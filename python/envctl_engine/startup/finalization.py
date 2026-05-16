@@ -119,23 +119,53 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
             metadata["plan_agent_launch_failed"] = True
         launch_outcomes: list[dict[str, object]] = []
         for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
-            launch_outcomes.append(
-                {
-                    "worktree_name": str(getattr(outcome, "worktree_name", "")).strip(),
-                    "worktree_root": str(getattr(outcome, "worktree_root", "")).strip(),
-                    "surface_id": getattr(outcome, "surface_id", None),
-                    "status": str(getattr(outcome, "status", "")).strip(),
-                    "reason": getattr(outcome, "reason", None),
-                    "transport": getattr(outcome, "transport", None),
-                    "cli": getattr(outcome, "cli", None),
-                    "workspace_id": getattr(outcome, "workspace_id", None),
-                    "tab_title": getattr(outcome, "tab_title", None),
-                }
-            )
+            outcome_payload: dict[str, object] = {
+                "worktree_name": str(getattr(outcome, "worktree_name", "")).strip(),
+                "worktree_root": str(getattr(outcome, "worktree_root", "")).strip(),
+                "surface_id": getattr(outcome, "surface_id", None),
+                "status": str(getattr(outcome, "status", "")).strip(),
+                "reason": getattr(outcome, "reason", None),
+                "transport": getattr(outcome, "transport", None),
+                "cli": getattr(outcome, "cli", None),
+                "workspace_id": getattr(outcome, "workspace_id", None),
+                "tab_title": getattr(outcome, "tab_title", None),
+            }
+            for key in (
+                "classification",
+                "failure_kind",
+                "log_path",
+                "log_status",
+                "worktree_clean",
+                "prompt_pasted",
+                "prompt_enter_sent",
+                "prompt_sent",
+                "prompt_accepted",
+                "screen_excerpt",
+            ):
+                value = getattr(outcome, key, None)
+                if value is not None:
+                    outcome_payload[key] = value
+            launch_outcomes.append(outcome_payload)
+            if outcome_payload["status"] == "prompt_failed":
+                metadata["plan_agent_prompt_failure_reason"] = str(outcome_payload.get("reason") or "").strip()
+                failure_kind = outcome_payload.get("failure_kind")
+                if failure_kind is not None:
+                    metadata["plan_agent_prompt_failure_kind"] = failure_kind
+                log_path = outcome_payload.get("log_path")
+                if log_path is not None:
+                    metadata["plan_agent_opencode_log_path"] = log_path
+                log_status = outcome_payload.get("log_status")
+                if log_status is not None:
+                    metadata["plan_agent_prompt_log_status"] = log_status
+                worktree_clean = outcome_payload.get("worktree_clean")
+                if worktree_clean is not None:
+                    metadata["plan_agent_worktree_clean"] = worktree_clean
         if launch_outcomes:
             metadata["plan_agent_launch_outcomes"] = launch_outcomes
-    if session.plan_agent_handoff_degraded or session.local_startup_failures:
-        metadata["plan_agent_handoff_degraded"] = bool(session.plan_agent_handoff_degraded)
+    if session.plan_agent_handoff_degraded or session.plan_agent_launch_degraded or session.local_startup_failures:
+        metadata["plan_agent_handoff_degraded"] = bool(
+            session.plan_agent_handoff_degraded or session.plan_agent_launch_degraded
+        )
         metadata["implementation_session_running"] = bool(session.plan_agent_session_started)
         metadata["local_startup_failed"] = bool(session.local_startup_failures)
         metadata["local_startup_failures"] = [failure.to_metadata() for failure in session.local_startup_failures]

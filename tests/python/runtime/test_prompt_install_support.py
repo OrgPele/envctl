@@ -589,6 +589,8 @@ class PromptInstallSupportTests(unittest.TestCase):
                 "phrases": (
                     "OpenCode plan-agent launches use the `/ulw-loop` prefix by default",
                     "Codex cycle settings are intentionally ignored for this surface",
+                    "If envctl reports `handoff_pending`, preserve the attach command",
+                    "ENVCTL_PLAN_AGENT_OPENCODE_DISABLE_ULW=true",
                     "do not silently fall back to Codex",
                 ),
             },
@@ -980,6 +982,9 @@ class PromptInstallSupportTests(unittest.TestCase):
                 written,
             )
             self.assertIn("Codex cycle settings are intentionally ignored for this surface", written)
+            self.assertIn("If envctl reports `handoff_pending`, preserve the attach command", written)
+            self.assertIn("OpenCode session created, but prompt execution failed.", written)
+            self.assertIn("worktree clean/dirty state", written)
 
     def test_resolve_codex_direct_prompt_body_prefers_user_installed_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1086,6 +1091,7 @@ class PromptInstallSupportTests(unittest.TestCase):
 
         self.assertIn("Automatic envctl follow-up", resolved)
         self.assertIn("--tmux --opencode --entire-system --headless --new-worktree", resolved)
+        self.assertIn("ENVCTL_PLAN_AGENT_OPENCODE_DISABLE_ULW=true", resolved)
         self.assertIn("Auto launch OpenCode ULW after planning", resolved)
 
     def test_resolve_codex_direct_prompt_body_only_replaces_standalone_arguments_placeholder(self) -> None:

@@ -142,6 +142,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         resolved_env = {
             "RUN_REPO_ROOT": str(repo),
             "RUN_SH_RUNTIME_DIR": str(runtime),
+            "ENVCTL_PLAN_AGENT_CODEX_READY_TIMEOUT_SECONDS": "0.2",
+            "ENVCTL_PLAN_AGENT_OPENCODE_READY_TIMEOUT_SECONDS": "0.2",
+            "ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS": "0.2",
             **(env or {}),
         }
         config = load_config(resolved_env)
@@ -641,6 +644,66 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(prompt_text, "/ulw-loop Implement this directly.")
+
+    def test_opencode_agent_env_extends_cli_command_without_breaking_prereq_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {"ENVCTL_PLAN_AGENT_OPENCODE_AGENT": "Sisyphus - Ultraworker"},
+                route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+            )
+            prereqs = launch_support.plan_agent_launch_prereq_commands(
+                config,
+                {"ENVCTL_PLAN_AGENT_OPENCODE_AGENT": "Sisyphus - Ultraworker"},
+                route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+            )
+
+        self.assertEqual(launch_config.cli_command, "opencode --agent 'Sisyphus - Ultraworker'")
+        self.assertEqual(prereqs, ("tmux", "opencode"))
+
+    def test_opencode_disable_ulw_submits_plain_direct_prompt_with_safe_instruction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            prompt_path = Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md"
+            repo.mkdir(parents=True, exist_ok=True)
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("Implement this directly.\n", encoding="utf-8")
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {"HOME": tmpdir, "ENVCTL_PLAN_AGENT_OPENCODE_DISABLE_ULW": "true"},
+                route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+            )
+            rt = self._runtime(repo, runtime, env={"HOME": tmpdir})
+
+            prompt_text, error = launch_support._resolve_preset_submission_text(
+                rt,
+                launch_config=launch_config,
+                cli="opencode",
+                preset="implement_task",
+            )
+
+        self.assertIsNone(error)
+        self.assertFalse(launch_config.ulw_loop_prefix)
+        self.assertFalse(prompt_text.startswith("/ulw-loop"))
+        self.assertIn("Implement this directly.", prompt_text)
+        self.assertIn("Do not spawn OMO/background subagents", prompt_text)
 
     def test_resolve_plan_agent_launch_config_ulw_route_enables_direct_prompt_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1273,6 +1336,303 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertIn("zsh: command not found: opencode", str(result.outcomes[0].reason))
         self.assertIn("opencode_ready_timeout", buffer.getvalue())
         submit_mock.assert_not_called()
+
+    def test_tmux_opencode_ready_timeout_with_alive_pane_returns_handoff_pending_attach_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            rt._command_exists = lambda command: command in {"tmux", "opencode", "zsh"}  # type: ignore[assignment]
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="feature-a.md")
+            expected_session = _tmux_session_name_for_worktree(repo, worktree, cli="opencode")
+
+            with (
+                redirect_stdout(StringIO()) as buffer,
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_tmux_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._ensure_tmux_window", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._launch_tmux_cli_bootstrap_commands", return_value=[None]),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready",
+                    return_value=launch_support.AiCliReadyResult(
+                        ready=False,
+                        reason="opencode_ready_timeout",
+                        screen_excerpt="OpenCode loading plugins...",
+                    ),
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._tmux_pane_diagnostics",
+                    return_value=launch_support._TmuxPaneDiagnostics(
+                        exists=True,
+                        pane_current_command="opencode",
+                        pane_current_path=str(worktree_root),
+                    ),
+                ),
+                patch("envctl_engine.planning.plan_agent_launch_support._submit_tmux_prompt_workflow_step", return_value=None) as submit_mock,
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+                    created_worktrees=(worktree,),
+                )
+
+        self.assertEqual(result.status, "handoff_pending")
+        self.assertEqual(result.reason, "opencode_ready_timeout")
+        self.assertIsNotNone(result.attach_target)
+        assert result.attach_target is not None
+        self.assertEqual(result.attach_target.session_name, expected_session)
+        self.assertEqual(result.attach_target.attach_command, ("tmux", "attach", "-t", expected_session))
+        self.assertEqual(len(result.outcomes), 1)
+        self.assertEqual(result.outcomes[0].status, "handoff_pending")
+        self.assertEqual(result.outcomes[0].reason, "opencode_ready_timeout")
+        self.assertIn("handoff pending", buffer.getvalue())
+        submit_mock.assert_not_called()
+        ready_timeout_events = self._events(rt, "planning.agent_launch.ready_timeout")
+        self.assertEqual(len(ready_timeout_events), 1)
+        self.assertEqual(ready_timeout_events[0]["classification"], "cli_running_not_ready")
+        self.assertEqual(ready_timeout_events[0]["pane_current_command"], "opencode")
+        self.assertEqual(ready_timeout_events[0]["attach_command"], f"tmux attach -t {expected_session}")
+        self.assertEqual(self._events(rt, "planning.agent_launch.command_sent"), [])
+
+    def test_tmux_opencode_timeout_records_provenance_handoff_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            provenance_path = worktree_root / ".envctl-state" / "worktree-provenance.json"
+            provenance_path.parent.mkdir(parents=True, exist_ok=True)
+            provenance_path.write_text(json.dumps({"fresh_ai_launch_status": "launching"}) + "\n", encoding="utf-8")
+            rt = self._runtime(repo, runtime)
+            rt._command_exists = lambda command: command in {"tmux", "opencode", "zsh"}  # type: ignore[assignment]
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="feature-a.md")
+            expected_session = _tmux_session_name_for_worktree(repo, worktree, cli="opencode")
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_tmux_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._ensure_tmux_window", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._launch_tmux_cli_bootstrap_commands", return_value=[None]),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready",
+                    return_value=launch_support.AiCliReadyResult(
+                        ready=False,
+                        reason="opencode_ready_timeout",
+                        screen_excerpt="OpenCode loading plugins...",
+                    ),
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._tmux_pane_diagnostics",
+                    return_value=launch_support._TmuxPaneDiagnostics(
+                        exists=True,
+                        pane_current_command="opencode",
+                        pane_current_path=str(worktree_root),
+                    ),
+                ),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+                    created_worktrees=(worktree,),
+                )
+
+            payload = json.loads(provenance_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.status, "handoff_pending")
+        self.assertEqual(payload["fresh_ai_launch_status"], "handoff_pending")
+        self.assertEqual(payload["launch_transport"], "tmux")
+        self.assertEqual(payload["session_name"], expected_session)
+        self.assertEqual(payload["window_name"], "feature-a-1")
+        self.assertEqual(payload["handoff_reason"], "opencode_ready_timeout")
+        self.assertFalse(payload["prompt_sent"])
+        self.assertFalse(payload["prompt_accepted"])
+        self.assertIn("OpenCode loading plugins", payload["last_screen_excerpt"])
+
+    def test_tmux_opencode_prompt_abort_preserves_attach_target_and_prompt_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "home"
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            log_dir = home / ".local" / "share" / "opencode" / "log"
+            provenance_path = worktree_root / ".envctl-state" / "worktree-provenance.json"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            provenance_path.parent.mkdir(parents=True, exist_ok=True)
+            log_dir.mkdir(parents=True, exist_ok=True)
+            provenance_path.write_text(json.dumps({"fresh_ai_launch_status": "launching"}) + "\n", encoding="utf-8")
+            subprocess.run(["git", "init", "--quiet"], cwd=worktree_root, check=True)
+            log_path = log_dir / "2026-05-16T124909.log"
+            log_path.write_text(
+                "INFO prompt accepted\n"
+                "ERROR e=InstanceRef not provided rejection\n"
+                "ERROR MessageAbortedError: Aborted process\n",
+                encoding="utf-8",
+            )
+            rt = self._runtime(repo, runtime, env={"HOME": str(home)})
+            rt._command_exists = lambda command: command in {"tmux", "opencode", "zsh"}  # type: ignore[assignment]
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="feature-a.md")
+            expected_session = _tmux_session_name_for_worktree(repo, worktree, cli="opencode")
+
+            with (
+                redirect_stdout(StringIO()),
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_tmux_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._ensure_tmux_window", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._launch_tmux_cli_bootstrap_commands", return_value=[None]),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready",
+                    return_value=launch_support.AiCliReadyResult(ready=True, reason="ready"),
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text",
+                    return_value=("/ulw-loop Implement", None),
+                ),
+                patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_prompt", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_key", return_value=None),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._read_tmux_screen",
+                    return_value="Sisyphus is working...\nEsc to interrupt\n",
+                ),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+                    created_worktrees=(worktree,),
+                )
+
+            payload = json.loads(provenance_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.status, "prompt_failed")
+        self.assertEqual(result.reason, "opencode_prompt_aborted")
+        self.assertIsNotNone(result.attach_target)
+        assert result.attach_target is not None
+        self.assertEqual(result.attach_target.session_name, expected_session)
+        self.assertEqual(result.attach_target.attach_command, ("tmux", "attach", "-t", expected_session))
+        self.assertEqual(result.outcomes[0].status, "prompt_failed")
+        self.assertEqual(result.outcomes[0].reason, "opencode_prompt_aborted")
+        self.assertEqual(payload["fresh_ai_launch_status"], "prompt_failed")
+        self.assertEqual(payload["prompt_failure_reason"], "opencode_prompt_aborted")
+        self.assertTrue(payload["prompt_sent"])
+        self.assertFalse(payload["prompt_accepted"])
+        self.assertEqual(payload["session_name"], expected_session)
+        self.assertEqual(payload["window_name"], "feature-a-1")
+        self.assertEqual(payload["opencode_log_path"], str(log_path))
+        self.assertFalse(payload["worktree_clean"])
+        self.assertTrue(payload["prompt_pasted"])
+        self.assertTrue(payload["prompt_enter_sent"])
+        self.assertTrue(result.outcomes[0].prompt_pasted)
+        self.assertTrue(result.outcomes[0].prompt_enter_sent)
+        failed_events = self._events(rt, "planning.agent_launch.opencode_prompt_failed")
+        self.assertEqual(len(failed_events), 1)
+        self.assertEqual(failed_events[0]["reason"], "opencode_prompt_aborted")
+        self.assertEqual(failed_events[0]["failure_kind"], "omo_abort")
+        self.assertEqual(failed_events[0]["transport"], "tmux")
+        self.assertEqual(failed_events[0]["session_name"], expected_session)
+        self.assertEqual(failed_events[0]["window_name"], "feature-a-1")
+        self.assertEqual(failed_events[0]["attach_command"], f"tmux attach -t {expected_session}")
+        self.assertTrue(failed_events[0]["prompt_sent"])
+        self.assertFalse(failed_events[0]["prompt_accepted"])
+        self.assertEqual(failed_events[0]["log_path"], str(log_path))
+        self.assertFalse(failed_events[0]["worktree_clean"])
+
+    def test_tmux_opencode_prompt_paste_failure_records_prompt_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "home"
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            provenance_path = worktree_root / ".envctl-state" / "worktree-provenance.json"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            provenance_path.parent.mkdir(parents=True, exist_ok=True)
+            provenance_path.write_text(json.dumps({"fresh_ai_launch_status": "launching"}) + "\n", encoding="utf-8")
+            rt = self._runtime(repo, runtime, env={"HOME": str(home)})
+            rt._command_exists = lambda command: command in {"tmux", "opencode", "zsh"}  # type: ignore[assignment]
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="feature-a.md")
+
+            with (
+                redirect_stdout(StringIO()),
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_tmux_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._ensure_tmux_window", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._launch_tmux_cli_bootstrap_commands", return_value=[None]),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready",
+                    return_value=launch_support.AiCliReadyResult(ready=True, reason="ready"),
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text",
+                    return_value=("/ulw-loop Implement", None),
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._send_tmux_prompt",
+                    return_value="tmux_load_buffer_failed: denied",
+                ),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+                    created_worktrees=(worktree,),
+                )
+
+            payload = json.loads(provenance_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.outcomes[0].status, "failed")
+        self.assertEqual(payload["fresh_ai_launch_status"], "failed")
+        self.assertFalse(payload["prompt_pasted"])
+        self.assertFalse(payload["prompt_enter_sent"])
+        self.assertFalse(payload["prompt_sent"])
+        self.assertFalse(payload["prompt_accepted"])
+        self.assertFalse(result.outcomes[0].prompt_pasted)
+        self.assertFalse(result.outcomes[0].prompt_enter_sent)
+
+    def test_tmux_opencode_prompt_enter_failure_records_prompt_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "home"
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            provenance_path = worktree_root / ".envctl-state" / "worktree-provenance.json"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            provenance_path.parent.mkdir(parents=True, exist_ok=True)
+            provenance_path.write_text(json.dumps({"fresh_ai_launch_status": "launching"}) + "\n", encoding="utf-8")
+            rt = self._runtime(repo, runtime, env={"HOME": str(home)})
+            rt._command_exists = lambda command: command in {"tmux", "opencode", "zsh"}  # type: ignore[assignment]
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="feature-a.md")
+
+            with (
+                redirect_stdout(StringIO()),
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_tmux_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._ensure_tmux_window", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._launch_tmux_cli_bootstrap_commands", return_value=[None]),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready",
+                    return_value=launch_support.AiCliReadyResult(ready=True, reason="ready"),
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text",
+                    return_value=("/ulw-loop Implement", None),
+                ),
+                patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_prompt", return_value=None),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._send_tmux_key",
+                    return_value="tmux_send_key_failed: denied",
+                ),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+                    created_worktrees=(worktree,),
+                )
+
+            payload = json.loads(provenance_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.outcomes[0].status, "failed")
+        self.assertEqual(payload["fresh_ai_launch_status"], "failed")
+        self.assertTrue(payload["prompt_pasted"])
+        self.assertFalse(payload["prompt_enter_sent"])
+        self.assertFalse(payload["prompt_sent"])
+        self.assertFalse(payload["prompt_accepted"])
+        self.assertTrue(result.outcomes[0].prompt_pasted)
+        self.assertFalse(result.outcomes[0].prompt_enter_sent)
 
     def test_tmux_codex_cycles_queue_remaining_workflow_steps(self) -> None:
         self.assertIsNotNone(_run_tmux_worktree_bootstrap)
@@ -5278,8 +5638,380 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertTrue(_screen_looks_ready("codex", ready))
 
     def test_ai_cli_ready_window_allows_slower_opencode_startup(self) -> None:
-        self.assertEqual(launch_support._cli_ready_delay_seconds("codex"), 5.0)
-        self.assertEqual(launch_support._cli_ready_delay_seconds("opencode"), 15.0)
+        self.assertEqual(launch_support._cli_ready_delay_seconds("codex"), 30.0)
+        self.assertEqual(launch_support._cli_ready_delay_seconds("opencode"), 60.0)
+        runtime = _RuntimeHarness(
+            config=load_config(
+                {
+                    "RUN_REPO_ROOT": "/tmp/repo",
+                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                }
+            ),
+            env={"ENVCTL_PLAN_AGENT_OPENCODE_READY_TIMEOUT_SECONDS": "7.5"},
+            process_runner=_RecordingRunner(),
+        )
+        self.assertEqual(launch_support._cli_ready_delay_seconds("opencode", runtime=runtime), 7.5)
+
+    def test_opencode_prompt_acceptance_rejects_immediate_abort_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            log_dir = home / ".local" / "share" / "opencode" / "log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "2026-05-16T124909.log"
+            log_path.write_text(
+                "INFO starting prompt\n"
+                "ERROR e=InstanceRef not provided rejection\n"
+                "ERROR MessageAbortedError: Aborted process\n",
+                encoding="utf-8",
+            )
+            rt = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(home / "repo"),
+                        "RUN_SH_RUNTIME_DIR": str(home / "runtime"),
+                    }
+                ),
+                env={"HOME": str(home)},
+                process_runner=_RecordingRunner(),
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._read_tmux_screen",
+                    return_value="Sisyphus is working...\nEsc to interrupt\n",
+                ),
+            ):
+                accepted = launch_support._wait_for_tmux_prompt_accepted(
+                    rt,
+                    session_name="envctl-test",
+                    window_name="feature-a",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=0.0,
+                )
+
+        self.assertFalse(accepted.ready)
+        self.assertEqual(accepted.reason, "opencode_prompt_aborted")
+        self.assertIn("InstanceRef not provided", accepted.screen_excerpt)
+        self.assertIn(str(log_path), accepted.screen_excerpt)
+        failed_events = self._events(rt, "planning.agent_launch.opencode_prompt_failed")
+        self.assertEqual(len(failed_events), 1)
+        self.assertEqual(failed_events[0]["reason"], "opencode_prompt_aborted")
+        self.assertEqual(failed_events[0]["log_path"], str(log_path))
+
+    def test_opencode_prompt_acceptance_rejects_provider_auth_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            log_dir = home / ".local" / "share" / "opencode" / "log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "2026-05-16T125010.log"
+            log_path.write_text(
+                "ERROR AI_LoadAPIKeyError: missing API key for OpenAI provider\n"
+                "ERROR provider response 401 Unauthorized\n",
+                encoding="utf-8",
+            )
+            rt = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(home / "repo"),
+                        "RUN_SH_RUNTIME_DIR": str(home / "runtime"),
+                    }
+                ),
+                env={"HOME": str(home), "ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS": "0.2"},
+                process_runner=_RecordingRunner(),
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
+                patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", return_value=""),
+            ):
+                accepted = launch_support._wait_for_tmux_prompt_accepted(
+                    rt,
+                    session_name="envctl-test",
+                    window_name="feature-a",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=0.0,
+                )
+
+        self.assertFalse(accepted.ready)
+        self.assertEqual(accepted.reason, "opencode_prompt_auth_failed")
+        self.assertEqual(accepted.failure_kind, "provider_auth")
+        self.assertEqual(accepted.log_path, str(log_path))
+        self.assertIn("provider response 401", accepted.screen_excerpt)
+        failed_events = self._events(rt, "planning.agent_launch.opencode_prompt_failed")
+        self.assertEqual(len(failed_events), 1)
+        self.assertEqual(failed_events[0]["reason"], "opencode_prompt_auth_failed")
+        self.assertEqual(failed_events[0]["failure_kind"], "provider_auth")
+
+    def test_opencode_prompt_failure_log_classifies_required_markers_and_scrubs_evidence(self) -> None:
+        cases = (
+            ("InstanceRef not provided", "opencode_prompt_aborted", "omo_abort"),
+            ("MessageAbortedError", "opencode_prompt_aborted", "omo_abort"),
+            ("Aborted process", "opencode_prompt_aborted", "omo_abort"),
+            ("Failed to run the query 'PRAGMA wal_checkpoint(PASSIVE)'", "opencode_prompt_aborted", "opencode_db"),
+            ("AI_LoadAPIKeyError", "opencode_prompt_auth_failed", "provider_auth"),
+            ("missing API key", "opencode_prompt_auth_failed", "provider_auth"),
+            ("authentication failed", "opencode_prompt_auth_failed", "provider_auth"),
+            ("provider authorization failed", "opencode_prompt_auth_failed", "provider_auth"),
+            ("provider response 401 Unauthorized", "opencode_prompt_auth_failed", "provider_auth"),
+            ("provider response 403 Forbidden", "opencode_prompt_auth_failed", "provider_auth"),
+        )
+        for marker, expected_reason, expected_kind in cases:
+            with self.subTest(marker=marker):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    home = Path(tmpdir)
+                    log_dir = home / ".local" / "share" / "opencode" / "log"
+                    log_dir.mkdir(parents=True, exist_ok=True)
+                    log_path = log_dir / "2026-05-16T125100.log"
+                    log_path.write_text(
+                        f"ERROR {marker}\n"
+                        "Authorization: Bearer bearer-secret\n"
+                        "OPENAI_API_KEY=sk-secret\n"
+                        "https://user:password@example.test/path\n",
+                        encoding="utf-8",
+                    )
+                    rt = _RuntimeHarness(
+                        config=load_config(
+                            {
+                                "RUN_REPO_ROOT": str(home / "repo"),
+                                "RUN_SH_RUNTIME_DIR": str(home / "runtime"),
+                            }
+                        ),
+                        env={"HOME": str(home)},
+                        process_runner=_RecordingRunner(),
+                    )
+
+                    found_path, evidence, reason, failure_kind, log_status = launch_support._latest_opencode_prompt_failure_log(
+                        rt,
+                        log_scan_since=0.0,
+                    )
+
+                self.assertEqual(found_path, log_path)
+                self.assertEqual(reason, expected_reason)
+                self.assertEqual(failure_kind, expected_kind)
+                self.assertEqual(log_status, "found")
+                self.assertTrue(evidence)
+                self.assertIn("<redacted>", evidence)
+                self.assertNotIn("bearer-secret", evidence)
+                self.assertNotIn("sk-secret", evidence)
+                self.assertNotIn("user:password", evidence)
+
+    def test_opencode_prompt_acceptance_reports_missing_log_dir_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            rt = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(home / "repo"),
+                        "RUN_SH_RUNTIME_DIR": str(home / "runtime"),
+                    }
+                ),
+                env={"HOME": str(home), "ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS": "0.2"},
+                process_runner=_RecordingRunner(),
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
+                patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", return_value=""),
+            ):
+                accepted = launch_support._wait_for_tmux_prompt_accepted(
+                    rt,
+                    session_name="envctl-test",
+                    window_name="feature-a",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=0.0,
+                )
+
+        self.assertFalse(accepted.ready)
+        self.assertEqual(accepted.reason, "opencode_prompt_accept_timeout")
+        self.assertEqual(accepted.log_status, "missing_log_dir")
+
+    def test_opencode_prompt_acceptance_reports_no_recent_log_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            log_dir = home / ".local" / "share" / "opencode" / "log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "old.log"
+            log_path.write_text("old MessageAbortedError\n", encoding="utf-8")
+            os.utime(log_path, (1.0, 1.0))
+            rt = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(home / "repo"),
+                        "RUN_SH_RUNTIME_DIR": str(home / "runtime"),
+                    }
+                ),
+                env={"HOME": str(home), "ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS": "0.2"},
+                process_runner=_RecordingRunner(),
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
+                patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", return_value=""),
+            ):
+                accepted = launch_support._wait_for_tmux_prompt_accepted(
+                    rt,
+                    session_name="envctl-test",
+                    window_name="feature-a",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=100.0,
+                )
+
+        self.assertFalse(accepted.ready)
+        self.assertEqual(accepted.log_status, "no_recent_log")
+
+    def test_opencode_prompt_acceptance_reports_unreadable_log_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            log_dir = home / ".local" / "share" / "opencode" / "log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "unreadable.log"
+            log_path.write_text("MessageAbortedError\n", encoding="utf-8")
+            rt = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(home / "repo"),
+                        "RUN_SH_RUNTIME_DIR": str(home / "runtime"),
+                    }
+                ),
+                env={"HOME": str(home), "ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS": "0.2"},
+                process_runner=_RecordingRunner(),
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
+                patch("envctl_engine.planning.plan_agent_launch_support.Path.read_text", side_effect=OSError("denied")),
+                patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", return_value=""),
+            ):
+                accepted = launch_support._wait_for_tmux_prompt_accepted(
+                    rt,
+                    session_name="envctl-test",
+                    window_name="feature-a",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=0.0,
+                )
+
+        self.assertFalse(accepted.ready)
+        self.assertEqual(accepted.log_status, "unreadable")
+
+    def test_surface_opencode_prompt_acceptance_matches_tmux_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            rt = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(home / "repo"),
+                        "RUN_SH_RUNTIME_DIR": str(home / "runtime"),
+                    }
+                ),
+                env={"HOME": str(home), "ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS": "0.2"},
+                process_runner=_RecordingRunner(),
+            )
+            busy = "Sisyphus is working...\nEsc to interrupt\n"
+            unchanged = "  ┃  /ulw-loop Implement\n  ctrl+p commands\n  ~/repo /status\n"
+            ready = "Sisyphus - Ultraworker · GPT-5.5 OpenAI · xhigh\n tab agents  ctrl+p commands\n ~/repo /status\n"
+
+            with patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", return_value=busy):
+                accepted = launch_support._wait_for_surface_prompt_accepted(
+                    rt,
+                    workspace_id="workspace:9",
+                    surface_id="surface:7",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=time.time(),
+                )
+            self.assertTrue(accepted.ready)
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
+                patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", return_value=unchanged),
+            ):
+                rejected = launch_support._wait_for_surface_prompt_accepted(
+                    rt,
+                    workspace_id="workspace:9",
+                    surface_id="surface:7",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=time.time(),
+                )
+            self.assertFalse(rejected.ready)
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
+                patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", return_value=ready),
+            ):
+                ambiguous = launch_support._wait_for_surface_prompt_accepted(
+                    rt,
+                    workspace_id="workspace:9",
+                    surface_id="surface:7",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=time.time(),
+                )
+            self.assertFalse(ambiguous.ready)
+            self.assertEqual(ambiguous.reason, "opencode_prompt_ambiguous_idle")
+
+    def test_surface_opencode_prompt_accepts_success_log_and_emits_failure_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            log_dir = home / ".local" / "share" / "opencode" / "log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            success_log = log_dir / "success.log"
+            success_log.write_text("INFO prompt created for session ses_123\n", encoding="utf-8")
+            rt = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(home / "repo"),
+                        "RUN_SH_RUNTIME_DIR": str(home / "runtime"),
+                    }
+                ),
+                env={"HOME": str(home), "ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS": "0.2"},
+                process_runner=_RecordingRunner(),
+            )
+
+            with patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", return_value=""):
+                accepted = launch_support._wait_for_surface_prompt_accepted(
+                    rt,
+                    workspace_id="workspace:9",
+                    surface_id="surface:7",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=0.0,
+                )
+
+            self.assertTrue(accepted.ready)
+            self.assertEqual(accepted.log_path, str(success_log))
+
+            success_log.unlink()
+            failure_log = log_dir / "failure.log"
+            failure_log.write_text("ERROR provider response 403 Forbidden\n", encoding="utf-8")
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
+                patch("envctl_engine.planning.plan_agent_launch_support._read_surface_screen", return_value=""),
+            ):
+                failed = launch_support._wait_for_surface_prompt_accepted(
+                    rt,
+                    workspace_id="workspace:9",
+                    surface_id="surface:7",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=0.0,
+                )
+
+        self.assertFalse(failed.ready)
+        self.assertEqual(failed.reason, "opencode_prompt_auth_failed")
+        failed_events = self._events(rt, "planning.agent_launch.opencode_prompt_failed")
+        self.assertEqual(len(failed_events), 1)
+        self.assertEqual(failed_events[0]["transport"], "cmux")
+        self.assertEqual(failed_events[0]["workspace_id"], "workspace:9")
+        self.assertEqual(failed_events[0]["surface_id"], "surface:7")
+        self.assertTrue(failed_events[0]["prompt_sent"])
+        self.assertFalse(failed_events[0]["prompt_accepted"])
 
     def test_workspace_entries_are_parsed_from_list_output(self) -> None:
         payload = """
@@ -5388,7 +6120,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
     def test_opencode_post_submit_rejects_unknown_screen(self) -> None:
         self.assertFalse(launch_support._post_submit_screen_looks_accepted("opencode", "shell prompt\n$ ", "/ulw-loop"))
 
-    def test_opencode_post_submit_accepts_busy_or_cleared_screen(self) -> None:
+    def test_opencode_post_submit_accepts_busy_screen_but_not_idle_ready_screen(self) -> None:
         prompt = "/ulw-loop\n\nImplement task"
         busy = "Sisyphus is working...\nEsc to interrupt\n"
         cmux_busy = "▣  Sisyphus - Ultraworker · GPT-5.5\n■■■■⬝⬝⬝⬝  esc interrupt  tab agents  ctrl+p commands\n"
@@ -5396,8 +6128,88 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         cleared = '  ┃  Ask anything... "Follow up"\n  ctrl+p commands\n  ~/repo /status\n'
         self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", busy, prompt))
         self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", cmux_busy, prompt))
-        self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", returned_ready, prompt))
-        self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", cleared, prompt))
+        self.assertFalse(launch_support._post_submit_screen_looks_accepted("opencode", returned_ready, prompt))
+        self.assertFalse(launch_support._post_submit_screen_looks_accepted("opencode", cleared, prompt))
+
+    def test_opencode_prompt_acceptance_treats_idle_ready_without_success_evidence_as_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            rt = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(home / "repo"),
+                        "RUN_SH_RUNTIME_DIR": str(home / "runtime"),
+                    }
+                ),
+                env={"HOME": str(home), "ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS": "0.2"},
+                process_runner=_RecordingRunner(),
+            )
+            ready_screen = (
+                "Sisyphus - Ultraworker · GPT-5.5 OpenAI · xhigh\n"
+                "tab agents  ctrl+p commands\n"
+                "~/repo ⊙ 3 MCP /status 1.15.0\n"
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
+                patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", return_value=ready_screen),
+            ):
+                accepted = launch_support._wait_for_tmux_prompt_accepted(
+                    rt,
+                    session_name="envctl-test",
+                    window_name="feature-a",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=time.time(),
+                )
+
+        self.assertFalse(accepted.ready)
+        self.assertEqual(accepted.reason, "opencode_prompt_ambiguous_idle")
+
+    def test_opencode_prompt_acceptance_accepts_idle_ready_with_recent_success_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            log_dir = home / ".local" / "share" / "opencode" / "log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "2026-05-16T125050.log"
+            log_path.write_text(
+                "INFO message created for session ses_123 after prompt submission\n",
+                encoding="utf-8",
+            )
+            rt = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(home / "repo"),
+                        "RUN_SH_RUNTIME_DIR": str(home / "runtime"),
+                    }
+                ),
+                env={"HOME": str(home), "ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS": "0.2"},
+                process_runner=_RecordingRunner(),
+            )
+            ready_screen = (
+                "Sisyphus - Ultraworker · GPT-5.5 OpenAI · xhigh\n"
+                "tab agents  ctrl+p commands\n"
+                "~/repo ⊙ 3 MCP /status 1.15.0\n"
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
+                patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", return_value=ready_screen),
+            ):
+                accepted = launch_support._wait_for_tmux_prompt_accepted(
+                    rt,
+                    session_name="envctl-test",
+                    window_name="feature-a",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=0.0,
+                )
+
+        self.assertTrue(accepted.ready)
+        self.assertEqual(accepted.reason, "prompt_accepted")
+        accepted_events = self._events(rt, "planning.agent_launch.opencode_prompt_accepted")
+        self.assertEqual(len(accepted_events), 1)
+        self.assertEqual(accepted_events[0]["log_path"], str(log_path))
 
     def test_opencode_post_submit_accepts_busy_screen_with_prompt_history(self) -> None:
         prompt = "/ulw-loop\n\nImplement task"

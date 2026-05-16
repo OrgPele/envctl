@@ -106,8 +106,8 @@ Before launching, validate the plan path and selector in this exact order:
 5. Run the launch command from the repo root, not from a generated worktree.
 
 If selector derivation fails, stop after writing the plan and report the exact issue. Do not guess a selector.
-If the envctl launch command exits non-zero, report the plan path, attempted command, exit status, relevant stderr/stdout summary, and that implementation session launch did not complete.
-If launch succeeds, report the plan path, selected launch surface, exact envctl command executed, attach/reconnect guidance printed by envctl when available, and that implementation work is now delegated to the launched session.
+If the envctl launch command exits non-zero, report the plan path, attempted command, exit status, relevant stderr/stdout summary, and whether envctl created an attachable session.
+If launch succeeds or reports an attachable degraded handoff, report the plan path, selected launch surface, exact envctl command executed, attach/reconnect guidance printed by envctl when available, and whether implementation work is now delegated or prompt handoff is still pending.
 The prompt must not begin implementing in the original planning session after launching envctl.
 
 Run the launch command after the plan path exists and selector derivation succeeds. Use `--entire-system` immediately before `--headless` by default; only replace it with a narrower explicit scope such as `--no-infra`, `--only-backend`, or `--only-frontend` when the plan records why full-stack E2E does not apply. Run exactly this default command:
@@ -118,7 +118,7 @@ cd <repo-root> && envctl --plan <category>/<slug> --tmux --opencode --entire-sys
 
 For example, a backend-only plan still keeps `--entire-system` by default; use `--only-backend` or `--no-infra` only when the plan records why full-stack E2E does not apply.
 
-OpenCode plan-agent launches use the `/ulw-loop` prefix by default, so this auto skill does not need `--ulw`. Codex cycle settings are intentionally ignored for this surface. If the launch fails because OpenCode or ULW support is unavailable in the user environment, report the exact error and leave the plan file in place; do not silently fall back to Codex.
+OpenCode plan-agent launches use the `/ulw-loop` prefix by default, so this auto skill does not need `--ulw`. Codex cycle settings are intentionally ignored for this surface. If envctl reports `handoff_pending`, preserve the attach command and explain that the OpenCode session is alive but prompt handoff is incomplete. If envctl reports `OpenCode session created, but prompt execution failed.` or OpenCode/OMO aborts after prompt submission, preserve the plan, include the attach command, log path or visible diagnostic, and worktree clean/dirty state when shown, then recommend a safe rerun such as `ENVCTL_PLAN_AGENT_OPENCODE_DISABLE_ULW=true envctl --plan <category>/<slug> --tmux --opencode --entire-system --headless --new-worktree` or `ENVCTL_PLAN_AGENT_OPENCODE_AGENT=<safe-agent> ...`. If the launch fails because OpenCode or ULW support is unavailable in the user environment, report the exact error and leave the plan file in place; do not silently fall back to Codex.
 
 ## Final response format
 1. Path of the plan file created.

@@ -107,7 +107,7 @@ Use `--no-deps` when you want to launch the AI session without dependency prep o
 and dependency prep. Use `--no-infra` when the task does not need backend, frontend, managed dependencies, or
 dependency prep at all.
 
-Each launched surface stays interactive. Envctl creates the tab/window, renames it to a compact worktree-derived title when supported, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset. By default that preset is `implement_task`. OpenCode cmux/tmux ULW launches submit `/ulw-loop <rendered prompt body>` as one normalized command line, so cmux does not fan out a large multi-line prompt paste. Codex resolves the preset from the envctl-managed prompt file and submits the full prompt body directly. `implement_plan` is still available when you want to override the default.
+Each launched surface stays interactive. Envctl creates the tab/window, renames it to a compact worktree-derived title when supported, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset. By default that preset is `implement_task`. OpenCode cmux/tmux ULW launches submit `/ulw-loop <rendered prompt body>` as one normalized command line, so cmux does not fan out a large multi-line prompt paste. Set `ENVCTL_PLAN_AGENT_OPENCODE_DISABLE_ULW=true` to skip `/ulw-loop` and keep work in the primary OpenCode session when OMO/subagent orchestration is unstable. Codex resolves the preset from the envctl-managed prompt file and submits the full prompt body directly. `implement_plan` is still available when you want to override the default.
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
 
@@ -128,7 +128,7 @@ The installed create-plan skills connect planning documents to these launch path
 - `$envctl-create-plan` stays plan-only and approval-first.
 - `$envctl-create-plan` records a recommended Codex cycle count from `0` through `8` in the plan and uses that recommendation in Codex follow-up command examples.
 - `$envctl-create-plan-auto-codex` writes `todo/plans/<category>/<slug>.md`, derives `<category>/<slug>` from that path, chooses a recommended Codex cycle count from `0` through `8`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --tmux --entire-system --headless --new-worktree`.
-- `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --new-worktree`; OpenCode prepends `/ulw-loop` by default.
+- `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --new-worktree`; OpenCode prepends `/ulw-loop` by default, reports `handoff_pending` with attach guidance when the session is alive but prompt submission did not complete, and reports prompt-stage failures separately when OpenCode/OMO aborts after the prompt is submitted.
 - `$envctl-create-plan-auto-omx` writes the plan, records the same recommendation for visibility, derives the selector, then runs `envctl --plan <selector> --omx --ultragoal --entire-system --headless --new-worktree`; optional `/goal` framing is submitted first, Ultragoal wraps the initial prompt, and envctl may queue Codex follow-up cycles using the current cycle configuration. Use `--ralph` explicitly when you need the Ralph compatibility workflow.
 
 The auto variants are explicit opt-ins for immediate implementation. Each uses the plan file path as the selector source and asks envctl to create a fresh headless session, so invoke them only when you want implementation work to start right after planning.
@@ -204,6 +204,8 @@ New worktrees created by `envctl` now persist their origin branch in:
 ```
 
 When you run `envctl` from a linked worktree of an envctl-managed project, envctl uses the owning main repo for control-plane metadata: `.envctl`, runtime scope, state files, port locks, and latest-run artifacts. The worktree-local provenance file remains in the worktree and is still used by planning and review flows; it is not the project-level runtime metadata store.
+
+Plan-agent provenance uses `fresh_ai_launch_status=launched` only after prompt handoff is accepted. If tmux/OpenCode is alive but prompt submission is incomplete, envctl records `fresh_ai_launch_status=handoff_pending`, the `session_name`, `window_name`, handoff reason, prompt booleans, and a scrubbed screen excerpt. If OpenCode/OMO aborts or provider/auth fails after envctl submits the prompt, envctl records `fresh_ai_launch_status=prompt_failed`, prompt failure reason, prompt paste/Enter state when known, log path or log status when known, worktree clean/dirty state when known, and keeps the attach command in run metadata. True shell or executable failures remain `failed`.
 
 When the source repo already has common local dependency/runtime artifacts, envctl-created worktrees also try to link a small compatibility set into the new worktree:
 
