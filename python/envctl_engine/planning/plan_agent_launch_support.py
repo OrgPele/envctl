@@ -203,7 +203,10 @@ class PlanAgentLaunchOutcome:
     classification: str | None = None
     failure_kind: str | None = None
     log_path: str | None = None
+    log_status: str | None = None
     worktree_clean: bool | None = None
+    prompt_pasted: bool | None = None
+    prompt_enter_sent: bool | None = None
     prompt_sent: bool | None = None
     prompt_accepted: bool | None = None
     screen_excerpt: str | None = None
@@ -250,7 +253,10 @@ class AiCliReadyResult:
     screen_excerpt: str = ""
     failure_kind: str = ""
     log_path: str = ""
+    log_status: str = ""
     worktree_clean: bool | None = None
+    prompt_pasted: bool = False
+    prompt_enter_sent: bool = False
     prompt_accepted: bool = False
 
 
@@ -275,16 +281,23 @@ class _TmuxBootstrapHandoff:
     prompt_accepted: bool = False
     failure_kind: str = ""
     log_path: str = ""
+    log_status: str = ""
     worktree_clean: bool | None = None
+    prompt_pasted: bool = False
+    prompt_enter_sent: bool = False
 
 
 @dataclass(slots=True, frozen=True)
 class _PromptSubmissionFailure:
     reason: str
     failure_kind: str
+    status: str = "prompt_failed"
     screen_excerpt: str = ""
     log_path: str = ""
+    log_status: str = ""
     worktree_clean: bool | None = None
+    prompt_pasted: bool = True
+    prompt_enter_sent: bool = True
     prompt_sent: bool = True
     prompt_accepted: bool = False
 
@@ -1915,11 +1928,14 @@ def _launch_single_tmux_worktree(
             window_name=window_name,
             handoff_reason=bootstrap_result.reason,
             prompt_failure_reason=prompt_failure_reason,
+            prompt_pasted=bootstrap_result.prompt_pasted,
+            prompt_enter_sent=bootstrap_result.prompt_enter_sent,
             prompt_sent=bootstrap_result.prompt_sent,
             prompt_accepted=bootstrap_result.prompt_accepted,
             last_screen_excerpt=bootstrap_result.screen_excerpt,
             failure_kind=bootstrap_result.failure_kind,
             opencode_log_path=bootstrap_result.log_path,
+            log_status=bootstrap_result.log_status,
             worktree_clean=bootstrap_result.worktree_clean,
         )
         if bootstrap_result.status == "prompt_failed":
@@ -1931,14 +1947,17 @@ def _launch_single_tmux_worktree(
                 window_name=window_name,
                 worktree=worktree.name,
                 log_path=bootstrap_result.log_path or None,
+                log_status=bootstrap_result.log_status or None,
                 worktree_clean=bootstrap_result.worktree_clean,
+                prompt_pasted=bootstrap_result.prompt_pasted,
+                prompt_enter_sent=bootstrap_result.prompt_enter_sent,
                 prompt_sent=bootstrap_result.prompt_sent,
                 prompt_accepted=bootstrap_result.prompt_accepted,
                 attach_command=shlex.join(_guidance_attach_command(session_name)),
                 transport="tmux",
                 cli=launch_config.cli,
             )
-        else:
+        elif bootstrap_result.status == "handoff_pending":
             runtime._emit(
                 "planning.agent_launch.handoff_pending",
                 reason=bootstrap_result.reason,
@@ -1948,6 +1967,21 @@ def _launch_single_tmux_worktree(
                 worktree=worktree.name,
                 pane_current_command=bootstrap_result.pane_current_command or None,
                 pane_current_path=bootstrap_result.pane_current_path or None,
+                transport="tmux",
+                cli=launch_config.cli,
+            )
+        else:
+            runtime._emit(
+                "planning.agent_launch.failed",
+                reason=bootstrap_result.classification or "bootstrap_failed",
+                session_name=session_name,
+                window_name=window_name,
+                worktree=worktree.name,
+                error=bootstrap_result.reason,
+                prompt_pasted=bootstrap_result.prompt_pasted,
+                prompt_enter_sent=bootstrap_result.prompt_enter_sent,
+                prompt_sent=bootstrap_result.prompt_sent,
+                prompt_accepted=bootstrap_result.prompt_accepted,
                 transport="tmux",
                 cli=launch_config.cli,
             )
@@ -1962,7 +1996,10 @@ def _launch_single_tmux_worktree(
             classification=bootstrap_result.classification,
             failure_kind=bootstrap_result.failure_kind or None,
             log_path=bootstrap_result.log_path or None,
+            log_status=bootstrap_result.log_status or None,
             worktree_clean=bootstrap_result.worktree_clean,
+            prompt_pasted=bootstrap_result.prompt_pasted,
+            prompt_enter_sent=bootstrap_result.prompt_enter_sent,
             prompt_sent=bootstrap_result.prompt_sent,
             prompt_accepted=bootstrap_result.prompt_accepted,
             screen_excerpt=bootstrap_result.screen_excerpt or None,
@@ -1976,6 +2013,8 @@ def _launch_single_tmux_worktree(
             session_name=session_name,
             window_name=window_name,
             handoff_reason=str(error),
+            prompt_pasted=False,
+            prompt_enter_sent=False,
             prompt_sent=False,
             prompt_accepted=False,
             last_screen_excerpt=str(error),
@@ -2013,6 +2052,8 @@ def _launch_single_tmux_worktree(
         transport="tmux",
         session_name=session_name,
         window_name=window_name,
+        prompt_pasted=True,
+        prompt_enter_sent=True,
         prompt_sent=True,
         prompt_accepted=True,
     )
@@ -2022,6 +2063,12 @@ def _launch_single_tmux_worktree(
         worktree_root=worktree.root,
         surface_id=None,
         status="launched",
+        transport="tmux",
+        cli=launch_config.cli,
+        prompt_pasted=True,
+        prompt_enter_sent=True,
+        prompt_sent=True,
+        prompt_accepted=True,
     )
 
 
@@ -2834,12 +2881,15 @@ def _mark_worktree_plan_agent_launch(
     window_name: str = "",
     handoff_reason: str = "",
     prompt_failure_reason: str = "",
+    prompt_pasted: bool | None = None,
+    prompt_enter_sent: bool | None = None,
     prompt_sent: bool | None = None,
     prompt_accepted: bool | None = None,
     last_screen_excerpt: str = "",
     launch_error: str = "",
     failure_kind: str = "",
     opencode_log_path: str = "",
+    log_status: str = "",
     worktree_clean: bool | None = None,
 ) -> None:
     path = Path(worktree.root) / _WORKTREE_PROVENANCE_PATH
@@ -2870,6 +2920,10 @@ def _mark_worktree_plan_agent_launch(
     normalized_failure_kind = str(failure_kind or "").strip()
     if normalized_failure_kind:
         payload["failure_kind"] = normalized_failure_kind
+    if prompt_pasted is not None:
+        payload["prompt_pasted"] = bool(prompt_pasted)
+    if prompt_enter_sent is not None:
+        payload["prompt_enter_sent"] = bool(prompt_enter_sent)
     if prompt_sent is not None:
         payload["prompt_sent"] = bool(prompt_sent)
     if prompt_accepted is not None:
@@ -2883,6 +2937,9 @@ def _mark_worktree_plan_agent_launch(
     normalized_log_path = str(opencode_log_path or "").strip()
     if normalized_log_path:
         payload["opencode_log_path"] = normalized_log_path
+    normalized_log_status = str(log_status or "").strip()
+    if normalized_log_status:
+        payload["log_status"] = normalized_log_status
     if worktree_clean is not None:
         payload["worktree_clean"] = bool(worktree_clean)
     payload["launch_recorded_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -3145,12 +3202,30 @@ def _submit_tmux_prompt_workflow_step(
     log_scan_since = time.time()
     paste_error = _send_tmux_prompt(runtime, session_name=session_name, window_name=window_name, text=prompt_text)
     if paste_error is not None:
-        return paste_error
+        return _PromptSubmissionFailure(
+            status="failed",
+            reason=paste_error,
+            failure_kind="tmux_prompt_paste_failed",
+            screen_excerpt=paste_error,
+            prompt_pasted=False,
+            prompt_enter_sent=False,
+            prompt_sent=False,
+            prompt_accepted=False,
+        )
     if str(cli).strip().lower() == "opencode":
         time.sleep(1.0)
     enter_error = _send_tmux_key(runtime, session_name=session_name, window_name=window_name, key="enter")
     if enter_error is not None:
-        return enter_error
+        return _PromptSubmissionFailure(
+            status="failed",
+            reason=enter_error,
+            failure_kind="tmux_prompt_enter_failed",
+            screen_excerpt=enter_error,
+            prompt_pasted=True,
+            prompt_enter_sent=False,
+            prompt_sent=False,
+            prompt_accepted=False,
+        )
     accepted = _wait_for_tmux_prompt_accepted(
         runtime,
         session_name=session_name,
@@ -3168,7 +3243,10 @@ def _submit_tmux_prompt_workflow_step(
             or "prompt_acceptance",
             screen_excerpt=accepted.screen_excerpt,
             log_path=accepted.log_path,
+            log_status=accepted.log_status,
             worktree_clean=accepted.worktree_clean,
+            prompt_pasted=True,
+            prompt_enter_sent=True,
             prompt_sent=True,
             prompt_accepted=accepted.prompt_accepted,
         )
@@ -3267,14 +3345,17 @@ def _run_tmux_worktree_bootstrap(
     if submit_error is not None:
         if isinstance(submit_error, _PromptSubmissionFailure):
             return _TmuxBootstrapHandoff(
-                status="prompt_failed",
+                status=submit_error.status,
                 reason=submit_error.reason,
                 classification=submit_error.failure_kind,
                 screen_excerpt=submit_error.screen_excerpt,
+                prompt_pasted=submit_error.prompt_pasted,
+                prompt_enter_sent=submit_error.prompt_enter_sent,
                 prompt_sent=submit_error.prompt_sent,
                 prompt_accepted=submit_error.prompt_accepted,
                 failure_kind=submit_error.failure_kind,
                 log_path=submit_error.log_path,
+                log_status=submit_error.log_status,
                 worktree_clean=submit_error.worktree_clean,
             )
         return submit_error
@@ -4358,7 +4439,16 @@ def _submit_direct_prompt_workflow_step(
         failure_event=failure_event,
     )
     if paste_error is not None:
-        return paste_error
+        return _PromptSubmissionFailure(
+            status="failed",
+            reason=paste_error,
+            failure_kind="cmux_prompt_paste_failed",
+            screen_excerpt=paste_error,
+            prompt_pasted=False,
+            prompt_enter_sent=False,
+            prompt_sent=False,
+            prompt_accepted=False,
+        )
     enter_error = _send_surface_key(
         runtime,
         workspace_id=workspace_id,
@@ -4367,7 +4457,16 @@ def _submit_direct_prompt_workflow_step(
         failure_event=failure_event,
     )
     if enter_error is not None:
-        return enter_error
+        return _PromptSubmissionFailure(
+            status="failed",
+            reason=enter_error,
+            failure_kind="cmux_prompt_enter_failed",
+            screen_excerpt=enter_error,
+            prompt_pasted=True,
+            prompt_enter_sent=False,
+            prompt_sent=False,
+            prompt_accepted=False,
+        )
     if str(cli).strip().lower() != "opencode":
         return None
     accepted = _wait_for_surface_prompt_accepted(
@@ -4387,7 +4486,10 @@ def _submit_direct_prompt_workflow_step(
             or "prompt_acceptance",
             screen_excerpt=accepted.screen_excerpt,
             log_path=accepted.log_path,
+            log_status=accepted.log_status,
             worktree_clean=accepted.worktree_clean,
+            prompt_pasted=True,
+            prompt_enter_sent=True,
             prompt_sent=True,
             prompt_accepted=accepted.prompt_accepted,
         )
@@ -6041,7 +6143,7 @@ def _opencode_prompt_failure_diagnostic(
     log_scan_since: float | None,
     worktree_root: Path | None,
 ) -> dict[str, object] | None:
-    log_path, evidence, reason, failure_kind = _latest_opencode_prompt_failure_log(
+    log_path, evidence, reason, failure_kind, log_status = _latest_opencode_prompt_failure_log(
         runtime,
         log_scan_since=log_scan_since,
     )
@@ -6052,6 +6154,7 @@ def _opencode_prompt_failure_diagnostic(
         "evidence": evidence,
         "reason": reason,
         "failure_kind": failure_kind,
+        "log_status": log_status,
         "worktree_clean": _worktree_clean_state(runtime, worktree_root=worktree_root),
     }
 
@@ -6070,50 +6173,83 @@ def _opencode_abort_diagnostic(
 
 
 def _latest_opencode_abort_log(runtime: Any, *, log_scan_since: float | None) -> tuple[Path | None, str]:
-    log_path, evidence, _reason, _failure_kind = _latest_opencode_prompt_failure_log(
+    log_path, evidence, _reason, _failure_kind, _log_status = _latest_opencode_prompt_failure_log(
         runtime,
         log_scan_since=log_scan_since,
     )
     return log_path, evidence
 
 
-def _latest_opencode_prompt_failure_log(
-    runtime: Any,
-    *,
-    log_scan_since: float | None,
-) -> tuple[Path | None, str, str, str]:
+def _recent_opencode_log_candidates(runtime: Any, *, log_scan_since: float | None) -> tuple[list[Path], str]:
     home = Path(str(getattr(runtime, "env", {}).get("HOME") or Path.home())).expanduser()
     log_dir = home / ".local" / "share" / "opencode" / "log"
+    if not log_dir.is_dir():
+        return [], "missing_log_dir"
     try:
         candidates = [path for path in log_dir.glob("*.log") if path.is_file()]
     except OSError:
-        return None, "", "", ""
+        return [], "unreadable"
     if log_scan_since is not None:
         cutoff = float(log_scan_since) - 5.0
         filtered: list[Path] = []
+        stat_failed = False
         for path in candidates:
             try:
                 if path.stat().st_mtime >= cutoff:
                     filtered.append(path)
             except OSError:
+                stat_failed = True
                 continue
         candidates = filtered
+        if not candidates and stat_failed:
+            return [], "unreadable"
+    if not candidates:
+        return [], "no_recent_log"
     candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0.0, reverse=True)
+    return candidates, "found"
+
+
+def _opencode_prompt_log_status(runtime: Any, *, log_scan_since: float | None) -> str:
+    candidates, log_status = _recent_opencode_log_candidates(runtime, log_scan_since=log_scan_since)
+    if log_status == "found":
+        unreadable_seen = False
+        for path in candidates[:3]:
+            try:
+                path.read_text(encoding="utf-8", errors="replace")
+                return "found"
+            except OSError:
+                unreadable_seen = True
+                continue
+        if unreadable_seen:
+            return "unreadable"
+    return log_status
+
+
+def _latest_opencode_prompt_failure_log(
+    runtime: Any,
+    *,
+    log_scan_since: float | None,
+) -> tuple[Path | None, str, str, str, str]:
+    candidates, log_status = _recent_opencode_log_candidates(runtime, log_scan_since=log_scan_since)
+    unreadable_seen = False
     for path in candidates[:3]:
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-80:]
         except OSError:
+            unreadable_seen = True
             continue
         text = "\n".join(lines)
         lower_text = text.lower()
         for marker in _OPENCODE_ABORT_MARKERS:
             if marker in lower_text:
                 failure_kind = "opencode_db" if "pragma wal_checkpoint" in marker else "omo_abort"
-                return path, _screen_excerpt(text, limit=300), "opencode_prompt_aborted", failure_kind
+                return path, _screen_excerpt(text, limit=300), "opencode_prompt_aborted", failure_kind, "found"
         for marker in _OPENCODE_PROVIDER_AUTH_FAILURE_MARKERS:
             if marker in lower_text:
-                return path, _screen_excerpt(text, limit=300), "opencode_prompt_auth_failed", "provider_auth"
-    return None, "", "", ""
+                return path, _screen_excerpt(text, limit=300), "opencode_prompt_auth_failed", "provider_auth", "found"
+    if unreadable_seen:
+        return None, "", "", "", "unreadable"
+    return None, "", "", "", log_status
 
 
 def _opencode_prompt_success_diagnostic(runtime: Any, *, log_scan_since: float | None) -> dict[str, object] | None:
@@ -6127,23 +6263,7 @@ def _opencode_prompt_success_diagnostic(runtime: Any, *, log_scan_since: float |
 
 
 def _latest_opencode_prompt_success_log(runtime: Any, *, log_scan_since: float | None) -> tuple[Path | None, str]:
-    home = Path(str(getattr(runtime, "env", {}).get("HOME") or Path.home())).expanduser()
-    log_dir = home / ".local" / "share" / "opencode" / "log"
-    try:
-        candidates = [path for path in log_dir.glob("*.log") if path.is_file()]
-    except OSError:
-        return None, ""
-    if log_scan_since is not None:
-        cutoff = float(log_scan_since) - 5.0
-        filtered: list[Path] = []
-        for path in candidates:
-            try:
-                if path.stat().st_mtime >= cutoff:
-                    filtered.append(path)
-            except OSError:
-                continue
-        candidates = filtered
-    candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0.0, reverse=True)
+    candidates, _log_status = _recent_opencode_log_candidates(runtime, log_scan_since=log_scan_since)
     for path in candidates[:3]:
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-80:]
@@ -6174,6 +6294,7 @@ def _emit_opencode_prompt_failed_event(
         reason=failure_diagnostic["reason"],
         failure_kind=failure_diagnostic["failure_kind"],
         log_path=failure_diagnostic["log_path"],
+        log_status=failure_diagnostic["log_status"],
         worktree_clean=failure_diagnostic["worktree_clean"],
         evidence=failure_diagnostic["evidence"],
         transport=transport,
@@ -6270,6 +6391,7 @@ def _wait_for_tmux_prompt_accepted(
                 screen_excerpt=f"{failure_diagnostic['evidence']} ({failure_diagnostic['log_path']})",
                 failure_kind=str(failure_diagnostic["failure_kind"]),
                 log_path=str(failure_diagnostic["log_path"]),
+                log_status=str(failure_diagnostic["log_status"]),
                 worktree_clean=cast(bool | None, failure_diagnostic["worktree_clean"]),
                 prompt_accepted=accepted_seen,
             )
@@ -6303,11 +6425,13 @@ def _wait_for_tmux_prompt_accepted(
             saw_idle_after_submit = True
         time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
     reason = "opencode_prompt_ambiguous_idle" if saw_idle_after_submit else "opencode_prompt_accept_timeout"
+    log_status = _opencode_prompt_log_status(runtime, log_scan_since=log_scan_since)
     return AiCliReadyResult(
         ready=False,
         reason=reason,
         screen_excerpt=_screen_excerpt(last_screen),
         failure_kind=reason,
+        log_status=log_status,
         prompt_accepted=accepted_seen,
     )
 
@@ -6353,6 +6477,7 @@ def _wait_for_surface_prompt_accepted(
                 screen_excerpt=f"{failure_diagnostic['evidence']} ({failure_diagnostic['log_path']})",
                 failure_kind=str(failure_diagnostic["failure_kind"]),
                 log_path=str(failure_diagnostic["log_path"]),
+                log_status=str(failure_diagnostic["log_status"]),
                 worktree_clean=cast(bool | None, failure_diagnostic["worktree_clean"]),
                 prompt_accepted=accepted_seen,
             )
@@ -6385,11 +6510,13 @@ def _wait_for_surface_prompt_accepted(
             saw_idle_after_submit = True
         time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
     reason = "opencode_prompt_ambiguous_idle" if saw_idle_after_submit else "opencode_prompt_accept_timeout"
+    log_status = _opencode_prompt_log_status(runtime, log_scan_since=log_scan_since)
     return AiCliReadyResult(
         ready=False,
         reason=reason,
         screen_excerpt=_screen_excerpt(last_screen),
         failure_kind=reason,
+        log_status=log_status,
         prompt_accepted=accepted_seen,
     )
 

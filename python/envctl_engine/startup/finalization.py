@@ -134,7 +134,10 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
                 "classification",
                 "failure_kind",
                 "log_path",
+                "log_status",
                 "worktree_clean",
+                "prompt_pasted",
+                "prompt_enter_sent",
                 "prompt_sent",
                 "prompt_accepted",
                 "screen_excerpt",
@@ -151,6 +154,9 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
                 log_path = outcome_payload.get("log_path")
                 if log_path is not None:
                     metadata["plan_agent_opencode_log_path"] = log_path
+                log_status = outcome_payload.get("log_status")
+                if log_status is not None:
+                    metadata["plan_agent_prompt_log_status"] = log_status
                 worktree_clean = outcome_payload.get("worktree_clean")
                 if worktree_clean is not None:
                     metadata["plan_agent_worktree_clean"] = worktree_clean

@@ -1776,6 +1776,10 @@ class StartupOrchestrator:
             log_path = str(getattr(first_outcome, "log_path", "") or "").strip()
             if log_path:
                 lines.append(f"log: {log_path}")
+            else:
+                log_status = str(getattr(first_outcome, "log_status", "") or "").strip()
+                if log_status:
+                    lines.append(f"log: unavailable ({log_status})")
             worktree_clean = getattr(first_outcome, "worktree_clean", None)
             if worktree_clean is not None:
                 lines.append(f"worktree: {'clean' if bool(worktree_clean) else 'dirty'}")
