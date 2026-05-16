@@ -1750,10 +1750,35 @@ class StartupOrchestrator:
         launch_result = session.plan_agent_launch_result
         launch_status = str(getattr(launch_result, "status", "") or "").strip().lower()
         launch_reason = str(getattr(launch_result, "reason", "") or "").strip()
+        first_outcome = None
+        for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
+            first_outcome = outcome
+            if str(getattr(outcome, "status", "") or "").strip().lower() in {"handoff_pending", "prompt_failed"}:
+                break
         if launch_status == "handoff_pending":
             lines.append("OpenCode session created, but prompt handoff is pending.")
             if launch_reason:
                 lines.append(f"reason: {launch_reason}")
+            classification = str(getattr(first_outcome, "classification", "") or "").strip()
+            if classification:
+                lines.append(f"classification: {classification}")
+            lines.append(
+                "safe rerun: ENVCTL_PLAN_AGENT_OPENCODE_DISABLE_ULW=true "
+                "or ENVCTL_PLAN_AGENT_OPENCODE_AGENT=<safe-agent>"
+            )
+        elif launch_status == "prompt_failed":
+            lines.append("OpenCode session created, but prompt execution failed.")
+            if launch_reason:
+                lines.append(f"reason: {launch_reason}")
+            failure_kind = str(getattr(first_outcome, "failure_kind", "") or "").strip()
+            if failure_kind:
+                lines.append(f"failure_kind: {failure_kind}")
+            log_path = str(getattr(first_outcome, "log_path", "") or "").strip()
+            if log_path:
+                lines.append(f"log: {log_path}")
+            worktree_clean = getattr(first_outcome, "worktree_clean", None)
+            if worktree_clean is not None:
+                lines.append(f"worktree: {'clean' if bool(worktree_clean) else 'dirty'}")
             lines.append(
                 "safe rerun: ENVCTL_PLAN_AGENT_OPENCODE_DISABLE_ULW=true "
                 "or ENVCTL_PLAN_AGENT_OPENCODE_AGENT=<safe-agent>"

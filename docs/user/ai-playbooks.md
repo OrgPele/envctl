@@ -159,6 +159,8 @@ If a headless plan-agent launch prints `Implementation session is running, but l
 
 If `envctl --plan ... --tmux --opencode` prints `OpenCode session created, but prompt handoff is pending.`, the tmux/OpenCode surface is alive but envctl did not submit the prompt before the readiness window ended. Attach with the printed `tmux attach -t <session>` command. Tune cold starts with `ENVCTL_PLAN_AGENT_OPENCODE_READY_TIMEOUT_SECONDS=<seconds>` or the shared `ENVCTL_PLAN_AGENT_CLI_READY_TIMEOUT_SECONDS=<seconds>` override.
 
+If it prints `OpenCode session created, but prompt execution failed.`, the tmux/OpenCode surface is still attachable but OpenCode or OMO rejected or aborted the submitted prompt. Attach with the printed command to inspect the session, check the reported log path and worktree clean/dirty state, then rerun with `ENVCTL_PLAN_AGENT_OPENCODE_DISABLE_ULW=true` or `ENVCTL_PLAN_AGENT_OPENCODE_AGENT=<agent name>` when the failure points at OMO/subagent or provider/auth instability.
+
 If `envctl --plan ... --tmux --opencode` reports `OpenCode AI session failed to start`, inspect the shown screen excerpt first. Common causes are a missing `opencode` executable in the shell used by tmux, an OpenCode startup/config error, or a stale tmux session. Re-run with `--new-worktree` after fixing the shell/config issue.
 
 OpenCode safety knobs:

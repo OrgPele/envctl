@@ -983,6 +983,8 @@ class PromptInstallSupportTests(unittest.TestCase):
             )
             self.assertIn("Codex cycle settings are intentionally ignored for this surface", written)
             self.assertIn("If envctl reports `handoff_pending`, preserve the attach command", written)
+            self.assertIn("OpenCode session created, but prompt execution failed.", written)
+            self.assertIn("worktree clean/dirty state", written)
 
     def test_resolve_codex_direct_prompt_body_prefers_user_installed_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

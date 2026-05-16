@@ -1447,6 +1447,88 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertFalse(payload["prompt_accepted"])
         self.assertIn("OpenCode loading plugins", payload["last_screen_excerpt"])
 
+    def test_tmux_opencode_prompt_abort_preserves_attach_target_and_prompt_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "home"
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = repo / "trees" / "feature-a" / "1"
+            log_dir = home / ".local" / "share" / "opencode" / "log"
+            provenance_path = worktree_root / ".envctl-state" / "worktree-provenance.json"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            provenance_path.parent.mkdir(parents=True, exist_ok=True)
+            log_dir.mkdir(parents=True, exist_ok=True)
+            provenance_path.write_text(json.dumps({"fresh_ai_launch_status": "launching"}) + "\n", encoding="utf-8")
+            subprocess.run(["git", "init", "--quiet"], cwd=worktree_root, check=True)
+            log_path = log_dir / "2026-05-16T124909.log"
+            log_path.write_text(
+                "INFO prompt accepted\n"
+                "ERROR e=InstanceRef not provided rejection\n"
+                "ERROR MessageAbortedError: Aborted process\n",
+                encoding="utf-8",
+            )
+            rt = self._runtime(repo, runtime, env={"HOME": str(home)})
+            rt._command_exists = lambda command: command in {"tmux", "opencode", "zsh"}  # type: ignore[assignment]
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="feature-a.md")
+            expected_session = _tmux_session_name_for_worktree(repo, worktree, cli="opencode")
+
+            with (
+                redirect_stdout(StringIO()),
+                patch("envctl_engine.planning.plan_agent_launch_support._find_existing_tmux_attach_target", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._ensure_tmux_window", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._launch_tmux_cli_bootstrap_commands", return_value=[None]),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._wait_for_tmux_cli_ready",
+                    return_value=launch_support.AiCliReadyResult(ready=True, reason="ready"),
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._workflow_step_prompt_text",
+                    return_value=("/ulw-loop Implement", None),
+                ),
+                patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_prompt", return_value=None),
+                patch("envctl_engine.planning.plan_agent_launch_support._send_tmux_key", return_value=None),
+                patch(
+                    "envctl_engine.planning.plan_agent_launch_support._read_tmux_screen",
+                    return_value="Sisyphus is working...\nEsc to interrupt\n",
+                ),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a", "--tmux", "--opencode"], env={}),
+                    created_worktrees=(worktree,),
+                )
+
+            payload = json.loads(provenance_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.status, "prompt_failed")
+        self.assertEqual(result.reason, "opencode_prompt_aborted")
+        self.assertIsNotNone(result.attach_target)
+        assert result.attach_target is not None
+        self.assertEqual(result.attach_target.session_name, expected_session)
+        self.assertEqual(result.attach_target.attach_command, ("tmux", "attach", "-t", expected_session))
+        self.assertEqual(result.outcomes[0].status, "prompt_failed")
+        self.assertEqual(result.outcomes[0].reason, "opencode_prompt_aborted")
+        self.assertEqual(payload["fresh_ai_launch_status"], "prompt_failed")
+        self.assertEqual(payload["prompt_failure_reason"], "opencode_prompt_aborted")
+        self.assertTrue(payload["prompt_sent"])
+        self.assertFalse(payload["prompt_accepted"])
+        self.assertEqual(payload["session_name"], expected_session)
+        self.assertEqual(payload["window_name"], "feature-a-1")
+        self.assertEqual(payload["opencode_log_path"], str(log_path))
+        self.assertFalse(payload["worktree_clean"])
+        failed_events = self._events(rt, "planning.agent_launch.opencode_prompt_failed")
+        self.assertEqual(len(failed_events), 1)
+        self.assertEqual(failed_events[0]["reason"], "opencode_prompt_aborted")
+        self.assertEqual(failed_events[0]["failure_kind"], "omo_abort")
+        self.assertEqual(failed_events[0]["transport"], "tmux")
+        self.assertEqual(failed_events[0]["session_name"], expected_session)
+        self.assertEqual(failed_events[0]["window_name"], "feature-a-1")
+        self.assertEqual(failed_events[0]["attach_command"], f"tmux attach -t {expected_session}")
+        self.assertTrue(failed_events[0]["prompt_sent"])
+        self.assertFalse(failed_events[0]["prompt_accepted"])
+        self.assertEqual(failed_events[0]["log_path"], str(log_path))
+        self.assertFalse(failed_events[0]["worktree_clean"])
+
     def test_tmux_codex_cycles_queue_remaining_workflow_steps(self) -> None:
         self.assertIsNotNone(_run_tmux_worktree_bootstrap)
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5489,7 +5571,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             with (
-                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=2.0)),
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
                 patch(
                     "envctl_engine.planning.plan_agent_launch_support._read_tmux_screen",
                     return_value="Sisyphus is working...\nEsc to interrupt\n",
@@ -5512,6 +5594,51 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(len(failed_events), 1)
         self.assertEqual(failed_events[0]["reason"], "opencode_prompt_aborted")
         self.assertEqual(failed_events[0]["log_path"], str(log_path))
+
+    def test_opencode_prompt_acceptance_rejects_provider_auth_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            log_dir = home / ".local" / "share" / "opencode" / "log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "2026-05-16T125010.log"
+            log_path.write_text(
+                "ERROR AI_LoadAPIKeyError: missing API key for OpenAI provider\n"
+                "ERROR provider response 401 Unauthorized\n",
+                encoding="utf-8",
+            )
+            rt = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(home / "repo"),
+                        "RUN_SH_RUNTIME_DIR": str(home / "runtime"),
+                    }
+                ),
+                env={"HOME": str(home), "ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS": "0.2"},
+                process_runner=_RecordingRunner(),
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
+                patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", return_value=""),
+            ):
+                accepted = launch_support._wait_for_tmux_prompt_accepted(
+                    rt,
+                    session_name="envctl-test",
+                    window_name="feature-a",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=0.0,
+                )
+
+        self.assertFalse(accepted.ready)
+        self.assertEqual(accepted.reason, "opencode_prompt_auth_failed")
+        self.assertEqual(accepted.failure_kind, "provider_auth")
+        self.assertEqual(accepted.log_path, str(log_path))
+        self.assertIn("provider response 401", accepted.screen_excerpt)
+        failed_events = self._events(rt, "planning.agent_launch.opencode_prompt_failed")
+        self.assertEqual(len(failed_events), 1)
+        self.assertEqual(failed_events[0]["reason"], "opencode_prompt_auth_failed")
+        self.assertEqual(failed_events[0]["failure_kind"], "provider_auth")
 
     def test_workspace_entries_are_parsed_from_list_output(self) -> None:
         payload = """
@@ -5620,7 +5747,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
     def test_opencode_post_submit_rejects_unknown_screen(self) -> None:
         self.assertFalse(launch_support._post_submit_screen_looks_accepted("opencode", "shell prompt\n$ ", "/ulw-loop"))
 
-    def test_opencode_post_submit_accepts_busy_or_cleared_screen(self) -> None:
+    def test_opencode_post_submit_accepts_busy_screen_but_not_idle_ready_screen(self) -> None:
         prompt = "/ulw-loop\n\nImplement task"
         busy = "Sisyphus is working...\nEsc to interrupt\n"
         cmux_busy = "▣  Sisyphus - Ultraworker · GPT-5.5\n■■■■⬝⬝⬝⬝  esc interrupt  tab agents  ctrl+p commands\n"
@@ -5628,8 +5755,88 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         cleared = '  ┃  Ask anything... "Follow up"\n  ctrl+p commands\n  ~/repo /status\n'
         self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", busy, prompt))
         self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", cmux_busy, prompt))
-        self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", returned_ready, prompt))
-        self.assertTrue(launch_support._post_submit_screen_looks_accepted("opencode", cleared, prompt))
+        self.assertFalse(launch_support._post_submit_screen_looks_accepted("opencode", returned_ready, prompt))
+        self.assertFalse(launch_support._post_submit_screen_looks_accepted("opencode", cleared, prompt))
+
+    def test_opencode_prompt_acceptance_treats_idle_ready_without_success_evidence_as_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            rt = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(home / "repo"),
+                        "RUN_SH_RUNTIME_DIR": str(home / "runtime"),
+                    }
+                ),
+                env={"HOME": str(home), "ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS": "0.2"},
+                process_runner=_RecordingRunner(),
+            )
+            ready_screen = (
+                "Sisyphus - Ultraworker · GPT-5.5 OpenAI · xhigh\n"
+                "tab agents  ctrl+p commands\n"
+                "~/repo ⊙ 3 MCP /status 1.15.0\n"
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
+                patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", return_value=ready_screen),
+            ):
+                accepted = launch_support._wait_for_tmux_prompt_accepted(
+                    rt,
+                    session_name="envctl-test",
+                    window_name="feature-a",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=time.time(),
+                )
+
+        self.assertFalse(accepted.ready)
+        self.assertEqual(accepted.reason, "opencode_prompt_ambiguous_idle")
+
+    def test_opencode_prompt_acceptance_accepts_idle_ready_with_recent_success_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            log_dir = home / ".local" / "share" / "opencode" / "log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "2026-05-16T125050.log"
+            log_path.write_text(
+                "INFO message created for session ses_123 after prompt submission\n",
+                encoding="utf-8",
+            )
+            rt = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(home / "repo"),
+                        "RUN_SH_RUNTIME_DIR": str(home / "runtime"),
+                    }
+                ),
+                env={"HOME": str(home), "ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS": "0.2"},
+                process_runner=_RecordingRunner(),
+            )
+            ready_screen = (
+                "Sisyphus - Ultraworker · GPT-5.5 OpenAI · xhigh\n"
+                "tab agents  ctrl+p commands\n"
+                "~/repo ⊙ 3 MCP /status 1.15.0\n"
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent_launch_support.time.monotonic", new=_monotonic_counter(step=0.05)),
+                patch("envctl_engine.planning.plan_agent_launch_support._read_tmux_screen", return_value=ready_screen),
+            ):
+                accepted = launch_support._wait_for_tmux_prompt_accepted(
+                    rt,
+                    session_name="envctl-test",
+                    window_name="feature-a",
+                    cli="opencode",
+                    prompt_text="/ulw-loop Implement",
+                    log_scan_since=0.0,
+                )
+
+        self.assertTrue(accepted.ready)
+        self.assertEqual(accepted.reason, "prompt_accepted")
+        accepted_events = self._events(rt, "planning.agent_launch.opencode_prompt_accepted")
+        self.assertEqual(len(accepted_events), 1)
+        self.assertEqual(accepted_events[0]["log_path"], str(log_path))
 
     def test_opencode_post_submit_accepts_busy_screen_with_prompt_history(self) -> None:
         prompt = "/ulw-loop\n\nImplement task"

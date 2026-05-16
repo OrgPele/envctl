@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field, replace
 from importlib import resources
 from pathlib import Path
-from typing import Any, Callable, Literal, Mapping
+from typing import Any, Callable, Literal, Mapping, cast
 
 from envctl_engine.planning import planning_feature_name
 from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
@@ -119,6 +119,22 @@ _OPENCODE_ABORT_MARKERS = (
     "failed to run the query 'pragma wal_checkpoint(passive)'",
     'failed to run the query "pragma wal_checkpoint(passive)"',
 )
+_OPENCODE_PROVIDER_AUTH_FAILURE_MARKERS = (
+    "ai_loadapikeyerror",
+    "missing api key",
+    "api key missing",
+    "authentication failed",
+    "authorization failed",
+    "provider authorization",
+    "unauthorized",
+    "401 unauthorized",
+    "403 forbidden",
+)
+_OPENCODE_PROMPT_SUCCESS_MARKERS = (
+    "message created",
+    "created message",
+    "prompt created",
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -184,6 +200,13 @@ class PlanAgentLaunchOutcome:
     cli: str | None = None
     workspace_id: str | None = None
     tab_title: str | None = None
+    classification: str | None = None
+    failure_kind: str | None = None
+    log_path: str | None = None
+    worktree_clean: bool | None = None
+    prompt_sent: bool | None = None
+    prompt_accepted: bool | None = None
+    screen_excerpt: str | None = None
     bootstrap_tracker: _SurfaceBootstrapTracker | None = field(default=None, repr=False, compare=False)
 
 
@@ -225,6 +248,10 @@ class AiCliReadyResult:
     ready: bool
     reason: str
     screen_excerpt: str = ""
+    failure_kind: str = ""
+    log_path: str = ""
+    worktree_clean: bool | None = None
+    prompt_accepted: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -245,6 +272,20 @@ class _TmuxBootstrapHandoff:
     pane_current_command: str = ""
     pane_current_path: str = ""
     prompt_sent: bool = False
+    prompt_accepted: bool = False
+    failure_kind: str = ""
+    log_path: str = ""
+    worktree_clean: bool | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class _PromptSubmissionFailure:
+    reason: str
+    failure_kind: str
+    screen_excerpt: str = ""
+    log_path: str = ""
+    worktree_clean: bool | None = None
+    prompt_sent: bool = True
     prompt_accepted: bool = False
 
 
@@ -1193,7 +1234,7 @@ def _launch_plan_agent_tmux_terminals(
             worktree=worktree,
         )
         outcomes.append(outcome)
-        if first_attach_target is None and outcome.status in {"launched", "handoff_pending"}:
+        if first_attach_target is None and outcome.status in {"launched", "handoff_pending", "prompt_failed"}:
             first_attach_target = PlanAgentAttachTarget(
                 repo_root=repo_root,
                 session_name=session_name,
@@ -1203,14 +1244,16 @@ def _launch_plan_agent_tmux_terminals(
             )
     launched = [item for item in outcomes if item.status == "launched"]
     handoff_pending = [item for item in outcomes if item.status == "handoff_pending"]
+    prompt_failed = [item for item in outcomes if item.status == "prompt_failed"]
     failed = [item for item in outcomes if item.status == "failed"]
     attach_target = first_attach_target or existing_attach_target
-    if failed and (launched or handoff_pending):
+    if failed and (launched or handoff_pending or prompt_failed):
         details = _summarize_failed_launch_outcomes(failed)
         suffix = f" Details: {details}." if details else ""
         _print_launch_summary(
             "Plan agent launch finished with partial success: "
-            f"launched {len(launched)}, handoff pending {len(handoff_pending)}, failed {len(failed)}.{suffix}"
+            f"launched {len(launched)}, handoff pending {len(handoff_pending)}, "
+            f"prompt failed {len(prompt_failed)}, failed {len(failed)}.{suffix}"
         )
         return PlanAgentLaunchResult(
             status="partial",
@@ -1232,6 +1275,19 @@ def _launch_plan_agent_tmux_terminals(
         )
         return PlanAgentLaunchResult(
             status="handoff_pending",
+            reason=reason,
+            outcomes=tuple(outcomes),
+            attach_target=attach_target,
+        )
+    if prompt_failed:
+        reason = str(prompt_failed[0].reason or "opencode_prompt_failed").strip() or "opencode_prompt_failed"
+        _print_launch_summary(
+            "Plan agent launch prompt execution failed for "
+            f"{len(prompt_failed)} tmux session(s): {reason}. Attach with: "
+            f"{shlex.join(attach_target.attach_command) if attach_target is not None else 'tmux'}"
+        )
+        return PlanAgentLaunchResult(
+            status="prompt_failed",
             reason=reason,
             outcomes=tuple(outcomes),
             attach_target=attach_target,
@@ -1850,6 +1906,7 @@ def _launch_single_tmux_worktree(
         worktree=worktree,
     )
     if isinstance(bootstrap_result, _TmuxBootstrapHandoff):
+        prompt_failure_reason = bootstrap_result.reason if bootstrap_result.status == "prompt_failed" else ""
         _mark_worktree_plan_agent_launch(
             worktree,
             status=bootstrap_result.status,
@@ -1857,22 +1914,43 @@ def _launch_single_tmux_worktree(
             session_name=session_name,
             window_name=window_name,
             handoff_reason=bootstrap_result.reason,
+            prompt_failure_reason=prompt_failure_reason,
             prompt_sent=bootstrap_result.prompt_sent,
             prompt_accepted=bootstrap_result.prompt_accepted,
             last_screen_excerpt=bootstrap_result.screen_excerpt,
+            failure_kind=bootstrap_result.failure_kind,
+            opencode_log_path=bootstrap_result.log_path,
+            worktree_clean=bootstrap_result.worktree_clean,
         )
-        runtime._emit(
-            "planning.agent_launch.handoff_pending",
-            reason=bootstrap_result.reason,
-            classification=bootstrap_result.classification,
-            session_name=session_name,
-            window_name=window_name,
-            worktree=worktree.name,
-            pane_current_command=bootstrap_result.pane_current_command or None,
-            pane_current_path=bootstrap_result.pane_current_path or None,
-            transport="tmux",
-            cli=launch_config.cli,
-        )
+        if bootstrap_result.status == "prompt_failed":
+            runtime._emit(
+                "planning.agent_launch.prompt_failed",
+                reason=bootstrap_result.reason,
+                failure_kind=bootstrap_result.failure_kind or bootstrap_result.classification,
+                session_name=session_name,
+                window_name=window_name,
+                worktree=worktree.name,
+                log_path=bootstrap_result.log_path or None,
+                worktree_clean=bootstrap_result.worktree_clean,
+                prompt_sent=bootstrap_result.prompt_sent,
+                prompt_accepted=bootstrap_result.prompt_accepted,
+                attach_command=shlex.join(_guidance_attach_command(session_name)),
+                transport="tmux",
+                cli=launch_config.cli,
+            )
+        else:
+            runtime._emit(
+                "planning.agent_launch.handoff_pending",
+                reason=bootstrap_result.reason,
+                classification=bootstrap_result.classification,
+                session_name=session_name,
+                window_name=window_name,
+                worktree=worktree.name,
+                pane_current_command=bootstrap_result.pane_current_command or None,
+                pane_current_path=bootstrap_result.pane_current_path or None,
+                transport="tmux",
+                cli=launch_config.cli,
+            )
         return PlanAgentLaunchOutcome(
             worktree_name=worktree.name,
             worktree_root=worktree.root,
@@ -1881,6 +1959,13 @@ def _launch_single_tmux_worktree(
             reason=bootstrap_result.reason,
             transport="tmux",
             cli=launch_config.cli,
+            classification=bootstrap_result.classification,
+            failure_kind=bootstrap_result.failure_kind or None,
+            log_path=bootstrap_result.log_path or None,
+            worktree_clean=bootstrap_result.worktree_clean,
+            prompt_sent=bootstrap_result.prompt_sent,
+            prompt_accepted=bootstrap_result.prompt_accepted,
+            screen_excerpt=bootstrap_result.screen_excerpt or None,
         )
     error = bootstrap_result
     if error is not None:
@@ -2748,10 +2833,14 @@ def _mark_worktree_plan_agent_launch(
     session_name: str,
     window_name: str = "",
     handoff_reason: str = "",
+    prompt_failure_reason: str = "",
     prompt_sent: bool | None = None,
     prompt_accepted: bool | None = None,
     last_screen_excerpt: str = "",
     launch_error: str = "",
+    failure_kind: str = "",
+    opencode_log_path: str = "",
+    worktree_clean: bool | None = None,
 ) -> None:
     path = Path(worktree.root) / _WORKTREE_PROVENANCE_PATH
     if not path.is_file():
@@ -2775,6 +2864,12 @@ def _mark_worktree_plan_agent_launch(
     normalized_reason = str(handoff_reason or "").strip()
     if normalized_reason:
         payload["handoff_reason"] = normalized_reason
+    normalized_prompt_failure_reason = str(prompt_failure_reason or "").strip()
+    if normalized_prompt_failure_reason:
+        payload["prompt_failure_reason"] = normalized_prompt_failure_reason
+    normalized_failure_kind = str(failure_kind or "").strip()
+    if normalized_failure_kind:
+        payload["failure_kind"] = normalized_failure_kind
     if prompt_sent is not None:
         payload["prompt_sent"] = bool(prompt_sent)
     if prompt_accepted is not None:
@@ -2785,6 +2880,11 @@ def _mark_worktree_plan_agent_launch(
     normalized_error = str(launch_error or "").strip()
     if normalized_error:
         payload["launch_error"] = scrub_sensitive_text(normalized_error)
+    normalized_log_path = str(opencode_log_path or "").strip()
+    if normalized_log_path:
+        payload["opencode_log_path"] = normalized_log_path
+    if worktree_clean is not None:
+        payload["worktree_clean"] = bool(worktree_clean)
     payload["launch_recorded_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     try:
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -3041,7 +3141,7 @@ def _submit_tmux_prompt_workflow_step(
     prompt_text: str,
     cli: str = "",
     worktree_root: Path | None = None,
-) -> str | None:
+) -> str | _PromptSubmissionFailure | None:
     log_scan_since = time.time()
     paste_error = _send_tmux_prompt(runtime, session_name=session_name, window_name=window_name, text=prompt_text)
     if paste_error is not None:
@@ -3061,8 +3161,26 @@ def _submit_tmux_prompt_workflow_step(
         worktree_root=worktree_root,
     )
     if not accepted.ready:
-        return _format_ai_cli_ready_failure(accepted)
+        return _PromptSubmissionFailure(
+            reason=str(accepted.reason or "opencode_prompt_accept_timeout").strip()
+            or "opencode_prompt_accept_timeout",
+            failure_kind=str(accepted.failure_kind or accepted.reason or "prompt_acceptance").strip()
+            or "prompt_acceptance",
+            screen_excerpt=accepted.screen_excerpt,
+            log_path=accepted.log_path,
+            worktree_clean=accepted.worktree_clean,
+            prompt_sent=True,
+            prompt_accepted=accepted.prompt_accepted,
+        )
     return None
+
+
+def _prompt_submission_failure_text(failure: _PromptSubmissionFailure) -> str:
+    reason = str(failure.reason or "opencode_prompt_failed").strip() or "opencode_prompt_failed"
+    excerpt = str(failure.screen_excerpt or "").strip()
+    if excerpt:
+        return f"{reason}: {excerpt}"
+    return reason
 
 
 def _run_tmux_worktree_bootstrap(
@@ -3147,6 +3265,18 @@ def _run_tmux_worktree_bootstrap(
         worktree_root=worktree.root,
     )
     if submit_error is not None:
+        if isinstance(submit_error, _PromptSubmissionFailure):
+            return _TmuxBootstrapHandoff(
+                status="prompt_failed",
+                reason=submit_error.reason,
+                classification=submit_error.failure_kind,
+                screen_excerpt=submit_error.screen_excerpt,
+                prompt_sent=submit_error.prompt_sent,
+                prompt_accepted=submit_error.prompt_accepted,
+                failure_kind=submit_error.failure_kind,
+                log_path=submit_error.log_path,
+                worktree_clean=submit_error.worktree_clean,
+            )
         return submit_error
     queued_steps = workflow.steps[1:]
     if queued_steps and launch_config.cli == "codex":
@@ -3609,6 +3739,7 @@ def _run_surface_bootstrap(
             surface_id=surface_id,
             prompt_text=prompt_text,
             cli=launch_config.cli,
+            worktree_root=worktree.root,
         )
     else:
         submit_error = _submit_prompt_workflow_step(
@@ -3619,6 +3750,8 @@ def _run_surface_bootstrap(
             prompt_text=prompt_text,
         )
     if submit_error is not None:
+        if isinstance(submit_error, _PromptSubmissionFailure):
+            return _prompt_submission_failure_text(submit_error)
         return submit_error
     queued_steps = workflow.steps[1:]
     if queued_steps and launch_config.cli == "codex":
@@ -3716,7 +3849,7 @@ def _run_review_surface_bootstrap(
     if resolution_error is not None:
         return resolution_error
     if _uses_direct_submission(cli=launch_config.cli, direct_prompt_enabled=launch_config.direct_prompt_enabled):
-        return _submit_direct_prompt_workflow_step(
+        submit_result = _submit_direct_prompt_workflow_step(
             runtime,
             workspace_id=workspace_id,
             surface_id=surface_id,
@@ -3724,6 +3857,9 @@ def _run_review_surface_bootstrap(
             cli=launch_config.cli,
             failure_event="dashboard.review_tab.failed",
         )
+        if isinstance(submit_result, _PromptSubmissionFailure):
+            return _prompt_submission_failure_text(submit_result)
+        return submit_result
     return _submit_prompt_workflow_step(
         runtime,
         workspace_id=workspace_id,
@@ -3799,6 +3935,8 @@ def _submit_surface_codex_goal(
         prompt_text=f"/goal {goal_text}",
     )
     if submit_error is not None:
+        if isinstance(submit_error, _PromptSubmissionFailure):
+            return _prompt_submission_failure_text(submit_error)
         return submit_error
     if not _wait_for_codex_queue_ready(runtime, workspace_id=workspace_id, surface_id=surface_id):
         return "codex_goal_ready_timeout"
@@ -4208,8 +4346,10 @@ def _submit_direct_prompt_workflow_step(
     surface_id: str,
     prompt_text: str,
     cli: str = "",
+    worktree_root: Path | None = None,
     failure_event: str = "planning.agent_launch.failed",
-) -> str | None:
+) -> str | _PromptSubmissionFailure | None:
+    log_scan_since = time.time()
     paste_error = _paste_surface_text(
         runtime,
         workspace_id=workspace_id,
@@ -4236,9 +4376,21 @@ def _submit_direct_prompt_workflow_step(
         surface_id=surface_id,
         cli=cli,
         prompt_text=prompt_text,
+        log_scan_since=log_scan_since,
+        worktree_root=worktree_root,
     )
     if not accepted.ready:
-        return _format_ai_cli_ready_failure(accepted)
+        return _PromptSubmissionFailure(
+            reason=str(accepted.reason or "opencode_prompt_accept_timeout").strip()
+            or "opencode_prompt_accept_timeout",
+            failure_kind=str(accepted.failure_kind or accepted.reason or "prompt_acceptance").strip()
+            or "prompt_acceptance",
+            screen_excerpt=accepted.screen_excerpt,
+            log_path=accepted.log_path,
+            worktree_clean=accepted.worktree_clean,
+            prompt_sent=True,
+            prompt_accepted=accepted.prompt_accepted,
+        )
     return None
 
 
@@ -5858,8 +6010,6 @@ def _post_submit_screen_looks_accepted(cli: str, screen: str, prompt_text: str) 
     prompt_lines = [line.strip().lower() for line in str(prompt_text).splitlines() if line.strip()]
     if prompt_lines and all(line in lower_text for line in prompt_lines):
         return False
-    if _screen_looks_ready(normalized_cli, screen):
-        return True
     return False
 
 
@@ -5885,23 +6035,98 @@ def _screen_looks_active(cli: str, screen: str) -> bool:
     return False
 
 
+def _opencode_prompt_failure_diagnostic(
+    runtime: Any,
+    *,
+    log_scan_since: float | None,
+    worktree_root: Path | None,
+) -> dict[str, object] | None:
+    log_path, evidence, reason, failure_kind = _latest_opencode_prompt_failure_log(
+        runtime,
+        log_scan_since=log_scan_since,
+    )
+    if log_path is None or not evidence:
+        return None
+    return {
+        "log_path": str(log_path),
+        "evidence": evidence,
+        "reason": reason,
+        "failure_kind": failure_kind,
+        "worktree_clean": _worktree_clean_state(runtime, worktree_root=worktree_root),
+    }
+
+
 def _opencode_abort_diagnostic(
     runtime: Any,
     *,
     log_scan_since: float | None,
     worktree_root: Path | None,
 ) -> dict[str, object] | None:
-    log_path, evidence = _latest_opencode_abort_log(runtime, log_scan_since=log_scan_since)
+    return _opencode_prompt_failure_diagnostic(
+        runtime,
+        log_scan_since=log_scan_since,
+        worktree_root=worktree_root,
+    )
+
+
+def _latest_opencode_abort_log(runtime: Any, *, log_scan_since: float | None) -> tuple[Path | None, str]:
+    log_path, evidence, _reason, _failure_kind = _latest_opencode_prompt_failure_log(
+        runtime,
+        log_scan_since=log_scan_since,
+    )
+    return log_path, evidence
+
+
+def _latest_opencode_prompt_failure_log(
+    runtime: Any,
+    *,
+    log_scan_since: float | None,
+) -> tuple[Path | None, str, str, str]:
+    home = Path(str(getattr(runtime, "env", {}).get("HOME") or Path.home())).expanduser()
+    log_dir = home / ".local" / "share" / "opencode" / "log"
+    try:
+        candidates = [path for path in log_dir.glob("*.log") if path.is_file()]
+    except OSError:
+        return None, "", "", ""
+    if log_scan_since is not None:
+        cutoff = float(log_scan_since) - 5.0
+        filtered: list[Path] = []
+        for path in candidates:
+            try:
+                if path.stat().st_mtime >= cutoff:
+                    filtered.append(path)
+            except OSError:
+                continue
+        candidates = filtered
+    candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0.0, reverse=True)
+    for path in candidates[:3]:
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-80:]
+        except OSError:
+            continue
+        text = "\n".join(lines)
+        lower_text = text.lower()
+        for marker in _OPENCODE_ABORT_MARKERS:
+            if marker in lower_text:
+                failure_kind = "opencode_db" if "pragma wal_checkpoint" in marker else "omo_abort"
+                return path, _screen_excerpt(text, limit=300), "opencode_prompt_aborted", failure_kind
+        for marker in _OPENCODE_PROVIDER_AUTH_FAILURE_MARKERS:
+            if marker in lower_text:
+                return path, _screen_excerpt(text, limit=300), "opencode_prompt_auth_failed", "provider_auth"
+    return None, "", "", ""
+
+
+def _opencode_prompt_success_diagnostic(runtime: Any, *, log_scan_since: float | None) -> dict[str, object] | None:
+    log_path, evidence = _latest_opencode_prompt_success_log(runtime, log_scan_since=log_scan_since)
     if log_path is None or not evidence:
         return None
     return {
         "log_path": str(log_path),
         "evidence": evidence,
-        "worktree_clean": _worktree_clean_state(runtime, worktree_root=worktree_root),
     }
 
 
-def _latest_opencode_abort_log(runtime: Any, *, log_scan_since: float | None) -> tuple[Path | None, str]:
+def _latest_opencode_prompt_success_log(runtime: Any, *, log_scan_since: float | None) -> tuple[Path | None, str]:
     home = Path(str(getattr(runtime, "env", {}).get("HOME") or Path.home())).expanduser()
     log_dir = home / ".local" / "share" / "opencode" / "log"
     try:
@@ -5926,10 +6151,64 @@ def _latest_opencode_abort_log(runtime: Any, *, log_scan_since: float | None) ->
             continue
         text = "\n".join(lines)
         lower_text = text.lower()
-        for marker in _OPENCODE_ABORT_MARKERS:
-            if marker in lower_text:
-                return path, _screen_excerpt(text, limit=300)
+        if any(marker in lower_text for marker in _OPENCODE_PROMPT_SUCCESS_MARKERS):
+            return path, _screen_excerpt(text, limit=300)
     return None, ""
+
+
+def _emit_opencode_prompt_failed_event(
+    runtime: Any,
+    *,
+    failure_diagnostic: Mapping[str, object],
+    transport: str,
+    prompt_sent: bool,
+    prompt_accepted: bool,
+    session_name: str = "",
+    window_name: str = "",
+    attach_command: str = "",
+    workspace_id: str = "",
+    surface_id: str = "",
+) -> None:
+    runtime._emit(
+        "planning.agent_launch.opencode_prompt_failed",
+        reason=failure_diagnostic["reason"],
+        failure_kind=failure_diagnostic["failure_kind"],
+        log_path=failure_diagnostic["log_path"],
+        worktree_clean=failure_diagnostic["worktree_clean"],
+        evidence=failure_diagnostic["evidence"],
+        transport=transport,
+        session_name=session_name or None,
+        window_name=window_name or None,
+        attach_command=attach_command or None,
+        workspace_id=workspace_id or None,
+        surface_id=surface_id or None,
+        prompt_sent=prompt_sent,
+        prompt_accepted=prompt_accepted,
+    )
+
+
+def _emit_opencode_prompt_accepted_event(
+    runtime: Any,
+    *,
+    success_diagnostic: Mapping[str, object],
+    transport: str,
+    session_name: str = "",
+    window_name: str = "",
+    attach_command: str = "",
+    workspace_id: str = "",
+    surface_id: str = "",
+) -> None:
+    runtime._emit(
+        "planning.agent_launch.opencode_prompt_accepted",
+        log_path=success_diagnostic["log_path"],
+        evidence=success_diagnostic["evidence"],
+        transport=transport,
+        session_name=session_name or None,
+        window_name=window_name or None,
+        attach_command=attach_command or None,
+        workspace_id=workspace_id or None,
+        surface_id=surface_id or None,
+    )
 
 
 def _worktree_clean_state(runtime: Any, *, worktree_root: Path | None) -> bool | None:
@@ -5966,33 +6245,70 @@ def _wait_for_tmux_prompt_accepted(
         return AiCliReadyResult(ready=True, reason="post_submit_check_not_required")
     deadline = time.monotonic() + _opencode_prompt_accept_timeout_seconds(runtime)
     last_screen = ""
+    accepted_seen = False
+    saw_idle_after_submit = False
     while time.monotonic() < deadline:
-        abort_diagnostic = _opencode_abort_diagnostic(
+        failure_diagnostic = _opencode_prompt_failure_diagnostic(
             runtime,
             log_scan_since=log_scan_since,
             worktree_root=worktree_root,
         )
-        if abort_diagnostic is not None:
-            runtime._emit(
-                "planning.agent_launch.opencode_prompt_failed",
-                reason="opencode_prompt_aborted",
-                log_path=abort_diagnostic["log_path"],
-                worktree_clean=abort_diagnostic["worktree_clean"],
-                evidence=abort_diagnostic["evidence"],
+        if failure_diagnostic is not None:
+            _emit_opencode_prompt_failed_event(
+                runtime,
+                failure_diagnostic=failure_diagnostic,
+                transport="tmux",
+                session_name=session_name,
+                window_name=window_name,
+                attach_command=shlex.join(_guidance_attach_command(session_name)),
+                prompt_sent=True,
+                prompt_accepted=accepted_seen,
             )
             return AiCliReadyResult(
                 ready=False,
-                reason="opencode_prompt_aborted",
-                screen_excerpt=f"{abort_diagnostic['evidence']} ({abort_diagnostic['log_path']})",
+                reason=str(failure_diagnostic["reason"]),
+                screen_excerpt=f"{failure_diagnostic['evidence']} ({failure_diagnostic['log_path']})",
+                failure_kind=str(failure_diagnostic["failure_kind"]),
+                log_path=str(failure_diagnostic["log_path"]),
+                worktree_clean=cast(bool | None, failure_diagnostic["worktree_clean"]),
+                prompt_accepted=accepted_seen,
+            )
+        success_diagnostic = _opencode_prompt_success_diagnostic(runtime, log_scan_since=log_scan_since)
+        if success_diagnostic is not None:
+            _emit_opencode_prompt_accepted_event(
+                runtime,
+                success_diagnostic=success_diagnostic,
+                transport="tmux",
+                session_name=session_name,
+                window_name=window_name,
+                attach_command=shlex.join(_guidance_attach_command(session_name)),
+            )
+            return AiCliReadyResult(
+                ready=True,
+                reason="prompt_accepted",
+                screen_excerpt=str(success_diagnostic["evidence"]),
+                log_path=str(success_diagnostic["log_path"]),
+                prompt_accepted=True,
             )
         last_screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
         if _post_submit_screen_looks_accepted(normalized_cli, last_screen, prompt_text):
-            return AiCliReadyResult(ready=True, reason="prompt_accepted", screen_excerpt=_screen_excerpt(last_screen))
+            accepted_seen = True
+            return AiCliReadyResult(
+                ready=True,
+                reason="prompt_accepted",
+                screen_excerpt=_screen_excerpt(last_screen),
+                prompt_accepted=True,
+            )
+        if _screen_looks_ready(normalized_cli, last_screen):
+            saw_idle_after_submit = True
         time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
+    reason = "opencode_prompt_ambiguous_idle" if saw_idle_after_submit else "opencode_prompt_accept_timeout"
     return AiCliReadyResult(
         ready=False,
-        reason="opencode_prompt_accept_timeout",
+        reason=reason,
         screen_excerpt=_screen_excerpt(last_screen),
+        failure_kind=reason,
+        prompt_accepted=accepted_seen,
     )
 
 
@@ -6003,36 +6319,78 @@ def _wait_for_surface_prompt_accepted(
     surface_id: str,
     cli: str,
     prompt_text: str,
+    log_scan_since: float | None = None,
+    worktree_root: Path | None = None,
 ) -> AiCliReadyResult:
     normalized_cli = str(cli).strip().lower()
     if normalized_cli != "opencode":
         return AiCliReadyResult(ready=True, reason="post_submit_check_not_required")
     deadline = time.monotonic() + _opencode_prompt_accept_timeout_seconds(runtime)
     last_screen = ""
-    log_scan_since = time.time()
+    if log_scan_since is None:
+        log_scan_since = time.time()
+    accepted_seen = False
+    saw_idle_after_submit = False
     while time.monotonic() < deadline:
-        abort_diagnostic = _opencode_abort_diagnostic(runtime, log_scan_since=log_scan_since, worktree_root=None)
-        if abort_diagnostic is not None:
-            runtime._emit(
-                "planning.agent_launch.opencode_prompt_failed",
-                reason="opencode_prompt_aborted",
-                log_path=abort_diagnostic["log_path"],
-                worktree_clean=abort_diagnostic["worktree_clean"],
-                evidence=abort_diagnostic["evidence"],
+        failure_diagnostic = _opencode_prompt_failure_diagnostic(
+            runtime,
+            log_scan_since=log_scan_since,
+            worktree_root=worktree_root,
+        )
+        if failure_diagnostic is not None:
+            _emit_opencode_prompt_failed_event(
+                runtime,
+                failure_diagnostic=failure_diagnostic,
+                transport="cmux",
+                workspace_id=workspace_id,
+                surface_id=surface_id,
+                prompt_sent=True,
+                prompt_accepted=accepted_seen,
             )
             return AiCliReadyResult(
                 ready=False,
-                reason="opencode_prompt_aborted",
-                screen_excerpt=f"{abort_diagnostic['evidence']} ({abort_diagnostic['log_path']})",
+                reason=str(failure_diagnostic["reason"]),
+                screen_excerpt=f"{failure_diagnostic['evidence']} ({failure_diagnostic['log_path']})",
+                failure_kind=str(failure_diagnostic["failure_kind"]),
+                log_path=str(failure_diagnostic["log_path"]),
+                worktree_clean=cast(bool | None, failure_diagnostic["worktree_clean"]),
+                prompt_accepted=accepted_seen,
+            )
+        success_diagnostic = _opencode_prompt_success_diagnostic(runtime, log_scan_since=log_scan_since)
+        if success_diagnostic is not None:
+            _emit_opencode_prompt_accepted_event(
+                runtime,
+                success_diagnostic=success_diagnostic,
+                transport="cmux",
+                workspace_id=workspace_id,
+                surface_id=surface_id,
+            )
+            return AiCliReadyResult(
+                ready=True,
+                reason="prompt_accepted",
+                screen_excerpt=str(success_diagnostic["evidence"]),
+                log_path=str(success_diagnostic["log_path"]),
+                prompt_accepted=True,
             )
         last_screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
         if _post_submit_screen_looks_accepted(normalized_cli, last_screen, prompt_text):
-            return AiCliReadyResult(ready=True, reason="prompt_accepted", screen_excerpt=_screen_excerpt(last_screen))
+            accepted_seen = True
+            return AiCliReadyResult(
+                ready=True,
+                reason="prompt_accepted",
+                screen_excerpt=_screen_excerpt(last_screen),
+                prompt_accepted=True,
+            )
+        if _screen_looks_ready(normalized_cli, last_screen):
+            saw_idle_after_submit = True
         time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
+    reason = "opencode_prompt_ambiguous_idle" if saw_idle_after_submit else "opencode_prompt_accept_timeout"
     return AiCliReadyResult(
         ready=False,
-        reason="opencode_prompt_accept_timeout",
+        reason=reason,
         screen_excerpt=_screen_excerpt(last_screen),
+        failure_kind=reason,
+        prompt_accepted=accepted_seen,
     )
 
 

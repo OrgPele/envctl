@@ -113,5 +113,6 @@ class StartupSession:
         return str(getattr(launch_result, "status", "")).strip().lower() in {
             "partial",
             "handoff_pending",
+            "prompt_failed",
             "degraded",
         }
