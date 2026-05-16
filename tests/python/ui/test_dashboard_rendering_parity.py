@@ -886,6 +886,64 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertNotIn("Run AI:", output)
             self.assertLess(output.index("Frontend:"), output.index("AI session:"))
 
+    def test_dashboard_renders_cmux_plan_agent_launch_instead_of_run_ai(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            project = "features_feature_a-1"
+            project_root = repo / "trees" / "features_feature_a" / "1"
+            project_root.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            engine = PythonEngineRuntime(load_config(self._config(repo, runtime)), env={"NO_COLOR": "1"})
+            engine._reconcile_state_truth = lambda _state: []  # type: ignore[method-assign]
+
+            state = RunState(
+                run_id="run-1",
+                mode="trees",
+                services={
+                    f"{project} Backend": ServiceRecord(
+                        name=f"{project} Backend",
+                        type="backend",
+                        cwd=str(project_root / "backend"),
+                        requested_port=8000,
+                        actual_port=8004,
+                        pid=1234,
+                        status="running",
+                    ),
+                },
+                metadata={
+                    "project_roots": {project: str(project_root)},
+                    "plan_agent_launch_outcomes": [
+                        {
+                            "worktree_name": project,
+                            "worktree_root": str(project_root),
+                            "transport": "cmux",
+                            "cli": "opencode",
+                            "workspace_id": "workspace:8",
+                            "surface_id": "surface:44",
+                            "status": "launched",
+                        }
+                    ],
+                },
+            )
+
+            buffer = io.StringIO()
+            with (
+                patch("envctl_engine.runtime.session_management.list_tmux_sessions", return_value=[]),
+                redirect_stdout(buffer),
+            ):
+                engine._print_dashboard_snapshot(state)
+            output = buffer.getvalue()
+
+            self.assertIn('AI session: OpenCode already running in cmux tab "features_feature_a-1"', output)
+            self.assertIn(
+                "highlight: cmux tab-action --action mark-unread --workspace workspace:8 --surface surface:44 && "
+                "cmux trigger-flash --workspace workspace:8 --surface surface:44",
+                output,
+            )
+            self.assertNotIn("cmux workspace:8 surface:44", output)
+            self.assertNotIn("Run AI:", output)
+
     def test_dashboard_renders_additional_service_rows_and_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -1029,8 +1087,8 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 output,
             )
             self.assertNotIn(
-                f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md "
-                "--tmux --opencode --headless --tmux-new-session",
+                f"○ Run AI: envctl --repo {repo.resolve()} --plan features/feature-a.md "
+                "--tmux --opencode --headless --new-worktree",
                 output,
             )
             self.assertNotIn("command:", output)
@@ -1204,7 +1262,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 engine._print_dashboard_snapshot(state)
             output = buffer.getvalue()
 
-            self.assertIn(f"○ Run AI: envctl --repo {project_root} codex-tmux", output)
+            self.assertIn(f"○ Run AI: envctl --repo {project_root.resolve()} codex-tmux", output)
             self.assertNotIn("AI session:", output)
 
     def test_dashboard_renders_run_ai_row_only_when_no_matching_session_exists(self) -> None:
@@ -1245,8 +1303,8 @@ class DashboardRenderingParityTests(unittest.TestCase):
             output = buffer.getvalue()
 
             self.assertIn(
-                f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md "
-                "--tmux --opencode --headless --tmux-new-session",
+                f"○ Run AI: envctl --repo {repo.resolve()} --plan features/feature-a.md "
+                "--tmux --opencode --headless --new-worktree",
                 output,
             )
             self.assertNotIn("AI session:", output)
@@ -1306,8 +1364,8 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertIn("Backend: http://localhost:8004", output)
             self.assertIn("Frontend: http://localhost:9004", output)
             self.assertIn(
-                f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md "
-                "--tmux --opencode --headless --tmux-new-session",
+                f"○ Run AI: envctl --repo {repo.resolve()} --plan features/feature-a.md "
+                "--tmux --opencode --headless --new-worktree",
                 output,
             )
             self.assertNotIn("AI session:", output)
@@ -1369,8 +1427,8 @@ class DashboardRenderingParityTests(unittest.TestCase):
                 output,
             )
             self.assertNotIn(
-                f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md "
-                "--tmux --opencode --headless --tmux-new-session",
+                f"○ Run AI: envctl --repo {repo.resolve()} --plan features/feature-a.md "
+                "--tmux --opencode --headless --new-worktree",
                 output,
             )
 
@@ -1405,8 +1463,8 @@ class DashboardRenderingParityTests(unittest.TestCase):
             output = buffer.getvalue()
 
             self.assertIn(
-                f"○ Run AI: envctl --repo {repo} --plan 'feature with spaces;and-symbols.md' "
-                "--tmux --opencode --headless --tmux-new-session",
+                f"○ Run AI: envctl --repo {repo.resolve()} --plan 'feature with spaces;and-symbols.md' "
+                "--tmux --opencode --headless --new-worktree",
                 output,
             )
             self.assertNotIn("codex-tmux", output)
@@ -1442,8 +1500,8 @@ class DashboardRenderingParityTests(unittest.TestCase):
             output = buffer.getvalue()
 
             self.assertIn(
-                f"○ Run AI: envctl --repo {repo} --plan feature_without_plan.md "
-                "--tmux --opencode --headless --tmux-new-session",
+                f"○ Run AI: envctl --repo {repo.resolve()} --plan feature_without_plan.md "
+                "--tmux --opencode --headless --new-worktree",
                 output,
             )
             self.assertNotIn("codex-tmux", output)
@@ -1486,9 +1544,9 @@ class DashboardRenderingParityTests(unittest.TestCase):
             output = buffer.getvalue()
 
             self.assertIn(
-                f"○ Run AI: envctl --repo {repo} "
+                f"○ Run AI: envctl --repo {repo.resolve()} "
                 "--plan refactoring/supportopia-to-pele-complete-repo-rename.md "
-                "--tmux --opencode --headless --tmux-new-session",
+                "--tmux --opencode --headless --new-worktree",
                 output,
             )
             self.assertNotIn("codex-tmux", output)
@@ -1537,8 +1595,8 @@ class DashboardRenderingParityTests(unittest.TestCase):
             output = buffer.getvalue()
 
             self.assertIn(
-                f"○ Run AI: envctl --repo {repo} --plan test-headless/tmux-headless-check.md "
-                "--tmux --opencode --headless --tmux-new-session",
+                f"○ Run AI: envctl --repo {repo.resolve()} --plan test-headless/tmux-headless-check.md "
+                "--tmux --opencode --headless --new-worktree",
                 output,
             )
             self.assertNotIn(" --project", output)
@@ -1579,8 +1637,8 @@ class DashboardRenderingParityTests(unittest.TestCase):
             output = buffer.getvalue()
 
             self.assertIn(
-                f"○ Run AI: envctl --repo {repo} --plan features/task.md "
-                "--tmux --opencode --headless --tmux-new-session",
+                f"○ Run AI: envctl --repo {repo.resolve()} --plan features/task.md "
+                "--tmux --opencode --headless --new-worktree",
                 output,
             )
             self.assertNotIn(" --project", output)

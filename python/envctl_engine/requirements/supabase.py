@@ -1284,6 +1284,23 @@ class SupabaseReliabilityContract:
     compose_path: Path | None
 
 
+@dataclass(frozen=True, slots=True)
+class SupabaseFingerprintRecord:
+    fingerprint: str
+    contract_version: int | None
+
+    @property
+    def is_legacy(self) -> bool:
+        return self.contract_version is None
+
+
+SUPABASE_REINIT_CONTRACT_VERSION = 1
+SUPABASE_REINIT_CONTRACT_INPUTS = (
+    Path("init/01-create-n8n-db.sql"),
+    Path("init/02-bootstrap-gotrue-auth.sql"),
+)
+
+
 def evaluate_supabase_reliability_contract(project_root: Path) -> SupabaseReliabilityContract:
     compose_root = project_root / "supabase"
     compose_path = compose_root / "docker-compose.yml"
@@ -1336,6 +1353,11 @@ def evaluate_supabase_reliability_contract(project_root: Path) -> SupabaseReliab
 
 
 def read_fingerprint(path: Path) -> str | None:
+    record = read_fingerprint_record(path)
+    return record.fingerprint if record is not None else None
+
+
+def read_fingerprint_record(path: Path) -> SupabaseFingerprintRecord | None:
     if not path.is_file():
         return None
     try:
@@ -1343,12 +1365,19 @@ def read_fingerprint(path: Path) -> str | None:
     except (OSError, json.JSONDecodeError):
         return None
     value = payload.get("fingerprint")
-    return str(value) if isinstance(value, str) and value.strip() else None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw_contract_version = payload.get("contract_version")
+    contract_version: int | None = None
+    if isinstance(raw_contract_version, int):
+        contract_version = raw_contract_version
+    return SupabaseFingerprintRecord(fingerprint=value, contract_version=contract_version)
 
 
 def write_fingerprint(path: Path, *, fingerprint: str, project_root: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "contract_version": SUPABASE_REINIT_CONTRACT_VERSION,
         "fingerprint": fingerprint,
         "project_root": str(project_root),
     }
@@ -1401,12 +1430,8 @@ def evaluate_managed_supabase_reliability_contract() -> SupabaseReliabilityContr
 
 def _fingerprint_contract_inputs(compose_root: Path, *, compose_text: str) -> str:
     hasher = hashlib.sha256()
-    hasher.update(compose_text.encode("utf-8"))
-    for rel in (
-        Path("kong.yml"),
-        Path("init/01-create-n8n-db.sql"),
-        Path("init/02-bootstrap-gotrue-auth.sql"),
-    ):
+    hasher.update(f"supabase-reinit-contract-v{SUPABASE_REINIT_CONTRACT_VERSION}\n".encode("utf-8"))
+    for rel in SUPABASE_REINIT_CONTRACT_INPUTS:
         path = compose_root / rel
         hasher.update(str(rel).encode("utf-8"))
         if path.is_file():

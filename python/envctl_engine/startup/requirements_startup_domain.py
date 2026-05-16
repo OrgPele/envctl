@@ -21,7 +21,7 @@ from envctl_engine.requirements.postgres import start_postgres_container
 from envctl_engine.requirements.redis import start_redis_container
 from envctl_engine.requirements.supabase import (
     evaluate_managed_supabase_reliability_contract,
-    read_fingerprint as read_supabase_fingerprint,
+    read_fingerprint_record as read_supabase_fingerprint_record,
     start_supabase_stack,
     write_fingerprint as write_supabase_fingerprint,
 )
@@ -272,26 +272,36 @@ def _start_requirement_component(
                 return False, "; ".join(contract.errors)
 
             fingerprint_path = self._supabase_fingerprint_path(context.name)
-            previous = read_supabase_fingerprint(fingerprint_path)
-            if previous is not None and previous != contract.fingerprint:
+            previous = read_supabase_fingerprint_record(fingerprint_path)
+            if previous is not None and previous.fingerprint != contract.fingerprint:
                 self._emit(
                     "supabase.fingerprint.changed",
                     project=context.name,
-                    previous=previous,
+                    previous=previous.fingerprint,
                     current=contract.fingerprint,
+                    previous_contract_version=previous.contract_version,
                 )
-                if not self._supabase_auto_reinit_enabled():
+                if previous.is_legacy:
+                    self._emit(
+                        "supabase.fingerprint.legacy_adopted",
+                        project=context.name,
+                        fingerprint_path=str(fingerprint_path),
+                    )
+                    pending_supabase_fingerprint = contract.fingerprint
+                    previous = None
+                if previous is not None and not self._supabase_auto_reinit_enabled():
                     self._emit("supabase.reinit.required", project=context.name, fingerprint_path=str(fingerprint_path))
                     return False, self._supabase_reinit_required_message()
-                reinit_error = self._run_supabase_reinit(
-                    project_root=context.root,
-                    project_name=context.name,
-                    db_port=port,
-                    public_port=_context_port(context, "supabase_api"),
-                )
-                if reinit_error is not None:
-                    return False, reinit_error
-                self._emit("supabase.reinit.executed", project=context.name, fingerprint_path=str(fingerprint_path))
+                if previous is not None:
+                    reinit_error = self._run_supabase_reinit(
+                        project_root=context.root,
+                        project_name=context.name,
+                        db_port=port,
+                        public_port=_context_port(context, "supabase_api"),
+                    )
+                    if reinit_error is not None:
+                        return False, reinit_error
+                    self._emit("supabase.reinit.executed", project=context.name, fingerprint_path=str(fingerprint_path))
             pending_supabase_fingerprint = contract.fingerprint
 
         nonlocal command_source

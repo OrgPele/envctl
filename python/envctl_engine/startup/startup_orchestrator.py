@@ -362,10 +362,8 @@ class StartupOrchestrator:
                     for worktree in getattr(selection_result, "created_worktrees", ())
                     if isinstance(worktree, CreatedPlanWorktree) and worktree.name in selected_names
                 )
-                explicit_plan_agent_launch = any(
-                    bool(route.flags.get(flag_name)) for flag_name in ("tmux", "omx", "codex", "opencode")
-                )
-                if not created_worktrees and explicit_plan_agent_launch:
+                launch_config = resolve_plan_agent_launch_config(rt.config, getattr(rt, "env", {}), route=route)
+                if not created_worktrees and launch_config.enabled:
                     recovered_worktrees: list[CreatedPlanWorktree] = []
                     for context in project_contexts:
                         recovered_worktrees.append(

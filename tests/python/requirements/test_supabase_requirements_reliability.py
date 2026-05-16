@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
@@ -14,6 +15,7 @@ from envctl_engine.requirements.supabase import (
     SupabaseReliabilityContract,
     build_supabase_project_name,
     evaluate_supabase_reliability_contract,
+    read_fingerprint_record,
 )
 
 
@@ -79,6 +81,18 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
             self.assertTrue(first.ok)
             self.assertTrue(second.ok)
             self.assertNotEqual(first.fingerprint, second.fingerprint)
+
+    def test_contract_fingerprint_ignores_non_reinit_compose_text_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            _write_supabase_files(repo)
+            first = evaluate_supabase_reliability_contract(repo)
+            compose_path = repo / "supabase" / "docker-compose.yml"
+            compose_path.write_text(compose_path.read_text(encoding="utf-8") + "\n# harmless compose note\n")
+            second = evaluate_supabase_reliability_contract(repo)
+            self.assertTrue(first.ok)
+            self.assertTrue(second.ok)
+            self.assertEqual(first.fingerprint, second.fingerprint)
 
     def test_runtime_blocks_supabase_start_when_contract_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -174,6 +188,67 @@ class SupabaseRequirementsReliabilityTests(unittest.TestCase):
                 )
             self.assertFalse(second.success)
             self.assertIn("reinit workflow", second.error or "")
+
+    def test_runtime_adopts_legacy_unversioned_supabase_fingerprint_without_reinit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime_dir = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            _write_supabase_files(repo)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime_dir),
+                    "SUPABASE_MAIN_ENABLE": "true",
+                }
+            )
+            runtime = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_REQUIREMENT_SUPABASE_CMD": "sh -lc true",
+                },
+            )
+            runtime._wait_for_requirement_listener = lambda _port: True  # type: ignore[method-assign]
+            context = ProjectContext(
+                name="Main", root=repo, ports=runtime.port_planner.plan_project_stack("Main", index=0)
+            )
+            fingerprint_path = runtime._supabase_fingerprint_path("Main")
+            fingerprint_path.parent.mkdir(parents=True, exist_ok=True)
+            fingerprint_path.write_text(json.dumps({"fingerprint": "legacy-compose-wide-hash"}), encoding="utf-8")
+
+            commands: list[list[str]] = []
+
+            def fake_run(cmd, **_kwargs):
+                commands.append(list(cmd))
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            runtime.process_runner.run = fake_run  # type: ignore[method-assign]
+            with patch(
+                "envctl_engine.startup.requirements_startup_domain.evaluate_managed_supabase_reliability_contract",
+                return_value=SupabaseReliabilityContract(
+                    ok=True,
+                    fingerprint="current-reinit-contract",
+                    errors=[],
+                    compose_path=Path("/managed/supabase/docker-compose.yml"),
+                ),
+            ):
+                outcome = runtime._start_requirement_component(
+                    context,
+                    "supabase",
+                    context.ports["db"],
+                    reserve_next=lambda port: port,
+                )
+
+            self.assertTrue(outcome.success)
+            self.assertFalse(any("down" in cmd and "-v" in cmd for cmd in commands))
+            record = read_fingerprint_record(fingerprint_path)
+            self.assertIsNotNone(record)
+            if record is None:
+                self.fail("expected versioned supabase fingerprint record")
+            self.assertEqual(record.fingerprint, "current-reinit-contract")
+            self.assertFalse(record.is_legacy)
 
     def test_runtime_auto_reinit_runs_when_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

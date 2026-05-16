@@ -1056,6 +1056,20 @@ def _print_dashboard_ai_session_row(
             project_root=project_root,
             envctl_executable=envctl_executable,
         )
+    cmux_launches = _dashboard_cmux_launches_for_project(state=state, project=project, project_root=project_root)
+    if cmux_launches:
+        for launch in cmux_launches:
+            cli = str(launch.get("cli", "") or "AI").strip()
+            cli_label = {"opencode": "OpenCode", "codex": "Codex"}.get(
+                cli.lower(),
+                cli[:1].upper() + cli[1:] if cli else "AI",
+            )
+            tab_title = _dashboard_cmux_launch_tab_title(launch, project=project)
+            print(f"    {gray}AI session:{reset} {dim}{cli_label} already running in cmux tab \"{tab_title}\"{reset}")
+            highlight_command = _dashboard_cmux_launch_highlight_command(launch)
+            if highlight_command:
+                print(f"      {gray}highlight:{reset} {dim}{highlight_command}{reset}")
+        return
     sessions = list_tmux_sessions()
     matching = [
         session
@@ -1079,6 +1093,73 @@ def _print_dashboard_ai_session_row(
     if not render_launch_fallback or not launch_command:
         return
     print(f"    {dim}○{reset} {gray}Run AI:{reset} {dim}{launch_command}{reset}")
+
+
+def _dashboard_cmux_launches_for_project(
+    *,
+    state: RunState,
+    project: str,
+    project_root: Path | None,
+) -> list[dict[str, object]]:
+    metadata = getattr(state, "metadata", {}) or {}
+    outcomes = metadata.get("plan_agent_launch_outcomes")
+    if not isinstance(outcomes, list):
+        return []
+    matches: list[dict[str, object]] = []
+    for raw_outcome in outcomes:
+        if not isinstance(raw_outcome, dict):
+            continue
+        if str(raw_outcome.get("status", "") or "").strip() != "launched":
+            continue
+        if str(raw_outcome.get("transport", "") or "").strip().lower() != "cmux":
+            continue
+        if not str(raw_outcome.get("surface_id", "") or "").strip():
+            continue
+        if _dashboard_cmux_launch_matches_project(
+            outcome=raw_outcome,
+            project=project,
+            project_root=project_root,
+        ):
+            matches.append(raw_outcome)
+    return matches
+
+
+def _dashboard_cmux_launch_tab_title(launch: dict[str, object], *, project: str) -> str:
+    configured = str(launch.get("tab_title", "") or "").strip()
+    if configured:
+        return configured
+    worktree_name = str(launch.get("worktree_name", "") or "").strip() or str(project).strip()
+    if not worktree_name:
+        return "implementation"
+    from envctl_engine.planning.plan_agent_launch_support import _tab_title_for_worktree  # noqa: PLC0415
+
+    return _tab_title_for_worktree(worktree_name)
+
+
+def _dashboard_cmux_launch_highlight_command(launch: dict[str, object]) -> str:
+    workspace = str(launch.get("workspace_id", "") or "").strip()
+    surface = str(launch.get("surface_id", "") or "").strip()
+    if not workspace or not surface:
+        return ""
+    mark_unread = shlex.join(
+        ["cmux", "tab-action", "--action", "mark-unread", "--workspace", workspace, "--surface", surface]
+    )
+    trigger_flash = shlex.join(["cmux", "trigger-flash", "--workspace", workspace, "--surface", surface])
+    return f"{mark_unread} && {trigger_flash}"
+
+
+def _dashboard_cmux_launch_matches_project(
+    *,
+    outcome: dict[str, object],
+    project: str,
+    project_root: Path | None,
+) -> bool:
+    if str(outcome.get("worktree_name", "") or "").strip() == project:
+        return True
+    raw_root = str(outcome.get("worktree_root", "") or "").strip()
+    if not raw_root or project_root is None:
+        return False
+    return Path(raw_root).expanduser().resolve(strict=False) == project_root.expanduser().resolve(strict=False)
 
 
 def _dashboard_session_matches_project(*, project_root: Path | None, project: str, session: dict[str, str]) -> bool:

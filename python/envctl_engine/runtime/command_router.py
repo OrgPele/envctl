@@ -128,6 +128,7 @@ _BOOLEAN_FLAG_TOKENS = (
     "--copy-db-storage",
     "--no-resume",
     "--no-auto-resume",
+    "--cmux",
     "--tmux",
     "--omx",
     "--ultragoal",
@@ -140,6 +141,9 @@ _BOOLEAN_FLAG_TOKENS = (
     "--codex",
     "--opencode",
     "--ulw",
+    "--new-worktree",
+    "--new-session",
+    "--fresh-session",
     "--tmux-new-session",
     "--with-codex-skills",
     "--confirm",
@@ -548,6 +552,7 @@ def parse_route(argv: list[str], env: Mapping[str, str]) -> Route:
     _apply_default_runtime_scope_policy(state)
     _apply_default_headless_policy(state)
     _validate_plan_agent_cli_flags(state)
+    _validate_plan_agent_transport_flags(state)
     _validate_plan_agent_workflow_flags(state)
     _validate_dependency_scope_flags(state)
 
@@ -1114,6 +1119,20 @@ def _validate_plan_agent_cli_flags(state: _ParserState) -> None:
         )
 
 
+def _validate_plan_agent_transport_flags(state: _ParserState) -> None:
+    enabled_transports = [
+        token
+        for token, enabled in (
+            ("--cmux", bool(state.flags.get("cmux"))),
+            ("--tmux", bool(state.flags.get("tmux"))),
+            ("--omx", bool(state.flags.get("omx"))),
+        )
+        if enabled
+    ]
+    if len(enabled_transports) > 1:
+        raise RouteError("Use only one plan-agent transport flag (--cmux, --tmux, or --omx).")
+
+
 def _validate_plan_agent_workflow_flags(state: _ParserState) -> None:
     ultragoal = bool(state.flags.get("ultragoal"))
     ralph = bool(state.flags.get("ralph"))
@@ -1202,6 +1221,7 @@ def _boolean_flag_name(token: str) -> str:
         "--copy-db-storage": "seed_requirements_from_base",
         "--no-resume": "no_resume",
         "--no-auto-resume": "no_resume",
+        "--cmux": "cmux",
         "--tmux": "tmux",
         "--omx": "omx",
         "--ultragoal": "ultragoal",
@@ -1214,6 +1234,9 @@ def _boolean_flag_name(token: str) -> str:
         "--codex": "codex",
         "--opencode": "opencode",
         "--ulw": "ulw",
+        "--new-worktree": "new_worktree",
+        "--new-session": "new_session",
+        "--fresh-session": "new_session",
         "--tmux-new-session": "tmux_new_session",
         "--with-codex-skills": "with_codex_skills",
         "--confirm": "confirm",

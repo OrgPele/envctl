@@ -69,9 +69,9 @@ Create-plan skill behavior:
 
 - `$envctl-create-plan` is plan-only and approval-first. It writes `todo/plans/<category>/<slug>.md` and asks before running envctl.
 - `$envctl-create-plan` records a recommended Codex cycle count from `0` through `8` in the plan and uses that recommendation in Codex follow-up command examples.
-- `$envctl-create-plan-auto-codex` writes the same kind of plan, derives `<category>/<slug>` from the plan file path, chooses a recommended Codex cycle count from `0` through `8`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --tmux --entire-system --headless --tmux-new-session`.
-- `$envctl-create-plan-auto-opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --tmux-new-session`. OpenCode ignores Codex cycle settings and prepends `/ulw-loop` by default.
-- `$envctl-create-plan-auto-omx` writes the plan, records the same `0` through `8` recommendation for visibility, derives `<selector>`, then runs `envctl --plan <selector> --omx --ultragoal --entire-system --headless --tmux-new-session`. OMX-managed launches are Codex-only: optional `/goal` framing is submitted first, Ultragoal wraps the initial prompt, and envctl may queue Codex follow-up cycles using the current cycle configuration. Use `--ralph` explicitly when you need the Ralph compatibility workflow.
+- `$envctl-create-plan-auto-codex` writes the same kind of plan, derives `<category>/<slug>` from the plan file path, chooses a recommended Codex cycle count from `0` through `8`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --tmux --entire-system --headless --new-worktree`.
+- `$envctl-create-plan-auto-opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --new-worktree`. OpenCode ignores Codex cycle settings and prepends `/ulw-loop` by default.
+- `$envctl-create-plan-auto-omx` writes the plan, records the same `0` through `8` recommendation for visibility, derives `<selector>`, then runs `envctl --plan <selector> --omx --ultragoal --entire-system --headless --new-worktree`. OMX-managed launches are Codex-only: optional `/goal` framing is submitted first, Ultragoal wraps the initial prompt, and envctl may queue Codex follow-up cycles using the current cycle configuration. Use `--ralph` explicitly when you need the Ralph compatibility workflow.
 - Keep the auto variants explicit-only; do not configure them for implicit invocation from generic planning language.
 - Rerun `envctl install-prompts --cli codex --yes`, `envctl install-prompts --cli opencode --yes`, or `envctl install-prompts --cli all --yes` to refresh installed prompt files.
 
@@ -84,7 +84,7 @@ Dashboard review follow-up:
 - during interactive `envctl dashboard` -> `review` setup for exactly one non-`Main` worktree, envctl can offer one origin-side AI review tab through the same selector UI used for dashboard target selection
 - the opened tab starts in the current repo root, not the target worktree
 - the submitted prompt includes reviewer notes pointing at the generated full review bundle, the target worktree directory, and the original plan file that created the worktree when provenance can resolve it
-- Codex receives the rendered `review_worktree_imp` prompt body with the reviewer notes injected. OpenCode cmux launches receive `/review_worktree_imp <worktree>`, while tmux OpenCode direct-prompt launches submit the rendered prompt body.
+- Codex receives the rendered `review_worktree_imp` prompt body with the reviewer notes injected. OpenCode cmux/tmux launches submit the rendered prompt body directly.
 - choosing `No`, cancelling the selector, reviewing `Main`, reviewing multiple targets, or a failed review keeps the existing markdown bundle-only behavior
 - this optional review-tab launch reuses the same `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` transport settings as the post-`--plan` launcher, but it does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`
 
@@ -99,7 +99,7 @@ envctl test --all
 
 Use this to run many implementations at the same time and inspect behavior in one place.
 
-To auto-open one AI terminal per newly created planning worktree in your current `cmux` workspace:
+To auto-open one AI terminal per selected planning worktree, either enable the launch flow in config/env or pass `--cmux`, `--tmux`, `--omx`, or `--new-worktree` on the command. When no transport is selected, Linux defaults to tmux; other hosts prefer cmux and fall back to tmux when cmux is not installed:
 
 ```dotenv
 ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true
@@ -117,9 +117,9 @@ CMUX=true
 CYCLES=3
 ```
 
-By default, enabling the feature targets a sibling workspace named `"<current workspace> implementation"`. Set `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` when you want a different workspace title or handle.
+For cmux launches, enabling the feature creates or reuses a repo-named implementations workspace. Set `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` when you want a different workspace title or handle.
 
-The optional dashboard review-tab flow reuses the same AI CLI and cmux transport settings, but when no explicit workspace override is set it targets a sibling workspace named `"<current workspace> reviews"`.
+The optional dashboard review-tab flow reuses the same AI CLI and cmux transport settings, but when no explicit workspace override is set it creates or reuses a repo-named reviews workspace.
 
 If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that does not exist yet, envctl creates that workspace before opening the new implementation surfaces.
 
@@ -136,7 +136,7 @@ Codex TUI cycle mode:
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` disables the `$browser-use` E2E follow-up when browser validation is not applicable
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false` disables the final PR review-comments follow-up when comment handling is manual
 - canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set
-- `CYCLES` does not enable plan-agent launch by itself
+- a positive command-scoped `CYCLES` or `ENVCTL_PLAN_AGENT_CODEX_CYCLES` value is treated as launch intent for that `envctl --plan` invocation; the config/default value only controls cycle count after launch is otherwise enabled
 - envctl only appends messages in this mode; Codex still performs the actual commit, push, and PR work itself
 
 Then run:
@@ -157,7 +157,7 @@ envctl codex-tmux --help
 
 If a headless plan-agent launch prints `Implementation session is running, but local app startup failed.`, the implementation session is still alive. Copy the `attach:` command from the `AI session:` section to continue watching or driving the agent. Configure `ENVCTL_BACKEND_START_CMD` / `ENVCTL_FRONTEND_START_CMD` only when that worktree also needs local services for verification; otherwise you can leave services disabled and let the AI implementation session continue.
 
-If `envctl --plan ... --tmux --opencode` reports `OpenCode AI session failed to start`, inspect the shown screen excerpt first. Common causes are a missing `opencode` executable in the shell used by tmux, an OpenCode startup/config error, or a stale tmux session. Re-run with `--tmux-new-session` after fixing the shell/config issue.
+If `envctl --plan ... --tmux --opencode` reports `OpenCode AI session failed to start`, inspect the shown screen excerpt first. Common causes are a missing `opencode` executable in the shell used by tmux, an OpenCode startup/config error, or a stale tmux session. Re-run with `--new-worktree` after fixing the shell/config issue.
 
 ## Compare Implementations
 

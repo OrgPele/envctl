@@ -114,7 +114,7 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE": "true",
         "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE": "true",
         "ENVCTL_PLAN_AGENT_SHELL": "zsh",
-        "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "true",
+        "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "false",
         "ENVCTL_PLAN_AGENT_CLI_CMD": "",
         "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "",
         "ENVCTL_RUNTIME_TRUTH_MODE": "auto",
@@ -737,7 +737,7 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
             True,
         ),
         plan_agent_shell=str(resolved.get("ENVCTL_PLAN_AGENT_SHELL", "zsh") or "zsh").strip() or "zsh",
-        plan_agent_require_cmux_context=parse_bool(resolved.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT"), True),
+        plan_agent_require_cmux_context=parse_bool(resolved.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT"), False),
         plan_agent_cli_cmd=str(resolved.get("ENVCTL_PLAN_AGENT_CLI_CMD", "") or "").strip(),
         plan_agent_cmux_workspace=plan_agent_cmux_workspace,
         runtime_truth_mode=_parse_runtime_truth_mode(

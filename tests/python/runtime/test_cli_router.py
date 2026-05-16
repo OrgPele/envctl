@@ -81,13 +81,50 @@ class CliRouterTests(unittest.TestCase):
             self.assertTrue(route.flags.get("batch"), msg=token)
 
     def test_tmux_and_opencode_flags_are_parsed(self) -> None:
-        route = parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--ulw", "--tmux-new-session", "--headless"], env={})
+        route = parse_route(
+            [
+                "--plan",
+                "feature-a",
+                "--tmux",
+                "--opencode",
+                "--ulw",
+                "--new-worktree",
+                "--new-session",
+                "--fresh-session",
+                "--headless",
+            ],
+            env={},
+        )
         self.assertEqual(route.command, "plan")
         self.assertTrue(route.flags.get("tmux"))
         self.assertTrue(route.flags.get("opencode"))
         self.assertTrue(route.flags.get("ulw"))
-        self.assertTrue(route.flags.get("tmux_new_session"))
+        self.assertTrue(route.flags.get("new_worktree"))
+        self.assertTrue(route.flags.get("new_session"))
         self.assertTrue(route.flags.get("batch"))
+
+    def test_cmux_plan_agent_transport_flag_is_parsed(self) -> None:
+        route = parse_route(["--plan", "feature-a", "--cmux", "--opencode", "--new-worktree"], env={})
+        self.assertEqual(route.command, "plan")
+        self.assertTrue(route.flags.get("cmux"))
+        self.assertTrue(route.flags.get("opencode"))
+        self.assertTrue(route.flags.get("new_worktree"))
+
+    def test_plan_agent_transport_flags_are_mutually_exclusive(self) -> None:
+        for args in (
+            ["--plan", "feature-a", "--cmux", "--tmux"],
+            ["--plan", "feature-a", "--cmux", "--omx"],
+            ["--plan", "feature-a", "--tmux", "--omx"],
+        ):
+            with self.subTest(args=args):
+                with self.assertRaises(RouteError):
+                    parse_route(args, env={})
+
+    def test_tmux_new_session_compatibility_flag_is_parsed(self) -> None:
+        route = parse_route(["--plan", "feature-a", "--tmux", "--tmux-new-session"], env={})
+        self.assertEqual(route.command, "plan")
+        self.assertTrue(route.flags.get("tmux"))
+        self.assertTrue(route.flags.get("tmux_new_session"))
 
     def test_tmux_and_codex_flags_are_parsed(self) -> None:
         route = parse_route(["--plan", "feature-a", "--tmux", "--codex"], env={})
