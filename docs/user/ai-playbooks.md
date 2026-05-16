@@ -157,7 +157,15 @@ envctl codex-tmux --help
 
 If a headless plan-agent launch prints `Implementation session is running, but local app startup failed.`, the implementation session is still alive. Copy the `attach:` command from the `AI session:` section to continue watching or driving the agent. Configure `ENVCTL_BACKEND_START_CMD` / `ENVCTL_FRONTEND_START_CMD` only when that worktree also needs local services for verification; otherwise you can leave services disabled and let the AI implementation session continue.
 
+If `envctl --plan ... --tmux --opencode` prints `OpenCode session created, but prompt handoff is pending.`, the tmux/OpenCode surface is alive but envctl did not submit the prompt before the readiness window ended. Attach with the printed `tmux attach -t <session>` command. Tune cold starts with `ENVCTL_PLAN_AGENT_OPENCODE_READY_TIMEOUT_SECONDS=<seconds>` or the shared `ENVCTL_PLAN_AGENT_CLI_READY_TIMEOUT_SECONDS=<seconds>` override.
+
 If `envctl --plan ... --tmux --opencode` reports `OpenCode AI session failed to start`, inspect the shown screen excerpt first. Common causes are a missing `opencode` executable in the shell used by tmux, an OpenCode startup/config error, or a stale tmux session. Re-run with `--new-worktree` after fixing the shell/config issue.
+
+OpenCode safety knobs:
+
+- `ENVCTL_PLAN_AGENT_OPENCODE_AGENT=<agent name>` runs `opencode --agent <agent name>` while keeping prereq detection on the `opencode` executable.
+- `ENVCTL_PLAN_AGENT_OPENCODE_DISABLE_ULW=true` skips `/ulw-loop` and appends an instruction to keep implementation in the primary OpenCode session. Use this when OMO/background subagent orchestration is unstable.
+- `ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS=<seconds>` controls the post-submit observation window used to catch immediate OpenCode/OMO aborts.
 
 ## Compare Implementations
 

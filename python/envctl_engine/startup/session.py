@@ -110,4 +110,8 @@ class StartupSession:
         launch_result = self.plan_agent_launch_result
         if launch_result is None:
             return False
-        return str(getattr(launch_result, "status", "")).strip().lower() == "partial"
+        return str(getattr(launch_result, "status", "")).strip().lower() in {
+            "partial",
+            "handoff_pending",
+            "degraded",
+        }

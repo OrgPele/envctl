@@ -134,8 +134,10 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
             )
         if launch_outcomes:
             metadata["plan_agent_launch_outcomes"] = launch_outcomes
-    if session.plan_agent_handoff_degraded or session.local_startup_failures:
-        metadata["plan_agent_handoff_degraded"] = bool(session.plan_agent_handoff_degraded)
+    if session.plan_agent_handoff_degraded or session.plan_agent_launch_degraded or session.local_startup_failures:
+        metadata["plan_agent_handoff_degraded"] = bool(
+            session.plan_agent_handoff_degraded or session.plan_agent_launch_degraded
+        )
         metadata["implementation_session_running"] = bool(session.plan_agent_session_started)
         metadata["local_startup_failed"] = bool(session.local_startup_failures)
         metadata["local_startup_failures"] = [failure.to_metadata() for failure in session.local_startup_failures]

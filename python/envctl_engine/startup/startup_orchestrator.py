@@ -1539,6 +1539,14 @@ class StartupOrchestrator:
         artifacts_started = time.monotonic()
         rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
         self._emit_phase(session, "artifacts_write", artifacts_started, status="ok")
+        if session.plan_agent_launch_degraded:
+            self._print_headless_plan_session_summary(session)
+            if self._headless_plan_output_only(session):
+                return 0
+            attach_code = self._maybe_attach_plan_agent_terminal(session)
+            if attach_code is not None:
+                return attach_code
+            return 0
         if requirements_timing_enabled_impl(self, session.effective_route) and not self._suppress_timing_output(
             session.effective_route
         ):
@@ -1739,6 +1747,17 @@ class StartupOrchestrator:
             str(part).strip() for part in getattr(resolved_target, "new_session_command", ()) if str(part).strip()
         )
         session_name = str(getattr(resolved_target, "session_name", "")).strip()
+        launch_result = session.plan_agent_launch_result
+        launch_status = str(getattr(launch_result, "status", "") or "").strip().lower()
+        launch_reason = str(getattr(launch_result, "reason", "") or "").strip()
+        if launch_status == "handoff_pending":
+            lines.append("OpenCode session created, but prompt handoff is pending.")
+            if launch_reason:
+                lines.append(f"reason: {launch_reason}")
+            lines.append(
+                "safe rerun: ENVCTL_PLAN_AGENT_OPENCODE_DISABLE_ULW=true "
+                "or ENVCTL_PLAN_AGENT_OPENCODE_AGENT=<safe-agent>"
+            )
         if new_session_command:
             lines.append(
                 "existing session: envctl did not create a new AI session because one already exists for this "
@@ -2079,12 +2098,15 @@ class StartupOrchestrator:
         attach_target = getattr(launch_result, "attach_target", None)
         session_name = str(getattr(attach_target, "session_name", "")).strip() if attach_target is not None else ""
         launched_worktrees: list[str] = []
+        pending_worktrees: list[str] = []
         failed_worktrees: list[str] = []
         for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
             status = str(getattr(outcome, "status", "")).strip().lower()
             worktree_name = str(getattr(outcome, "worktree_name", "")).strip()
             if status == "launched" and worktree_name:
                 launched_worktrees.append(worktree_name)
+            elif status == "handoff_pending" and worktree_name:
+                pending_worktrees.append(worktree_name)
             elif status == "failed" and worktree_name:
                 failed_worktrees.append(worktree_name)
         self.runtime._emit(
@@ -2094,6 +2116,7 @@ class StartupOrchestrator:
             status=str(getattr(launch_result, "status", "")).strip(),
             reason=str(getattr(launch_result, "reason", "")).strip(),
             launched_worktrees=launched_worktrees,
+            handoff_pending_worktrees=pending_worktrees,
             failed_worktrees=failed_worktrees,
             session_name=session_name or None,
             implementation_session_running=session.plan_agent_session_started,

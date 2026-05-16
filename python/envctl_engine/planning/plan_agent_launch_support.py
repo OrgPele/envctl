@@ -38,14 +38,15 @@ _DEFAULT_SHELL = "zsh"
 _SURFACE_READY_DELAY_SECONDS = 0.15
 _DEFAULT_CLI_READY_DELAY_SECONDS = 0.35
 _CLI_READY_DELAY_SECONDS_BY_CLI = {
-    "codex": 5.0,
-    "opencode": 15.0,
+    "codex": 30.0,
+    "opencode": 60.0,
 }
 _CLI_READY_POLL_INTERVAL_SECONDS = 0.1
 _READ_SCREEN_LINE_COUNT = 80
 _PROMPT_PRE_SUBMIT_DELAY_SECONDS = 0.3
 _PROMPT_SUBMIT_READY_DELAY_SECONDS = 0.15
 _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS = 1.0
+_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS = 8.0
 _PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS = 0.1
 _TMUX_WINDOW_READY_TIMEOUT_SECONDS = 1.0
 _TMUX_WINDOW_READY_POLL_INTERVAL_SECONDS = 0.05
@@ -111,6 +112,13 @@ _AI_CLI_SHELL_FAILURE_MARKERS = (
     "no such file",
     "traceback",
 )
+_OPENCODE_ABORT_MARKERS = (
+    "instanceref not provided",
+    "messageabortederror",
+    "aborted process",
+    "failed to run the query 'pragma wal_checkpoint(passive)'",
+    'failed to run the query "pragma wal_checkpoint(passive)"',
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -161,6 +169,8 @@ class PlanAgentLaunchConfig:
     pr_review_comments_followup_enable: bool = True
     omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
     codex_goal_enable: bool = True
+    opencode_agent: str = ""
+    opencode_disable_ulw: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -215,6 +225,27 @@ class AiCliReadyResult:
     ready: bool
     reason: str
     screen_excerpt: str = ""
+
+
+@dataclass(slots=True, frozen=True)
+class _TmuxPaneDiagnostics:
+    exists: bool
+    pane_current_command: str = ""
+    pane_current_path: str = ""
+    pane_dead: bool = False
+    error: str = ""
+
+
+@dataclass(slots=True, frozen=True)
+class _TmuxBootstrapHandoff:
+    status: str
+    reason: str
+    classification: str
+    screen_excerpt: str = ""
+    pane_current_command: str = ""
+    pane_current_path: str = ""
+    prompt_sent: bool = False
+    prompt_accepted: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -359,7 +390,11 @@ def _cmux_transport_configured(
 ) -> bool:
     if bool(route_flags.get("cmux")):
         return True
-    if str(env_map.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE") or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE") or "").strip():
+    if str(
+        env_map.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
+        or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
+        or ""
+    ).strip():
         return True
     return parse_bool(env_map.get("CMUX") or config.raw.get("CMUX"), False)
 
@@ -483,11 +518,21 @@ def resolve_plan_agent_launch_config(
         or config.raw.get("ENVCTL_PLAN_AGENT_CODEX_YOLO"),
         True,
     )
-    cli_command = str(
+    opencode_agent = str(
+        env_map.get("ENVCTL_PLAN_AGENT_OPENCODE_AGENT")
+        or config.raw.get("ENVCTL_PLAN_AGENT_OPENCODE_AGENT")
+        or ""
+    ).strip()
+    explicit_cli_command = str(
         env_map.get("ENVCTL_PLAN_AGENT_CLI_CMD")
         or config.raw.get("ENVCTL_PLAN_AGENT_CLI_CMD")
-        or _default_plan_agent_cli_command(cli, codex_yolo_enabled=codex_yolo_enabled)
-    ).strip() or cli
+        or ""
+    ).strip()
+    cli_command = explicit_cli_command or _default_plan_agent_cli_command(
+        cli,
+        codex_yolo_enabled=codex_yolo_enabled,
+        opencode_agent=opencode_agent,
+    )
     preset = str(
         env_map.get("ENVCTL_PLAN_AGENT_PRESET")
         or config.raw.get("ENVCTL_PLAN_AGENT_PRESET")
@@ -530,10 +575,17 @@ def resolve_plan_agent_launch_config(
         or config.raw.get("ENVCTL_PLAN_AGENT_APPEND_ULW"),
         False,
     )
+    opencode_disable_ulw = parse_bool(
+        env_map.get("ENVCTL_PLAN_AGENT_OPENCODE_DISABLE_ULW")
+        or config.raw.get("ENVCTL_PLAN_AGENT_OPENCODE_DISABLE_ULW"),
+        False,
+    )
     if bool(route_flags.get("ulw")):
         ulw_loop_prefix = True
         if transport in {"cmux", "tmux"} and cli == "opencode":
             direct_prompt_enabled = True
+    if cli == "opencode" and opencode_disable_ulw:
+        ulw_loop_prefix = False
     omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
     if bool(route_flags.get("ultragoal")):
         omx_workflow = "ultragoal"
@@ -582,15 +634,28 @@ def resolve_plan_agent_launch_config(
         ulw_suffix=ulw_suffix,
         omx_workflow=omx_workflow,
         codex_goal_enable=goal_enabled,
+        opencode_agent=opencode_agent,
+        opencode_disable_ulw=opencode_disable_ulw,
     )
 
 
-def _default_plan_agent_cli_command(cli: str, *, codex_yolo_enabled: bool = True) -> str:
+def _default_plan_agent_cli_command(
+    cli: str,
+    *,
+    codex_yolo_enabled: bool = True,
+    opencode_agent: str = "",
+) -> str:
     normalized = str(cli).strip().lower()
     if normalized == "codex":
         if codex_yolo_enabled:
             return f"codex {_CODEX_BYPASS_FLAGS}"
         return "codex"
+    if normalized == "opencode":
+        command = ["opencode"]
+        agent = str(opencode_agent or "").strip()
+        if agent:
+            command.extend(["--agent", agent])
+        return shlex.join(command)
     return normalized or "codex"
 
 
@@ -713,11 +778,7 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
     )
     workspace_id = None if launch_config.transport == "tmux" else _resolve_workspace_id(runtime, launch_config)
-    target_workspace = (
-        None
-        if launch_config.transport == "tmux"
-        else (launch_config.cmux_workspace or _default_target_workspace_title(runtime, launch_config))
-    )
+    configured_workspace = None if launch_config.transport == "tmux" else launch_config.cmux_workspace
     payload: dict[str, object] = {
         "enabled": launch_config.enabled,
         "transport": launch_config.transport,
@@ -732,11 +793,17 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         "direct_prompt_enabled": launch_config.direct_prompt_enabled,
         "ulw_loop_prefix": launch_config.ulw_loop_prefix,
         "ulw_suffix": launch_config.ulw_suffix,
+        "cli_ready_timeout_seconds": _cli_ready_delay_seconds(launch_config.cli, runtime=runtime),
+        "opencode_prompt_accept_timeout_seconds": _opencode_prompt_accept_timeout_seconds(runtime)
+        if launch_config.cli == "opencode"
+        else None,
+        "opencode_agent": launch_config.opencode_agent or None,
+        "opencode_disable_ulw": launch_config.opencode_disable_ulw,
         "browser_e2e_followup_enable": launch_config.browser_e2e_followup_enable,
         "pr_review_comments_followup_enable": launch_config.pr_review_comments_followup_enable,
         "require_cmux_context": launch_config.require_cmux_context,
         "workspace_id": workspace_id,
-        "configured_workspace": target_workspace or None,
+        "configured_workspace": configured_workspace or None,
         "reason": "disabled",
     }
     if str(getattr(route, "command", "")).strip() != "plan":
@@ -982,7 +1049,9 @@ def launch_plan_agent_terminals(
             reason=workspace_target.starter_surface_probe_result,
         )
     outcomes: list[PlanAgentLaunchOutcome] = []
-    starter_surface_id = None if _route_requests_fresh_plan_agent_session(route) else workspace_target.starter_surface_id
+    starter_surface_id = (
+        None if _route_requests_fresh_plan_agent_session(route) else workspace_target.starter_surface_id
+    )
     for worktree in created_worktrees:
         outcome = _launch_single_worktree(
             runtime,
@@ -1124,7 +1193,7 @@ def _launch_plan_agent_tmux_terminals(
             worktree=worktree,
         )
         outcomes.append(outcome)
-        if first_attach_target is None and outcome.status == "launched":
+        if first_attach_target is None and outcome.status in {"launched", "handoff_pending"}:
             first_attach_target = PlanAgentAttachTarget(
                 repo_root=repo_root,
                 session_name=session_name,
@@ -1133,13 +1202,15 @@ def _launch_plan_agent_tmux_terminals(
                 attach_command=_guidance_attach_command(session_name),
             )
     launched = [item for item in outcomes if item.status == "launched"]
+    handoff_pending = [item for item in outcomes if item.status == "handoff_pending"]
     failed = [item for item in outcomes if item.status == "failed"]
     attach_target = first_attach_target or existing_attach_target
-    if failed and launched:
+    if failed and (launched or handoff_pending):
         details = _summarize_failed_launch_outcomes(failed)
         suffix = f" Details: {details}." if details else ""
         _print_launch_summary(
-            f"Plan agent launch finished with partial success: launched {len(launched)}, failed {len(failed)}.{suffix}"
+            "Plan agent launch finished with partial success: "
+            f"launched {len(launched)}, handoff pending {len(handoff_pending)}, failed {len(failed)}.{suffix}"
         )
         return PlanAgentLaunchResult(
             status="partial",
@@ -1152,6 +1223,19 @@ def _launch_plan_agent_tmux_terminals(
         suffix = f" Details: {details}." if details else ""
         _print_launch_summary(f"Plan agent launch failed for {len(failed)} worktree(s).{suffix}")
         return PlanAgentLaunchResult(status="failed", reason="launch_failed", outcomes=tuple(outcomes))
+    if handoff_pending:
+        reason = str(handoff_pending[0].reason or "handoff_pending").strip() or "handoff_pending"
+        _print_launch_summary(
+            "Plan agent launch handoff pending for "
+            f"{len(handoff_pending)} tmux session(s): {reason}. Attach with: "
+            f"{shlex.join(attach_target.attach_command) if attach_target is not None else 'tmux'}"
+        )
+        return PlanAgentLaunchResult(
+            status="handoff_pending",
+            reason=reason,
+            outcomes=tuple(outcomes),
+            attach_target=attach_target,
+        )
     _print_launch_summary(f"Plan agent launch prepared {len(launched)} tmux session(s).")
     return PlanAgentLaunchResult(
         status="launched",
@@ -1757,7 +1841,7 @@ def _launch_single_tmux_worktree(
         source="tmux_window",
         transport="tmux",
     )
-    error = _run_tmux_worktree_bootstrap(
+    bootstrap_result = _run_tmux_worktree_bootstrap(
         runtime,
         session_name=session_name,
         window_name=window_name,
@@ -1765,7 +1849,53 @@ def _launch_single_tmux_worktree(
         workflow=workflow,
         worktree=worktree,
     )
+    if isinstance(bootstrap_result, _TmuxBootstrapHandoff):
+        _mark_worktree_plan_agent_launch(
+            worktree,
+            status=bootstrap_result.status,
+            transport="tmux",
+            session_name=session_name,
+            window_name=window_name,
+            handoff_reason=bootstrap_result.reason,
+            prompt_sent=bootstrap_result.prompt_sent,
+            prompt_accepted=bootstrap_result.prompt_accepted,
+            last_screen_excerpt=bootstrap_result.screen_excerpt,
+        )
+        runtime._emit(
+            "planning.agent_launch.handoff_pending",
+            reason=bootstrap_result.reason,
+            classification=bootstrap_result.classification,
+            session_name=session_name,
+            window_name=window_name,
+            worktree=worktree.name,
+            pane_current_command=bootstrap_result.pane_current_command or None,
+            pane_current_path=bootstrap_result.pane_current_path or None,
+            transport="tmux",
+            cli=launch_config.cli,
+        )
+        return PlanAgentLaunchOutcome(
+            worktree_name=worktree.name,
+            worktree_root=worktree.root,
+            surface_id=None,
+            status=bootstrap_result.status,
+            reason=bootstrap_result.reason,
+            transport="tmux",
+            cli=launch_config.cli,
+        )
+    error = bootstrap_result
     if error is not None:
+        _mark_worktree_plan_agent_launch(
+            worktree,
+            status="failed",
+            transport="tmux",
+            session_name=session_name,
+            window_name=window_name,
+            handoff_reason=str(error),
+            prompt_sent=False,
+            prompt_accepted=False,
+            last_screen_excerpt=str(error),
+            launch_error=str(error),
+        )
         runtime._emit(
             "planning.agent_launch.failed",
             reason="bootstrap_failed",
@@ -1791,6 +1921,15 @@ def _launch_single_tmux_worktree(
         workflow_mode=workflow.mode,
         codex_cycles=workflow.codex_cycles,
         transport="tmux",
+    )
+    _mark_worktree_plan_agent_launch(
+        worktree,
+        status="launched",
+        transport="tmux",
+        session_name=session_name,
+        window_name=window_name,
+        prompt_sent=True,
+        prompt_accepted=True,
     )
     _persist_runtime_events_snapshot(runtime)
     return PlanAgentLaunchOutcome(
@@ -2607,6 +2746,12 @@ def _mark_worktree_plan_agent_launch(
     status: str,
     transport: str,
     session_name: str,
+    window_name: str = "",
+    handoff_reason: str = "",
+    prompt_sent: bool | None = None,
+    prompt_accepted: bool | None = None,
+    last_screen_excerpt: str = "",
+    launch_error: str = "",
 ) -> None:
     path = Path(worktree.root) / _WORKTREE_PROVENANCE_PATH
     if not path.is_file():
@@ -2624,6 +2769,22 @@ def _mark_worktree_plan_agent_launch(
     normalized_session = str(session_name or "").strip()
     if normalized_session:
         payload["session_name"] = normalized_session
+    normalized_window = str(window_name or "").strip()
+    if normalized_window:
+        payload["window_name"] = normalized_window
+    normalized_reason = str(handoff_reason or "").strip()
+    if normalized_reason:
+        payload["handoff_reason"] = normalized_reason
+    if prompt_sent is not None:
+        payload["prompt_sent"] = bool(prompt_sent)
+    if prompt_accepted is not None:
+        payload["prompt_accepted"] = bool(prompt_accepted)
+    normalized_excerpt = str(last_screen_excerpt or "").strip()
+    if normalized_excerpt:
+        payload["last_screen_excerpt"] = scrub_sensitive_text(normalized_excerpt)
+    normalized_error = str(launch_error or "").strip()
+    if normalized_error:
+        payload["launch_error"] = scrub_sensitive_text(normalized_error)
     payload["launch_recorded_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     try:
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -2693,7 +2854,7 @@ def _launch_tmux_cli_bootstrap_commands(
 
 def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: str, cli: str) -> AiCliReadyResult:
     normalized_cli = str(cli).strip().lower()
-    timeout_seconds = _cli_ready_delay_seconds(normalized_cli)
+    timeout_seconds = _cli_ready_delay_seconds(normalized_cli, runtime=runtime)
     if normalized_cli not in {"codex", "opencode"}:
         time.sleep(timeout_seconds)
         return AiCliReadyResult(ready=True, reason="unsupported_cli_assumed_ready")
@@ -2708,6 +2869,137 @@ def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: st
         ready=False,
         reason=f"{normalized_cli}_ready_timeout",
         screen_excerpt=_screen_excerpt(last_screen),
+    )
+
+
+def _tmux_pane_diagnostics(runtime: Any, *, session_name: str, window_name: str) -> _TmuxPaneDiagnostics:
+    separator = "|||ENVCTL_TMUX_PANE|||"
+    result = _run_tmux_probe(
+        runtime,
+        (
+            "tmux",
+            "display-message",
+            "-p",
+            "-t",
+            _tmux_target(session_name, window_name),
+            f"#{{pane_current_command}}{separator}#{{pane_current_path}}{separator}#{{pane_dead}}",
+        ),
+        cwd=Path(runtime.config.base_dir).resolve(),
+    )
+    if result.returncode != 0:
+        return _TmuxPaneDiagnostics(
+            exists=False,
+            error=_tmux_completed_process_error_text(result),
+        )
+    command, command_sep, rest = str(getattr(result, "stdout", "")).strip().partition(separator)
+    path, path_sep, pane_dead = rest.partition(separator)
+    if not command_sep or not path_sep:
+        return _TmuxPaneDiagnostics(exists=False, error="tmux_pane_diagnostics_parse_failed")
+    return _TmuxPaneDiagnostics(
+        exists=True,
+        pane_current_command=command.strip(),
+        pane_current_path=path.strip(),
+        pane_dead=str(pane_dead).strip() in {"1", "true", "yes"},
+    )
+
+
+def _classify_tmux_cli_readiness_timeout(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    cli: str,
+    ready_result: AiCliReadyResult,
+) -> _TmuxBootstrapHandoff:
+    normalized_cli = str(cli).strip().lower()
+    screen_excerpt = str(ready_result.screen_excerpt or "").strip()
+    lower_excerpt = screen_excerpt.lower()
+    if "command not found" in lower_excerpt:
+        return _TmuxBootstrapHandoff(
+            status="failed",
+            reason=str(ready_result.reason or f"{normalized_cli}_ready_timeout"),
+            classification="command_not_found",
+            screen_excerpt=screen_excerpt,
+        )
+    if any(marker in lower_excerpt for marker in _AI_CLI_SHELL_FAILURE_MARKERS):
+        return _TmuxBootstrapHandoff(
+            status="failed",
+            reason=str(ready_result.reason or f"{normalized_cli}_ready_timeout"),
+            classification="shell_failure",
+            screen_excerpt=screen_excerpt,
+        )
+    diagnostics = _tmux_pane_diagnostics(runtime, session_name=session_name, window_name=window_name)
+    if not diagnostics.exists or diagnostics.pane_dead:
+        return _TmuxBootstrapHandoff(
+            status="failed",
+            reason=str(ready_result.reason or f"{normalized_cli}_ready_timeout"),
+            classification="pane_exited",
+            screen_excerpt=screen_excerpt,
+            pane_current_command=diagnostics.pane_current_command,
+            pane_current_path=diagnostics.pane_current_path,
+        )
+    if normalized_cli == "opencode" and _pane_command_matches_cli(diagnostics.pane_current_command, "opencode"):
+        return _TmuxBootstrapHandoff(
+            status="handoff_pending",
+            reason=str(ready_result.reason or "opencode_ready_timeout"),
+            classification="cli_running_not_ready",
+            screen_excerpt=screen_excerpt,
+            pane_current_command=diagnostics.pane_current_command,
+            pane_current_path=diagnostics.pane_current_path,
+        )
+    if normalized_cli == "opencode" and _screen_has_opencode_context(screen_excerpt):
+        return _TmuxBootstrapHandoff(
+            status="handoff_pending",
+            reason=str(ready_result.reason or "opencode_ready_timeout"),
+            classification="ready_marker_mismatch",
+            screen_excerpt=screen_excerpt,
+            pane_current_command=diagnostics.pane_current_command,
+            pane_current_path=diagnostics.pane_current_path,
+        )
+    return _TmuxBootstrapHandoff(
+        status="failed",
+        reason=str(ready_result.reason or f"{normalized_cli}_ready_timeout"),
+        classification="unknown_timeout",
+        screen_excerpt=screen_excerpt,
+        pane_current_command=diagnostics.pane_current_command,
+        pane_current_path=diagnostics.pane_current_path,
+    )
+
+
+def _pane_command_matches_cli(pane_current_command: str, cli: str) -> bool:
+    command = Path(str(pane_current_command or "").strip()).name.lower()
+    normalized_cli = str(cli or "").strip().lower()
+    return bool(command and normalized_cli and (command == normalized_cli or command.endswith(f"/{normalized_cli}")))
+
+
+def _screen_has_opencode_context(screen_excerpt: str) -> bool:
+    lower_text = str(screen_excerpt or "").lower()
+    return any(marker in lower_text for marker in ("opencode", "sisyphus", "ultraworker", "ctrl+p commands", "/status"))
+
+
+def _emit_tmux_ready_timeout_event(
+    runtime: Any,
+    *,
+    session_name: str,
+    window_name: str,
+    cli: str,
+    worktree: CreatedPlanWorktree,
+    classification: _TmuxBootstrapHandoff,
+) -> None:
+    runtime._emit(
+        "planning.agent_launch.ready_timeout",
+        cli=str(cli).strip().lower(),
+        transport="tmux",
+        session_name=session_name,
+        window_name=window_name,
+        worktree=worktree.name,
+        reason=classification.reason,
+        classification=classification.classification,
+        status=classification.status,
+        pane_current_command=classification.pane_current_command or None,
+        pane_current_path=classification.pane_current_path or None,
+        attach_command=shlex.join(_guidance_attach_command(session_name)),
+        screen_excerpt=classification.screen_excerpt,
     )
 
 
@@ -2748,7 +3040,9 @@ def _submit_tmux_prompt_workflow_step(
     window_name: str,
     prompt_text: str,
     cli: str = "",
+    worktree_root: Path | None = None,
 ) -> str | None:
+    log_scan_since = time.time()
     paste_error = _send_tmux_prompt(runtime, session_name=session_name, window_name=window_name, text=prompt_text)
     if paste_error is not None:
         return paste_error
@@ -2763,6 +3057,8 @@ def _submit_tmux_prompt_workflow_step(
         window_name=window_name,
         cli=cli,
         prompt_text=prompt_text,
+        log_scan_since=log_scan_since,
+        worktree_root=worktree_root,
     )
     if not accepted.ready:
         return _format_ai_cli_ready_failure(accepted)
@@ -2777,7 +3073,7 @@ def _run_tmux_worktree_bootstrap(
     launch_config: PlanAgentLaunchConfig,
     workflow: _PlanAgentWorkflow,
     worktree: CreatedPlanWorktree,
-) -> str | None:
+) -> str | _TmuxBootstrapHandoff | None:
     send_errors = _launch_tmux_cli_bootstrap_commands(
         runtime,
         session_name=session_name,
@@ -2795,6 +3091,23 @@ def _run_tmux_worktree_bootstrap(
         cli=launch_config.cli,
     )
     if ready_result is not None and not ready_result.ready:
+        timeout_classification = _classify_tmux_cli_readiness_timeout(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            cli=launch_config.cli,
+            ready_result=ready_result,
+        )
+        _emit_tmux_ready_timeout_event(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            cli=launch_config.cli,
+            worktree=worktree,
+            classification=timeout_classification,
+        )
+        if timeout_classification.status == "handoff_pending":
+            return timeout_classification
         return _format_ai_cli_ready_failure(ready_result)
     goal_error = _maybe_submit_tmux_codex_goal(
         runtime,
@@ -2831,6 +3144,7 @@ def _run_tmux_worktree_bootstrap(
         window_name=window_name,
         prompt_text=prompt_text,
         cli=launch_config.cli,
+        worktree_root=worktree.root,
     )
     if submit_error is not None:
         return submit_error
@@ -3626,12 +3940,23 @@ def _resolve_preset_submission_text(
             prompt_text=resolved,
             worktree=worktree,
         )
+        if normalized_cli == "opencode" and launch_config.opencode_disable_ulw:
+            resolved = _append_opencode_no_ulw_instruction(resolved)
     return _shape_prompt_text(
         resolved,
         direct_prompt=direct_prompt,
         ulw_loop_prefix=launch_config.ulw_loop_prefix,
         ulw_suffix=launch_config.ulw_suffix,
     )
+
+
+def _append_opencode_no_ulw_instruction(prompt_text: str) -> str:
+    instruction = (
+        "## OpenCode execution constraint\n"
+        "Do not spawn OMO/background subagents unless the user explicitly asks for that in this session; "
+        "implement in the current primary OpenCode session."
+    )
+    return f"{str(prompt_text).rstrip()}\n\n{instruction}\n"
 
 
 def _append_runtime_addresses_for_preset(
@@ -5347,14 +5672,70 @@ def _wait_for_omx_attach_target(
     return None
 
 
-def _cli_ready_delay_seconds(cli: str) -> float:
+def _cli_ready_delay_seconds(cli: str, *, runtime: Any | None = None) -> float:
     normalized = str(cli).strip().lower()
-    return float(_CLI_READY_DELAY_SECONDS_BY_CLI.get(normalized, _DEFAULT_CLI_READY_DELAY_SECONDS))
+    default = float(_CLI_READY_DELAY_SECONDS_BY_CLI.get(normalized, _DEFAULT_CLI_READY_DELAY_SECONDS))
+    keys = [
+        f"ENVCTL_PLAN_AGENT_{normalized.upper()}_READY_TIMEOUT_SECONDS",
+        "ENVCTL_PLAN_AGENT_CLI_READY_TIMEOUT_SECONDS",
+    ]
+    return _float_runtime_config_value(runtime, keys=keys, default=default, minimum=0.1)
+
+
+def _opencode_prompt_accept_timeout_seconds(runtime: Any | None = None) -> float:
+    return _float_runtime_config_value(
+        runtime,
+        keys=("ENVCTL_PLAN_AGENT_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS",),
+        default=_OPENCODE_PROMPT_ACCEPT_TIMEOUT_SECONDS,
+        minimum=0.1,
+    )
+
+
+def _float_runtime_config_value(
+    runtime: Any | None,
+    *,
+    keys: tuple[str, ...] | list[str],
+    default: float,
+    minimum: float,
+) -> float:
+    if runtime is None:
+        return float(default)
+    env = getattr(runtime, "env", {}) or {}
+    config_raw = getattr(getattr(runtime, "config", None), "raw", {}) or {}
+    for key in keys:
+        raw = None
+        if isinstance(env, Mapping):
+            raw = env.get(key)
+        if (raw is None or str(raw).strip() == "") and isinstance(config_raw, Mapping):
+            raw = config_raw.get(key)
+        if raw is None or str(raw).strip() == "":
+            continue
+        try:
+            parsed = float(str(raw).strip())
+        except ValueError:
+            _emit_plan_agent_config_warning(runtime, key=key, value=raw, reason="invalid_float")
+            continue
+        if parsed < minimum:
+            _emit_plan_agent_config_warning(runtime, key=key, value=raw, reason="below_minimum")
+            continue
+        return parsed
+    return float(default)
+
+
+def _emit_plan_agent_config_warning(runtime: Any | None, *, key: str, value: object, reason: str) -> None:
+    if runtime is None or not hasattr(runtime, "_emit"):
+        return
+    runtime._emit(
+        "planning.agent_launch.config_warning",
+        key=key,
+        value=str(value),
+        reason=reason,
+    )
 
 
 def _wait_for_cli_ready(runtime: Any, *, workspace_id: str, surface_id: str, cli: str) -> None:
     normalized_cli = str(cli).strip().lower()
-    timeout_seconds = _cli_ready_delay_seconds(normalized_cli)
+    timeout_seconds = _cli_ready_delay_seconds(normalized_cli, runtime=runtime)
     if normalized_cli not in {"codex", "opencode"}:
         time.sleep(timeout_seconds)
         return
@@ -5504,6 +5885,72 @@ def _screen_looks_active(cli: str, screen: str) -> bool:
     return False
 
 
+def _opencode_abort_diagnostic(
+    runtime: Any,
+    *,
+    log_scan_since: float | None,
+    worktree_root: Path | None,
+) -> dict[str, object] | None:
+    log_path, evidence = _latest_opencode_abort_log(runtime, log_scan_since=log_scan_since)
+    if log_path is None or not evidence:
+        return None
+    return {
+        "log_path": str(log_path),
+        "evidence": evidence,
+        "worktree_clean": _worktree_clean_state(runtime, worktree_root=worktree_root),
+    }
+
+
+def _latest_opencode_abort_log(runtime: Any, *, log_scan_since: float | None) -> tuple[Path | None, str]:
+    home = Path(str(getattr(runtime, "env", {}).get("HOME") or Path.home())).expanduser()
+    log_dir = home / ".local" / "share" / "opencode" / "log"
+    try:
+        candidates = [path for path in log_dir.glob("*.log") if path.is_file()]
+    except OSError:
+        return None, ""
+    if log_scan_since is not None:
+        cutoff = float(log_scan_since) - 5.0
+        filtered: list[Path] = []
+        for path in candidates:
+            try:
+                if path.stat().st_mtime >= cutoff:
+                    filtered.append(path)
+            except OSError:
+                continue
+        candidates = filtered
+    candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0.0, reverse=True)
+    for path in candidates[:3]:
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-80:]
+        except OSError:
+            continue
+        text = "\n".join(lines)
+        lower_text = text.lower()
+        for marker in _OPENCODE_ABORT_MARKERS:
+            if marker in lower_text:
+                return path, _screen_excerpt(text, limit=300)
+    return None, ""
+
+
+def _worktree_clean_state(runtime: Any, *, worktree_root: Path | None) -> bool | None:
+    if worktree_root is None:
+        return None
+    root = Path(worktree_root)
+    if not root.exists():
+        return None
+    result = subprocess.run(
+        ["git", "status", "--short"],
+        capture_output=True,
+        text=True,
+        cwd=root,
+        env=dict(getattr(runtime, "env", {})),
+        timeout=10.0,
+    )
+    if result.returncode != 0:
+        return None
+    return not bool(str(result.stdout).strip())
+
+
 def _wait_for_tmux_prompt_accepted(
     runtime: Any,
     *,
@@ -5511,13 +5958,33 @@ def _wait_for_tmux_prompt_accepted(
     window_name: str,
     cli: str,
     prompt_text: str,
+    log_scan_since: float | None = None,
+    worktree_root: Path | None = None,
 ) -> AiCliReadyResult:
     normalized_cli = str(cli).strip().lower()
     if normalized_cli != "opencode":
         return AiCliReadyResult(ready=True, reason="post_submit_check_not_required")
-    deadline = time.monotonic() + _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS
+    deadline = time.monotonic() + _opencode_prompt_accept_timeout_seconds(runtime)
     last_screen = ""
     while time.monotonic() < deadline:
+        abort_diagnostic = _opencode_abort_diagnostic(
+            runtime,
+            log_scan_since=log_scan_since,
+            worktree_root=worktree_root,
+        )
+        if abort_diagnostic is not None:
+            runtime._emit(
+                "planning.agent_launch.opencode_prompt_failed",
+                reason="opencode_prompt_aborted",
+                log_path=abort_diagnostic["log_path"],
+                worktree_clean=abort_diagnostic["worktree_clean"],
+                evidence=abort_diagnostic["evidence"],
+            )
+            return AiCliReadyResult(
+                ready=False,
+                reason="opencode_prompt_aborted",
+                screen_excerpt=f"{abort_diagnostic['evidence']} ({abort_diagnostic['log_path']})",
+            )
         last_screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
         if _post_submit_screen_looks_accepted(normalized_cli, last_screen, prompt_text):
             return AiCliReadyResult(ready=True, reason="prompt_accepted", screen_excerpt=_screen_excerpt(last_screen))
@@ -5540,9 +6007,24 @@ def _wait_for_surface_prompt_accepted(
     normalized_cli = str(cli).strip().lower()
     if normalized_cli != "opencode":
         return AiCliReadyResult(ready=True, reason="post_submit_check_not_required")
-    deadline = time.monotonic() + _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS
+    deadline = time.monotonic() + _opencode_prompt_accept_timeout_seconds(runtime)
     last_screen = ""
+    log_scan_since = time.time()
     while time.monotonic() < deadline:
+        abort_diagnostic = _opencode_abort_diagnostic(runtime, log_scan_since=log_scan_since, worktree_root=None)
+        if abort_diagnostic is not None:
+            runtime._emit(
+                "planning.agent_launch.opencode_prompt_failed",
+                reason="opencode_prompt_aborted",
+                log_path=abort_diagnostic["log_path"],
+                worktree_clean=abort_diagnostic["worktree_clean"],
+                evidence=abort_diagnostic["evidence"],
+            )
+            return AiCliReadyResult(
+                ready=False,
+                reason="opencode_prompt_aborted",
+                screen_excerpt=f"{abort_diagnostic['evidence']} ({abort_diagnostic['log_path']})",
+            )
         last_screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
         if _post_submit_screen_looks_accepted(normalized_cli, last_screen, prompt_text):
             return AiCliReadyResult(ready=True, reason="prompt_accepted", screen_excerpt=_screen_excerpt(last_screen))
