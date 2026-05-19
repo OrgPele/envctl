@@ -47,7 +47,9 @@ WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
 WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
 FRESH_AI_LAUNCH_IN_PROGRESS_TTL_SECONDS = 24 * 60 * 60
 _WORKTREE_GIT_HOOKS_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "false", "0", "no"))
-_WORKTREE_GIT_HOOKS_INHERITED_VALUES = frozenset(("inherit", "inherited", "enabled", "enable", "on", "true", "1", "yes"))
+_WORKTREE_GIT_HOOKS_INHERITED_VALUES = frozenset(
+    ("inherit", "inherited", "enabled", "enable", "on", "true", "1", "yes")
+)
 
 
 def _worktree_spinner_policy(self: Any, *, op_id: str) -> SpinnerPolicy:
@@ -1324,7 +1326,11 @@ def _create_feature_worktrees_result(
                     result=result,
                 )
                 if error:
-                    return PlanWorktreeSyncResult(raw_projects=[], created_worktrees=tuple(created_worktrees), error=error)
+                    return PlanWorktreeSyncResult(
+                        raw_projects=[],
+                        created_worktrees=tuple(created_worktrees),
+                        error=error,
+                    )
         else:
             _write_worktree_provenance(
                 self,
