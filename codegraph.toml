@@ -1,0 +1,10 @@
+# codegraph project config.
+#
+# The envctl repo is a Python package, not a frontend/backend monorepo.
+# Keep this scoped to real Python package roots so `codegraph index .` and
+# `codegraph arch-check` do not inherit stale global paths from other repos.
+
+packages = [
+  "python/envctl_engine",
+  "tests/python",
+]
