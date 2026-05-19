@@ -133,21 +133,15 @@ To confirm the release gate runs the same test lane:
 .venv/bin/python scripts/release_shipability_gate.py --repo . --check-tests
 ```
 
-Codegraph validation is scoped by `codegraph.toml` to the repo's real Python package roots:
-`python/envctl_engine` and `tests/python`. Use the standard incremental lane after code changes:
+Serena is the repo's symbolic code navigation tool. It is configured by `.serena/project.yml` and should be used for
+architecture discovery, dependency tracing, and refactor planning when available:
 
 ```bash
-codegraph index . --since HEAD~1
-codegraph arch-check --json
+serena project health-check
 ```
 
-If a shared local codegraph database has stale entries from another repository, the configured packages
-keep `arch-check` scoped to envctl paths and prevent unrelated paths such as `frontend/` or `backend/`
-from affecting this repo's result.
-
-The repo keeps codegraph's structural checks enabled. `.arch-policies.toml` disables only the default
-orphan detector because it treats normal Python pytest classes, CLI command handlers, and externally
-invoked entry points as dead code.
+Serena is not a CI gate for this repository. Keep CI-style validation centered on pytest, ruff, build, and the release
+shipability gate. Use Serena as an interactive symbol/reference layer before broad text search.
 
 Use narrower scopes while iterating, then widen before finishing. Targeted `unittest` runs remain useful for focused module work, but `pytest -q` is the authoritative repo-wide signal.
 
