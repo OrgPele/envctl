@@ -12,3 +12,6 @@ tmp/
 htmlcov/
 .DS_Store
 .omx/
+
+# Serena local overrides and generated caches
+.serena/project.local.yml

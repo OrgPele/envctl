@@ -139,7 +139,10 @@ class _FakeProcessRunner:
         command = tuple(str(part) for part in cmd)
         if self.docker_connect_error and command and command[0] == "docker":
             return SimpleNamespace(returncode=1, stdout="", stderr=self.docker_connect_error)
-        if len(command) >= 5 and command[0] == "git" and command[3] == "worktree" and command[4] == "add":
+        if len(command) >= 5 and command[0] == "git" and "worktree" in command:
+            worktree_index = command.index("worktree")
+            if worktree_index + 1 >= len(command) or command[worktree_index + 1] != "add":
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
             target = Path(str(command[-1]))
             target.mkdir(parents=True, exist_ok=True)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -304,7 +307,10 @@ class _FakeSetupWorktreeRunner(_FakeProcessRunner):
 
     def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
         command = tuple(str(part) for part in cmd)
-        if len(command) >= 5 and command[0] == "git" and command[3] == "worktree" and command[4] == "add":
+        if len(command) >= 5 and command[0] == "git" and "worktree" in command:
+            worktree_index = command.index("worktree")
+            if worktree_index + 1 >= len(command) or command[worktree_index + 1] != "add":
+                return super().run(cmd, cwd=cwd, env=env, timeout=timeout)
             self.run_calls.append((tuple(cmd), str(cwd)))
             self.run_envs.append(dict(env) if env is not None else None)
             if self.fail_worktree_add:

@@ -196,6 +196,12 @@ Use `--plan` when:
 - you want repo-native selection by plan/task
 - multiple people or agents need to run the same implementation matrix
 
+Envctl-managed worktree creation disables repo-local Git hooks by default so local developer automation cannot make
+internal `git worktree add` setup fail after a worktree has already been created. This applies to `--plan`,
+`--setup-worktree`, `--setup-worktrees`, and `ensure-worktree`. The override is command-scoped and does not modify repo
+or global Git config. Set `ENVCTL_WORKTREE_GIT_HOOKS=inherit` when you want those hooks to run during envctl-managed
+worktree creation.
+
 New worktrees created by `envctl` now persist their origin branch in:
 
 ```text

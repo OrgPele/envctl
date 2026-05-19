@@ -134,4 +134,8 @@ When a plan is scaled to zero through `envctl --plan`, envctl blasts the related
 - active: `todo/plans/backend/checkout.md`
 - archived: `todo/done/backend/checkout.md`
 
+Envctl-managed worktree creation for `--plan`, `--setup-worktree(s)`, and `ensure-worktree` disables repo-local Git
+hooks by default with a command-scoped Git config override. Set `ENVCTL_WORKTREE_GIT_HOOKS=inherit` to opt into
+repo-local hooks for those worktree creation commands.
+
 For fuller operational guidance, see [Python Engine Guide](../user/python-engine-guide.md).
