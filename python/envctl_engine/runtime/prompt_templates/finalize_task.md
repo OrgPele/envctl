@@ -17,7 +17,7 @@ $ARGUMENTS
    - `envctl endpoints --project <current-worktree-name> --json` to read canonical active URLs and dependency ports.
    - `envctl qa-user ensure --project <current-worktree-name> ... --json` when deterministic auth credentials are needed.
    - `envctl playwright --project <current-worktree-name> -- <command>` for Playwright/browser tests against the active frontend.
-   - If this prompt is installed as a Codex skill or direct prompt, you may also use available Codex skills named in the session, such as `$browser-use`, for browser verification.
+   - If this prompt is installed as a Codex skill or direct prompt, you may also use available Codex skills named in the session, such as `$browser`, for browser verification.
 5. Update `.envctl-commit-message.md` so the next commit message reflects the finalized implementation accurately.
 6. Commit the work.
 7. Push the branch.
