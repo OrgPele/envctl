@@ -721,7 +721,8 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("Runtime addresses used or produced during validation: dependencies, backend, and frontend", codex)
         self.assertIn("Playwright", codex)
         self.assertIn("running service", codex)
-        self.assertEqual(claude, codex)
+        self.assertNotEqual(claude, codex)
+        self.assertIn("$browser-use", claude)
         self.assertNotEqual(opencode, codex)
         self.assertIn("$browser-use", opencode)
 

@@ -544,10 +544,14 @@ def _render_codex_template(template: PromptTemplate) -> str:
 
 
 def _render_claude_template(template: PromptTemplate) -> str:
-    return template.body
+    return _render_non_codex_template(template)
 
 
 def _render_opencode_template(template: PromptTemplate) -> str:
+    return _render_non_codex_template(template)
+
+
+def _render_non_codex_template(template: PromptTemplate) -> str:
     return re.sub(r"\$browser(?!-use)", "$browser-use", template.body)
 
 
