@@ -218,6 +218,18 @@ When the source repo already has common local dependency/runtime artifacts, envc
 
 This helps worktree-local test and runtime commands reuse the repo-local backend virtualenv, backend env file, and frontend dependency tree when those artifacts already exist in the source repo. Envctl only creates the link when the source artifact exists and the worktree path is not already occupied by a real file or directory. Plan-agent dependency prep does not rely on these links; it prepares per-worktree dependency artifacts so branch-specific dependency files remain authoritative.
 
+Envctl also bootstraps code-intelligence tool state for generated worktrees. When the source repo has repo-local Serena
+configuration, envctl copies `.serena/project.yml` and `.serena/.gitignore` into the worktree if those files are not
+already present. When the source repo has a CGC ignore file, envctl copies `.cgcignore` as well. This keeps Codex,
+OpenCode, and other agents pointed at the current worktree's local symbol/index scope without putting tool routing rules
+into task prompts.
+
+CodeGraphContext indexing is intentionally per worktree, not symlinked or shared from the main checkout. Set
+`ENVCTL_WORKTREE_CGC_INDEX=true` to run `cgc index <worktree>` after envctl creates each worktree. The default
+`ENVCTL_WORKTREE_CGC_INDEX=auto` indexes only when the source repo already has CGC local markers such as `.cgcignore` or
+`.codegraphcontext`; set it to `false` to disable indexing completely. Set
+`ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` to disable all of this code-intelligence bootstrap behavior.
+
 Single-mode `envctl review` uses that provenance automatically when it needs a base branch. For older or manually created worktrees, review falls back to the attached branch's upstream and then the repo default branch. Use `--review-base <branch>` when you need to override that resolution explicitly.
 
 ## Typical Loop

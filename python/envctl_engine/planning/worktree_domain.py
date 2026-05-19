@@ -50,6 +50,11 @@ _WORKTREE_GIT_HOOKS_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "
 _WORKTREE_GIT_HOOKS_INHERITED_VALUES = frozenset(
     ("inherit", "inherited", "enabled", "enable", "on", "true", "1", "yes")
 )
+_WORKTREE_CODE_INTELLIGENCE_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "false", "0", "no"))
+_WORKTREE_CODE_INTELLIGENCE_ENABLED_VALUES = frozenset(("auto", "enabled", "enable", "on", "true", "1", "yes"))
+_WORKTREE_CGC_INDEX_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "false", "0", "no"))
+_WORKTREE_CGC_INDEX_ENABLED_VALUES = frozenset(("enabled", "enable", "on", "true", "1", "yes"))
+_WORKTREE_CGC_INDEX_AUTO_VALUES = frozenset(("auto",))
 
 
 def _worktree_spinner_policy(self: Any, *, op_id: str) -> SpinnerPolicy:
@@ -213,6 +218,7 @@ def _create_single_worktree(self, *, feature: str, iteration: str) -> str | None
     if getattr(result, "returncode", 1) != 0:
         if _recover_partial_worktree_creation(self, feature=feature, iteration=iteration, target=target, result=result):
             _link_repo_local_shared_artifacts(self, target=target)
+            _prepare_worktree_code_intelligence(self, target=target)
             _write_worktree_provenance(self, target=target)
             return None
         error = self._worktree_add_failure(feature=feature, iteration=iteration, target=target, result=result)
@@ -220,6 +226,7 @@ def _create_single_worktree(self, *, feature: str, iteration: str) -> str | None
             return error
     else:
         _link_repo_local_shared_artifacts(self, target=target)
+        _prepare_worktree_code_intelligence(self, target=target)
         _write_worktree_provenance(self, target=target)
     return None
 
@@ -1318,6 +1325,7 @@ def _create_feature_worktrees_result(
                     created_for_fresh_ai_launch=created_for_fresh_ai_launch,
                     launch_transport=launch_transport,
                 )
+                _prepare_worktree_code_intelligence(self, target=target)
             else:
                 error = self._worktree_add_failure(
                     feature=feature,
@@ -1339,6 +1347,7 @@ def _create_feature_worktrees_result(
                 created_for_fresh_ai_launch=created_for_fresh_ai_launch,
                 launch_transport=launch_transport,
             )
+            _prepare_worktree_code_intelligence(self, target=target)
         _seed_main_task_from_plan(target=target, plan_path=plan_path)
         worktree_cli = cli_sequence[index] if index < len(cli_sequence) else ""
         created_worktrees.append(
@@ -1540,6 +1549,87 @@ def _link_repo_local_shared_artifacts(self: Any, *, target: Path) -> None:
             worktree_path.symlink_to(source_path)
         except OSError:
             continue
+
+
+def _prepare_worktree_code_intelligence(self: Any, *, target: Path) -> None:
+    if not target.is_dir() or not _worktree_code_intelligence_enabled(self):
+        return
+    _copy_worktree_code_intelligence_file(
+        source=self.config.base_dir / ".serena" / "project.yml",
+        target=target / ".serena" / "project.yml",
+    )
+    _copy_worktree_code_intelligence_file(
+        source=self.config.base_dir / ".serena" / ".gitignore",
+        target=target / ".serena" / ".gitignore",
+    )
+    _copy_worktree_code_intelligence_file(
+        source=self.config.base_dir / ".cgcignore",
+        target=target / ".cgcignore",
+    )
+    if _worktree_cgc_index_enabled(self):
+        _index_worktree_with_cgc(self, target=target)
+
+
+def _copy_worktree_code_intelligence_file(*, source: Path, target: Path) -> None:
+    if not source.is_file() or target.exists() or target.is_symlink():
+        return
+    try:
+        text = source.read_text(encoding="utf-8")
+    except OSError:
+        return
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    except OSError:
+        return
+
+
+def _worktree_code_intelligence_enabled(self: Any) -> bool:
+    raw = str(
+        self.env.get("ENVCTL_WORKTREE_CODE_INTELLIGENCE")
+        or self.config.raw.get("ENVCTL_WORKTREE_CODE_INTELLIGENCE")
+        or "auto"
+    ).strip().lower()
+    if raw in _WORKTREE_CODE_INTELLIGENCE_ENABLED_VALUES:
+        return True
+    if raw in _WORKTREE_CODE_INTELLIGENCE_DISABLED_VALUES:
+        return False
+    raise RuntimeError(
+        "Invalid ENVCTL_WORKTREE_CODE_INTELLIGENCE value. "
+        "Use auto/on/true or off/false."
+    )
+
+
+def _worktree_cgc_index_enabled(self: Any) -> bool:
+    raw = str(
+        self.env.get("ENVCTL_WORKTREE_CGC_INDEX")
+        or self.config.raw.get("ENVCTL_WORKTREE_CGC_INDEX")
+        or "auto"
+    ).strip().lower()
+    if raw in _WORKTREE_CGC_INDEX_ENABLED_VALUES:
+        return True
+    if raw in _WORKTREE_CGC_INDEX_DISABLED_VALUES:
+        return False
+    if raw in _WORKTREE_CGC_INDEX_AUTO_VALUES:
+        repo_root = self.config.base_dir
+        return (repo_root / ".cgcignore").is_file() or (repo_root / ".codegraphcontext").exists()
+    raise RuntimeError("Invalid ENVCTL_WORKTREE_CGC_INDEX value. Use auto/on/true or off/false.")
+
+
+def _index_worktree_with_cgc(self: Any, *, target: Path) -> None:
+    if not getattr(self, "_command_exists", lambda _name: False)("cgc"):
+        return
+    result = self.process_runner.run(
+        ["cgc", "index", str(target)],
+        cwd=target,
+        env=self._command_env(port=0),
+        timeout=600.0,
+    )
+    self._emit(
+        "setup.worktree.code_intelligence.cgc_index",
+        target=str(target),
+        success=getattr(result, "returncode", 1) == 0,
+    )
 
 
 def _build_worktree_provenance(
