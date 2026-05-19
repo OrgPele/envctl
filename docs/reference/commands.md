@@ -444,6 +444,11 @@ envctl ensure-worktree feature-a --json
 - does not imply runtime/service startup
 - returns `envctl.ensure_worktree.v1` in `--json` mode
 
+Envctl-managed worktree creation disables repo-local Git hooks by default for reliability. The override is command-scoped
+(`git -c core.hooksPath=/dev/null ...`) and does not edit repo, global, or hook files. Set
+`ENVCTL_WORKTREE_GIT_HOOKS=inherit` when you intentionally want repo-local hooks to run during envctl-managed
+worktree creation. This policy applies to `--plan`, `--setup-worktree`, `--setup-worktrees`, and `ensure-worktree`.
+
 Commit defaults:
 
 - `envctl commit` now reads its default commit message from the repo-local `.envctl-commit-message.md` file when you do not pass `--commit-message` or `--commit-message-file`

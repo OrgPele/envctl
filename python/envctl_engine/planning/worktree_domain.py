@@ -46,6 +46,8 @@ class ProjectContextLike(Protocol):
 WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
 WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
 FRESH_AI_LAUNCH_IN_PROGRESS_TTL_SECONDS = 24 * 60 * 60
+_WORKTREE_GIT_HOOKS_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "false", "0", "no"))
+_WORKTREE_GIT_HOOKS_INHERITED_VALUES = frozenset(("inherit", "inherited", "enabled", "enable", "on", "true", "1", "yes"))
 
 
 def _worktree_spinner_policy(self: Any, *, op_id: str) -> SpinnerPolicy:
@@ -207,12 +209,11 @@ def _create_single_worktree(self, *, feature: str, iteration: str) -> str | None
     target = feature_root / iteration
     result = _run_worktree_add(self, feature=feature, iteration=iteration, target=target, env=self._command_env(port=0))
     if getattr(result, "returncode", 1) != 0:
-        error = self._worktree_add_failure(
-            feature=feature,
-            iteration=iteration,
-            target=target,
-            result=result,
-        )
+        if _recover_partial_worktree_creation(self, feature=feature, iteration=iteration, target=target, result=result):
+            _link_repo_local_shared_artifacts(self, target=target)
+            _write_worktree_provenance(self, target=target)
+            return None
+        error = self._worktree_add_failure(feature=feature, iteration=iteration, target=target, result=result)
         if error:
             return error
     else:
@@ -1301,14 +1302,29 @@ def _create_feature_worktrees_result(
         target = feature_root / str(iteration)
         result = _run_worktree_add(self, feature=feature, iteration=str(iteration), target=target, env=setup_env)
         if getattr(result, "returncode", 1) != 0:
-            error = self._worktree_add_failure(
+            if _recover_partial_worktree_creation(
+                self,
                 feature=feature,
                 iteration=str(iteration),
                 target=target,
                 result=result,
-            )
-            if error:
-                return PlanWorktreeSyncResult(raw_projects=[], created_worktrees=tuple(created_worktrees), error=error)
+            ):
+                _write_worktree_provenance(
+                    self,
+                    target=target,
+                    plan_file=plan_file,
+                    created_for_fresh_ai_launch=created_for_fresh_ai_launch,
+                    launch_transport=launch_transport,
+                )
+            else:
+                error = self._worktree_add_failure(
+                    feature=feature,
+                    iteration=str(iteration),
+                    target=target,
+                    result=result,
+                )
+                if error:
+                    return PlanWorktreeSyncResult(raw_projects=[], created_worktrees=tuple(created_worktrees), error=error)
         else:
             _write_worktree_provenance(
                 self,
@@ -1354,23 +1370,59 @@ def _worktree_add_failure(self: Any, *, feature: str, iteration: str, target: Pa
             reason=reason,
         )
         return None
-    return f"failed creating worktree {feature}/{iteration}: {reason}"
+    target_status = "target exists" if target.exists() else "target missing"
+    hook_policy_hint = (
+        "envctl disables repo-local Git hooks during managed worktree creation by default; "
+        "set ENVCTL_WORKTREE_GIT_HOOKS=inherit to opt into hooks."
+    )
+    return f"failed creating worktree {feature}/{iteration}: {reason} ({target_status}). {hook_policy_hint}"
+
+
+def _recover_partial_worktree_creation(
+    self: Any,
+    *,
+    feature: str,
+    iteration: str,
+    target: Path,
+    result: object,
+) -> bool:
+    if not _worktree_git_hooks_disabled(self):
+        return False
+    if not _worktree_target_created(target):
+        return False
+    reason = self._command_result_error_text(result=result)
+    self._emit(
+        "setup.worktree.partial_git_failure_recovered",
+        feature=feature,
+        iteration=iteration,
+        target=str(target),
+        reason=reason,
+    )
+    return True
+
+
+def _worktree_target_created(target: Path) -> bool:
+    return target.is_dir() and (target / ".git").exists()
 
 
 def _run_worktree_add(self: Any, *, feature: str, iteration: str, target: Path, env: Mapping[str, str]) -> object:
     branch_name = _worktree_branch_name(feature=feature, iteration=iteration)
     start_point = _worktree_start_point(self)
     branch_flag = "-B" if _worktree_branch_exists(self, branch_name=branch_name) else "-b"
-    command = [
-        "git",
-        "-C",
-        str(self.config.base_dir),
-        "worktree",
-        "add",
-        branch_flag,
-        branch_name,
-        str(target),
-    ]
+    command = ["git"]
+    if _worktree_git_hooks_disabled(self):
+        command.extend(["-c", "core.hooksPath=/dev/null"])
+    command.extend(
+        [
+            "-C",
+            str(self.config.base_dir),
+            "worktree",
+            "add",
+            branch_flag,
+            branch_name,
+            str(target),
+        ]
+    )
     if start_point:
         command.append(start_point)
     return self.process_runner.run(
@@ -1407,6 +1459,21 @@ def _setup_worktree_placeholder_fallback_enabled(self: Any) -> bool:
         "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK"
     )
     return parse_bool(raw, False)
+
+
+def _worktree_git_hooks_policy(self: Any) -> str:
+    raw = self.env.get("ENVCTL_WORKTREE_GIT_HOOKS") or self.config.raw.get("ENVCTL_WORKTREE_GIT_HOOKS") or "disabled"
+    normalized = str(raw).strip().lower()
+    if normalized in _WORKTREE_GIT_HOOKS_DISABLED_VALUES:
+        return "disabled"
+    if normalized in _WORKTREE_GIT_HOOKS_INHERITED_VALUES:
+        return "inherit"
+    allowed = ", ".join(sorted(_WORKTREE_GIT_HOOKS_DISABLED_VALUES | _WORKTREE_GIT_HOOKS_INHERITED_VALUES))
+    raise RuntimeError(f"Invalid ENVCTL_WORKTREE_GIT_HOOKS value {raw!r}; expected one of: {allowed}.")
+
+
+def _worktree_git_hooks_disabled(self: Any) -> bool:
+    return _worktree_git_hooks_policy(self) == "disabled"
 
 
 def _write_worktree_provenance(
