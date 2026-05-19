@@ -446,7 +446,7 @@ def resolve_opencode_direct_prompt_body(
         template = _parse_template(name=normalized_preset, raw=raw)
     else:
         template = _load_template(normalized_preset)
-    return _render_direct_prompt_arguments(template.body, arguments=arguments)
+    return _render_direct_prompt_arguments(_render_opencode_template(template), arguments=arguments)
 
 
 def _codex_envctl_prompt_root(*, home: Path, env: Mapping[str, str] | None = None) -> Path:
@@ -548,7 +548,7 @@ def _render_claude_template(template: PromptTemplate) -> str:
 
 
 def _render_opencode_template(template: PromptTemplate) -> str:
-    return template.body
+    return re.sub(r"\$browser(?!-use)", "$browser-use", template.body)
 
 
 def _render_direct_prompt_arguments(body: str, *, arguments: str) -> str:
