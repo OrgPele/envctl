@@ -7,12 +7,12 @@ planning ownership slices and finish the remaining refactor end-to-end.
 
 Current committed evidence on branch `refactoring_envctl_deep_codebase_refactor-4`:
 
-- `d720265 Refactor worktree code intelligence setup`
+- `67f588b Refactor worktree code intelligence setup`
   - Added `docs/reference/python-engine-architecture.md`.
   - Moved generated-worktree code-intelligence setup from `planning/worktree_domain.py` into
     `planning/worktree_code_intelligence.py`.
   - Added structure guards in `tests/python/shared/test_structure_layout.py`.
-- `ce9ce49 Move worktree provenance helpers`
+- `6a76bbe Move worktree provenance helpers`
   - Moved worktree provenance, branch resolution, and fresh-AI worktree protection helpers into
     `planning/worktree_provenance.py`.
   - Updated the architecture inventory and structure guards.
@@ -137,6 +137,7 @@ Fully implemented in this worktree:
 - Generated-worktree code-intelligence behavior is extracted to `python/envctl_engine/planning/worktree_code_intelligence.py`.
 - Worktree provenance and fresh-AI worktree protection helpers are extracted to
   `python/envctl_engine/planning/worktree_provenance.py`.
+- Worktree git-hook policy resolution is extracted to `python/envctl_engine/planning/worktree_git_hooks.py`.
 - `planning/worktree_domain.py` keeps compatibility wrappers for the extracted planning helpers.
 - Structure guards exist in `tests/python/shared/test_structure_layout.py`.
 - Targeted validation reported before this rollover:
@@ -148,8 +149,8 @@ Fully implemented in this worktree:
 
 Partially implemented:
 
-- Planning/worktree split has started, but `worktree_domain.py` is still about 1,748 lines and still contains selection,
-  menu, memory, sync/create/delete, git hook policy, `MAIN_TASK.md` seeding, cleanup, and sorting responsibilities.
+- Planning/worktree split has started, but `worktree_domain.py` still contains selection, menu, memory,
+  sync/create/delete, `MAIN_TASK.md` seeding, cleanup, and sorting responsibilities.
 - Documentation has a first architecture inventory, but it does not yet reflect final ownership boundaries for every
   extracted runtime area.
 
