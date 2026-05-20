@@ -20,7 +20,7 @@ class CreatePlanPromptContractTests(unittest.TestCase):
         self.assertEqual(self.prompt.name, "create_plan")
         self.assertContainsCluster(
             "You are creating an implementation plan, not changing code.",
-            "First, read the relevant code, tests, docs, and existing plans in depth before writing anything.",
+            "First, read the relevant code, tests, docs, and existing plans deeply enough to ground the plan before writing anything.",
             "Do not implement code. Only research and write the plan file.",
             "- Do not drift into implementation work.",
         )
@@ -37,7 +37,7 @@ class CreatePlanPromptContractTests(unittest.TestCase):
     def test_create_plan_prompt_includes_required_research_and_plan_sections(self) -> None:
         self.assertContainsCluster(
             "## Required research (do before writing)",
-            "2. Review todo/plans/ README and at least one relevant plan file for depth/format.",
+            "2. Review todo/plans/README.md if it exists; otherwise use the nearest relevant plan file(s) in the current repo for depth/format reference without leaving the repo root to hunt for a README elsewhere.",
             "4. Inspect the current behavior in code: key files, key functions, and call paths.",
             "7. Capture evidence (file paths + function names) to ground the plan.",
             "## Plan file structure (must follow)",
@@ -57,15 +57,15 @@ class CreatePlanPromptContractTests(unittest.TestCase):
             "## Optional envctl follow-up",
             "- After completing the required final response items, ask exactly one final approval question",
             "- use an explicit selector for the created plan with `envctl --headless --plan <selector>`",
-            'derive the cmux workspace name dynamically from the current repo root directory name as `"<repo-name> implementation"`',
+            "explain the supported launch surfaces clearly enough that the user does not need to run `envctl --help` to understand them",
             "- default the launch preset to `implement_task`",
-            "- AI CLI: `codex`",
-            "- Codex cycles: `2`",
+            "AI launch choice: `codex`, `opencode`, `omx`, `codex + opencode`, or `codex + omx`",
+            "if the selected launch choice includes Codex or OMX-managed Codex, include `recommended Codex cycles: <n>`",
             "## Final response format",
             "1. Path of the plan file created.",
             "2. One-paragraph summary of the plan intent.",
             "3. Files referenced during research (short list).",
-            "5. One final approval question asking whether you should run the envctl worktree-and-prompt follow-up now",
+            "5. One short approval question asking whether you should run the envctl worktree-and-prompt follow-up now or whether the user wants to run it manually.",
         )
 
 
