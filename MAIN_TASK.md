@@ -16,6 +16,10 @@ Current committed evidence on branch `refactoring_envctl_deep_codebase_refactor-
   - Moved worktree provenance, branch resolution, and fresh-AI worktree protection helpers into
     `planning/worktree_provenance.py`.
   - Updated the architecture inventory and structure guards.
+- `c3bdb24 Continue planning worktree decomposition`
+  - Moved worktree git-hook policy parsing and disabled/inherit checks into
+    `planning/worktree_git_hooks.py`.
+  - Updated the architecture inventory and structure guards.
 
 The objective of this next iteration is to complete the remaining deep refactor scope: reduce the largest orchestrators
 to thin coordination layers or documented compatibility facades, give each major runtime area an obvious owner module and
@@ -138,6 +142,8 @@ Fully implemented in this worktree:
 - Worktree provenance and fresh-AI worktree protection helpers are extracted to
   `python/envctl_engine/planning/worktree_provenance.py`.
 - Worktree git-hook policy resolution is extracted to `python/envctl_engine/planning/worktree_git_hooks.py`.
+- Generated worktree `MAIN_TASK.md` seeding, plan archival into `todo/done`, and iteration gap selection are extracted
+  to `python/envctl_engine/planning/worktree_main_task.py`.
 - `planning/worktree_domain.py` keeps compatibility wrappers for the extracted planning helpers.
 - Structure guards exist in `tests/python/shared/test_structure_layout.py`.
 - Targeted validation reported before this rollover:
@@ -150,7 +156,7 @@ Fully implemented in this worktree:
 Partially implemented:
 
 - Planning/worktree split has started, but `worktree_domain.py` still contains selection, menu, memory,
-  sync/create/delete, `MAIN_TASK.md` seeding, cleanup, and sorting responsibilities.
+  sync/create/delete, cleanup, and sorting responsibilities.
 - Documentation has a first architecture inventory, but it does not yet reflect final ownership boundaries for every
   extracted runtime area.
 
