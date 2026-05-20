@@ -133,7 +133,7 @@ Codex TUI cycle mode:
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` or more keep that first commit/push/PR/status-check follow-up, use commit/push-only follow-ups in the middle, and reserve `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
 - OpenCode keeps the existing one-shot flow even when the cycle count is set
 - create-plan prompts use a stricter recommendation policy of `0` through `8`; lower-level runtime parsing still applies the runtime implementation cap to direct env/config values
-- `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` disables the `$browser-use` E2E follow-up when browser validation is not applicable
+- `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` disables the `$browser` E2E follow-up when browser validation is not applicable
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false` disables the final PR review-comments follow-up when comment handling is manual
 - canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set
 - `CYCLES` does not enable plan-agent launch by itself

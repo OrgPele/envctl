@@ -705,7 +705,8 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("envctl --entire-system --headless", codex)
         self.assertIn("envctl stop --entire-system --headless", codex)
         self.assertIn("Codex skills and envctl validation helpers", codex)
-        self.assertIn("$browser-use", codex)
+        self.assertIn("$browser", codex)
+        self.assertNotIn("$browser-use", codex)
         self.assertIn("envctl endpoints --project <current-worktree-name> --json", codex)
         self.assertIn("envctl qa-user ensure --project <current-worktree-name>", codex)
         self.assertIn("envctl playwright --project <current-worktree-name> -- <command>", codex)
@@ -720,8 +721,10 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("Runtime addresses used or produced during validation: dependencies, backend, and frontend", codex)
         self.assertIn("Playwright", codex)
         self.assertIn("running service", codex)
-        self.assertEqual(claude, codex)
-        self.assertEqual(opencode, codex)
+        self.assertNotEqual(claude, codex)
+        self.assertIn("$browser-use", claude)
+        self.assertNotEqual(opencode, codex)
+        self.assertIn("$browser-use", opencode)
 
         continue_prompt = _load_template("continue_task")
         self.assertIn(".envctl-commit-message.md", continue_prompt.body)
@@ -735,7 +738,8 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("envctl endpoints --project <current-worktree-name> --json", finalize_prompt.body)
         self.assertIn("envctl qa-user ensure --project <current-worktree-name>", finalize_prompt.body)
         self.assertIn("envctl playwright --project <current-worktree-name> -- <command>", finalize_prompt.body)
-        self.assertIn("$browser-use", finalize_prompt.body)
+        self.assertIn("$browser", finalize_prompt.body)
+        self.assertNotIn("$browser-use", finalize_prompt.body)
         self.assertIn("Commit the work.", finalize_prompt.body)
         self.assertIn("Push the branch.", finalize_prompt.body)
         self.assertIn("Open the PR if none exists yet, or update the existing PR.", finalize_prompt.body)
@@ -1087,6 +1091,23 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("Automatic envctl follow-up", resolved)
         self.assertIn("--tmux --opencode --entire-system --headless --tmux-new-session", resolved)
         self.assertIn("Auto launch OpenCode ULW after planning", resolved)
+
+    def test_resolve_opencode_direct_prompt_body_keeps_browser_use_skill_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resolved = resolve_opencode_direct_prompt_body(preset="implement_task", env={"HOME": tmpdir})
+
+        self.assertIn("$browser-use", resolved)
+
+    def test_resolve_opencode_direct_prompt_body_does_not_double_browser_use_in_user_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            target = self._target(cli="opencode", preset="implement_task", home=home)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("Use $browser-use for browser validation.\n", encoding="utf-8")
+
+            resolved = resolve_opencode_direct_prompt_body(preset="implement_task", env={"HOME": tmpdir})
+
+            self.assertEqual(resolved, "Use $browser-use for browser validation.\n")
 
     def test_resolve_codex_direct_prompt_body_only_replaces_standalone_arguments_placeholder(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

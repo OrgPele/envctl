@@ -3259,7 +3259,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertIsNotNone(_browser_e2e_instruction_text)
         prompt = _browser_e2e_instruction_text()
 
-        self.assertIn("$browser-use", prompt)
+        self.assertIn("$browser", prompt)
         self.assertIn("envctl endpoints --project <current-worktree-name> --json", prompt)
         self.assertIn("envctl qa-user ensure --project <current-worktree-name>", prompt)
         self.assertIn("envctl playwright --project <current-worktree-name> -- <command>", prompt)

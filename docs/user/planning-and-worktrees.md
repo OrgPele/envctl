@@ -82,7 +82,7 @@ Behavior:
 - `CMUX=true` is shorthand for enabling the feature with the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=...` is shorthand for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
 - `CYCLES=...` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=...`
-- `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` disables the `$browser-use` E2E follow-up when browser validation is not applicable
+- `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` disables the `$browser` E2E follow-up when browser validation is not applicable
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false` disables the final PR review-comments follow-up when comment handling is manual
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and shorthand values are set
 
@@ -113,7 +113,7 @@ Each launched surface stays interactive. Envctl creates the tab, renames it to a
 - default/unset is `2`, so Codex launches first queue a commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 - `CYCLES=<n>` resolves to the same effective value as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `0` submits the single implementation prompt and queues enabled browser-E2E and PR review-comments follow-ups for Codex/OMX surfaces
-- `2` queues a plain follow-up asking Codex to commit, push, open or update the PR, and wait for GitHub status checks after the first pass, then queues `continue_task`, `implement_task`, `finalize_task`, `$browser-use` E2E, and the PR review-comments follow-up
+- `2` queues a plain follow-up asking Codex to commit, push, open or update the PR, and wait for GitHub status checks after the first pass, then queues `continue_task`, `implement_task`, `finalize_task`, `$browser` E2E, and the PR review-comments follow-up
 - `3` or more keep that first commit/push/PR/status-check follow-up, then use commit/push-only follow-ups for intermediate rounds, and reserve `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the final round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the existing one-shot preset flow
 - `CYCLES` does not enable the plan-agent launcher on its own; you still need the existing enablement config such as `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
@@ -217,6 +217,18 @@ When the source repo already has common local dependency/runtime artifacts, envc
 - `frontend/node_modules`
 
 This helps worktree-local test and runtime commands reuse the repo-local backend virtualenv, backend env file, and frontend dependency tree when those artifacts already exist in the source repo. Envctl only creates the link when the source artifact exists and the worktree path is not already occupied by a real file or directory. Plan-agent dependency prep does not rely on these links; it prepares per-worktree dependency artifacts so branch-specific dependency files remain authoritative.
+
+Envctl also bootstraps code-intelligence tool state for generated worktrees. When the source repo has repo-local Serena
+configuration, envctl copies `.serena/project.yml` and `.serena/.gitignore` into the worktree if those files are not
+already present. When the source repo has a CGC ignore file, envctl copies `.cgcignore` as well. This keeps Codex,
+OpenCode, and other agents pointed at the current worktree's local symbol/index scope without putting tool routing rules
+into task prompts.
+
+CodeGraphContext indexing is intentionally per worktree, not symlinked or shared from the main checkout. Set
+`ENVCTL_WORKTREE_CGC_INDEX=true` to run `cgc index <worktree>` after envctl creates each worktree. The default
+`ENVCTL_WORKTREE_CGC_INDEX=auto` indexes only when the source repo already has CGC local markers such as `.cgcignore` or
+`.codegraphcontext`; set it to `false` to disable indexing completely. Set
+`ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` to disable all of this code-intelligence bootstrap behavior.
 
 Single-mode `envctl review` uses that provenance automatically when it needs a base branch. For older or manually created worktrees, review falls back to the attached branch's upstream and then the repo default branch. Use `--review-base <branch>` when you need to override that resolution explicitly.
 

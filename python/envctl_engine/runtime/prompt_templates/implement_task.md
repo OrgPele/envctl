@@ -44,7 +44,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - At the end of verification, kill the exact scope you started so no stray services remain, then offer to start it again for human verification if the user wants to manually inspect the running app.
 
 ## Codex skills and envctl validation helpers
-- When this prompt is installed as a Codex skill or direct prompt, you may use available Codex skills named in the session, including `$browser-use` for browser validation when it is present. Follow the active AGENTS.md and skill instructions before invoking a skill.
+- When this prompt is installed as a Codex skill or direct prompt, you may use available Codex skills named in the session, including `$browser` for browser validation when it is present. Follow the active AGENTS.md and skill instructions before invoking a skill.
 - Prefer `envctl endpoints --project <current-worktree-name> --json` to discover the canonical frontend, backend, and dependency addresses for an already-running target instead of hand-composing URLs.
 - Use `envctl qa-user ensure --project <current-worktree-name> --email <email> --password <password> --json` when browser or auth validation needs deterministic local QA credentials.
 - Use `envctl playwright --project <current-worktree-name> -- <command>` for Playwright or browser-test commands that should run against the active project frontend without starting a second dev server.
