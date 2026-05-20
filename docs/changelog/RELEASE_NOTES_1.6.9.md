@@ -6,7 +6,7 @@
 
 The `create_plan` prompt already suggested repo-scoped tmux launches for Codex and OpenCode, but it did not fully document what each launch surface actually does. That made the follow-up guidance incomplete for users who want OMX-managed Codex sessions, want to understand whether envctl will take over the current terminal, or want to run parallel Codex + OMX follow-ups from the same plan.
 
-This hotfix teaches the shipped planning prompt to explain `--tmux`, `--omx`, `--omx --ralph`, `--omx --team`, `--headless`, and `--tmux-new-session` directly in the handoff so users do not need to consult `--help` first.
+This hotfix teaches the shipped planning prompt to explain `--tmux`, `--omx`, `--omx --ralph`, `--omx --team`, `--headless`, and `--new-session` directly in the handoff so users do not need to consult `--help` first.
 
 ## Highlights
 

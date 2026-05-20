@@ -1326,7 +1326,32 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             engine = self._runtime(repo, runtime, env={"ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true"})
             contexts = engine._discover_projects(mode="trees")
             route = parse_route(
-                ["--plan", "implementations/task", "--tmux", "--opencode", "--headless", "--tmux-new-session"],
+                ["--plan", "implementations/task", "--tmux", "--opencode", "--headless", "--new-session"],
+                env={},
+            )
+
+            selected = engine._select_plan_projects(route, contexts)
+
+            selection_result = engine.planning_worktree_orchestrator.last_plan_selection_result()
+            self.assertEqual([ctx.name for ctx in selected], ["implementations_task-2"])
+            self.assertEqual([item.name for item in selection_result.created_worktrees], ["implementations_task-2"])
+            self.assertTrue((repo / "trees" / "implementations_task" / "1").is_dir())
+            self.assertTrue((repo / "trees" / "implementations_task" / "2").is_dir())
+
+    def test_plan_selection_with_cmux_new_session_launch_creates_and_targets_next_iteration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
+            (repo / "trees" / "implementations_task" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true"})
+            contexts = engine._discover_projects(mode="trees")
+            route = parse_route(
+                ["--plan", "implementations/task", "--cmux", "--headless", "--new-session"],
                 env={},
             )
 

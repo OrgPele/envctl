@@ -620,7 +620,7 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles>", written)
             self.assertIn("exactly one integer from `0` through `8`", written)
             self.assertNotIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <category>/<slug>", written)
-            self.assertIn("--tmux-new-session", written)
+            self.assertIn("--new-session", written)
 
     def test_install_prompts_cli_run_installs_create_plan_auto_opencode_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -649,7 +649,7 @@ class CommandExitCodeTests(unittest.TestCase):
             written = target.read_text(encoding="utf-8")
             self.assertIn(
                 "envctl --plan <category>/<slug> --tmux --opencode --entire-system "
-                "--headless --tmux-new-session",
+                "--headless --new-session",
                 written,
             )
             self.assertIn("Codex cycle settings are intentionally ignored for this surface", written)

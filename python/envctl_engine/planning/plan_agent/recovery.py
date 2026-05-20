@@ -114,7 +114,7 @@ def plan_agent_native_recovery_command(
         command.append("--isolated-deps")
     if bool(route_flags.get("batch") or route_flags.get("default_headless")):
         command.append("--headless")
-    command.append("--tmux-new-session")
+    command.append("--new-session")
     return tuple(command)
 
 
@@ -155,7 +155,7 @@ def _new_session_command_for_route(
     for flag_name, token in workflow_tokens:
         if bool(route_flags.get(flag_name)):
             command.append(token)
-    command.append("--tmux-new-session")
+    command.append("--new-session")
     command.append("--headless")
     return tuple(command)
 

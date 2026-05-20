@@ -626,7 +626,7 @@ def resolve_plan_agent_launch_command(
             "--tmux",
             "--opencode",
             "--headless",
-            "--tmux-new-session",
+            "--new-session",
         )
     )
 

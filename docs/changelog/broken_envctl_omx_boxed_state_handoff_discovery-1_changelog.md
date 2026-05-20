@@ -1,12 +1,12 @@
 ## 2026-05-08 - Discover OMX-managed plan-agent sessions from deterministic state roots
 
 Scope:
-- Fixed `envctl --plan ... --omx --ralph --headless --tmux-new-session` handoff discovery when OMX starts the managed tmux/Codex session but writes runtime state outside the source worktree.
+- Fixed `envctl --plan ... --omx --ralph --headless --new-session` handoff discovery when OMX starts the managed tmux/Codex session but writes runtime state outside the source worktree.
 - Kept the OMX-managed launch contract intact: envctl still asks `omx --tmux` to create the session, then discovers and bootstraps the managed target.
 
 Key behavior changes:
 - Plan-agent OMX spawns now select an envctl-owned `OMX_ROOT` under `<worktree>/.envctl-state/omx/<worktree-name>/`, overriding inherited stale `OMX_ROOT` values so discovery is launch-scoped and deterministic.
-- Session discovery now reads the deterministic OMX root first, falls back to legacy `<worktree>/.omx/state/session.json`, rejects state whose `cwd` points at a different worktree, and preserves stale-session avoidance for `--tmux-new-session`.
+- Session discovery now reads the deterministic OMX root first, falls back to legacy `<worktree>/.omx/state/session.json`, rejects state whose `cwd` points at a different worktree, and preserves stale-session avoidance for `--new-session`.
 - Attach-target discovery still prefers `native_session_id`, then the derived OMX tmux session name, and now has a conservative tmux pane-path fallback for matching OMX-prefixed sessions under the target worktree.
 - `omx_session_unavailable` events now include bounded diagnostics for selected roots, session-file presence, session-id presence, tmux candidates, and matching worktree panes.
 - Stale OMX tmux lock cleanup now also checks the selected deterministic OMX root.

@@ -69,9 +69,9 @@ Create-plan skill behavior:
 
 - `$envctl-create-plan` is plan-only and approval-first. It writes `todo/plans/<category>/<slug>.md` and asks before running envctl.
 - `$envctl-create-plan` records a recommended Codex cycle count from `0` through `8` in the plan and uses that recommendation in Codex follow-up command examples.
-- `$envctl-create-plan-auto-codex` writes the same kind of plan, derives `<category>/<slug>` from the plan file path, chooses a recommended Codex cycle count from `0` through `8`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --tmux --entire-system --headless --tmux-new-session`.
-- `$envctl-create-plan-auto-opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --tmux-new-session`. OpenCode ignores Codex cycle settings and prepends `/ulw-loop` by default.
-- `$envctl-create-plan-auto-omx` writes the plan, records the same `0` through `8` recommendation for visibility, derives `<selector>`, then runs `envctl --plan <selector> --omx --ultragoal --entire-system --headless --tmux-new-session`. OMX-managed launches are Codex-only: optional `/goal` framing is submitted first, Ultragoal wraps the initial prompt, and envctl may queue Codex follow-up cycles using the current cycle configuration. Use `--ralph` explicitly when you need the Ralph compatibility workflow.
+- `$envctl-create-plan-auto-codex` writes the same kind of plan, derives `<category>/<slug>` from the plan file path, chooses a recommended Codex cycle count from `0` through `8`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --tmux --entire-system --headless --new-session`.
+- `$envctl-create-plan-auto-opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --new-session`. OpenCode ignores Codex cycle settings and prepends `/ulw-loop` by default.
+- `$envctl-create-plan-auto-omx` writes the plan, records the same `0` through `8` recommendation for visibility, derives `<selector>`, then runs `envctl --plan <selector> --omx --ultragoal --entire-system --headless --new-session`. OMX-managed launches are Codex-only: optional `/goal` framing is submitted first, Ultragoal wraps the initial prompt, and envctl may queue Codex follow-up cycles using the current cycle configuration. Use `--ralph` explicitly when you need the Ralph compatibility workflow.
 - Keep the auto variants explicit-only; do not configure them for implicit invocation from generic planning language.
 - Rerun `envctl install-prompts --cli codex --yes`, `envctl install-prompts --cli opencode --yes`, or `envctl install-prompts --cli all --yes` to refresh installed prompt files.
 
@@ -173,7 +173,7 @@ envctl codex-tmux --help
 
 If a headless plan-agent launch prints `Implementation session is running, but local app startup failed.`, the implementation session is still alive. Copy the `attach:` command from the `AI session:` section to continue watching or driving the agent. Configure `ENVCTL_BACKEND_START_CMD` / `ENVCTL_FRONTEND_START_CMD` only when that worktree also needs local services for verification; otherwise you can leave services disabled and let the AI implementation session continue.
 
-If `envctl --plan ... --tmux --opencode` reports `OpenCode AI session failed to start`, inspect the shown screen excerpt first. Common causes are a missing `opencode` executable in the shell used by tmux, an OpenCode startup/config error, or a stale tmux session. Re-run with `--tmux-new-session` after fixing the shell/config issue.
+If `envctl --plan ... --tmux --opencode` reports `OpenCode AI session failed to start`, inspect the shown screen excerpt first. Common causes are a missing `opencode` executable in the shell used by tmux, an OpenCode startup/config error, or a stale tmux session. Re-run with `--new-session` after fixing the shell/config issue.
 
 ## Compare Implementations
 
