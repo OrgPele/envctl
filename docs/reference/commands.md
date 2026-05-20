@@ -459,6 +459,7 @@ Commit defaults:
 Optional plan-agent launch config for `--plan`:
 
 - `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
+- `envctl --plan <selector> --cmux` enables the default cmux plan-agent launcher for this command without setting `CMUX=true`
 - `SUPERSET_PROJECT=<project-id> envctl --plan <selector>` asks Superset to create or reuse a workspace for the branch and start Codex with the rendered implementation prompt; `SUPERSET=true` is optional when a project or workspace is configured
 - `SUPERSET_WORKSPACE=<workspace-id> envctl --plan <selector>` runs Codex in an existing Superset workspace
 - Superset transport uses public `superset workspaces create`, `superset agents run`, and optional `superset workspaces open` commands for workspace management; it does not use cmux surface commands

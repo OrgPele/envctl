@@ -89,6 +89,11 @@ class CliRouterTests(unittest.TestCase):
         self.assertTrue(route.flags.get("tmux_new_session"))
         self.assertTrue(route.flags.get("batch"))
 
+    def test_cmux_flag_is_parsed(self) -> None:
+        route = parse_route(["--plan", "feature-a", "--cmux"], env={})
+        self.assertEqual(route.command, "plan")
+        self.assertTrue(route.flags.get("cmux"))
+
     def test_tmux_and_codex_flags_are_parsed(self) -> None:
         route = parse_route(["--plan", "feature-a", "--tmux", "--codex"], env={})
         self.assertEqual(route.command, "plan")

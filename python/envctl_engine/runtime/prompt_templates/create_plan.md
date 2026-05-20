@@ -112,6 +112,7 @@ Prefer the smallest number that can plausibly finish the task and verify it. Inc
   - use an explicit selector for the created plan with `envctl --headless --plan <selector>`
   - if the user wants envctl to launch the AI prompts too, treat that as a deterministic repo-scoped flow rather than an inherited terminal-context flow
   - explain the supported launch surfaces clearly enough that the user does not need to run `envctl --help` to understand them:
+    - `--cmux`: envctl launches the default cmux plan-agent workflow for this command without requiring an environment alias
     - `--tmux`: envctl creates or reuses the tmux session/window itself, launches the selected CLI, and submits the rendered prompt/workflow there
     - `--tmux --opencode`: envctl creates or reuses the tmux session/window itself, launches OpenCode, and prepends `/ulw-loop` to the first submitted prompt by default
     - `--omx`: envctl asks OMX to create the managed detached tmux/Codex session, then envctl submits the rendered prompt/workflow into that OMX-managed session
@@ -123,7 +124,8 @@ Prefer the smallest number that can plausibly finish the task and verify it. Inc
   - whenever you show a follow-up command, include `--entire-system` by default; use narrower flags (`--only-frontend`, `--only-backend`, or `--no-infra`) only when the plan records why full-stack E2E does not apply
   - whenever you show a follow-up command, also explain in plain language what happens when that exact command runs: whether envctl only prints guidance or actually launches a session, whether the session is tmux-managed by envctl or OMX-managed by omx, whether the current terminal is taken over, and how the user can reconnect to the launched session later
   - keep the wording operational rather than marketing: spell out what envctl creates or syncs, what CLI or session it starts, what prompt preset it submits, and what remains for the user or AI to do after launch
-  - make clear that `opencode` applies only to the tmux launcher path today; OMX-managed launches are Codex-only
+  - make clear that `opencode` applies only to the cmux/tmux launcher paths today; OMX-managed launches are Codex-only
+  - if you show a cmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --cmux --entire-system`
   - if you show an OpenCode tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --tmux --opencode --entire-system`
   - if you show a Codex tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system`
   - if you show an OMX-managed Codex launch command, include an explicit repo-scoped shell form such as `cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --omx --entire-system`

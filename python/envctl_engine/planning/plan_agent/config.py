@@ -77,6 +77,7 @@ def resolve_plan_agent_launch_config(
     env_map = dict(env or {})
     _apply_plan_agent_aliases(env_map, explicit_values=env_map)
     route_flags = getattr(route, "flags", {}) or {}
+    cmux_launch_requested = bool(route_flags.get("cmux"))
     opencode_launch_requested = bool(route_flags.get("opencode"))
     configured_surface_transport = str(
         env_map.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
@@ -158,7 +159,14 @@ def resolve_plan_agent_launch_config(
         env_map.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
         or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
         False,
-    ) or bool(cmux_workspace) or bool(superset_project or superset_workspace) or transport in {"tmux", "omx"}
+    ) or any(
+        (
+            bool(cmux_workspace),
+            cmux_launch_requested,
+            bool(superset_project or superset_workspace),
+            transport in {"tmux", "omx"},
+        )
+    )
     direct_prompt_enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT")
         or config.raw.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT"),

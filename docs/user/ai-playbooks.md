@@ -117,6 +117,12 @@ CMUX=true
 CYCLES=3
 ```
 
+For a command-scoped cmux launch, pass `--cmux`:
+
+```bash
+envctl --plan backend/checkout --cmux --headless
+```
+
 By default, enabling the feature targets a sibling workspace named `"<current workspace> implementation"`. Set `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` when you want a different workspace title or handle.
 
 The optional dashboard review-tab flow reuses the same AI CLI and cmux transport settings, but when no explicit workspace override is set it targets a sibling workspace named `"<current workspace> reviews"`.
@@ -146,7 +152,7 @@ Codex TUI cycle mode:
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` disables the `$browser` E2E follow-up when browser validation is not applicable
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false` disables the final PR review-comments follow-up when comment handling is manual
 - canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set
-- `CYCLES` does not enable plan-agent launch by itself
+- `CYCLES` does not enable plan-agent launch by itself; use `--cmux`, `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or a cmux workspace override to enable launch
 - envctl only appends messages in this mode; Codex still performs the actual commit, push, and PR work itself
 
 Then run:

@@ -852,7 +852,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
-            "`opencode` applies only to the tmux launcher path today; OMX-managed launches are Codex-only",
+            "`opencode` applies only to the cmux/tmux launcher paths today; OMX-managed launches are Codex-only",
             plan_prompt.body,
         )
         self.assertIn(
