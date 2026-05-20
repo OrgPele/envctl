@@ -13,6 +13,7 @@ The reference assumes the current Python runtime and the package-installed `envc
 - [Commands](commands.md)
 - [Configuration](configuration.md)
 - [Important Flags](important-flags.md)
+- [Python Engine Architecture](python-engine-architecture.md)
 
 ## Related Sections
 

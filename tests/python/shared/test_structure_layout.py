@@ -74,6 +74,21 @@ class StructureLayoutTests(unittest.TestCase):
             with self.subTest(path=rel):
                 self.assertTrue((REPO_ROOT / rel).is_file())
 
+    def test_worktree_code_intelligence_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_code_intelligence.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_code_intelligence import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_python_engine_architecture_inventory_exists(self) -> None:
+        inventory = REPO_ROOT / "docs" / "reference" / "python-engine-architecture.md"
+
+        self.assertTrue(inventory.is_file())
+
     def test_repo_local_launcher_is_python_script(self) -> None:
         launcher = REPO_ROOT / "bin" / "envctl"
         self.assertTrue(launcher.is_file())

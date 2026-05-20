@@ -1,0 +1,36 @@
+# Python Engine Architecture
+
+This inventory is the ownership map for the Python engine refactor. Keep it aligned with the code as modules move; do not use it to document planned behavior that is not wired yet.
+
+## Ownership Map
+
+| Workflow | Primary owner | Supporting modules | Compatibility boundary |
+| --- | --- | --- | --- |
+| CLI command routing and runtime facade | `python/envctl_engine/runtime/command_router.py` and `python/envctl_engine/runtime/engine_runtime.py` | `runtime/engine_runtime_*_support.py`, `runtime/command_policy.py`, `runtime/command_resolution.py` | `PythonEngineRuntime` remains the CLI-facing facade. |
+| Runtime lifecycle, start, resume, stop, and cleanup | `python/envctl_engine/runtime/engine_runtime_lifecycle_support.py` | `startup/startup_orchestrator.py`, `runtime/lifecycle_cleanup_orchestrator.py`, `runtime/session_management.py` | Existing lifecycle command flags and exit statuses stay stable. |
+| Startup orchestration | `python/envctl_engine/startup/startup_orchestrator.py` | `startup/requirements_execution.py`, `startup/service_execution.py`, `startup/finalization.py`, `startup/run_reuse_support.py`, `startup/service_bootstrap_domain.py` | `StartupOrchestrator.execute` is the sequence owner. |
+| Action commands | `python/envctl_engine/actions/action_command_orchestrator.py` | `actions/action_target_support.py`, `actions/action_test_runner.py`, `actions/action_worktree_runner.py`, `actions/project_action_domain.py` | Action command output, artifacts, and return codes remain compatible. |
+| Planning and generated worktrees | `python/envctl_engine/planning/worktree_domain.py` and `python/envctl_engine/planning/worktree_orchestrator.py` | `planning/menu.py`, `planning/worktree_code_intelligence.py` | Public worktree setup helpers keep current behavior while implementation moves behind owners. |
+| Plan-agent launch transports | `python/envctl_engine/planning/plan_agent/launch.py` | `planning/plan_agent/cmux_transport.py`, `tmux_transport.py`, `omx_transport.py`, `superset_transport.py`, `workflow.py`, `recovery.py` | Prompt presets, direct prompts, readiness, recovery text, and launch flags remain stable. |
+| Requirements bootstrap | `python/envctl_engine/requirements/orchestrator.py` | `requirements/supabase.py`, `postgres.py`, `redis.py`, `n8n.py`, `adapter_base.py`, `common.py` | Adapter APIs used by startup and runtime stay stable during component extraction. |
+| Dashboard and terminal UI | `python/envctl_engine/ui/dashboard/orchestrator.py` | `ui/dashboard/rendering.py`, `ui/dashboard/terminal_ui.py`, `ui/backend.py`, `ui/backend_resolver.py`, `ui/command_loop.py` | Dashboard command behavior and rendering contracts remain compatible. |
+| State and generated runtime contracts | `python/envctl_engine/state/` and `python/envctl_engine/runtime_feature_inventory.py` | `contracts/*.json`, `scripts/generate_*`, `scripts/release_shipability_gate.py` | Checked-in artifacts change only when generated output changes intentionally. |
+
+## Invariants
+
+- Supported CLI flags, compatibility commands, route selection, exit statuses, and user-facing command output must remain stable unless a task explicitly requires a compatibility-preserving update.
+- `.envctl-state` artifact schemas, startup logs, debug reports, runtime readiness files, and state repository models are persistent contracts.
+- Prompt installation behavior and plan-agent launch semantics are contracts across Codex, OpenCode, cmux, tmux, omx, ULW, headless, new-session, and direct-prompt paths.
+- Generated contract artifacts are maintained by their generator scripts; update checked-in JSON only after comparing generated output.
+- Generated worktree setup must stay confined to the current checkout or generated worktree targets. Do not mutate sibling worktrees as a side effect of planning changes.
+- Serena is the symbol navigation tool for exact definitions, references, and diagnostics. CGC context `Envctl` is for broad repo graph analysis. Literal strings and docs/config text can use native search.
+
+## How To Change Areas
+
+- Runtime: add or move behavior into a focused `runtime/engine_runtime_*_support.py` owner, then keep `PythonEngineRuntime` as a thin facade and run runtime dispatch/contract tests.
+- Startup: extract lifecycle phases behind narrow inputs and result objects while preserving `StartupOrchestrator.execute` as the readable sequence.
+- Actions: route each action through action-owned helpers; keep `ActionCommandOrchestrator` as the compatibility entry point and split tests by action behavior.
+- Planning and worktrees: keep caller-facing helpers stable first, move cohesive internals into planning-owned modules, and preserve fresh AI worktree safety checks.
+- Transports: share launch vocabulary through `planning/plan_agent/models.py` and helper modules; keep transport-specific process/session behavior in the transport modules.
+- Requirements: split adapters behind stable adapter APIs. Supabase should be decomposed by configuration, lifecycle, readiness, database setup, auth users, repair, and reporting.
+- Dashboard: keep orchestration, rendering, backend resolution, and command parsing separate; protect rendering and restart-selector behavior with focused UI tests.
