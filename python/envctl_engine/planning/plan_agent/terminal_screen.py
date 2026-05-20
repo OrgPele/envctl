@@ -21,9 +21,11 @@ _CODEX_READY_MARKERS = (
 )
 _CODEX_GOAL_ACTIVE_MARKERS = (
     "active goal",
+    "goal active",
     "goal context",
     "goal_context",
     "current goal",
+    "active thread goal",
 )
 _OPENCODE_LOADING_MARKERS = (
     "loading",
@@ -173,11 +175,20 @@ def _codex_queue_screen_looks_ready(screen: str) -> bool:
     return _screen_looks_ready("codex", cleaned)
 
 
-def _codex_goal_screen_looks_active(screen: str) -> bool:
+def _codex_goal_screen_looks_active(screen: str, goal_text: str = "") -> bool:
     normalized_screen = _normalized_screen_text(screen)
     if not normalized_screen:
         return False
-    return any(marker in normalized_screen for marker in _CODEX_GOAL_ACTIVE_MARKERS)
+    if not any(marker in normalized_screen for marker in _CODEX_GOAL_ACTIVE_MARKERS):
+        return False
+    normalized_goal = _normalized_screen_text(goal_text)
+    if not normalized_goal:
+        return True
+    goal_tokens = [token for token in normalized_goal.split() if len(token) > 4]
+    if not goal_tokens:
+        return True
+    matched_tokens = sum(1 for token in goal_tokens[:12] if token in normalized_screen)
+    return matched_tokens >= min(4, len(goal_tokens[:12]))
 
 
 def _codex_queue_message_needs_tab(screen: str, text: str, *, require_text_match: bool = True) -> bool:
