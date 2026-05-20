@@ -389,7 +389,7 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--opencode          force OpenCode for tmux launches",
             "--ulw               tmux + OpenCode only: force /ulw-loop prefix (default for OpenCode)",
             "--tmux-new-session  create another tmux/OMX session instead of reusing an attachable existing one",
-            "SUPERSET=true SUPERSET_PROJECT=<id> selects the Superset high-level transport",
+            "SUPERSET_PROJECT=<id> or SUPERSET_WORKSPACE=<id> selects the Superset high-level transport",
         ),
         examples=(
             "envctl --plan feature/task --headless",

@@ -125,13 +125,14 @@ Each launched surface stays interactive. Envctl creates the tab, renames it to a
 Superset is a separate high-level transport, not a cmux-compatible terminal surface. Configure a Superset project or an existing workspace, then run the same plan workflow:
 
 ```sh
-SUPERSET=true SUPERSET_PROJECT=<project-id> envctl --plan <selector>
+SUPERSET_PROJECT=<project-id> envctl --plan <selector>
 SUPERSET_WORKSPACE=<workspace-id> envctl --plan <selector>
 ```
 
 Behavior:
 
 - for each newly created envctl plan worktree, envctl runs `superset workspaces create --local --project <project> --name <name> --branch <branch> --agent codex --prompt <prompt> --json`, unless an existing workspace is configured
+- `SUPERSET_PROJECT` and `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT` select the Superset transport unless `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` is explicitly set
 - with `SUPERSET_WORKSPACE` or `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE`, envctl runs `superset agents run --workspace <workspace> --agent codex --prompt <prompt> --json`
 - `ENVCTL_PLAN_AGENT_SUPERSET_HOST=<host>` uses `--host <host>` instead of `--local`
 - `ENVCTL_PLAN_AGENT_SUPERSET_OPEN=true` opens the workspace when Superset returns a workspace id

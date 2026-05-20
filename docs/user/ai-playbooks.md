@@ -126,11 +126,11 @@ If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that
 To launch through Superset instead of cmux surfaces:
 
 ```sh
-SUPERSET=true SUPERSET_PROJECT=<project-id> envctl --plan <selector>
+SUPERSET_PROJECT=<project-id> envctl --plan <selector>
 SUPERSET_WORKSPACE=<workspace-id> envctl --plan <selector>
 ```
 
-Superset launches use Superset's public high-level CLI. Envctl sends the rendered Codex `implement_task` prompt to `superset workspaces create` or `superset agents run`, then optionally opens the workspace. Superset does not support envctl's cmux screen polling, tab renames, key sending, review tabs, or Codex cycle queue injection in this slice.
+Superset project or workspace config selects the Superset transport unless `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` is explicitly set. Superset launches use Superset's public high-level CLI. Envctl sends the rendered Codex `implement_task` prompt to `superset workspaces create` or `superset agents run`, then optionally opens the workspace. Superset does not support envctl's cmux screen polling, tab renames, key sending, review tabs, or Codex cycle queue injection in this slice.
 
 Codex TUI cycle mode:
 

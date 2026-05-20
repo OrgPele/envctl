@@ -1132,9 +1132,15 @@ def _apply_plan_agent_aliases(resolved: dict[str, str], *, explicit_values: Mapp
             resolved["ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT"] = "superset"
     if "ENVCTL_PLAN_AGENT_SUPERSET_PROJECT" not in explicit_values and "SUPERSET_PROJECT" in explicit_values:
         resolved["ENVCTL_PLAN_AGENT_SUPERSET_PROJECT"] = str(explicit_values.get("SUPERSET_PROJECT", ""))
+    if "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT" not in explicit_values and (
+        "SUPERSET_PROJECT" in explicit_values or "ENVCTL_PLAN_AGENT_SUPERSET_PROJECT" in explicit_values
+    ):
+        resolved["ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT"] = "superset"
     if "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE" not in explicit_values and "SUPERSET_WORKSPACE" in explicit_values:
         resolved["ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE"] = str(explicit_values.get("SUPERSET_WORKSPACE", ""))
-    if "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT" not in explicit_values and "SUPERSET_WORKSPACE" in explicit_values:
+    if "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT" not in explicit_values and (
+        "SUPERSET_WORKSPACE" in explicit_values or "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE" in explicit_values
+    ):
         resolved["ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT"] = "superset"
     if "ENVCTL_PLAN_AGENT_CODEX_CYCLES" not in explicit_values and "CYCLES" in explicit_values:
         resolved["ENVCTL_PLAN_AGENT_CODEX_CYCLES"] = str(explicit_values.get("CYCLES", ""))

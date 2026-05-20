@@ -55,11 +55,14 @@ def _launch_plan_agent_superset_workspaces(
         _print_launch_summary(
             f"Superset plan agent launch finished with partial success: launched {len(launched)}, failed {len(failed)}."
         )
+        _print_superset_outcome_details(outcomes, launch_config=launch_config)
         return PlanAgentLaunchResult(status="partial", reason="partial_failure", outcomes=tuple(outcomes))
     if failed:
         _print_launch_summary(f"Superset plan agent launch failed for {len(failed)} worktree(s).")
+        _print_superset_outcome_details(outcomes, launch_config=launch_config)
         return PlanAgentLaunchResult(status="failed", reason="launch_failed", outcomes=tuple(outcomes))
     _print_launch_summary(f"Superset plan agent launch started {len(launched)} workspace/agent run(s).")
+    _print_superset_outcome_details(outcomes, launch_config=launch_config)
     return PlanAgentLaunchResult(status="launched", reason="launched", outcomes=tuple(outcomes))
 
 
@@ -187,10 +190,20 @@ def _launch_single_superset_worktree(
             project=launch_config.superset_project or None,
         )
 
+    outcome_reason = None
     if launch_config.superset_open and workspace_id:
-        _open_superset_workspace(runtime, launch_config=launch_config, worktree=worktree, workspace_id=workspace_id)
+        open_error = _open_superset_workspace(
+            runtime,
+            launch_config=launch_config,
+            worktree=worktree,
+            workspace_id=workspace_id,
+        )
+        if open_error:
+            outcome_reason = f"open_failed: {open_error}"
+    elif not workspace_id:
+        outcome_reason = "workspace_id_unavailable"
     _persist_runtime_events_snapshot(runtime)
-    return PlanAgentLaunchOutcome(worktree.name, worktree.root, workspace_id, "launched")
+    return PlanAgentLaunchOutcome(worktree.name, worktree.root, workspace_id, "launched", outcome_reason)
 
 
 def _superset_initial_prompt(
@@ -237,7 +250,7 @@ def _open_superset_workspace(
     launch_config: PlanAgentLaunchConfig,
     worktree: CreatedPlanWorktree,
     workspace_id: str,
-) -> None:
+) -> str | None:
     command = ["superset", "workspaces", "open", workspace_id]
     runtime._emit(
         "planning.agent_launch.superset_open",
@@ -247,12 +260,49 @@ def _open_superset_workspace(
         workspace_id=workspace_id,
         command_kind="open",
     )
-    runtime.process_runner.run(
+    result = runtime.process_runner.run(
         command,
         cwd=Path(worktree.root),
         env=getattr(runtime, "env", {}),
         timeout=30.0,
     )
+    if getattr(result, "returncode", 1) == 0:
+        return None
+    error = _completed_process_error_text(result)
+    runtime._emit(
+        "planning.agent_launch.superset_open_failed",
+        reason="superset_open_failed",
+        transport="superset",
+        worktree=worktree.name,
+        project=launch_config.superset_project or None,
+        workspace_id=workspace_id,
+        error=error,
+    )
+    return error
+
+
+def _print_superset_outcome_details(
+    outcomes: list[PlanAgentLaunchOutcome],
+    *,
+    launch_config: PlanAgentLaunchConfig,
+) -> None:
+    for outcome in outcomes:
+        if outcome.status == "failed":
+            suffix = f": {outcome.reason}" if outcome.reason else ""
+            _print_launch_summary(f"  - {outcome.worktree_name}: failed{suffix}")
+            continue
+        workspace_id = str(outcome.surface_id or "").strip()
+        if workspace_id:
+            _print_launch_summary(f"  - {outcome.worktree_name}: launched Superset workspace {workspace_id}")
+            if not launch_config.superset_open:
+                _print_launch_summary(f"    open: superset workspaces open {workspace_id}")
+        else:
+            _print_launch_summary(
+                f"  - {outcome.worktree_name}: Superset command succeeded, but no workspace id was returned."
+            )
+        reason = str(outcome.reason or "").strip()
+        if reason.startswith("open_failed:"):
+            _print_launch_summary(f"    open failed: {reason.removeprefix('open_failed:').strip()}")
 
 
 def _parse_superset_json_output(stdout: str) -> dict[str, Any] | list[Any] | None:

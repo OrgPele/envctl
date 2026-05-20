@@ -400,7 +400,7 @@ Alias env vars:
 - `CMUX=true` is a shorthand alias for enabling plan-agent launch with the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=<value>`
 - `SUPERSET=true` enables plan-agent launch and selects `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=superset` unless the canonical transport key is set
-- `SUPERSET_PROJECT=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT=<value>`
+- `SUPERSET_PROJECT=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT=<value>` and selects Superset transport unless the canonical transport key is set
 - `SUPERSET_WORKSPACE=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE=<value>` and selects Superset transport unless the canonical transport key is set
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - canonical `ENVCTL_PLAN_AGENT_*` keys win when both canonical and alias forms are set
@@ -419,6 +419,7 @@ Cycle mode notes:
 Superset transport notes:
 
 - Superset launches use public CLI commands only: `superset workspaces create`, `superset agents run`, and optionally `superset workspaces open`.
+- `SUPERSET_PROJECT`, `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT`, `SUPERSET_WORKSPACE`, and `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE` select the Superset transport by default unless `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` is explicitly set.
 - Superset public CLI accepts project and branch, not an explicit worktree path; exact envctl worktree adoption is a future extension point.
 - Superset receives only the initial rendered Codex implementation prompt in this slice. Codex cycle queueing, screen polling, tab renaming, key sending, cmux surfaces, and dashboard review tabs are not supported through Superset public CLI.
 - Superset auth and host errors are surfaced from the Superset command output; configure OAuth login or `SUPERSET_API_KEY` as Superset requires.

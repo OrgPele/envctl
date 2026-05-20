@@ -459,7 +459,7 @@ Commit defaults:
 Optional plan-agent launch config for `--plan`:
 
 - `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
-- `SUPERSET=true SUPERSET_PROJECT=<project-id> envctl --plan <selector>` asks Superset to create or reuse a workspace for the branch and start Codex with the rendered implementation prompt
+- `SUPERSET_PROJECT=<project-id> envctl --plan <selector>` asks Superset to create or reuse a workspace for the branch and start Codex with the rendered implementation prompt; `SUPERSET=true` is optional when a project or workspace is configured
 - `SUPERSET_WORKSPACE=<workspace-id> envctl --plan <selector>` runs Codex in an existing Superset workspace
 - Superset transport uses public `superset workspaces create`, `superset agents run`, and optional `superset workspaces open` commands; it does not use cmux surface commands
 - `envctl --plan <selector> --omx` launches Codex through an OMX-managed detached tmux session instead of having envctl create the tmux window itself
@@ -494,7 +494,7 @@ Optional plan-agent launch config for `--plan`:
 - when a named target workspace does not exist yet, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface
 - `CMUX=true` enables the feature and uses the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=envctl` is a shorthand alias for targeting a named cmux workspace
-- `SUPERSET=true`, `SUPERSET_PROJECT=<value>`, and `SUPERSET_WORKSPACE=<value>` are shorthand aliases for the Superset public-CLI transport; canonical `ENVCTL_PLAN_AGENT_*` keys still win
+- `SUPERSET=true`, `SUPERSET_PROJECT=<value>`, `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT=<value>`, and `SUPERSET_WORKSPACE=<value>` select the Superset public-CLI transport unless `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` is explicitly set; canonical `ENVCTL_PLAN_AGENT_*` keys still win
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `CYCLES` only changes the Codex cycle count and does not enable plan-agent launch by itself
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and alias forms are set
