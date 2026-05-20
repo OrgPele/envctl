@@ -162,6 +162,37 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         harness._plan_agent_events = events
         return harness
 
+    def _superset_host_db(self, home: Path, host_id: str = "host-1") -> Path:
+        host_db = home / ".superset" / "host" / host_id / "host.db"
+        host_db.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(host_db) as connection:
+            connection.execute(
+                """
+                create table host_agent_configs (
+                    id text primary key not null,
+                    preset_id text not null,
+                    label text not null,
+                    command text not null,
+                    args_json text default '[]' not null,
+                    prompt_transport text not null,
+                    prompt_args_json text default '[]' not null,
+                    env_json text default '{}' not null,
+                    display_order integer not null,
+                    created_at integer not null,
+                    updated_at integer not null
+                )
+                """
+            )
+            connection.execute(
+                """
+                insert into host_agent_configs
+                (id, preset_id, label, command, args_json, prompt_transport, prompt_args_json, env_json, display_order, created_at, updated_at)
+                values ('codex-default', 'codex', 'Codex', 'codex', '["--dangerously-bypass-approvals-and-sandbox"]', 'argv', '["--"]', '{}', 0, 1, 1)
+                """
+            )
+            connection.commit()
+        return host_db
+
     def _expected_omx_root(self, worktree: CreatedPlanWorktree) -> Path:
         token = omx_transport._sanitize_omx_tmux_token(worktree.name)
         return Path(worktree.root).resolve() / ".envctl-state" / "omx" / token
@@ -6252,11 +6283,14 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             repo = Path(tmpdir) / "repo"
             worktree = repo / "trees" / "feature-a" / "1"
             runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
             worktree.mkdir(parents=True, exist_ok=True)
+            host_db = self._superset_host_db(home)
             rt = self._runtime(
                 repo,
                 runtime,
                 env={
+                    "HOME": str(home),
                     "SUPERSET": "true",
                     "SUPERSET_PROJECT": "proj-1",
                     "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
@@ -6288,6 +6322,16 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                         ),
                     ),
                 )
+            create_call = rt.process_runner.calls[1]
+            agent_id = create_call[create_call.index("--agent") + 1]
+            with sqlite3.connect(host_db) as connection:
+                host_agent_row = connection.execute(
+                    "select command, args_json, prompt_transport from host_agent_configs where id = ?",
+                    (agent_id,),
+                ).fetchone()
+            launcher_path = Path(json.loads(host_agent_row[1])[0]) if host_agent_row else Path()
+            launcher_exists = launcher_path.exists()
+            launcher_source = launcher_path.read_text(encoding="utf-8") if launcher_exists else ""
 
         rendered = buffer.getvalue()
         self.assertEqual(result.status, "launched")
@@ -6295,19 +6339,34 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertIn("features_envctl_plan_agent_superset_lean_launch_1", rendered)
         self.assertIn("ws-123", rendered)
         self.assertEqual(rt.process_runner.calls[0], ["git", "-C", str(worktree), "branch", "--show-current"])
-        create_call = rt.process_runner.calls[1]
         self.assertEqual(create_call[:7], ["superset", "workspaces", "create", "--local", "--project", "proj-1", "--name"])
         self.assertIn("--branch", create_call)
         self.assertEqual(create_call[create_call.index("--branch") + 1], "feature/superset")
         self.assertIn("--agent", create_call)
-        self.assertEqual(create_call[create_call.index("--agent") + 1], "codex")
+        self.assertRegex(agent_id, r"^[0-9a-f-]{36}$")
+        self.assertNotEqual(agent_id, "codex")
         self.assertIn("--prompt", create_call)
         prompt = create_call[create_call.index("--prompt") + 1]
-        self.assertTrue(prompt.startswith("/goal "))
-        self.assertIn("Workflow mode: single_prompt.", prompt)
-        self.assertIn("Authoritative source of truth", prompt)
+        payload = json.loads(prompt)
+        self.assertEqual(payload["version"], 1)
+        self.assertTrue(payload["goal"].startswith("Implement the envctl plan-agent task for a.md"))
+        self.assertIn("Workflow mode: single_prompt.", payload["goal"])
+        self.assertIn("Authoritative source of truth", payload["prompt"])
         self.assertEqual(create_call[-1], "--json")
         self.assertEqual(rt.process_runner.calls[2], ["superset", "workspaces", "open", "ws-123"])
+        self.assertIsNotNone(host_agent_row)
+        self.assertEqual(host_agent_row[0], "python3")
+        self.assertEqual(host_agent_row[2], "argv")
+        self.assertEqual(launcher_path, worktree / ".envctl-state" / "superset-codex-goal-launcher.py")
+        self.assertTrue(launcher_exists)
+        self.assertIn('if b"Goal active" in buffer:', launcher_source)
+        self.assertIn('f"/goal {goal}"', launcher_source)
+        self.assertIn('os.write(master_fd, b"\\r")', launcher_source)
+        self.assertIn('os.write(master_fd, b"\\n")', launcher_source)
+        self.assertIn("goal_submit_attempts < 6", launcher_source)
+        self.assertIn("prompt_submit_attempts < 6", launcher_source)
+        self.assertIn("prompt_pasted = True", launcher_source)
+        self.assertNotIn("goal_deadline", launcher_source)
         flattened = "\n".join(" ".join(call) for call in rt.process_runner.calls)
         self.assertNotIn("cmux read-screen", flattened)
         self.assertNotIn("cmux send-key", flattened)
@@ -6315,7 +6374,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertNotIn("cmux paste-buffer", flattened)
         warnings = self._events(rt, "planning.agent_launch.superset_cycles_unsupported")
         self.assertEqual(len(warnings), 1)
-        goal_events = self._events(rt, "planning.agent_launch.codex_goal_embedded")
+        goal_events = self._events(rt, "planning.agent_launch.codex_goal_launcher_prepared")
         self.assertEqual(len(goal_events), 1)
         self.assertEqual(goal_events[0]["transport"], "superset")
 
@@ -6354,7 +6413,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         create_call = rt.process_runner.calls[1]
         prompt = create_call[create_call.index("--prompt") + 1]
         self.assertFalse(prompt.startswith("/goal "))
-        self.assertEqual(self._events(rt, "planning.agent_launch.codex_goal_embedded"), [])
+        self.assertEqual(self._events(rt, "planning.agent_launch.codex_goal_launcher_prepared"), [])
 
     def test_superset_workspace_launch_uses_public_agent_run_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
