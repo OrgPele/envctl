@@ -6260,6 +6260,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "SUPERSET": "true",
                     "SUPERSET_PROJECT": "proj-1",
                     "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+                    "ENVCTL_PLAN_AGENT_SUPERSET_GOAL_ACTIVE_DELAY": "0",
                 },
             )
             rt.process_runner = _RecordingRunner(
@@ -6276,7 +6277,21 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             buffer = StringIO()
-            with redirect_stdout(buffer):
+            with (
+                patch(
+                    "envctl_engine.planning.plan_agent.superset_transport._launch_superset_terminal_session",
+                    return_value="term-1",
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent.superset_transport._wait_for_superset_codex_goal_active",
+                    return_value=True,
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent.superset_transport._write_superset_terminal_input",
+                    return_value=None,
+                ),
+                redirect_stdout(buffer),
+            ):
                 result = launch_plan_agent_terminals(
                     rt,
                     route=parse_route(["--plan", "feature-a"], env={}),
@@ -6299,13 +6314,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(create_call[:7], ["superset", "workspaces", "create", "--local", "--project", "proj-1", "--name"])
         self.assertIn("--branch", create_call)
         self.assertEqual(create_call[create_call.index("--branch") + 1], "feature/superset")
-        self.assertIn("--agent", create_call)
-        self.assertEqual(create_call[create_call.index("--agent") + 1], "codex")
-        self.assertIn("--prompt", create_call)
-        prompt = create_call[create_call.index("--prompt") + 1]
-        self.assertTrue(prompt.startswith("/goal "))
-        self.assertIn("Workflow mode: single_prompt.", prompt)
-        self.assertIn("Authoritative source of truth", prompt)
+        self.assertNotIn("--agent", create_call)
+        self.assertNotIn("--prompt", create_call)
         self.assertEqual(create_call[-1], "--json")
         self.assertEqual(rt.process_runner.calls[2], ["superset", "workspaces", "open", "ws-123"])
         flattened = "\n".join(" ".join(call) for call in rt.process_runner.calls)
@@ -6315,9 +6325,140 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertNotIn("cmux paste-buffer", flattened)
         warnings = self._events(rt, "planning.agent_launch.superset_cycles_unsupported")
         self.assertEqual(len(warnings), 1)
-        goal_events = self._events(rt, "planning.agent_launch.codex_goal_embedded")
+        goal_events = self._events(rt, "planning.agent_launch.codex_goal_submitted")
         self.assertEqual(len(goal_events), 1)
         self.assertEqual(goal_events[0]["transport"], "superset")
+
+    def test_superset_project_launch_submits_goal_then_prompt_through_open_workspace_terminal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            runtime = Path(tmpdir) / "runtime"
+            worktree.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "SUPERSET": "true",
+                    "SUPERSET_PROJECT": "proj-1",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["git"], returncode=0, stdout="feature/superset\n", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["superset"],
+                        returncode=0,
+                        stdout=json.dumps({"workspace": {"id": "ws-123"}}),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="", stderr=""),
+                ]
+            )
+            actions: list[tuple[str, str]] = []
+
+            def fake_launch_terminal(*_args: object, workspace_id: str, initial_command: str, cwd: Path, **_kwargs: object) -> str:
+                actions.append(("launch", f"{workspace_id}|{initial_command}|{cwd}"))
+                return "term-1"
+
+            def fake_wait(*_args: object, workspace_id: str, terminal_id: str, **_kwargs: object) -> bool:
+                actions.append(("wait", f"{workspace_id}|{terminal_id}"))
+                return True
+
+            def fake_write(*_args: object, workspace_id: str, terminal_id: str, data: str, **_kwargs: object) -> str | None:
+                actions.append(("write", f"{workspace_id}|{terminal_id}|{data}"))
+                return None
+
+            with (
+                patch(
+                    "envctl_engine.planning.plan_agent.superset_transport._launch_superset_terminal_session",
+                    side_effect=fake_launch_terminal,
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent.superset_transport._wait_for_superset_codex_goal_active",
+                    side_effect=fake_wait,
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent.superset_transport._write_superset_terminal_input",
+                    side_effect=fake_write,
+                ),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                    created_worktrees=(
+                        CreatedPlanWorktree(
+                            name="features_envctl_plan_agent_superset_lean_launch_1",
+                            root=worktree,
+                            plan_file="a.md",
+                        ),
+                    ),
+                )
+
+        self.assertEqual(result.status, "launched")
+        create_call = rt.process_runner.calls[1]
+        self.assertNotIn("--agent", create_call)
+        self.assertNotIn("--prompt", create_call)
+        self.assertEqual(rt.process_runner.calls[2], ["superset", "workspaces", "open", "ws-123"])
+        self.assertEqual(actions[0], ("launch", f"ws-123|codex --dangerously-bypass-approvals-and-sandbox|{worktree}"))
+        self.assertEqual(actions[1][0], "write")
+        self.assertIn("ws-123|term-1|/goal ", actions[1][1])
+        self.assertTrue(actions[1][1].endswith("\r"))
+        self.assertEqual(actions[2], ("wait", "ws-123|term-1"))
+        self.assertEqual(actions[3][0], "write")
+        self.assertIn("Authoritative source of truth", actions[3][1])
+        self.assertTrue(actions[3][1].endswith("\r"))
+        goal_events = self._events(rt, "planning.agent_launch.codex_goal_submitted")
+        self.assertEqual(len(goal_events), 1)
+        self.assertEqual(goal_events[0]["transport"], "superset")
+
+    def test_superset_project_launch_fails_before_prompt_when_goal_never_becomes_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            runtime = Path(tmpdir) / "runtime"
+            worktree.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime, env={"SUPERSET_PROJECT": "proj-1"})
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["git"], returncode=0, stdout="feature/superset\n", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["superset"],
+                        returncode=0,
+                        stdout=json.dumps({"workspace": {"id": "ws-123"}}),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="", stderr=""),
+                ]
+            )
+            writes: list[str] = []
+
+            with (
+                patch(
+                    "envctl_engine.planning.plan_agent.superset_transport._launch_superset_terminal_session",
+                    return_value="term-1",
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent.superset_transport._wait_for_superset_codex_goal_active",
+                    return_value=False,
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent.superset_transport._write_superset_terminal_input",
+                    side_effect=lambda *_args, data, **_kwargs: writes.append(data) or None,
+                ),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=worktree, plan_file="a.md"),),
+                )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.outcomes[0].status, "failed")
+        self.assertEqual(result.outcomes[0].reason, "superset_codex_goal_active_timeout")
+        self.assertEqual(len(writes), 1)
+        self.assertTrue(writes[0].startswith("/goal "))
+        self.assertEqual(self._events(rt, "planning.agent_launch.codex_goal_fallback")[0]["reason"], "codex_goal_active_timeout")
 
     def test_superset_project_launch_honors_no_goal_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -6331,6 +6472,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={
                     "SUPERSET_PROJECT": "proj-1",
                     "ENVCTL_PLAN_AGENT_SUPERSET_OPEN": "false",
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
                 },
             )
             rt.process_runner = _RecordingRunner(
@@ -6412,6 +6554,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={
                     "SUPERSET_PROJECT": "proj-1",
                     "ENVCTL_PLAN_AGENT_SUPERSET_OPEN": "false",
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
                 },
             )
             rt.process_runner = _RecordingRunner(
@@ -6440,7 +6583,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             worktree = repo / "trees" / "feature-a" / "1"
             runtime = Path(tmpdir) / "runtime"
             worktree.mkdir(parents=True, exist_ok=True)
-            rt = self._runtime(repo, runtime, env={"SUPERSET_PROJECT": "proj-1"})
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={"SUPERSET_PROJECT": "proj-1", "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false"},
+            )
             rt.process_runner = _RecordingRunner(
                 outputs=[
                     subprocess.CompletedProcess(args=["git"], returncode=0, stdout="feature/agents\n", stderr=""),
@@ -6472,7 +6619,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             worktree = repo / "trees" / "feature-a" / "1"
             runtime = Path(tmpdir) / "runtime"
             worktree.mkdir(parents=True, exist_ok=True)
-            rt = self._runtime(repo, runtime, env={"SUPERSET_PROJECT": "proj-1"})
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={"SUPERSET_PROJECT": "proj-1", "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false"},
+            )
             rt.process_runner = _RecordingRunner(
                 outputs=[
                     subprocess.CompletedProcess(args=["git"], returncode=0, stdout="feature/non-json\n", stderr=""),
@@ -6575,7 +6726,11 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             worktree = repo / "trees" / "feature-a" / "1"
             runtime = Path(tmpdir) / "runtime"
             worktree.mkdir(parents=True, exist_ok=True)
-            rt = self._runtime(repo, runtime, env={"SUPERSET_PROJECT": "proj-1"})
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={"SUPERSET_PROJECT": "proj-1", "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false"},
+            )
             rt.process_runner = _RecordingRunner(
                 outputs=[
                     subprocess.CompletedProcess(args=["git"], returncode=0, stdout="feature/open\n", stderr=""),
@@ -6618,7 +6773,15 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             with sqlite3.connect(db_path) as connection:
                 connection.execute("create table workspaces (id text primary key)")
                 connection.execute("insert into workspaces (id) values (?)", ("ws-ready",))
-            rt = self._runtime(repo, runtime, env={"SUPERSET_PROJECT": "proj-1", "HOME": str(home)})
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "SUPERSET_PROJECT": "proj-1",
+                    "HOME": str(home),
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
+                },
+            )
             rt.process_runner = _RecordingRunner(
                 outputs=[
                     subprocess.CompletedProcess(args=["git"], returncode=0, stdout="feature/open\n", stderr=""),
@@ -6749,6 +6912,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "SUPERSET_PROJECT": "proj-1",
                     "HOME": str(home),
                     "ENVCTL_PLAN_AGENT_SUPERSET_DESKTOP_RESTART": "false",
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
                 },
             )
             rt.process_runner = _RecordingRunner(

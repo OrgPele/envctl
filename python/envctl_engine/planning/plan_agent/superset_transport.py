@@ -4,6 +4,9 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -99,6 +102,8 @@ def _launch_single_superset_worktree(
         )
         return PlanAgentLaunchOutcome(worktree.name, worktree.root, None, "failed", prompt_error)
 
+    interactive_goal = _superset_project_codex_goal_interaction_enabled(launch_config=launch_config)
+
     if launch_config.superset_workspace:
         command = [
             "superset",
@@ -141,13 +146,16 @@ def _launch_single_superset_worktree(
                 _superset_workspace_name(worktree),
                 "--branch",
                 branch or worktree.name,
+                "--json",
+            ]
+        )
+        if not interactive_goal:
+            command[-1:-1] = [
                 "--agent",
                 launch_config.cli,
                 "--prompt",
                 prompt,
-                "--json",
             ]
-        )
         event_name = "planning.agent_launch.superset_workspace_create"
         event_payload = {
             "workspace_id": None,
@@ -248,10 +256,113 @@ def _launch_single_superset_worktree(
                 )
                 _persist_runtime_events_snapshot(runtime)
                 return PlanAgentLaunchOutcome(worktree.name, worktree.root, workspace_id, "failed", desktop_error)
+    if interactive_goal and workspace_id:
+        interaction_error = _run_superset_codex_goal_interaction(
+            runtime,
+            launch_config=launch_config,
+            workflow=workflow,
+            worktree=worktree,
+            workspace_id=workspace_id,
+            implementation_prompt=prompt,
+        )
+        if interaction_error:
+            runtime._emit(
+                "planning.agent_launch.failed",
+                reason=interaction_error,
+                transport="superset",
+                worktree=worktree.name,
+                workspace_id=workspace_id,
+                **base_payload,
+            )
+            _persist_runtime_events_snapshot(runtime)
+            return PlanAgentLaunchOutcome(worktree.name, worktree.root, workspace_id, "failed", interaction_error)
     elif not workspace_id:
         outcome_reason = "workspace_id_unavailable"
     _persist_runtime_events_snapshot(runtime)
     return PlanAgentLaunchOutcome(worktree.name, worktree.root, workspace_id, "launched", outcome_reason)
+
+
+def _superset_project_codex_goal_interaction_enabled(*, launch_config: PlanAgentLaunchConfig) -> bool:
+    return (
+        launch_config.cli == "codex"
+        and launch_config.codex_goal_enable
+        and bool(launch_config.superset_project)
+        and not bool(launch_config.superset_workspace)
+    )
+
+
+def _run_superset_codex_goal_interaction(
+    runtime: Any,
+    *,
+    launch_config: PlanAgentLaunchConfig,
+    workflow: _PlanAgentWorkflow,
+    worktree: CreatedPlanWorktree,
+    workspace_id: str,
+    implementation_prompt: str,
+) -> str | None:
+    terminal_id = _launch_superset_terminal_session(
+        runtime,
+        workspace_id=workspace_id,
+        initial_command=launch_config.cli_command,
+        cwd=Path(worktree.root),
+    )
+    if not terminal_id:
+        return "superset_terminal_launch_failed"
+
+    goal_text = _codex_goal_text_for_worktree(
+        worktree=worktree,
+        preset=launch_config.preset,
+        workflow_mode=workflow.mode,
+        omx_workflow=launch_config.omx_workflow,
+    )
+    goal_error = _write_superset_terminal_input(
+        runtime,
+        workspace_id=workspace_id,
+        terminal_id=terminal_id,
+        data=f"/goal {goal_text}\r",
+    )
+    if goal_error is not None:
+        return goal_error
+    _emit_codex_goal_event(
+        runtime,
+        "planning.agent_launch.codex_goal_submitted",
+        session_name=terminal_id,
+        window_name=workspace_id,
+        cli=launch_config.cli,
+        workflow=workflow,
+        transport="superset",
+        worktree=worktree,
+    )
+    if not _wait_for_superset_codex_goal_active(runtime, workspace_id=workspace_id, terminal_id=terminal_id):
+        _emit_codex_goal_event(
+            runtime,
+            "planning.agent_launch.codex_goal_fallback",
+            session_name=terminal_id,
+            window_name=workspace_id,
+            cli=launch_config.cli,
+            workflow=workflow,
+            transport="superset",
+            worktree=worktree,
+            reason="codex_goal_active_timeout",
+        )
+        return "superset_codex_goal_active_timeout"
+
+    prompt_error = _write_superset_terminal_input(
+        runtime,
+        workspace_id=workspace_id,
+        terminal_id=terminal_id,
+        data=f"{implementation_prompt}\r",
+    )
+    if prompt_error is not None:
+        return prompt_error
+    runtime._emit(
+        "planning.agent_launch.superset_prompt_submitted",
+        transport="superset",
+        worktree=worktree.name,
+        workspace_id=workspace_id,
+        terminal_id=terminal_id,
+    )
+    return None
 
 
 def _superset_initial_prompt(
@@ -273,7 +384,11 @@ def _superset_initial_prompt(
     )
     if prompt_error is not None:
         return prompt, prompt_error
-    if launch_config.cli != "codex" or not launch_config.codex_goal_enable:
+    if (
+        launch_config.cli != "codex"
+        or not launch_config.codex_goal_enable
+        or _superset_project_codex_goal_interaction_enabled(launch_config=launch_config)
+    ):
         return prompt, None
     goal_text = _codex_goal_text_for_worktree(
         worktree=worktree,
@@ -290,6 +405,232 @@ def _superset_initial_prompt(
         worktree=worktree,
     )
     return f"/goal {goal_text}\n\n{prompt}", None
+
+
+def _launch_superset_terminal_session(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    initial_command: str,
+    cwd: Path,
+) -> str:
+    payload = {
+        "workspaceId": workspace_id,
+        "initialCommand": initial_command,
+        "cwd": str(cwd),
+    }
+    response, error = _call_superset_host_trpc(runtime, "terminal.launchSession", payload)
+    if error is not None:
+        runtime._emit(
+            "planning.agent_launch.superset_terminal_launch_failed",
+            reason="superset_terminal_launch_failed",
+            transport="superset",
+            workspace_id=workspace_id,
+            error=error,
+        )
+        return ""
+    terminal_id = str(response.get("terminalId") or "").strip()
+    if not terminal_id:
+        runtime._emit(
+            "planning.agent_launch.superset_terminal_launch_failed",
+            reason="superset_terminal_id_unavailable",
+            transport="superset",
+            workspace_id=workspace_id,
+            response=response,
+        )
+        return ""
+    runtime._emit(
+        "planning.agent_launch.superset_terminal_launch",
+        transport="superset",
+        workspace_id=workspace_id,
+        terminal_id=terminal_id,
+    )
+    return terminal_id
+
+
+def _write_superset_terminal_input(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    terminal_id: str,
+    data: str,
+) -> str | None:
+    _, error = _call_superset_host_trpc(
+        runtime,
+        "terminal.writeInput",
+        {
+            "workspaceId": workspace_id,
+            "terminalId": terminal_id,
+            "data": data,
+        },
+    )
+    if error is not None:
+        runtime._emit(
+            "planning.agent_launch.superset_terminal_input_failed",
+            reason="superset_terminal_input_failed",
+            transport="superset",
+            workspace_id=workspace_id,
+            terminal_id=terminal_id,
+            error=error,
+        )
+        return f"superset_terminal_input_failed: {error}"
+    return None
+
+
+def _wait_for_superset_codex_goal_active(runtime: Any, *, workspace_id: str, terminal_id: str) -> bool:
+    env = getattr(runtime, "env", {}) or {}
+    deadline = time.monotonic() + _superset_goal_active_timeout_seconds(env)
+    while True:
+        response, error = _call_superset_host_trpc(
+            runtime,
+            "terminal.listSessions",
+            {"workspaceId": workspace_id},
+            method="GET",
+        )
+        if error is None:
+            sessions = response.get("sessions")
+            if isinstance(sessions, list):
+                for session in sessions:
+                    if not isinstance(session, dict):
+                        continue
+                    if str(session.get("terminalId") or "") != terminal_id:
+                        continue
+                    if not bool(session.get("exited")):
+                        delay = _superset_goal_active_delay_seconds(env)
+                        if delay > 0:
+                            time.sleep(delay)
+                        return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
+
+
+def _superset_goal_active_timeout_seconds(env: dict[str, str]) -> float:
+    raw = str(env.get("ENVCTL_PLAN_AGENT_SUPERSET_GOAL_ACTIVE_TIMEOUT") or "").strip()
+    if not raw:
+        return 10.0
+    try:
+        value = float(raw)
+    except ValueError:
+        return 10.0
+    return max(0.0, min(value, 60.0))
+
+
+def _superset_goal_active_delay_seconds(env: dict[str, str]) -> float:
+    raw = str(env.get("ENVCTL_PLAN_AGENT_SUPERSET_GOAL_ACTIVE_DELAY") or "").strip()
+    if not raw:
+        return 2.0
+    try:
+        value = float(raw)
+    except ValueError:
+        return 2.0
+    return max(0.0, min(value, 10.0))
+
+
+def _call_superset_host_trpc(
+    runtime: Any,
+    procedure: str,
+    payload: dict[str, object],
+    *,
+    method: str = "POST",
+) -> tuple[dict[str, Any], str | None]:
+    endpoint, token = _superset_host_connection(runtime)
+    if not endpoint or not token:
+        return {}, "superset_host_connection_unavailable"
+    procedure_path = urllib.parse.quote(str(procedure).strip(), safe=".")
+    url = f"{endpoint.rstrip('/')}/trpc/{procedure_path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    try:
+        if method.upper() == "GET":
+            query = urllib.parse.urlencode({"input": json.dumps({"json": payload}, separators=(",", ":"))})
+            request = urllib.request.Request(f"{url}?{query}", headers=headers, method="GET")
+        else:
+            body = json.dumps({"json": payload}, separators=(",", ":")).encode("utf-8")
+            request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(request, timeout=10.0) as response:  # noqa: S310 - localhost Superset endpoint
+            raw = response.read().decode("utf-8")
+    except (OSError, urllib.error.URLError, TimeoutError) as exc:
+        return {}, str(exc)
+    try:
+        parsed = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {}, "invalid_superset_host_response"
+    if not isinstance(parsed, dict):
+        return {}, "invalid_superset_host_response"
+    error = parsed.get("error")
+    if isinstance(error, dict):
+        message = str(error.get("message") or error).strip()
+        return {}, message or "superset_host_trpc_error"
+    data = parsed.get("result")
+    if isinstance(data, dict):
+        data = data.get("data")
+    if isinstance(data, dict):
+        json_data = data.get("json")
+        if isinstance(json_data, dict):
+            return json_data, None
+        return data, None
+    return {}, None
+
+
+def _superset_host_connection(runtime: Any) -> tuple[str, str]:
+    env = getattr(runtime, "env", {}) or {}
+    endpoint = str(env.get("ENVCTL_PLAN_AGENT_SUPERSET_HOST_SERVICE_ENDPOINT") or "").strip()
+    token = str(env.get("ENVCTL_PLAN_AGENT_SUPERSET_HOST_SERVICE_TOKEN") or "").strip()
+    if endpoint and token:
+        return endpoint, token
+
+    manifest = _read_superset_host_manifest(runtime)
+    if manifest:
+        endpoint = endpoint or str(manifest.get("endpoint") or "").strip()
+        token = token or str(manifest.get("authToken") or "").strip()
+    if endpoint and token:
+        return endpoint, token
+
+    status = _superset_status(runtime)
+    if status:
+        endpoint = endpoint or str(status.get("endpoint") or "").strip()
+    return endpoint, token
+
+
+def _read_superset_host_manifest(runtime: Any) -> dict[str, Any]:
+    env = getattr(runtime, "env", {}) or {}
+    home = str(env.get("HOME") or "").strip()
+    if not home:
+        return {}
+    superset_home = Path(home) / ".superset"
+    organization_id = str(env.get("SUPERSET_ORGANIZATION_ID") or "").strip()
+    candidates: list[Path] = []
+    if organization_id:
+        candidates.append(superset_home / "host" / organization_id / "manifest.json")
+    host_root = superset_home / "host"
+    if host_root.exists():
+        candidates.extend(
+            sorted(host_root.glob("*/manifest.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+        )
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _superset_status(runtime: Any) -> dict[str, Any]:
+    result = runtime.process_runner.run(
+        ["superset", "status", "--json"],
+        cwd=Path(getattr(getattr(runtime, "config", None), "base_dir", ".")).resolve(),
+        env=getattr(runtime, "env", {}),
+        timeout=10.0,
+    )
+    if getattr(result, "returncode", 1) != 0:
+        return {}
+    parsed = _parse_superset_json_output(str(getattr(result, "stdout", "") or ""))
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _git_branch_name(runtime: Any, cwd: Path) -> tuple[str, str | None]:
