@@ -21,6 +21,8 @@ Completed and preserved planning ownership slices:
 - `planning/worktree_git_hooks.py` owns `ENVCTL_WORKTREE_GIT_HOOKS` parsing and disabled/inherit policy checks.
 - `planning/worktree_main_task.py` owns generated worktree `MAIN_TASK.md` seeding, plan archival into `todo/done`,
   and numeric iteration gap selection.
+- `planning/worktree_selection_memory.py` owns plan selection memory path resolution, load/save behavior, and initial
+  selected-count calculation.
 - `planning/worktree_domain.py` remains a compatibility facade for those extracted helpers.
 
 Fully implement the remaining decomposition work without changing CLI semantics, persistent state formats, generated
@@ -40,7 +42,6 @@ implementation commits unless a task explicitly requires changing it.
      - setup-worktree selection and setup-entry application,
      - plan selection and prompt parsing,
      - interactive planning menu rendering/key handling,
-     - plan selection memory load/save,
      - worktree sync/create/delete orchestration,
      - partial worktree-add recovery and placeholder fallback,
      - generated worktree shared-artifact linking,
@@ -177,21 +178,26 @@ Fully implemented:
 - Worktree git-hook policy resolution is extracted to `python/envctl_engine/planning/worktree_git_hooks.py`.
 - Generated worktree `MAIN_TASK.md` seeding, plan archival, and numeric iteration gap selection are extracted to
   `python/envctl_engine/planning/worktree_main_task.py`.
+- Plan selection memory load/save and initial selected-count calculation are extracted to
+  `python/envctl_engine/planning/worktree_selection_memory.py`.
 - Structure guards exist in `tests/python/shared/test_structure_layout.py` for the planning owner modules.
-- Focused planning tests exist for `worktree_git_hooks.py` and `worktree_main_task.py`.
+- Focused planning tests exist for `worktree_git_hooks.py`, `worktree_main_task.py`, and
+  `worktree_selection_memory.py`.
 - Most recent reported validation:
   - `uv run --extra dev pytest -q tests/python/planning/test_worktree_main_task.py tests/python/shared/test_structure_layout.py::StructureLayoutTests::test_worktree_main_task_has_owned_module`
     -> `6 passed`.
+  - `uv run --extra dev pytest -q tests/python/planning/test_worktree_selection_memory.py tests/python/shared/test_structure_layout.py::StructureLayoutTests::test_worktree_selection_memory_has_owned_module`
+    -> `6 passed`.
   - `uv run --extra dev pytest -q tests/python/planning tests/python/shared/test_structure_layout.py tests/python/startup/test_support_module_decoupling.py tests/python/shared/test_utility_consolidation_contract.py`
-    -> `325 passed, 28 subtests passed`.
+    -> `331 passed, 28 subtests passed`.
   - `uv run --extra dev ruff check python/envctl_engine/planning tests/python/planning tests/python/shared/test_structure_layout.py docs/reference/README.md docs/reference/python-engine-architecture.md`
     -> passed.
   - `git diff --check` -> passed.
 
 Partially implemented:
 
-- Planning/worktree split is started, but `worktree_domain.py` is still about 1,720 lines and still owns selection,
-  menu, memory, sync/create/delete, partial recovery, shared-artifact linking, cleanup, candidate discovery, and sorting.
+- Planning/worktree split is started, but `worktree_domain.py` still owns selection, menu, sync/create/delete, partial
+  recovery, shared-artifact linking, cleanup, candidate discovery, and sorting.
 - Runtime support modules already exist under `runtime/engine_runtime_*_support.py`, but
   `runtime/engine_runtime.py` is still about 1,679 lines and still owns many delegate-worthy responsibilities.
 - Startup support modules already exist, but `startup/startup_orchestrator.py` is still about 2,272 lines and still owns
