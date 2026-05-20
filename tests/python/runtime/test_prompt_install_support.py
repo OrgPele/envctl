@@ -571,7 +571,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             "create_plan_auto_codex": {
                 "command": (
                     "ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> "
-                    "envctl --plan <category>/<slug> --tmux --entire-system --headless --new-session"
+                    "envctl --plan <category>/<slug> --cmux --entire-system --headless --new-session"
                 ),
                 "phrases": (
                     "recommended_codex_cycles=<n>",
@@ -583,7 +583,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             },
             "create_plan_auto_opencode": {
                 "command": (
-                    "envctl --plan <category>/<slug> --tmux --opencode --entire-system "
+                    "envctl --plan <category>/<slug> --cmux --opencode --entire-system "
                     "--headless --new-session"
                 ),
                 "phrases": (
@@ -792,6 +792,10 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
+            "default to the cmux launcher when cmux is installed",
+            plan_prompt.body,
+        )
+        self.assertIn(
             "cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux",
             plan_prompt.body,
         )
@@ -982,7 +986,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertTrue(expected.exists())
             written = expected.read_text(encoding="utf-8")
             self.assertIn(
-                "envctl --plan <category>/<slug> --tmux --opencode --entire-system "
+                "envctl --plan <category>/<slug> --cmux --opencode --entire-system "
                 "--headless --new-session",
                 written,
             )
@@ -1092,7 +1096,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             )
 
         self.assertIn("Automatic envctl follow-up", resolved)
-        self.assertIn("--tmux --opencode --entire-system --headless --new-session", resolved)
+        self.assertIn("--cmux --opencode --entire-system --headless --new-session", resolved)
         self.assertIn("Auto launch OpenCode ULW after planning", resolved)
 
     def test_resolve_opencode_direct_prompt_body_keeps_browser_use_skill_name(self) -> None:

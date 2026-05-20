@@ -113,7 +113,7 @@ The prompt must not begin implementing in the original planning session after la
 Run the launch command after the plan path exists and selector derivation succeeds. Use `--entire-system` immediately before `--headless` by default; only replace it with a narrower explicit scope such as `--no-infra`, `--only-backend`, or `--only-frontend` when the plan records why full-stack E2E does not apply. Run exactly this default command:
 
 ```bash
-cd <repo-root> && envctl --plan <category>/<slug> --tmux --opencode --entire-system --headless --new-session
+cd <repo-root> && envctl --plan <category>/<slug> --cmux --opencode --entire-system --headless --new-session
 ```
 
 For example, a backend-only plan still keeps `--entire-system` by default; use `--only-backend` or `--no-infra` only when the plan records why full-stack E2E does not apply.

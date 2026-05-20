@@ -122,7 +122,7 @@ def launch_plan_agent_terminals(
         return PlanAgentLaunchResult(status="skipped", reason="disabled")
     if launch_config.surface_transport_warning:
         _print_launch_summary(
-            "Plan agent launch failed: ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT must be 'cmux' or 'superset'."
+            "Plan agent launch failed: ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT must be 'cmux', 'tmux', or 'superset'."
         )
         runtime._emit("planning.agent_launch.failed", reason=launch_config.surface_transport_warning, **base_payload)
         return PlanAgentLaunchResult(status="failed", reason=launch_config.surface_transport_warning)

@@ -112,7 +112,7 @@ Prefer the smallest number that can plausibly finish the task and verify it. Inc
   - use an explicit selector for the created plan with `envctl --headless --plan <selector>`
   - if the user wants envctl to launch the AI prompts too, treat that as a deterministic repo-scoped flow rather than an inherited terminal-context flow
   - explain the supported launch surfaces clearly enough that the user does not need to run `envctl --help` to understand them:
-    - `--cmux`: envctl launches the default cmux plan-agent workflow for this command without requiring an environment alias
+    - `--cmux`: envctl launches the default cmux plan-agent workflow for this command without requiring an environment alias; prefer this when cmux is installed
     - `--tmux`: envctl creates or reuses the tmux session/window itself, launches the selected CLI, and submits the rendered prompt/workflow there
     - `--cmux --opencode` or `--tmux --opencode`: envctl launches OpenCode and prepends `/ulw-loop` to the first submitted prompt by default; add `--no-ulw-loop` only when the user explicitly wants to omit that prefix
     - `--omx`: envctl asks OMX to create the managed detached tmux/Codex session, then envctl submits the rendered prompt/workflow into that OMX-managed session
@@ -122,6 +122,7 @@ Prefer the smallest number that can plausibly finish the task and verify it. Inc
     - `--headless`: envctl stays non-interactive and prints follow-up/attach guidance instead of taking over the current terminal
     - `--new-session`: create a fresh cmux surface, tmux session, or OMX-managed session instead of attaching to an existing one
   - whenever you show a follow-up command, include `--entire-system` by default; use narrower flags (`--only-frontend`, `--only-backend`, or `--no-infra`) only when the plan records why full-stack E2E does not apply
+  - default to the cmux launcher when cmux is installed; use `--tmux` only when cmux is unavailable or the user explicitly asks for tmux
   - whenever you show a follow-up command, also explain in plain language what happens when that exact command runs: whether envctl only prints guidance or actually launches a session, whether the session is tmux-managed by envctl or OMX-managed by omx, whether the current terminal is taken over, and how the user can reconnect to the launched session later
   - keep the wording operational rather than marketing: spell out what envctl creates or syncs, what CLI or session it starts, what prompt preset it submits, and what remains for the user or AI to do after launch
   - make clear that `opencode` applies only to the cmux/tmux launcher paths today; OMX-managed launches are Codex-only

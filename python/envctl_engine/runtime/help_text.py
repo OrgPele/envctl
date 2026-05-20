@@ -379,7 +379,7 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--headless          stay non-interactive and print follow-up/attach guidance",
             "--dry-run           preview selected/reused/created worktrees without mutating git worktrees or trees/",
             "--only-backend|--only-frontend|--no-deps|--no-infra  skip local app/dependency launch pieces",
-            "--cmux              launch the default cmux plan-agent workflow without setting CMUX=true",
+            "--cmux              launch the cmux plan-agent workflow; default when cmux is installed",
             "--tmux              envctl owns the tmux session/window and submits the workflow there",
             "--omx               envctl asks OMX to create/manage the detached Codex tmux session",
             "--ultragoal         requires --omx: start Ultragoal after optional Codex /goal framing",
