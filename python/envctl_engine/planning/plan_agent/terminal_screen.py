@@ -19,6 +19,14 @@ _CODEX_READY_MARKERS = (
     "model:",
     "directory:",
 )
+_CODEX_GOAL_ACTIVE_MARKERS = (
+    "active goal",
+    "goal active",
+    "goal context",
+    "goal_context",
+    "current goal",
+    "active thread goal",
+)
 _OPENCODE_LOADING_MARKERS = (
     "loading",
     "starting",
@@ -167,23 +175,11 @@ def _codex_queue_screen_looks_ready(screen: str) -> bool:
     return _screen_looks_ready("codex", cleaned)
 
 
-def _codex_goal_screen_looks_active(screen: str, goal_text: str) -> bool:
-    cleaned = _strip_ansi_sequences(screen)
-    normalized_screen = _normalized_screen_text(cleaned)
+def _codex_goal_screen_looks_active(screen: str, goal_text: str = "") -> bool:
+    normalized_screen = _normalized_screen_text(screen)
     if not normalized_screen:
         return False
-    marker_found = any(
-        marker in normalized_screen
-        for marker in (
-            "active goal",
-            "goal active",
-            "current goal",
-            "goal context",
-            "goal_context",
-            "active thread goal",
-        )
-    )
-    if not marker_found:
+    if not any(marker in normalized_screen for marker in _CODEX_GOAL_ACTIVE_MARKERS):
         return False
     normalized_goal = _normalized_screen_text(goal_text)
     if not normalized_goal:

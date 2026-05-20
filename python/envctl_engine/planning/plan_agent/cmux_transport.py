@@ -407,7 +407,7 @@ def _run_surface_bootstrap(
         workflow=workflow,
         worktree=worktree,
     )
-    if goal_error is not None and goal_error != "codex_goal_ready_timeout":
+    if goal_error is not None:
         return goal_error
     if goal_error is None and launch_config.codex_goal_enable and launch_config.cli == "codex":
         _wait_for_cli_ready(

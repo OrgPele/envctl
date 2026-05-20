@@ -136,7 +136,8 @@ Behavior:
 - with `SUPERSET_WORKSPACE` or `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE`, envctl runs `superset agents run --workspace <workspace> --agent codex --prompt <prompt> --json`
 - `ENVCTL_PLAN_AGENT_SUPERSET_HOST=<host>` uses `--host <host>` instead of `--local`
 - `ENVCTL_PLAN_AGENT_SUPERSET_OPEN=true` opens the workspace when Superset returns a workspace id
-- Superset public CLI receives only the initial rendered Codex implementation prompt; Codex cycles, screen polling, tab renames, key sending, and dashboard review tabs are not supported through Superset in this slice
+- Local Superset Codex launches with `/goal` enabled register an envctl host-agent wrapper that starts Codex, types `/goal ...`, presses Enter, waits for `Goal active`, then submits the rendered implementation prompt
+- If no local Superset host DB is available, envctl falls back to Superset's public prompt-only agent launch; Codex cycles, screen polling, tab renames, and dashboard review tabs are not supported through Superset in this slice
 - Superset public CLI accepts project and branch, not an explicit worktree path; exact adoption of envctl's worktree path is reserved for a later Superset CLI or host-service extension
 - Superset auth and host setup errors are reported from Superset stdout/stderr so users can log in or configure `SUPERSET_API_KEY`
 

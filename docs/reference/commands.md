@@ -461,7 +461,7 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
 - `SUPERSET_PROJECT=<project-id> envctl --plan <selector>` asks Superset to create or reuse a workspace for the branch and start Codex with the rendered implementation prompt; `SUPERSET=true` is optional when a project or workspace is configured
 - `SUPERSET_WORKSPACE=<workspace-id> envctl --plan <selector>` runs Codex in an existing Superset workspace
-- Superset transport uses public `superset workspaces create`, `superset agents run`, and optional `superset workspaces open` commands; it does not use cmux surface commands
+- Superset transport uses public `superset workspaces create`, `superset agents run`, and optional `superset workspaces open` commands for workspace management; it does not use cmux surface commands
 - `envctl --plan <selector> --omx` launches Codex through an OMX-managed detached tmux session instead of having envctl create the tmux window itself
 - `envctl --plan <selector> --omx --ultragoal` enters the default/recommended Ultragoal OMX workflow inside that OMX-managed Codex session
 - `envctl --plan <selector> --omx --ralph` enters the explicit Ralph compatibility workflow inside that OMX-managed Codex session
@@ -472,7 +472,7 @@ Optional plan-agent launch config for `--plan`:
 - when an OMX handoff is stale, unavailable, exited, or tied to a removed worktree, envctl does not silently start native tmux in the same command; it prints a `recovery:` command that switches the same plan selector to envctl-owned `--tmux`, preserves relevant scope/headless flags, includes `--tmux-new-session`, and omits OMX-only workflow flags such as `--ultragoal`, `--ralph`, and `--team`
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI for envctl-owned cmux/tmux launches; OMX launches always use Codex
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
-- `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true` submits Codex `/goal` session framing before the initial implementation prompt; `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch
+- `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true` submits Codex `/goal` session framing before the initial implementation prompt; local Superset Codex launches use an envctl Superset host-agent wrapper that types `/goal`, presses Enter, waits for `Goal active`, then submits the implementation prompt; `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex TUI queued cycle workflow for cmux, tmux, and OMX-managed Codex sessions; the default is `2`
 - `$envctl-create-plan-auto-codex` computes a `0` through `8` recommendation and uses that command-scoped count for its launch command; the global default remains `2`
 - OpenCode cmux launches send `/<preset>`; `--tmux --opencode` submits the rendered prompt body directly so ULW/direct-prompt flows do not depend on an installed slash command
@@ -518,7 +518,7 @@ Optional dashboard review-tab launch:
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues a plain commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first commit/push/PR/status-check follow-up, uses commit/push-only follow-ups for intermediate rounds, and reserves `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the one-shot preset workflow
-- Superset also stays on a one-shot Codex prompt in this slice; Codex cycles, screen polling, tab renames, and dashboard review tabs are cmux/tmux/OMX concerns, not Superset public-CLI behavior
+- Superset still stays on a one-shot implementation prompt in this slice; local Codex `/goal` framing is handled by the envctl wrapper before that prompt is submitted, while Codex cycles, screen polling, tab renames, and dashboard review tabs remain cmux/tmux/OMX concerns
 - envctl only appends queued messages; it does not type `envctl test`, `git`, `gh`, `envctl commit`, or `envctl pr` commands into the shell
 
 Debug and diagnostics:
