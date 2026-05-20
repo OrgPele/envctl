@@ -16,12 +16,21 @@ from envctl_engine.actions.actions_worktree import delete_worktree_path
 from envctl_engine.planning.worktree_code_intelligence import (
     prepare_worktree_code_intelligence as _prepare_worktree_code_intelligence_impl,
 )
+from envctl_engine.planning.worktree_provenance import (
+    active_fresh_ai_worktree_protection_reason as _active_fresh_ai_worktree_protection_reason_impl,
+    build_worktree_provenance as _build_worktree_provenance_impl,
+    detect_default_branch as _detect_default_branch_impl,
+    fresh_ai_launch_marker_is_fresh as _fresh_ai_launch_marker_is_fresh_impl,
+    git_command_output as _git_command_output_impl,
+    read_worktree_provenance as _read_worktree_provenance_impl,
+    resolve_branch_ref as _resolve_branch_ref_impl,
+    write_worktree_provenance as _write_worktree_provenance_impl,
+)
 from envctl_engine.planning.plan_agent.models import (
     CreatedPlanWorktree,
     PlanSelectionResult,
     PlanWorktreeSyncResult,
 )
-from envctl_engine.runtime.codex_tmux_support import _tmux_session_exists
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.planning import (
@@ -46,9 +55,6 @@ class ProjectContextLike(Protocol):
     root: Path
 
 
-WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
-WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
-FRESH_AI_LAUNCH_IN_PROGRESS_TTL_SECONDS = 24 * 60 * 60
 _WORKTREE_GIT_HOOKS_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "false", "0", "no"))
 _WORKTREE_GIT_HOOKS_INHERITED_VALUES = frozenset(
     ("inherit", "inherited", "enabled", "enable", "on", "true", "1", "yes")
@@ -1499,20 +1505,13 @@ def _write_worktree_provenance(
     created_for_fresh_ai_launch: bool = False,
     launch_transport: str = "",
 ) -> None:
-    provenance = _build_worktree_provenance(
+    _write_worktree_provenance_impl(
         self,
+        target=target,
         plan_file=plan_file,
         created_for_fresh_ai_launch=created_for_fresh_ai_launch,
         launch_transport=launch_transport,
     )
-    if provenance is None or not target.is_dir():
-        return
-    path = target / WORKTREE_PROVENANCE_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        path.write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
-    except OSError:
-        return
 
 
 def _link_repo_local_shared_artifacts(self: Any, *, target: Path) -> None:
@@ -1566,90 +1565,24 @@ def _build_worktree_provenance(
     created_for_fresh_ai_launch: bool = False,
     launch_transport: str = "",
 ) -> dict[str, object] | None:
-    source_branch = _git_command_output(self, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
-    if source_branch and source_branch != "HEAD":
-        return _worktree_provenance_payload(
-            self,
-            source_branch=source_branch,
-            resolution_reason="attached_branch",
-            plan_file=plan_file,
-            created_for_fresh_ai_launch=created_for_fresh_ai_launch,
-            launch_transport=launch_transport,
-        )
-
-    default_branch = _detect_default_branch(self)
-    if not default_branch:
-        return None
-    return _worktree_provenance_payload(
+    return _build_worktree_provenance_impl(
         self,
-        source_branch=default_branch,
-        resolution_reason="default_branch_detached_head",
         plan_file=plan_file,
         created_for_fresh_ai_launch=created_for_fresh_ai_launch,
         launch_transport=launch_transport,
     )
 
 
-def _worktree_provenance_payload(
-    self: Any,
-    *,
-    source_branch: str,
-    resolution_reason: str,
-    plan_file: str | None = None,
-    created_for_fresh_ai_launch: bool = False,
-    launch_transport: str = "",
-) -> dict[str, object]:
-    source_ref = _resolve_branch_ref(self, source_branch=source_branch)
-    payload: dict[str, object] = {
-        "schema_version": WORKTREE_PROVENANCE_SCHEMA_VERSION,
-        "source_branch": source_branch,
-        "source_ref": source_ref or source_branch,
-        "resolution_reason": resolution_reason,
-        "created_from_repo": str(self.config.base_dir.resolve()),
-        "recorded_at": datetime.now(tz=UTC).isoformat(),
-    }
-    normalized_plan_file = str(plan_file or "").strip()
-    if normalized_plan_file:
-        payload["plan_file"] = normalized_plan_file
-    if created_for_fresh_ai_launch:
-        payload["created_for_fresh_ai_launch"] = True
-        payload["fresh_ai_launch_status"] = "launching"
-    normalized_transport = str(launch_transport or "").strip().lower()
-    if normalized_transport:
-        payload["launch_transport"] = normalized_transport
-    return payload
-
-
 def _resolve_branch_ref(self: Any, *, source_branch: str) -> str:
-    normalized = source_branch.strip()
-    if not normalized:
-        return ""
-    for candidate in (f"origin/{normalized}", normalized):
-        if _git_command_output(self, ["rev-parse", "--verify", candidate]).strip():
-            return candidate
-    return normalized
+    return _resolve_branch_ref_impl(self, source_branch=source_branch)
 
 
 def _detect_default_branch(self: Any) -> str:
-    ref = _git_command_output(self, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
-    if ref.startswith("origin/"):
-        return ref.split("origin/", 1)[1]
-    for candidate in ("main", "master"):
-        if _git_command_output(self, ["rev-parse", "--verify", candidate]).strip():
-            return candidate
-    return "main"
+    return _detect_default_branch_impl(self)
 
 
 def _git_command_output(self: Any, args: list[str]) -> str:
-    result = self.process_runner.run(
-        ["git", "-C", str(self.config.base_dir), *args],
-        cwd=self.config.base_dir,
-        env=self._command_env(port=0),
-        timeout=30.0,
-    )
-    if getattr(result, "returncode", 1) != 0:
-        return ""
-    return str(getattr(result, "stdout", ""))
+    return _git_command_output_impl(self, args)
 
 
 def _seed_main_task_from_plan(*, target: Path, plan_path: Path) -> None:
@@ -1724,42 +1657,15 @@ def _delete_feature_worktrees(
 
 
 def _active_fresh_ai_worktree_protection_reason(self: Any, *, name: str, root: Path) -> str:
-    provenance = _read_worktree_provenance(root)
-    if not parse_bool(provenance.get("created_for_fresh_ai_launch"), False):
-        return ""
-    status = str(provenance.get("fresh_ai_launch_status") or "").strip().lower()
-    if status in {"launching", "queued", "starting"}:
-        recorded_at = str(provenance.get("recorded_at") or "").strip()
-        if _fresh_ai_launch_marker_is_fresh(recorded_at):
-            return "fresh_ai_launch_in_progress"
-    session_name = str(provenance.get("session_name") or provenance.get("native_session_id") or "").strip()
-    if session_name and _tmux_session_exists(self, session_name):
-        return "active_ai_session"
-    return ""
+    return _active_fresh_ai_worktree_protection_reason_impl(self, name=name, root=root)
 
 
 def _fresh_ai_launch_marker_is_fresh(recorded_at: str) -> bool:
-    if not recorded_at:
-        return True
-    try:
-        parsed = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
-    except ValueError:
-        return True
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    age = datetime.now(tz=UTC) - parsed.astimezone(UTC)
-    return age.total_seconds() <= FRESH_AI_LAUNCH_IN_PROGRESS_TTL_SECONDS
+    return _fresh_ai_launch_marker_is_fresh_impl(recorded_at)
 
 
 def _read_worktree_provenance(root: Path) -> dict[str, object]:
-    path = Path(root) / WORKTREE_PROVENANCE_PATH
-    if not path.is_file():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    return _read_worktree_provenance_impl(root)
 
 
 def _cleanup_empty_feature_root(self: Any, *, feature: str) -> None:

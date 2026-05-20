@@ -84,6 +84,16 @@ class StructureLayoutTests(unittest.TestCase):
             facade.read_text(encoding="utf-8"),
         )
 
+    def test_worktree_provenance_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_provenance.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_provenance import",
+            facade.read_text(encoding="utf-8"),
+        )
+
     def test_python_engine_architecture_inventory_exists(self) -> None:
         inventory = REPO_ROOT / "docs" / "reference" / "python-engine-architecture.md"
 
