@@ -8,7 +8,11 @@ from typing import Any
 from envctl_engine.planning.plan_agent.constants import *
 from envctl_engine.planning.plan_agent.models import *
 from envctl_engine.planning.plan_agent.recovery import _persist_runtime_events_snapshot, _print_launch_summary
-from envctl_engine.planning.plan_agent.workflow import _tab_title_for_worktree, _workflow_step_prompt_text
+from envctl_engine.planning.plan_agent.workflow import (
+    _codex_goal_text_for_worktree,
+    _tab_title_for_worktree,
+    _workflow_step_prompt_text,
+)
 
 
 def _launch_plan_agent_superset_workspaces(
@@ -216,13 +220,24 @@ def _superset_initial_prompt(
     if not workflow.steps:
         return "", "prompt_resolution_failed: empty_workflow"
     step = workflow.steps[0]
-    return _workflow_step_prompt_text(
+    prompt, prompt_error = _workflow_step_prompt_text(
         runtime,
         launch_config=launch_config,
         cli=launch_config.cli,
         step=step,
         worktree=worktree,
     )
+    if prompt_error is not None:
+        return prompt, prompt_error
+    if launch_config.cli != "codex" or not launch_config.codex_goal_enable:
+        return prompt, None
+    goal_text = _codex_goal_text_for_worktree(
+        worktree=worktree,
+        preset=launch_config.preset,
+        workflow_mode=workflow.mode,
+        omx_workflow=launch_config.omx_workflow,
+    )
+    return f"/goal {goal_text}\n\n{prompt}", None
 
 
 def _git_branch_name(runtime: Any, cwd: Path) -> tuple[str, str | None]:

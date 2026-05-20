@@ -6301,7 +6301,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertIn("--agent", create_call)
         self.assertEqual(create_call[create_call.index("--agent") + 1], "codex")
         self.assertIn("--prompt", create_call)
-        self.assertIn("Authoritative source of truth", create_call[create_call.index("--prompt") + 1])
+        prompt_text = create_call[create_call.index("--prompt") + 1]
+        self.assertTrue(prompt_text.startswith("/goal Implement the envctl plan-agent task for a.md"))
+        self.assertIn("Workflow mode: single_prompt.", prompt_text)
+        self.assertIn("Authoritative source of truth", prompt_text)
         self.assertEqual(create_call[-1], "--json")
         self.assertEqual(rt.process_runner.calls[2], ["superset", "workspaces", "open", "ws-123"])
         flattened = "\n".join(" ".join(call) for call in rt.process_runner.calls)
@@ -6355,6 +6358,42 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertIn("feature-a-1", rendered)
         self.assertIn("ws-existing", rendered)
         self.assertIn("superset workspaces open ws-existing", rendered)
+
+    def test_superset_launch_honors_codex_goal_disable_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "SUPERSET_WORKSPACE": "ws-existing",
+                    "ENVCTL_PLAN_AGENT_SUPERSET_OPEN": "false",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(
+                        args=["superset"],
+                        returncode=0,
+                        stdout=json.dumps({"workspace": {"id": "ws-existing"}}),
+                        stderr="",
+                    )
+                ]
+            )
+
+            result = launch_plan_agent_terminals(
+                rt,
+                route=parse_route(["--plan", "feature-a", "--no-goal"], env={}),
+                created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+            )
+
+        self.assertEqual(result.status, "launched")
+        run_call = rt.process_runner.calls[0]
+        prompt_text = run_call[run_call.index("--prompt") + 1]
+        self.assertFalse(prompt_text.startswith("/goal "))
+        self.assertIn("Authoritative source of truth", prompt_text)
 
     def test_superset_project_launch_uses_top_level_workspace_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
