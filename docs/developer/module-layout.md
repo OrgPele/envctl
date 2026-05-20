@@ -26,6 +26,7 @@
 - Shared Textual list navigation belongs in `python/envctl_engine/ui/textual/list_controller.py`.
 - Shared prompt-toolkit list execution belongs in `python/envctl_engine/ui/prompt_toolkit_list.py`.
 - Plan-agent launch internals belong in `python/envctl_engine/planning/plan_agent/`; keep `planning/plan_agent_launch_support.py` as the public compatibility facade for old public imports only. Internal code and tests must import private helpers from the owner modules under `planning/plan_agent/`.
+- Plan-agent transport and CLI selection vocabulary belongs in `python/envctl_engine/planning/plan_agent/intent.py`; launch config parsing should consume that shared intent instead of reimplementing route-flag precedence.
 - New shared helpers should be imported from their owning module, not redefined locally.
 
 ## Orchestrator ownership

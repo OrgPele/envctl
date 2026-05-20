@@ -31,6 +31,7 @@ from envctl_engine.state.models import RunState
 from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 
 from envctl_engine.planning.plan_agent.constants import *
+from envctl_engine.planning.plan_agent.intent import resolve_plan_agent_launch_intent
 from envctl_engine.planning.plan_agent.models import *
 
 def _parse_codex_cycles(raw: object) -> tuple[int, str | None]:
@@ -77,41 +78,9 @@ def resolve_plan_agent_launch_config(
     env_map = dict(env or {})
     _apply_plan_agent_aliases(env_map, explicit_values=env_map)
     route_flags = getattr(route, "flags", {}) or {}
-    cmux_launch_requested = bool(route_flags.get("cmux"))
-    opencode_launch_requested = bool(route_flags.get("opencode"))
-    configured_surface_transport = str(
-        env_map.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
-        or config.raw.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
-        or "cmux"
-    ).strip().lower() or "cmux"
-    surface_transport_warning = None
-    if configured_surface_transport not in {"cmux", "superset"}:
-        surface_transport_warning = "invalid_surface_transport"
-        configured_surface_transport = "cmux"
-    transport: Literal["cmux", "tmux", "omx", "superset"]
-    if bool(route_flags.get("omx")):
-        transport = "omx"
-    elif bool(route_flags.get("tmux")):
-        transport = "tmux"
-    elif cmux_launch_requested:
-        transport = "cmux"
-    elif opencode_launch_requested:
-        transport = "tmux"
-    else:
-        transport = "superset" if configured_surface_transport == "superset" else "cmux"
-    cli = str(
-        "opencode"
-        if bool(route_flags.get("opencode"))
-        else (
-            "codex"
-            if bool(route_flags.get("codex")) or transport == "omx"
-            else (
-            env_map.get("ENVCTL_PLAN_AGENT_CLI")
-            or config.raw.get("ENVCTL_PLAN_AGENT_CLI")
-            or "codex"
-            )
-        )
-    ).strip().lower() or "codex"
+    launch_intent = resolve_plan_agent_launch_intent(env_map=env_map, config_raw=config.raw, route=route)
+    transport = launch_intent.transport
+    cli = launch_intent.cli
     codex_yolo_enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_CODEX_YOLO")
         or config.raw.get("ENVCTL_PLAN_AGENT_CODEX_YOLO"),
@@ -164,7 +133,7 @@ def resolve_plan_agent_launch_config(
     ) or any(
         (
             bool(cmux_workspace),
-            cmux_launch_requested,
+            launch_intent.route_launch_requested,
             bool(superset_project or superset_workspace),
             transport in {"tmux", "omx"},
         )
@@ -251,7 +220,7 @@ def resolve_plan_agent_launch_config(
             or config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_OPEN"),
             True,
         ),
-        surface_transport_warning=surface_transport_warning,
+        surface_transport_warning=launch_intent.surface_transport_warning,
     )
 
 

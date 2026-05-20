@@ -40,6 +40,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "cmux_transport.py",
             "config.py",
             "constants.py",
+            "intent.py",
             "launch.py",
             "models.py",
             "omx_transport.py",
@@ -175,6 +176,9 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "_parse_codex_cycles",
                 "resolve_plan_agent_launch_config",
                 "plan_agent_launch_prereq_commands",
+            },
+            "intent.py": {
+                "resolve_plan_agent_launch_intent",
             },
             "workflow.py": {
                 "_workflow_step_prompt_text",
