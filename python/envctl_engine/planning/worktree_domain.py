@@ -17,6 +17,11 @@ from envctl_engine.planning.worktree_git_hooks import (
     worktree_git_hooks_disabled as _worktree_git_hooks_disabled_impl,
     worktree_git_hooks_policy as _worktree_git_hooks_policy_impl,
 )
+from envctl_engine.planning.worktree_main_task import (
+    move_plan_to_done as _move_plan_to_done_impl,
+    next_available_iteration as _next_available_iteration_impl,
+    seed_main_task_from_plan as _seed_main_task_from_plan_impl,
+)
 from envctl_engine.planning.worktree_code_intelligence import (
     prepare_worktree_code_intelligence as _prepare_worktree_code_intelligence_impl,
 )
@@ -1577,19 +1582,7 @@ def _git_command_output(self: Any, args: list[str]) -> str:
 
 
 def _seed_main_task_from_plan(*, target: Path, plan_path: Path) -> None:
-    if not plan_path.is_file() or not target.is_dir():
-        return
-    try:
-        plan_text = plan_path.read_text(encoding="utf-8")
-    except OSError:
-        return
-    if not plan_text.strip():
-        return
-    main_task_path = target / "MAIN_TASK.md"
-    try:
-        main_task_path.write_text(plan_text if plan_text.endswith("\n") else f"{plan_text}\n", encoding="utf-8")
-    except OSError:
-        return
+    _seed_main_task_from_plan_impl(target=target, plan_path=plan_path)
 
 
 def _delete_feature_worktrees(
@@ -1673,25 +1666,16 @@ def _cleanup_empty_feature_root(self: Any, *, feature: str) -> None:
 
 
 def _move_plan_to_done(self: Any, plan_file: str) -> None:
-    src = self._planning_root() / plan_file
-    if not src.is_file():
-        return
-    rel_dir = Path(plan_file).parent
-    if str(rel_dir) in {"", "."}:
-        rel_dir = Path("_misc")
-    done_dir = self._planning_done_root() / rel_dir
-    done_dir.mkdir(parents=True, exist_ok=True)
-    dest = done_dir / src.name
-    if dest.exists():
-        stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-        dest = done_dir / f"{src.stem}-{stamp}{src.suffix}"
-    src.replace(dest)
-    relative_done = dest.relative_to(self._planning_done_root())
-    print(
-        "Moved "
-        f"{_render_planning_path(self, absolute_path=src, display_text=plan_file)} "
-        "to "
-        f"{_render_planning_path(self, absolute_path=dest, display_text=f'done/{relative_done}') }."
+    _move_plan_to_done_impl(
+        plan_file=plan_file,
+        planning_root=self._planning_root(),
+        planning_done_root=self._planning_done_root(),
+        render_path=lambda *, absolute_path, display_text: _render_planning_path(
+            self,
+            absolute_path=absolute_path,
+            display_text=display_text,
+        ),
+        emit_message=print,
     )
 
 
@@ -1729,10 +1713,7 @@ def _project_sort_key_for_feature(project_name: str, feature: str) -> tuple[int,
 
 
 def _next_available_iteration(existing_iters: set[int]) -> int:
-    candidate = 1
-    while candidate in existing_iters:
-        candidate += 1
-    return candidate
+    return _next_available_iteration_impl(existing_iters)
 
 
 def _setup_worktree_requested(route: Route) -> bool:
