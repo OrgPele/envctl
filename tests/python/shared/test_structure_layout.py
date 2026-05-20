@@ -114,6 +114,16 @@ class StructureLayoutTests(unittest.TestCase):
             facade.read_text(encoding="utf-8"),
         )
 
+    def test_worktree_selection_memory_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_selection_memory.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_selection_memory import",
+            facade.read_text(encoding="utf-8"),
+        )
+
     def test_python_engine_architecture_inventory_exists(self) -> None:
         inventory = REPO_ROOT / "docs" / "reference" / "python-engine-architecture.md"
 
