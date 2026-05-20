@@ -88,15 +88,17 @@ def resolve_plan_agent_launch_config(
     if configured_surface_transport not in {"cmux", "superset"}:
         surface_transport_warning = "invalid_surface_transport"
         configured_surface_transport = "cmux"
-    transport: Literal["cmux", "tmux", "omx", "superset"] = (
-        "omx"
-        if bool(route_flags.get("omx"))
-        else (
-            "tmux"
-            if bool(route_flags.get("tmux")) or opencode_launch_requested
-            else ("superset" if configured_surface_transport == "superset" else "cmux")
-        )
-    )
+    transport: Literal["cmux", "tmux", "omx", "superset"]
+    if bool(route_flags.get("omx")):
+        transport = "omx"
+    elif bool(route_flags.get("tmux")):
+        transport = "tmux"
+    elif cmux_launch_requested:
+        transport = "cmux"
+    elif opencode_launch_requested:
+        transport = "tmux"
+    else:
+        transport = "superset" if configured_surface_transport == "superset" else "cmux"
     cli = str(
         "opencode"
         if bool(route_flags.get("opencode"))

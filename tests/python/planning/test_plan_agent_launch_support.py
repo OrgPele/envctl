@@ -496,6 +496,36 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertTrue(launch_config.ulw_loop_prefix)
         self.assertEqual(prereqs, ("tmux", "opencode"))
 
+    def test_resolve_plan_agent_launch_config_honors_cmux_opencode_route_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--cmux", "--opencode"], env={}),
+            )
+            prereqs = launch_support.plan_agent_launch_prereq_commands(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--cmux", "--opencode"], env={}),
+            )
+
+        self.assertEqual(launch_config.transport, "cmux")
+        self.assertEqual(launch_config.cli, "opencode")
+        self.assertTrue(launch_config.enabled)
+        self.assertFalse(launch_config.direct_prompt_enabled)
+        self.assertFalse(launch_config.ulw_loop_prefix)
+        self.assertEqual(prereqs, ("cmux", "opencode"))
+
     def test_resolve_preset_submission_text_defaults_ulw_loop_for_explicit_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
