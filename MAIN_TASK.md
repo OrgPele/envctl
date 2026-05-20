@@ -1,161 +1,350 @@
-# Envctl Worktree CGC Backend Default Hardening
+# Envctl Deep Refactor Remaining Orchestrator Work
 
 ## Context and objective
 
-The prior task, archived as `OLD_TASK_2.md`, implemented most of the envctl worktree code-intelligence isolation feature:
-generated worktrees get unique Serena project names, deterministic CGC contexts, explicit `cgc index <worktree>
---context <context>` commands, `.envctl-state/code-intelligence.json` metadata, docs, and targeted test coverage.
+The previous task, now archived as `OLD_TASK_2.md`, was a broad "Envctl Deep
+Codebase Refactor" plan. The last implementation pass completed several
+ownership slices and opened PR #247:
 
-The remaining issue is real CodeGraphContext backend reliability. The implementation currently leaves
-`ENVCTL_WORKTREE_CGC_DATABASE` empty by default, so generated worktrees create CGC contexts without `--database`.
-On this machine, a real generated-context index used CGC's FalkorDB-backed default path, failed to start FalkorDB
-cleanly, fell back, and indexing sat without progress until manually killed. Because this branch also commits
-`.cgcignore`, `ENVCTL_WORKTREE_CGC_INDEX=auto` can now trigger CGC indexing for generated envctl worktrees and hit that
-flaky default backend path.
+- `f5c60a9 Introduce plan-agent launch intent boundary`
+- `1f52d2c Split plan-agent intent tests by owner`
+- `088d19d Move self-destruct worktree helpers to action owner`
+- `5914614 Move action target resolution to target support`
 
-Objective: make the default generated-worktree CGC backend robust by defaulting worktree CGC context creation to
-`kuzudb` when no explicit database is configured, while preserving explicit user/config overrides and the best-effort
-non-fatal behavior from the prior task.
+Those commits are useful progress, but they do not complete the full deep
+refactor definition of done. This task must finish the remaining refactor
+end-to-end: reduce the largest orchestrators into clear coordination layers,
+complete owner modules and focused tests for each major runtime area, preserve
+all public envctl behavior, and run the required contract/release validation
+before final PR handoff.
 
-This is a follow-up hardening task, not a rewrite of the prior implementation.
+Authoritative implementation target: complete every remaining requirement below
+inside this worktree. Do not treat PR #247 as complete for the original broad
+task; treat it as the starting point for the remaining work.
 
 ## Remaining requirements (complete and exhaustive)
 
-1. Fully implement a default CGC database backend for envctl-generated worktree contexts.
-   - When `ENVCTL_WORKTREE_CGC_DATABASE` is unset or absent from config, `_worktree_cgc_database()` must return
-     `kuzudb`.
-   - `cgc context create <context>` must therefore include `--database kuzudb` by default for generated worktree CGC
-     indexing.
-   - Explicit env values must continue to win over config raw values.
-   - Explicit config raw values must continue to win over the default.
-   - Empty or whitespace-only env/config values must be treated as absent and must fall back to `kuzudb`.
+1. Thin `PythonEngineRuntime` into explicit runtime delegates.
+   - Group remaining runtime facade methods by owner:
+     dispatch/help, project/state resolution, lifecycle start/resume/stop,
+     action command entry points, debug/doctor/release-gate commands,
+     dashboard/interactive commands, service helpers, hook bridging, readiness,
+     truth/state helpers, prompt install/utility commands, and artifact paths.
+   - Move cohesive method clusters into existing `runtime/engine_runtime_*`
+     support modules where an owner already exists.
+   - Add new runtime owner modules only when no existing module has a clear
+     responsibility.
+   - Keep `PythonEngineRuntime` as the public CLI facade and compatibility
+     object, but make it construction/delegation focused.
+   - Preserve command dispatch behavior, exit status, help/config output,
+     generated runtime feature inventory, and compatibility imports.
+   - Add focused tests around facade/delegate boundaries so route selection,
+     output shape, and exit codes cannot drift.
 
-2. Preserve opt-out and override behavior.
-   - `ENVCTL_WORKTREE_CGC_INDEX=false` must still skip indexing.
-   - `ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` must still skip all code-intelligence bootstrap behavior.
-   - A non-empty `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` must still pass that backend to `cgc context create`.
-   - Existing context handling must continue to treat "already exists" output as success and proceed to indexing.
-   - Missing `cgc`, context creation failure, and index failure must remain non-fatal for worktree creation.
+2. Decompose startup orchestration by lifecycle phase.
+   - Extract plan-agent worktree preparation and launch handoff from
+     `StartupOrchestrator` into a startup/planning coordinator with explicit
+     input and result objects.
+   - Extract restart/reuse/pre-stop policy into a startup policy module.
+   - Extract success, degraded, and failure finalization into a finalizer module
+     that owns user-facing summaries and debug-report references.
+   - Extract requirement and service startup sequencing into service/bootstrap
+     coordinators while preserving readiness and truth reconciliation.
+   - Keep `StartupOrchestrator.execute` as the main sequence owner, but make it
+     read as high-level orchestration rather than low-level launch/rendering
+     logic.
+   - Preserve tests for degraded handoff, plan-agent launch skip/resume,
+     disabled modes, startup logs, state truth, restart behavior, and service
+     readiness.
 
-3. Persist and emit the selected default database clearly.
-   - `.envctl-state/code-intelligence.json` must record `"cgc_database": "kuzudb"` when the default is used.
-   - The `setup.worktree.code_intelligence.cgc_context` event must include `database="kuzudb"` when the default is used.
-   - Attempted command metadata must show `["cgc", "context", "create", <context>, "--database", "kuzudb"]` by default.
+3. Finish action command decomposition.
+   - Keep the completed action target and self-destruct worktree owner modules:
+     `actions/action_target_support.py` and `actions/action_worktree_runner.py`.
+   - Move `test` action execution, failed-test manifest handling, failed-test
+     summary formatting, and suite overview printing into action/test owner
+     modules.
+   - Move `migrate` command resolution, environment hints, migration logs,
+     compact failure output, result records, symbols, and result summary
+     rendering into an action/migrate owner module.
+   - Move project action environment/replacement construction, success/failure
+     handlers, artifact persistence, report writing, PR cache clearing, and
+     git-state summary helpers into reusable project-action owner modules.
+   - Keep `ActionCommandOrchestrator` as the compatibility entry point, with
+     each route delegating to focused helpers.
+   - Preserve public behavior for `test`, `pr`, `commit`, `review`, `migrate`,
+     `delete-worktree`, `blast-worktree`, and `self-destruct-worktree`.
+   - Split `tests/python/actions/test_actions_parity.py` into smaller
+     action-owned suites as each production seam is created, preserving all
+     assertions and fixture behavior.
 
-4. Update docs and repo guidance.
-   - `docs/user/planning-and-worktrees.md` must state that generated worktree CGC contexts default to `kuzudb`.
-   - The docs must explain that `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` overrides the default.
-   - The docs must explain why the default exists: to avoid relying on CGC's global/default backend selection for
-     generated worktrees.
-   - Do not reintroduce references to the old `codegraph` CLI.
+4. Separate planning worktree responsibilities.
+   - Split `planning/worktree_domain.py` by owner:
+     selection/menu/memory, worktree sync/create/delete, provenance and
+     `MAIN_TASK.md` seeding, git hook policy, fresh AI worktree protection, and
+     code-intelligence setup for Serena/CGC.
+   - Keep public functions stable during the first pass by delegating behind
+     compatibility wrappers.
+   - Preserve strict write boundaries: plan operations may edit only the current
+     checked-out worktree or generated plan worktrees.
+   - Preserve Serena and CGC setup behavior, repo-local ignores, generated
+     context selection, `.envctl-state/code-intelligence.json`, and
+     `.envctl-state/worktree-provenance.json` compatibility.
+   - Add tests that fail on accidental sibling-worktree writes, hook-policy
+     drift, task seeding drift, and code-intelligence metadata drift.
 
-5. Do not retrofit existing worktrees as part of this task.
-   - Existing already-created implementation worktrees may still have `.serena/project.yml` with `project_name:
-     "envctl"` and may lack `.envctl-state/code-intelligence.json` because they were created before the prior fix.
-   - This task must harden behavior for newly generated or regenerated worktrees.
-   - Do not mutate sibling worktrees or paths outside the current repo root.
+5. Finish shared plan-agent transport vocabulary and coverage.
+   - Keep the completed `planning/plan_agent/intent.py` selection boundary.
+   - Extend shared vocabulary beyond basic transport/CLI/readiness to include
+     prompt preset, command preview, session identity, failure reason, recovery
+     guidance, and skipped/resumed launch context.
+   - Route common option mapping and result rendering through shared helpers
+     while keeping transport-specific modules for `cmux`, `tmux`, `omx`,
+     OpenCode/Codex behavior, Superset, and recovery.
+   - Add or split focused tests that exercise the same option matrix across:
+     `--cmux`, `--tmux`, `--omx`, `--codex`, `--opencode`, `--ulw`,
+     `--no-ulw-loop`, `--new-session`, `--headless`, direct-prompt behavior,
+     skipped launches, resumed launches, and failure diagnostics.
+   - Preserve OpenCode readiness failures with enough context to diagnose active
+     command, expected prompt state, transport, and timeout.
+   - Regenerate and compare `contracts/runtime_feature_matrix.json` only if the
+     declared feature inventory intentionally changes.
+
+6. Break requirements adapters into lifecycle components, starting with
+   Supabase.
+   - Split `requirements/supabase.py` into smaller components for
+     configuration/env resolution, Docker/process lifecycle, health/readiness,
+     database setup, QA/auth user setup, repair/reinit, and summary reporting.
+   - Keep the public adapter API stable for callers in startup/runtime code.
+   - Preserve real contract behavior for existing managed dependency flows,
+     env projection, repair paths, user setup, database setup, and readiness
+     status.
+   - Apply the same pattern to other requirement adapters only when it reduces
+     actual complexity without hiding important behavior behind generic
+     abstractions.
+   - Add adapter-level tests proving behavior before and after each split.
+
+7. Split remaining oversized tests by behavior owner.
+   - Continue splitting giant tests only after the related production seam
+     exists.
+   - Required target files to reduce or split by owner:
+     `tests/python/planning/test_plan_agent_launch_support.py`,
+     `tests/python/actions/test_actions_parity.py`,
+     `tests/python/runtime/test_engine_runtime_real_startup.py`,
+     `tests/python/requirements/test_requirements_adapters_real_contracts.py`,
+     and `tests/python/ui/test_dashboard_orchestrator_restart_selector.py`.
+   - Preserve every behavior assertion, fixture contract, and regression case.
+   - Keep test names descriptive and colocated with their owner module.
+
+8. Tighten structure, generated contracts, and release checks.
+   - Add or update lightweight structure/import-cycle checks only after the
+     relevant production boundaries exist.
+   - Make structural failures actionable by naming the owning module family and
+     acceptable compatibility facades.
+   - Re-run generators only when behavior or feature inventory changes:
+     `scripts/generate_runtime_feature_matrix.py`,
+     `scripts/generate_python_runtime_gap_report.py`, and
+     `scripts/generate_python_engine_parity_manifest.py`.
+   - Compare generated output to checked-in JSON artifacts and commit artifact
+     updates only when intentional.
+   - Keep `scripts/release_shipability_gate.py`, ruff, and the full Python test
+     suite passing before final handoff.
+
+9. Update contributor-facing documentation after each major extraction.
+   - Keep `docs/reference/python-engine-architecture.md`,
+     `docs/developer/module-layout.md`, and `AGENTS.md` aligned with actual
+     owner modules and tooling guidance.
+   - Preserve guidance that Serena is used for symbol navigation/reference
+     checks, CGC is used for broad graph analysis, and native search is used for
+     literal strings/config/docs.
+   - Add short "how to change this area" notes for runtime, startup, actions,
+     planning/worktrees, plan-agent transports, requirements, and dashboard/UI
+     once each area has a stable owner boundary.
 
 ## Gaps from prior iteration (mapped to evidence)
 
-Fully implemented in commits `2cad2a5` and `916789d`:
+Fully implemented in PR #247 / commits `f5c60a9`, `1f52d2c`, `088d19d`, and
+`5914614`:
 
-- Deterministic generated worktree identity exists in
-  `python/envctl_engine/planning/worktree_domain.py::_worktree_code_intelligence_identity`.
-- Copied Serena project config is rewritten by `_copy_worktree_serena_project_file` and
-  `_rewrite_serena_project_name`.
-- CGC indexing now calls `cgc context create <context>` before `cgc index <worktree> --context <context>`.
-- Metadata is written to `.envctl-state/code-intelligence.json`.
-- Docs describe generated Serena project names, CGC contexts, templates, and metadata.
-- Targeted validation passed:
-  - `uv run --extra dev pytest -q tests/python/planning/test_planning_worktree_setup.py` -> `44 passed`
-  - `uv run --extra dev ruff check python/envctl_engine/planning/worktree_domain.py tests/python/planning/test_planning_worktree_setup.py` -> passed
-- PR #232 checks passed for `ruff`, `build & shipability`, and `pytest`.
+- Architecture inventory exists at `docs/reference/python-engine-architecture.md`
+  with owner table, invariants, plan-agent vocabulary, and tool guidance.
+- `docs/reference/README.md` links the architecture inventory.
+- `docs/developer/module-layout.md` now records owner guidance for plan-agent
+  intent, worktree action helpers, and action target resolution.
+- Plan-agent transport/CLI/readiness intent moved to
+  `python/envctl_engine/planning/plan_agent/intent.py`.
+- `resolve_plan_agent_launch_config` consumes the shared plan-agent intent.
+- Intent option-matrix tests live in
+  `tests/python/planning/test_plan_agent_intent.py`.
+- Self-destruct worktree handling and helper spawning moved to
+  `python/envctl_engine/actions/action_worktree_runner.py`.
+- Action target/project-scope resolution moved to
+  `python/envctl_engine/actions/action_target_support.py`.
+- Targeted action and planning tests passed locally, and PR #247 GitHub checks
+  passed for `ruff`, `build & shipability`, and `pytest`.
 
-Remaining/partial:
+Partially implemented:
 
-- `_worktree_cgc_database()` currently returns `""` when no env/config value is present, so the default command is
-  `cgc context create <context>` with no `--database`.
-- Docs currently say users can set `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb`, but they do not say `kuzudb` is the default.
-- Existing tests cover explicit `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb`, but not the default-unset path requiring
-  `--database kuzudb`.
-- Real machine evidence shows the empty default can select a flaky FalkorDB-backed path, fail to start FalkorDB cleanly,
-  fall back, and then stall indexing.
+- Step 1 architecture inventory is present, but it must be kept updated as
+  remaining owner modules are created.
+- Step 4 action decomposition has completed target resolution and self-destruct
+  worktree ownership only. Test execution, migrate behavior, project action
+  persistence, summaries, and test splitting remain.
+- Step 6 plan-agent shared vocabulary has completed only basic launch intent.
+  Command preview, session identity, failure reason, recovery guidance,
+  skipped/resumed context, and complete option-matrix splitting remain.
+- Step 8 giant-test splitting has begun only for plan-agent intent. The large
+  launch, action parity, runtime startup, requirements, and dashboard tests
+  remain mostly intact.
 
-Not implemented and not required:
+Not implemented:
 
-- No retroactive migration for the current implementation worktree's `.serena/project.yml` or missing
-  `.envctl-state/code-intelligence.json`.
-- No CGC MCP server, no CGC backend implementation, and no old `codegraph` CLI behavior.
+- Runtime facade thinning.
+- Startup lifecycle decomposition.
+- Planning worktree-domain decomposition.
+- Supabase requirements adapter decomposition.
+- Requirements adapter component tests beyond existing coverage.
+- Dashboard orchestrator/test decomposition.
+- New structural guardrails for final owner boundaries.
+- Generated contract regeneration/comparison for final state.
+- Full release shipability gate and full Python suite after all remaining
+  refactor work is complete.
 
 ## Acceptance criteria (requirement-by-requirement)
 
-- A generated worktree with `ENVCTL_WORKTREE_CGC_INDEX=true` and no `ENVCTL_WORKTREE_CGC_DATABASE` runs:
-  - `cgc context create <generated-context> --database kuzudb`
-  - `cgc index <worktree> --context <generated-context>`
-- A generated worktree with `ENVCTL_WORKTREE_CGC_INDEX=true` and `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` runs:
-  - `cgc context create <generated-context> --database <backend>`
-  - `cgc index <worktree> --context <generated-context>`
-- Metadata for the default path records `"cgc_database": "kuzudb"` and includes the default database in the attempted
-  context-create command.
-- Metadata for the override path records the override backend.
-- Existing tests for missing `cgc`, CGC launch failure, existing context, context failure, and index behavior remain
-  green.
-- Docs state the default backend and override behavior accurately.
-- GitHub PR checks pass after the follow-up commit.
+- Runtime facade acceptance:
+  - `PythonEngineRuntime` is materially smaller and delegates grouped behavior
+    to owner modules.
+  - Runtime dispatch/help/config/action/lifecycle/debug/dashboard/service/truth
+    behavior remains unchanged in focused runtime tests and generated feature
+    inventory checks.
+
+- Startup acceptance:
+  - Startup phase modules own policy, plan-agent handoff, service/requirement
+    sequencing, and finalization.
+  - Startup tests continue to prove degraded handoff, skip/resume, disabled
+    modes, logs, state truth, restart/reuse, and readiness behavior.
+
+- Action acceptance:
+  - `ActionCommandOrchestrator` delegates target resolution, worktree actions,
+    test action details, migrate details, and project-action persistence to
+    owner modules.
+  - Action tests prove all public action command behavior and the split test
+    suites preserve the previous parity assertions.
+
+- Planning/worktree acceptance:
+  - `worktree_domain.py` no longer owns unrelated selection, sync/create/delete,
+    provenance/task seeding, hook policy, fresh AI protection, and
+    code-intelligence internals directly.
+  - Worktree tests prove no sibling worktree writes, no hook-policy drift, no
+    task seeding drift, and no code-intelligence metadata drift.
+
+- Plan-agent acceptance:
+  - Shared vocabulary covers transport, CLI, readiness, preset, command preview,
+    session identity, failure reason, recovery guidance, skipped/resumed
+    context, direct prompts, and ULW/new-session/headless interactions.
+  - Focused tests prove the full transport option matrix without relying only on
+    the giant launch-support suite.
+
+- Requirements acceptance:
+  - Supabase adapter behavior is preserved through smaller components.
+  - Requirements tests prove real adapter contracts, readiness, repair/reinit,
+    DB/user setup, env/config behavior, and startup integration.
+
+- Test/documentation/contract acceptance:
+  - Oversized tests are split by owner where production seams exist.
+  - Documentation names final owner modules and tooling boundaries.
+  - Runtime feature matrix, Python runtime gap report, parity manifest,
+    release shipability gate, ruff, and the full Python test suite pass before
+    final PR handoff.
 
 ## Required implementation scope (frontend/backend/data/integration)
 
 - Backend/Python engine:
-  - Update `python/envctl_engine/planning/worktree_domain.py`.
-  - Prefer the narrowest possible change around `_worktree_cgc_database()` and any helper needed to keep env/config
-    precedence clear.
+  - Refactor Python modules under `python/envctl_engine/runtime/`,
+    `python/envctl_engine/startup/`, `python/envctl_engine/actions/`,
+    `python/envctl_engine/planning/`, `python/envctl_engine/requirements/`, and
+    `python/envctl_engine/ui/` as required by the remaining requirements.
 - Tests:
-  - Update `tests/python/planning/test_planning_worktree_setup.py`.
-- Docs:
-  - Update `docs/user/planning-and-worktrees.md`.
+  - Add and split tests under `tests/python/runtime`, `tests/python/startup`,
+    `tests/python/actions`, `tests/python/planning`,
+    `tests/python/requirements`, `tests/python/ui`, and
+    `tests/python/shared` as owner seams are created.
+- Docs/contracts:
+  - Update reference/developer docs and generated contracts only when the
+    implementation changes the maintained source of truth.
 - Frontend:
-  - None.
+  - None expected unless dashboard/UI refactor touches browser-visible behavior.
 - Data/migrations:
-  - None.
+  - None expected. Preserve existing state artifacts and schemas.
 - Runtime services:
-  - None.
+  - Not required for pure Python refactor slices. Use envctl runtime scopes only
+    if a change crosses runtime/service behavior and cannot be proven by unit or
+    integration tests.
 
 ## Required tests and quality gates
 
-Run all of the following after implementation:
+Run targeted tests after each ownership area:
 
-- `uv run --extra dev pytest -q tests/python/planning/test_planning_worktree_setup.py`
-- `uv run --extra dev ruff check python/envctl_engine/planning/worktree_domain.py tests/python/planning/test_planning_worktree_setup.py`
-- A focused Python 3.12 smoke for the real-git fake-`cgc` test if available locally:
-  - `python3.12 -m pytest -q tests/python/planning/test_planning_worktree_setup.py::PlanningWorktreeSetupTests::test_setup_worktree_real_git_smoke_writes_isolated_code_intelligence`
+- Runtime:
+  `uv run --extra dev pytest -q tests/python/runtime tests/python/test_runtime_feature_inventory.py`
+- Startup:
+  `uv run --extra dev pytest -q tests/python/startup tests/python/runtime/test_engine_runtime_real_startup.py`
+- Actions:
+  `uv run --extra dev pytest -q tests/python/actions`
+- Planning and plan-agent:
+  `uv run --extra dev pytest -q tests/python/planning`
+- Requirements:
+  `uv run --extra dev pytest -q tests/python/requirements`
+- UI/dashboard:
+  `uv run --extra dev pytest -q tests/python/ui`
+- Shared structure/import checks:
+  `uv run --extra dev pytest -q tests/python/shared/test_structure_layout.py tests/python/startup/test_support_module_decoupling.py tests/python/shared/test_utility_consolidation_contract.py`
+- Static checks:
+  `uv run --extra dev ruff check python tests scripts`
 
-Recommended test additions or adjustments:
+Before final handoff, run:
 
-- Add or update a test proving the unset database path includes `--database kuzudb`.
-- Keep the existing explicit database test proving `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb` or another non-empty backend is
-  respected.
-- Add a test for whitespace-only `ENVCTL_WORKTREE_CGC_DATABASE` falling back to `kuzudb` if that can be done without
-  duplicating excessive setup.
-- Ensure metadata assertions cover the selected database for default and override paths.
+- Runtime feature matrix generator comparison using the checked-in timestamp.
+- Python runtime gap report generator comparison using the checked-in timestamp.
+- Python engine parity manifest generator comparison using the checked-in
+  timestamp, if the manifest generator exists in this checkout.
+- `uv run --extra dev python scripts/release_shipability_gate.py`.
+- Full Python test suite with `uv run --extra dev pytest -q tests/python`.
+- Open or update the PR, inspect unresolved review threads, and wait for all
+  required GitHub checks to pass.
 
 ## Edge cases and failure handling
 
-- Empty or whitespace-only database env/config values fall back to `kuzudb`.
-- Non-empty database values are sanitized using existing identity sanitization before being passed to CGC.
-- If `cgc` is missing, no context-create or index command runs, and metadata still records the selected database and
-  `cgc_available=false`.
-- If `cgc context create` fails, worktree creation still succeeds, indexing is skipped, and metadata/events include the
-  database, return code, and short stdout/stderr summaries.
-- If `cgc context create` reports that the context already exists, indexing still runs with the generated context.
-- If `cgc index` fails or hangs in real usage, envctl must still treat the subprocess result/failure as non-fatal within
-  the current timeout/error behavior; this task only changes backend selection, not CGC internals.
+- Dynamic CLI dispatch can hide call sites. Preserve behavior-level dispatch
+  tests and generated feature matrix checks for every runtime move.
+- Moving user-facing summaries can change text. Preserve snapshot-like tests for
+  launch guidance, prompt install output, startup failure summaries, migrate
+  hints, action reports, and release-gate messages.
+- Generated contracts can drift accidentally. Regenerate only intentionally and
+  compare generator output before committing.
+- Long-lived compatibility facades can become permanent. Document each facade's
+  owner and remove redundant wrappers once call sites are updated.
+- Broad refactors can conflict with active plan-agent work. Use small commits by
+  ownership area and avoid touching unrelated files in a commit.
+- Serena and CGC indexes can lag after structural moves. Let Serena refresh
+  automatically, run `serena project health-check` if symbol results look
+  stale, and refresh CGC with `cgc index . --context Envctl` after major
+  structural changes.
+- Worktree tasks must not mutate sibling worktrees unless the feature being
+  tested intentionally creates or deletes generated envctl worktrees.
 
 ## Definition of done
 
-- New generated envctl worktrees default to `kuzudb` for CGC context creation when no database override is configured.
-- User/config overrides for `ENVCTL_WORKTREE_CGC_DATABASE` still work.
-- Metadata and events clearly record the selected database.
-- Docs describe the default, override, and rationale.
-- Targeted tests and Ruff pass locally.
-- Follow-up commit is pushed to PR #232 or its successor.
-- GitHub required checks pass.
+- All remaining requirements above are fully implemented end-to-end.
+- The largest orchestrators are thin coordination layers or explicitly
+  documented compatibility facades.
+- Each major runtime area has an obvious owner module and focused tests.
+- Plan-agent transport flags and readiness behavior are covered by shared
+  vocabulary and focused option-matrix tests.
+- Supabase requirements behavior is preserved behind smaller components.
+- Giant tests are split by behavior owner without losing assertions.
+- Runtime feature matrix, Python runtime gap report, parity manifest,
+  release shipability gate, ruff, and the full Python test suite pass.
+- Documentation reflects final ownership boundaries and tooling guidance.
+- The implementation is committed, pushed, PR review threads are inspected and
+  addressed, and required GitHub checks pass before final handoff.
