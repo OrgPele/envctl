@@ -264,6 +264,10 @@ context creation failures, and index failures remain non-fatal for worktree crea
 `.envctl-state/code-intelligence.json` in the generated worktree for the chosen Serena project, CGC context, selected
 database, commands attempted, return codes, and copied-file status.
 
+When envctl later deletes a generated worktree through `delete-worktree`, `blast-worktree`, or plan count scale-down, it
+reads that metadata file before removing the worktree and best-effort deletes the recorded CGC context. Missing metadata,
+missing `cgc`, or CGC cleanup failures do not block worktree deletion; they are reported in the delete result message.
+
 Example CGC follow-up commands:
 
 ```bash
