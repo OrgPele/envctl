@@ -1,89 +1,161 @@
-# Superset Plan-Agent Final Completion Audit
+# Envctl Worktree CGC Backend Default Hardening
 
 ## Context and objective
-The prior task, archived as `OLD_TASK_4.md`, was itself a completion audit for the Superset plan-agent launch work. This follow-up audit reviewed the current task, local working-tree state, committed divergence from the originating base `origin/main`, the implemented Superset config/launch/prereq/inspection code paths, focused tests, documentation evidence, and PR status.
 
-The audit found that the Superset plan-agent launch scope is fully complete in the current branch. There is no remaining implementation work to carry forward.
+The prior task, archived as `OLD_TASK_2.md`, implemented most of the envctl worktree code-intelligence isolation feature:
+generated worktrees get unique Serena project names, deterministic CGC contexts, explicit `cgc index <worktree>
+--context <context>` commands, `.envctl-state/code-intelligence.json` metadata, docs, and targeted test coverage.
+
+The remaining issue is real CodeGraphContext backend reliability. The implementation currently leaves
+`ENVCTL_WORKTREE_CGC_DATABASE` empty by default, so generated worktrees create CGC contexts without `--database`.
+On this machine, a real generated-context index used CGC's FalkorDB-backed default path, failed to start FalkorDB
+cleanly, fell back, and indexing sat without progress until manually killed. Because this branch also commits
+`.cgcignore`, `ENVCTL_WORKTREE_CGC_INDEX=auto` can now trigger CGC indexing for generated envctl worktrees and hit that
+flaky default backend path.
+
+Objective: make the default generated-worktree CGC backend robust by defaulting worktree CGC context creation to
+`kuzudb` when no explicit database is configured, while preserving explicit user/config overrides and the best-effort
+non-fatal behavior from the prior task.
+
+This is a follow-up hardening task, not a rewrite of the prior implementation.
 
 ## Remaining requirements (complete and exhaustive)
-- No implementation changes remain.
-- Preserve the completed Superset commits and PR state:
-  - `9224080 Add Superset plan-agent launch transport`
-  - `14a111c Harden Superset plan-agent completion`
-  - `4037eb5 Archive completed Superset plan-agent task`
-  - PR: `https://github.com/OrgPele/envctl/pull/231`
-- Preserve the completed Superset behavior:
-  - `SUPERSET_PROJECT=<value>` maps to `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT=<value>`.
-  - `SUPERSET_PROJECT=<value>` and `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT=<value>` select Superset transport by default unless `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` is explicitly set.
-  - Explicit `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=cmux`, `--tmux`, `--omx`, and `--opencode` route flags override Superset workspace-backed transport selection.
-  - Project-only Superset opt-in requires `superset` and `codex`, not `cmux`.
-  - Superset launches use public `superset workspaces create`, `superset agents run`, and optional `superset workspaces open` commands.
-  - Superset summaries report launched worktrees, parsed workspace ids, manual open commands when auto-open is disabled, missing workspace ids, launch failures, and open failures.
-  - Failed `superset workspaces open` emits `planning.agent_launch.superset_open_failed` and does not turn a successful create/run launch into a failed launch.
-  - Superset JSON parsing handles nested `workspace.id`, top-level `id`, `workspace_id`, and `agents[].workspace_id` payloads.
-  - Successful non-JSON Superset output remains a launched outcome without a workspace id and emits a debug-output event.
-  - `ENVCTL_PLAN_AGENT_SUPERSET_HOST=<host>` uses `--host <host>` instead of `--local`.
-  - Git branch lookup failure or empty output falls back to the worktree name and emits a branch-fallback event.
-  - Superset transport remains isolated from cmux-only commands such as `new-surface`, `send`, `send-key`, `set-buffer`, `paste-buffer`, `read-screen`, and `respawn-pane`.
-  - Superset documentation/help text continues to describe project/workspace shortcuts, public CLI limits, one-shot prompt behavior, unsupported review tabs, and no explicit worktree-path adoption.
+
+1. Fully implement a default CGC database backend for envctl-generated worktree contexts.
+   - When `ENVCTL_WORKTREE_CGC_DATABASE` is unset or absent from config, `_worktree_cgc_database()` must return
+     `kuzudb`.
+   - `cgc context create <context>` must therefore include `--database kuzudb` by default for generated worktree CGC
+     indexing.
+   - Explicit env values must continue to win over config raw values.
+   - Explicit config raw values must continue to win over the default.
+   - Empty or whitespace-only env/config values must be treated as absent and must fall back to `kuzudb`.
+
+2. Preserve opt-out and override behavior.
+   - `ENVCTL_WORKTREE_CGC_INDEX=false` must still skip indexing.
+   - `ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` must still skip all code-intelligence bootstrap behavior.
+   - A non-empty `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` must still pass that backend to `cgc context create`.
+   - Existing context handling must continue to treat "already exists" output as success and proceed to indexing.
+   - Missing `cgc`, context creation failure, and index failure must remain non-fatal for worktree creation.
+
+3. Persist and emit the selected default database clearly.
+   - `.envctl-state/code-intelligence.json` must record `"cgc_database": "kuzudb"` when the default is used.
+   - The `setup.worktree.code_intelligence.cgc_context` event must include `database="kuzudb"` when the default is used.
+   - Attempted command metadata must show `["cgc", "context", "create", <context>, "--database", "kuzudb"]` by default.
+
+4. Update docs and repo guidance.
+   - `docs/user/planning-and-worktrees.md` must state that generated worktree CGC contexts default to `kuzudb`.
+   - The docs must explain that `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` overrides the default.
+   - The docs must explain why the default exists: to avoid relying on CGC's global/default backend selection for
+     generated worktrees.
+   - Do not reintroduce references to the old `codegraph` CLI.
+
+5. Do not retrofit existing worktrees as part of this task.
+   - Existing already-created implementation worktrees may still have `.serena/project.yml` with `project_name:
+     "envctl"` and may lack `.envctl-state/code-intelligence.json` because they were created before the prior fix.
+   - This task must harden behavior for newly generated or regenerated worktrees.
+   - Do not mutate sibling worktrees or paths outside the current repo root.
 
 ## Gaps from prior iteration (mapped to evidence)
-- None.
-- Working-tree evidence:
-  - `git status --short` reported only `.envctl-state/worktree-provenance.json` as an unstaged envctl-local artifact before this archive update.
-  - `git diff --name-status` reported only `.envctl-state/worktree-provenance.json` before this archive update.
-  - `git diff --cached --name-status` reported no staged changes before this archive update.
-- Originating-base evidence:
-  - `.envctl-state/worktree-provenance.json` identifies `source_ref` as `origin/main` and `source_branch` as `main`.
-  - `git merge-base HEAD origin/main` resolved to `ea7bfd4e4e26646b7c3b3283b32a8061448b25ba`.
-  - `git log --oneline --decorate ea7bfd4e4e26646b7c3b3283b32a8061448b25ba..HEAD` showed only the three intended branch commits listed above.
-  - `git diff --name-status ea7bfd4e4e26646b7c3b3283b32a8061448b25ba..HEAD` showed the Superset implementation/docs/tests plus task archive files.
-- Code evidence:
-  - `python/envctl_engine/config/__init__.py` contains Superset alias/default transport inference for `SUPERSET_PROJECT`, `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT`, workspace aliases, and canonical transport precedence.
-  - `python/envctl_engine/planning/plan_agent/config.py` resolves Superset launch config and prereq command selection.
-  - `python/envctl_engine/planning/plan_agent/launch.py` dispatches Superset transport without cmux workspace resolution.
-  - `python/envctl_engine/planning/plan_agent/superset_transport.py` implements public Superset CLI launch/run/open behavior, diagnostics, workspace-id parsing, branch fallback, host targeting, and open-failure handling.
-- Test evidence:
-  - `tests/python/config/test_config_loader.py` covers Superset alias/canonical config behavior.
-  - `tests/python/planning/test_plan_agent_launch_support.py` covers Superset create/run/open behavior, public CLI isolation, workspace id parsing, non-JSON success, host targeting, branch fallback, launch failure, open failure, and unsupported review tabs.
-  - `tests/python/runtime/test_prereq_policy.py` covers project-only Superset prereqs and route override behavior.
-  - `tests/python/runtime/test_engine_runtime_command_parity.py` covers `explain-startup --json` Superset inspection behavior.
-- Documentation evidence:
-  - `docs/reference/configuration.md`, `docs/reference/commands.md`, `docs/user/ai-playbooks.md`, `docs/user/planning-and-worktrees.md`, and `python/envctl_engine/runtime/help_text.py` document Superset project/workspace shortcuts and limitations.
-- PR evidence:
-  - `gh pr view 231 --json url,state,isDraft,headRefName,statusCheckRollup,reviewDecision` showed PR #231 open, not draft, and checks `pytest`, `ruff`, and `build & shipability` passing on the latest pushed commit.
+
+Fully implemented in commits `2cad2a5` and `916789d`:
+
+- Deterministic generated worktree identity exists in
+  `python/envctl_engine/planning/worktree_domain.py::_worktree_code_intelligence_identity`.
+- Copied Serena project config is rewritten by `_copy_worktree_serena_project_file` and
+  `_rewrite_serena_project_name`.
+- CGC indexing now calls `cgc context create <context>` before `cgc index <worktree> --context <context>`.
+- Metadata is written to `.envctl-state/code-intelligence.json`.
+- Docs describe generated Serena project names, CGC contexts, templates, and metadata.
+- Targeted validation passed:
+  - `uv run --extra dev pytest -q tests/python/planning/test_planning_worktree_setup.py` -> `44 passed`
+  - `uv run --extra dev ruff check python/envctl_engine/planning/worktree_domain.py tests/python/planning/test_planning_worktree_setup.py` -> passed
+- PR #232 checks passed for `ruff`, `build & shipability`, and `pytest`.
+
+Remaining/partial:
+
+- `_worktree_cgc_database()` currently returns `""` when no env/config value is present, so the default command is
+  `cgc context create <context>` with no `--database`.
+- Docs currently say users can set `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb`, but they do not say `kuzudb` is the default.
+- Existing tests cover explicit `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb`, but not the default-unset path requiring
+  `--database kuzudb`.
+- Real machine evidence shows the empty default can select a flaky FalkorDB-backed path, fail to start FalkorDB cleanly,
+  fall back, and then stall indexing.
+
+Not implemented and not required:
+
+- No retroactive migration for the current implementation worktree's `.serena/project.yml` or missing
+  `.envctl-state/code-intelligence.json`.
+- No CGC MCP server, no CGC backend implementation, and no old `codegraph` CLI behavior.
 
 ## Acceptance criteria (requirement-by-requirement)
-- `OLD_TASK_4.md` contains the archived prior completion-audit task.
-- This `MAIN_TASK.md` clearly states that no implementation work remains for the Superset plan-agent launch scope.
-- The completed Superset behavior listed in this task remains preserved.
-- PR #231 remains open, updated, and green.
-- No new runtime code, tests, docs, config, or migrations are required unless future evidence identifies a new gap.
+
+- A generated worktree with `ENVCTL_WORKTREE_CGC_INDEX=true` and no `ENVCTL_WORKTREE_CGC_DATABASE` runs:
+  - `cgc context create <generated-context> --database kuzudb`
+  - `cgc index <worktree> --context <generated-context>`
+- A generated worktree with `ENVCTL_WORKTREE_CGC_INDEX=true` and `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` runs:
+  - `cgc context create <generated-context> --database <backend>`
+  - `cgc index <worktree> --context <generated-context>`
+- Metadata for the default path records `"cgc_database": "kuzudb"` and includes the default database in the attempted
+  context-create command.
+- Metadata for the override path records the override backend.
+- Existing tests for missing `cgc`, CGC launch failure, existing context, context failure, and index behavior remain
+  green.
+- Docs state the default backend and override behavior accurately.
+- GitHub PR checks pass after the follow-up commit.
 
 ## Required implementation scope (frontend/backend/data/integration)
-- Frontend: none.
-- Backend/Python engine: none.
-- Data model/migrations: none.
-- Integration/E2E: none.
-- Runtime services: none.
+
+- Backend/Python engine:
+  - Update `python/envctl_engine/planning/worktree_domain.py`.
+  - Prefer the narrowest possible change around `_worktree_cgc_database()` and any helper needed to keep env/config
+    precedence clear.
+- Tests:
+  - Update `tests/python/planning/test_planning_worktree_setup.py`.
+- Docs:
+  - Update `docs/user/planning-and-worktrees.md`.
+- Frontend:
+  - None.
+- Data/migrations:
+  - None.
+- Runtime services:
+  - None.
 
 ## Required tests and quality gates
-- For this no-op completion task, preserve evidence from the latest validation and PR checks:
-  - Focused pytest previously passed: `496 passed, 73 subtests passed`.
-  - Ruff previously passed: `All checks passed!`.
-  - GitHub checks on PR #231 passed: `pytest`, `ruff`, and `build & shipability`.
-- If any future implementation changes are made after this audit, rerun:
-  - `uv run --extra dev python -m pytest tests/python/config/test_config_loader.py tests/python/planning/test_plan_agent_launch_support.py tests/python/planning/test_plan_agent_module_layout.py tests/python/runtime/test_prereq_policy.py tests/python/runtime/test_engine_runtime_command_parity.py tests/python/runtime/test_engine_runtime_real_startup.py -q`
-  - `uv run --extra dev ruff check python/envctl_engine/planning/plan_agent python/envctl_engine/config/__init__.py python/envctl_engine/runtime/inspection_support.py python/envctl_engine/runtime/help_text.py tests/python/config/test_config_loader.py tests/python/planning/test_plan_agent_launch_support.py tests/python/planning/test_plan_agent_module_layout.py tests/python/runtime/test_prereq_policy.py tests/python/runtime/test_engine_runtime_command_parity.py tests/python/runtime/test_engine_runtime_real_startup.py`
+
+Run all of the following after implementation:
+
+- `uv run --extra dev pytest -q tests/python/planning/test_planning_worktree_setup.py`
+- `uv run --extra dev ruff check python/envctl_engine/planning/worktree_domain.py tests/python/planning/test_planning_worktree_setup.py`
+- A focused Python 3.12 smoke for the real-git fake-`cgc` test if available locally:
+  - `python3.12 -m pytest -q tests/python/planning/test_planning_worktree_setup.py::PlanningWorktreeSetupTests::test_setup_worktree_real_git_smoke_writes_isolated_code_intelligence`
+
+Recommended test additions or adjustments:
+
+- Add or update a test proving the unset database path includes `--database kuzudb`.
+- Keep the existing explicit database test proving `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb` or another non-empty backend is
+  respected.
+- Add a test for whitespace-only `ENVCTL_WORKTREE_CGC_DATABASE` falling back to `kuzudb` if that can be done without
+  duplicating excessive setup.
+- Ensure metadata assertions cover the selected database for default and override paths.
 
 ## Edge cases and failure handling
-- If future work changes Superset config aliasing, revalidate canonical transport precedence and route-flag override behavior.
-- If future work changes Superset output parsing, preserve nested `workspace.id`, top-level `id`, `workspace_id`, `agents[].workspace_id`, and non-JSON success behavior.
-- If future work changes launch summaries or event payloads, preserve sanitized error reporting and avoid printing environment variables or secrets.
-- If future work changes transport dispatch, preserve the guarantee that Superset does not call cmux-only commands.
+
+- Empty or whitespace-only database env/config values fall back to `kuzudb`.
+- Non-empty database values are sanitized using existing identity sanitization before being passed to CGC.
+- If `cgc` is missing, no context-create or index command runs, and metadata still records the selected database and
+  `cgc_available=false`.
+- If `cgc context create` fails, worktree creation still succeeds, indexing is skipped, and metadata/events include the
+  database, return code, and short stdout/stderr summaries.
+- If `cgc context create` reports that the context already exists, indexing still runs with the generated context.
+- If `cgc index` fails or hangs in real usage, envctl must still treat the subprocess result/failure as non-fatal within
+  the current timeout/error behavior; this task only changes backend selection, not CGC internals.
 
 ## Definition of done
-- `OLD_TASK_4.md` exists and contains the archived prior task.
-- `MAIN_TASK.md` contains only this final completion audit and explicitly states that no implementation work remains.
-- Git evidence, code evidence, test evidence, documentation evidence, and PR evidence all support the completed status.
-- The final handoff reports the archive file name, implemented-vs-remaining scope, git evidence commands used, and residual risks.
+
+- New generated envctl worktrees default to `kuzudb` for CGC context creation when no database override is configured.
+- User/config overrides for `ENVCTL_WORKTREE_CGC_DATABASE` still work.
+- Metadata and events clearly record the selected database.
+- Docs describe the default, override, and rationale.
+- Targeted tests and Ruff pass locally.
+- Follow-up commit is pushed to PR #232 or its successor.
+- GitHub required checks pass.
