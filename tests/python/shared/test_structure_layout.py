@@ -80,6 +80,33 @@ class StructureLayoutTests(unittest.TestCase):
         text = launcher.read_text(encoding="utf-8")
         self.assertTrue(text.startswith("#!/usr/bin/env python3"))
 
+    def test_python_engine_architecture_inventory_exists(self) -> None:
+        doc = REPO_ROOT / "docs" / "reference" / "python-engine-architecture.md"
+        self.assertTrue(doc.is_file())
+        text = doc.read_text(encoding="utf-8")
+        for heading in [
+            "## Ownership Map",
+            "## Compatibility Invariants",
+            "## Generated Contracts",
+            "## Change Guide",
+        ]:
+            with self.subTest(heading=heading):
+                self.assertIn(heading, text)
+        for required_path in [
+            "python/envctl_engine/runtime/engine_runtime.py",
+            "python/envctl_engine/startup/startup_orchestrator.py",
+            "python/envctl_engine/actions/action_command_orchestrator.py",
+            "python/envctl_engine/planning/worktree_domain.py",
+            "python/envctl_engine/planning/plan_agent/",
+            "python/envctl_engine/requirements/supabase.py",
+            "python/envctl_engine/ui/dashboard/orchestrator.py",
+            "contracts/runtime_feature_matrix.json",
+            "contracts/python_runtime_gap_report.json",
+            "contracts/python_engine_parity_manifest.json",
+        ]:
+            with self.subTest(path=required_path):
+                self.assertIn(required_path, text)
+
 
 if __name__ == "__main__":
     unittest.main()

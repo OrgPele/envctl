@@ -12,7 +12,10 @@ from envctl_engine.actions.action_target_support import (  # noqa: E402
     ActionCommandResolution,
     execute_targeted_action,
     emit_action_output,
+    resolve_action_targets,
 )
+from envctl_engine.runtime.command_router import Route
+from envctl_engine.ui.target_selector import TargetSelection
 
 
 @dataclass
@@ -29,6 +32,80 @@ class _Target:
 
 
 class ActionTargetSupportTests(unittest.TestCase):
+    def test_resolve_action_targets_applies_service_selectors_from_state(self) -> None:
+        candidates = [_Target(name="Main", root="/tmp/main")]
+        state = type(
+            "State",
+            (),
+            {
+                "services": {
+                    "Main Voice Runtime": type(
+                        "Service",
+                        (),
+                        {"type": "voice-runtime"},
+                    )()
+                }
+            },
+        )()
+
+        targets, error = resolve_action_targets(
+            route=Route(command="test", mode="main", flags={"services": ["voice-runtime"]}),
+            trees_only=False,
+            discover_projects=lambda mode: candidates if mode == "main" else [],
+            selectors_from_passthrough=lambda _args: set(),
+            load_existing_state=lambda mode: state if mode == "main" else None,
+            project_name_from_service=lambda service_name: "Main" if service_name == "Main Voice Runtime" else "",
+            select_project_targets=lambda **_kwargs: TargetSelection(cancelled=True),
+            resolve_current_worktree_target=lambda _require_configured_main_root=False: None,
+            interactive_selection_allowed=lambda _route: False,
+            no_target_selected_message=lambda route: f"No {route.command} target selected.",
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual([target.name for target in targets], ["Main"])
+
+    def test_resolve_action_targets_uses_interactive_selection_for_ambiguous_targets(self) -> None:
+        candidates = [_Target(name="alpha", root="/tmp/alpha"), _Target(name="beta", root="/tmp/beta")]
+        route = Route(command="test", mode="trees", flags={"interactive_command": True})
+
+        targets, error = resolve_action_targets(
+            route=route,
+            trees_only=False,
+            discover_projects=lambda mode: candidates if mode == "trees" else [],
+            selectors_from_passthrough=lambda _args: set(),
+            load_existing_state=lambda _mode: None,
+            project_name_from_service=lambda _service_name: "",
+            select_project_targets=lambda **_kwargs: TargetSelection(all_selected=True),
+            resolve_current_worktree_target=lambda _require_configured_main_root=False: None,
+            interactive_selection_allowed=lambda _route: True,
+            no_target_selected_message=lambda route: f"No {route.command} target selected.",
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual([target.name for target in targets], ["alpha", "beta"])
+        self.assertTrue(route.flags["all"])
+
+    def test_resolve_action_targets_prefers_current_worktree_for_main_actions(self) -> None:
+        current = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
+
+        targets, error = resolve_action_targets(
+            route=Route(command="commit", mode="main", raw_args=["--main", "commit"]),
+            trees_only=False,
+            discover_projects=lambda _mode: [_Target(name="Main", root="/tmp/repo")],
+            selectors_from_passthrough=lambda _args: set(),
+            load_existing_state=lambda _mode: None,
+            project_name_from_service=lambda _service_name: "",
+            select_project_targets=lambda **_kwargs: TargetSelection(cancelled=True),
+            resolve_current_worktree_target=lambda require_configured_main_root=False: (
+                current if require_configured_main_root else None
+            ),
+            interactive_selection_allowed=lambda _route: False,
+            no_target_selected_message=lambda route: f"No {route.command} target selected.",
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(targets, [current])
+
     def test_emit_action_output_trims_and_emits_status(self) -> None:
         printed: list[str] = []
         emitted: list[str] = []
