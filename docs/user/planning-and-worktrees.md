@@ -219,16 +219,62 @@ When the source repo already has common local dependency/runtime artifacts, envc
 This helps worktree-local test and runtime commands reuse the repo-local backend virtualenv, backend env file, and frontend dependency tree when those artifacts already exist in the source repo. Envctl only creates the link when the source artifact exists and the worktree path is not already occupied by a real file or directory. Plan-agent dependency prep does not rely on these links; it prepares per-worktree dependency artifacts so branch-specific dependency files remain authoritative.
 
 Envctl also bootstraps code-intelligence tool state for generated worktrees. When the source repo has repo-local Serena
-configuration, envctl copies `.serena/project.yml` and `.serena/.gitignore` into the worktree if those files are not
-already present. When the source repo has a CGC ignore file, envctl copies `.cgcignore` as well. This keeps Codex,
-OpenCode, and other agents pointed at the current worktree's local symbol/index scope without putting tool routing rules
-into task prompts.
+configuration, envctl copies `.serena/project.yml` into the worktree with a generated top-level `project_name`, and
+copies `.serena/.gitignore` if those files are not already present. When the source repo has a CGC ignore file, envctl
+copies `.cgcignore` as well. This keeps Codex, OpenCode, and other agents pointed at the current worktree's local
+symbol/index scope without putting tool routing rules into task prompts.
+
+Generated names are deterministic from the worktree path under the configured trees root. For example,
+`trees/feature-a/1` in a repo whose Serena project is `envctl` gets:
+
+```text
+Serena project: envctl-feature-a-1
+CGC context:    Envctl-feature-a-1
+Metadata:       trees/feature-a/1/.envctl-state/code-intelligence.json
+```
 
 CodeGraphContext indexing is intentionally per worktree, not symlinked or shared from the main checkout. Set
-`ENVCTL_WORKTREE_CGC_INDEX=true` to run `cgc index <worktree>` after envctl creates each worktree. The default
+`ENVCTL_WORKTREE_CGC_INDEX=true` to run `cgc context create <context>` and then
+`cgc index <worktree> --context <context>` after envctl creates each worktree. The default
 `ENVCTL_WORKTREE_CGC_INDEX=auto` indexes only when the source repo already has CGC local markers such as `.cgcignore` or
 `.codegraphcontext`; set it to `false` to disable indexing completely. Set
 `ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` to disable all of this code-intelligence bootstrap behavior.
+
+You can customize generated names with templates:
+
+```dotenv
+ENVCTL_WORKTREE_SERENA_PROJECT_TEMPLATE={project}-{worktree}
+ENVCTL_WORKTREE_CGC_CONTEXT_TEMPLATE={project}-{worktree}
+```
+
+Supported placeholders are `{project}`, `{worktree}`, `{feature}`, and `{iteration}`. Envctl sanitizes rendered values to
+ASCII letters, digits, `-`, and `_`. For CGC, `{project}` is title-cased by default so a source project named `envctl`
+renders as `Envctl`.
+
+Generated worktree CGC contexts default to the `kuzudb` backend so envctl does not rely on CGC's global/default backend
+selection for new worktree contexts. If your CGC installation needs a different backend for new contexts, override it:
+
+```dotenv
+ENVCTL_WORKTREE_CGC_DATABASE=kuzudb
+```
+
+The selected backend adds `--database <backend>` to `cgc context create`; with the default this is
+`--database kuzudb`. Existing-context messages are treated as success and envctl continues to indexing. Missing `cgc`,
+context creation failures, and index failures remain non-fatal for worktree creation; inspect
+`.envctl-state/code-intelligence.json` in the generated worktree for the chosen Serena project, CGC context, selected
+database, commands attempted, return codes, and copied-file status.
+
+When envctl later deletes a generated worktree through `delete-worktree`, `blast-worktree`, or plan count scale-down, it
+reads that metadata file before removing the worktree and best-effort deletes the recorded CGC context. Missing metadata,
+missing `cgc`, or CGC cleanup failures do not block worktree deletion; they are reported in the delete result message.
+
+Example CGC follow-up commands:
+
+```bash
+cgc stats trees/feature-a/1 --context Envctl-feature-a-1
+cgc index trees/feature-a/1 --context Envctl-feature-a-1
+cgc context delete Envctl-feature-a-1
+```
 
 Single-mode `envctl review` uses that provenance automatically when it needs a base branch. For older or manually created worktrees, review falls back to the attached branch's upstream and then the repo default branch. Use `--review-base <branch>` when you need to override that resolution explicitly.
 

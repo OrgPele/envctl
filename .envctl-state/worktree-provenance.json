@@ -4,8 +4,8 @@
   "source_ref": "origin/main",
   "resolution_reason": "attached_branch",
   "created_from_repo": "/Users/kfiramar/projects/envctl",
-  "recorded_at": "2026-05-19T09:16:04.685593+00:00",
-  "plan_file": "refactoring/envctl-dead-code-cleanup.md",
+  "recorded_at": "2026-05-20T14:21:46.797640+00:00",
+  "plan_file": "features/envctl-worktree-code-intelligence-isolation.md",
   "created_for_fresh_ai_launch": true,
   "fresh_ai_launch_status": "launching",
   "launch_transport": "tmux"
