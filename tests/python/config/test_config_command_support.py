@@ -73,6 +73,10 @@ class ConfigCommandSupportTests(unittest.TestCase):
                             "BACKEND_DIR=api",
                             "--set",
                             "MAIN_STARTUP_ENABLE=false",
+                            "--set",
+                            "ENVCTL_UI_VISUAL_HOST=192.0.2.42",
+                            "--set",
+                            "ENVCTL_PUBLIC_HOST=203.0.113.10",
                         ],
                         env={},
                     )
@@ -83,6 +87,60 @@ class ConfigCommandSupportTests(unittest.TestCase):
             self.assertIn("ENVCTL_DEFAULT_MODE=trees", text)
             self.assertIn("BACKEND_DIR=api", text)
             self.assertIn("MAIN_STARTUP_ENABLE=false", text)
+            self.assertIn("ENVCTL_UI_VISUAL_HOST=192.0.2.42", text)
+            self.assertIn("ENVCTL_PUBLIC_HOST=203.0.113.10", text)
+
+    def test_config_set_from_managed_linked_worktree_saves_main_repo_envctl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            runtime_root = root / "runtime"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+            runtime = self._runtime(worktree, runtime_root)
+
+            with redirect_stdout(io.StringIO()):
+                code = runtime.dispatch(
+                    parse_route(
+                        [
+                            "config",
+                            "--set",
+                            "ENVCTL_DEFAULT_MODE=trees",
+                            "--set",
+                            "BACKEND_DIR=api",
+                        ],
+                        env={},
+                    )
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(runtime.config.base_dir, repo.resolve())
+            main_text = (repo / ".envctl").read_text(encoding="utf-8")
+            self.assertIn("ENVCTL_DEFAULT_MODE=trees", main_text)
+            self.assertIn("BACKEND_DIR=api", main_text)
+            self.assertFalse((worktree / ".envctl").exists())
+
+    def test_config_command_emits_progress_events_for_interactive_spinner_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_root = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            runtime = self._runtime(repo, runtime_root)
+
+            with redirect_stdout(io.StringIO()):
+                code = runtime.dispatch(parse_route(["config", "--set", "ENVCTL_DEFAULT_MODE=trees"], env={}))
+
+            self.assertEqual(code, 0)
+            start_events = [event for event in runtime.events if event.get("event") == "config.command.start"]
+            finish_events = [event for event in runtime.events if event.get("event") == "config.command.finish"]
+            self.assertTrue(start_events)
+            self.assertTrue(finish_events)
+            self.assertEqual(finish_events[-1].get("code"), 0)
 
     def test_config_stdin_json_updates_nested_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -92,6 +150,7 @@ class ConfigCommandSupportTests(unittest.TestCase):
             runtime = self._runtime(repo, runtime_root)
             payload = {
                 "default_mode": "trees",
+                "network": {"public_host": "203.0.113.20"},
                 "directories": {"backend": "api", "frontend": "web"},
                 "profiles": {
                     "main": {
@@ -120,9 +179,11 @@ class ConfigCommandSupportTests(unittest.TestCase):
             self.assertEqual(response["config"]["directories"]["backend"], "api")
             self.assertEqual(response["config"]["directories"]["frontend"], "web")
             self.assertEqual(response["config"]["profiles"]["main"]["startup_enabled"], False)
+            self.assertEqual(response["config"]["network"]["public_host"], "203.0.113.20")
             text = (repo / ".envctl").read_text(encoding="utf-8")
             self.assertIn("FRONTEND_DIR=web", text)
             self.assertIn("MAIN_STARTUP_ENABLE=false", text)
+            self.assertIn("ENVCTL_PUBLIC_HOST=203.0.113.20", text)
 
     def test_config_json_output_includes_global_ignore_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -152,7 +213,7 @@ class ConfigCommandSupportTests(unittest.TestCase):
                 [".envctl*", "MAIN_TASK.md", "OLD_TASK_*.md", "trees/", "trees-*"],
             )
 
-    def test_headless_config_does_not_bootstrap_missing_global_excludes(self) -> None:
+    def test_headless_config_bootstraps_missing_global_excludes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime_root = Path(tmpdir) / "runtime"
@@ -168,11 +229,18 @@ class ConfigCommandSupportTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             response = json.loads(buffer.getvalue())
-            self.assertFalse(response["ignore_updated"])
-            self.assertEqual(response["ignore_status"]["code"], "missing_global_excludes_configuration")
-            self.assertIsNone(response["ignore_status"]["target_path"])
+            self.assertTrue(response["ignore_updated"])
+            self.assertIsNone(response["ignore_warning"])
+            self.assertEqual(response["ignore_status"]["code"], "configured_global_excludes")
+            excludes_path = Path(response["ignore_status"]["target_path"])
+            self.assertEqual(excludes_path, Path(tmpdir) / "home" / ".gitignore_global")
+            self.assertEqual(
+                response["ignore_status"]["managed_patterns"],
+                [".envctl*", "MAIN_TASK.md", "OLD_TASK_*.md", "trees/", "trees-*"],
+            )
+            self.assertIn("MAIN_TASK.md", excludes_path.read_text(encoding="utf-8"))
 
-    def test_config_plain_output_warns_when_global_ignore_is_missing(self) -> None:
+    def test_config_plain_output_reports_configured_global_ignore_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime_root = Path(tmpdir) / "runtime"
@@ -190,8 +258,9 @@ class ConfigCommandSupportTests(unittest.TestCase):
             output = buffer.getvalue()
             self.assertIn("Saved startup config:", output)
             self.assertIn("Config saved. Restart required for running services to adopt changes.", output)
-            self.assertIn("global excludes", output.lower())
+            self.assertIn(f"Configured Git global excludes at {Path(tmpdir) / 'home' / '.gitignore_global'}.", output)
             self.assertNotIn(".gitignore on save", output)
+            self.assertNotIn("not configured", output.lower())
 
     def test_config_plain_output_reports_updated_global_ignore_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

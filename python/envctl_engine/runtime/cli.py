@@ -10,11 +10,13 @@ from typing import Callable
 
 from envctl_engine.runtime.command_router import Route, RouteError, parse_route
 from envctl_engine.config import EngineConfig, discover_local_config_state, load_config
-from envctl_engine.planning.plan_agent_launch_support import plan_agent_launch_prereq_commands
+from envctl_engine.planning.plan_agent.config import plan_agent_launch_prereq_commands
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.config.wizard_domain import ensure_local_config
 from envctl_engine.runtime.launcher_support import LauncherError, install_or_uninstall, parse_install_options
 from envctl_engine.runtime.launcher_support import resolve_envctl_version
+from envctl_engine.shared.repo_roots import canonical_envctl_project_root, find_repo_root, is_repo_root
+from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
 from envctl_engine.runtime.runtime_dependency_contract import (
     missing_runtime_dependency_modules,
     runtime_dependency_failure_message,
@@ -35,15 +37,20 @@ def _python_dependency_available(module_name: str) -> bool:
     return importlib.util.find_spec(module_name) is not None
 
 
-def check_prereqs(route: Route, config: EngineConfig, *, env: Mapping[str, str] | None = None) -> tuple[bool, str | None]:
+def check_prereqs(
+    route: Route,
+    config: EngineConfig,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> tuple[bool, str | None]:
     required_tools = {"git"}
     effective_mode = _effective_prereq_mode(route)
-    if route.command in {"start", "plan", "restart"} and _requires_docker(effective_mode, config):
+    if route.command in {"start", "plan", "restart"} and _requires_docker(effective_mode, config, route=route):
         required_tools.add("docker")
     if config.port_availability_mode == "listener_query":
         required_tools.add("lsof")
     if route.command == "plan" and not bool(route.flags.get("planning_prs")):
-        required_tools.update(plan_agent_launch_prereq_commands(config))
+        required_tools.update(plan_agent_launch_prereq_commands(config, route=route))
     missing = sorted(tool for tool in required_tools if shutil.which(tool) is None)
     if missing:
         return False, f"Missing required executables: {', '.join(missing)}"
@@ -63,7 +70,11 @@ def _effective_prereq_mode(route: Route) -> str:
     return route.mode
 
 
-def _requires_docker(mode: str, config: EngineConfig) -> bool:
+def _requires_docker(mode: str, config: EngineConfig, *, route: Route | None = None) -> bool:
+    if route is not None and route.flags.get("launch_dependencies") is False:
+        return False
+    if effective_dependency_scope(route, mode) == "shared" and mode == "trees":
+        mode = "main"
     return any(config.requirement_enabled_for_mode(mode, definition.id) for definition in dependency_definitions())
 
 
@@ -72,7 +83,7 @@ def run(
     *,
     env: Mapping[str, str] | None = None,
     shell_runner: Callable[[Sequence[str]], int] | None = None,
-    dispatcher: Callable[[object, EngineConfig], int] | None = None,
+    dispatcher: Callable[[Route, EngineConfig], int] | None = None,
 ) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
     env_map = dict(os.environ if env is None else env)
@@ -110,10 +121,13 @@ def run(
                 if rendered:
                     print(rendered, end="")
                 return 0
+            env_map.setdefault("ENVCTL_INVOCATION_CWD", str(Path.cwd().resolve()))
+            execution_root = _resolve_execution_root(env_map, repo_arg=repo_arg)
+            env_map.setdefault("ENVCTL_EXECUTION_ROOT", str(execution_root))
             base_dir = _resolve_base_dir(env_map, repo_arg=repo_arg)
-            if repo_arg is not None and _is_repo_root(base_dir):
+            if repo_arg is not None and is_repo_root(base_dir):
                 env_map["RUN_REPO_ROOT"] = str(base_dir)
-            elif "RUN_REPO_ROOT" not in env_map and _is_repo_root(base_dir):
+            elif "RUN_REPO_ROOT" not in env_map and is_repo_root(base_dir):
                 env_map["RUN_REPO_ROOT"] = str(base_dir)
             route = _parse_initial_route(argv, env_map)
         except RouteError as exc:
@@ -155,9 +169,14 @@ def run(
             "install-prompts",
             "codex-tmux",
             "ensure-worktree",
+            "supabase-user",
+            "qa-user",
+            "playwright",
+            "endpoints",
             "list-commands",
             "list-targets",
             "list-trees",
+            "session",
             "migrate-hooks",
             "show-config",
             "show-state",
@@ -215,10 +234,14 @@ def _command_can_skip_local_config_bootstrap(route: Route) -> bool:
         "commit",
         "dashboard",
         "delete-worktree",
+        "self-destruct-worktree",
         "help",
         "install-prompts",
         "codex-tmux",
         "ensure-worktree",
+        "supabase-user",
+        "qa-user",
+        "playwright",
         "doctor",
         "errors",
         "health",
@@ -233,6 +256,7 @@ def _command_can_skip_local_config_bootstrap(route: Route) -> bool:
         "resume",
         "show-config",
         "show-state",
+        "endpoints",
         "stop",
         "stop-all",
         "test",
@@ -279,34 +303,40 @@ def _resolve_base_dir(env_map: Mapping[str, str], *, repo_arg: str | None) -> Pa
         if not candidate.is_absolute():
             candidate = cwd / candidate
         candidate = candidate.resolve()
-        repo_root = _find_repo_root(candidate)
+        repo_root = find_repo_root(candidate)
+        if repo_root is None:
+            raise RouteError(f"Invalid --repo path: {repo_arg}")
+        return canonical_envctl_project_root(repo_root)
+    if env_map.get("RUN_REPO_ROOT"):
+        return canonical_envctl_project_root(Path(str(env_map["RUN_REPO_ROOT"])).expanduser())
+    cwd = Path.cwd().resolve()
+    repo_root = find_repo_root(cwd)
+    if repo_root is not None:
+        return canonical_envctl_project_root(repo_root)
+    return cwd
+
+
+def _resolve_execution_root(env_map: Mapping[str, str], *, repo_arg: str | None) -> Path:
+    if repo_arg is not None:
+        cwd = Path.cwd().resolve()
+        candidate = Path(repo_arg).expanduser()
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        candidate = candidate.resolve()
+        repo_root = find_repo_root(candidate)
         if repo_root is None:
             raise RouteError(f"Invalid --repo path: {repo_arg}")
         return repo_root
     if env_map.get("RUN_REPO_ROOT"):
+        repo_root = find_repo_root(Path(str(env_map["RUN_REPO_ROOT"])).expanduser())
+        if repo_root is not None:
+            return repo_root
         return Path(str(env_map["RUN_REPO_ROOT"])).expanduser().resolve()
     cwd = Path.cwd().resolve()
-    repo_root = _find_repo_root(cwd)
+    repo_root = find_repo_root(cwd)
     if repo_root is not None:
         return repo_root
     return cwd
-
-
-def _find_repo_root(candidate: Path) -> Path | None:
-    current = candidate
-    if current.is_file():
-        current = current.parent
-    current = current.resolve()
-    while True:
-        if _is_repo_root(current):
-            return current
-        if current.parent == current:
-            return None
-        current = current.parent
-
-
-def _is_repo_root(path: Path) -> bool:
-    return (path / ".git").is_dir() or (path / ".git").is_file()
 
 
 if __name__ == "__main__":

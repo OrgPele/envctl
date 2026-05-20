@@ -18,7 +18,21 @@ from envctl_engine.ui.path_links import local_paths_in_text, render_path_for_ter
 
 
 def run_config_command(runtime: Any, route: Any) -> int:
-    if bool(route.flags.get("stdin_json")) or bool(route.flags.get("set_values")) or bool(route.passthrough_args):
+    emit = getattr(runtime, "_emit", None)
+    emit_progress = _config_command_has_direct_output(route)
+    if emit_progress and callable(emit):
+        emit("config.command.start")
+    code = 1
+    try:
+        code = _run_config_command(runtime, route)
+        return code
+    finally:
+        if emit_progress and callable(emit):
+            emit("config.command.finish", code=code)
+
+
+def _run_config_command(runtime: Any, route: Any) -> int:
+    if _config_command_has_direct_output(route):
         return _run_headless_config_command(runtime, route)
 
     result = edit_local_config(
@@ -31,6 +45,10 @@ def run_config_command(runtime: Any, route: Any) -> int:
     if result.changed:
         print("Config saved. Restart required for running services to adopt changes.")
     return 0
+
+
+def _config_command_has_direct_output(route: Any) -> bool:
+    return bool(route.flags.get("stdin_json")) or bool(route.flags.get("set_values")) or bool(route.passthrough_args)
 
 
 def _run_headless_config_command(runtime: Any, route: Any) -> int:
@@ -74,7 +92,9 @@ def _run_headless_config_command(runtime: Any, route: Any) -> int:
             {
                 **asdict(save_result.ignore_status),
                 "target_path": (
-                    str(save_result.ignore_status.target_path) if save_result.ignore_status.target_path is not None else None
+                    str(save_result.ignore_status.target_path)
+                    if save_result.ignore_status.target_path is not None
+                    else None
                 ),
                 "managed_patterns": list(save_result.ignore_status.managed_patterns),
             }

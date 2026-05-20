@@ -13,10 +13,17 @@ $ARGUMENTS
 1. Read `MAIN_TASK.md` and briefly inspect the current repo state so you understand what is being finalized.
 2. Determine the current worktree/project name and run `envctl test --project <current-worktree-name>`.
 3. If tests fail, investigate and fix the failures when they are caused by the current implementation, then rerun the relevant validation until the tree is in a good state or you have a concrete blocker.
-4. Update `.envctl-commit-message.md` so the next commit message reflects the finalized implementation accurately.
-5. Commit the work.
-6. Push the branch.
-7. Open the PR if none exists yet, or update the existing PR. In either case, make sure the PR title and body/message are finalized to a high standard: they should be detailed, accurate, polished, and should clearly reflect the shipped implementation, validation results, and any residual risks.
+4. For runtime or browser-visible work, use project-scoped envctl helpers before handoff:
+   - `envctl endpoints --project <current-worktree-name> --json` to read canonical active URLs and dependency ports.
+   - `envctl qa-user ensure --project <current-worktree-name> ... --json` when deterministic auth credentials are needed.
+   - `envctl playwright --project <current-worktree-name> -- <command>` for Playwright/browser tests against the active frontend.
+   - If this prompt is installed as a Codex skill or direct prompt, you may also use available Codex skills named in the session, such as `$browser`, for browser verification.
+5. Update `.envctl-commit-message.md` so the next commit message reflects the finalized implementation accurately.
+6. Commit the work.
+7. Push the branch.
+8. Open the PR if none exists yet, or update the existing PR. In either case, make sure the PR title and body/message are finalized to a high standard: they should be detailed, accurate, polished, and should clearly reflect the shipped implementation, validation results, and any residual risks.
+9. After creating or updating the PR, wait for GitHub status checks to complete (for example, `gh pr checks --watch` when available), verify that all required checks pass, and fix/re-push if any check fails before final handoff.
+10. Inspect all unresolved PR review comments and review threads, address ALL actionable comments, commit and push any follow-up fixes, then wait for final PR confirmation/status checks before closing out the task. If comments are already resolved or non-actionable, report that evidence.
 
 ## Non-negotiables
 - Prefer `envctl` commands over ad hoc test commands for the final validation pass.

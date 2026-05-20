@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kfiramar/envctl/releases/tag/1.5.0"><img src="https://img.shields.io/badge/release-1.5.0-2ea043" alt="Release 1.5.0"></a>
+  <a href="https://github.com/OrgPele/envctl/releases/tag/1.9.2"><img src="https://img.shields.io/badge/release-1.9.2-2ea043" alt="Release 1.9.2"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12--3.14-3776AB" alt="Python 3.12-3.14"></a>
   <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-readable-0969DA" alt="Documentation"></a>
   <a href="docs/changelog/main_changelog.md"><img src="https://img.shields.io/badge/changelog-main-7A3EFF" alt="Changelog"></a>
@@ -148,5 +148,5 @@ Install-path summary:
 
 - On first interactive use, the setup wizard creates it for you.
 - Later, run `envctl config` to reopen the wizard and edit it safely.
-- Envctl-managed local workflow artifacts are expected to be ignored through your Git global excludes file, not by auto-editing the repository `.gitignore`.
+- Envctl-managed local workflow artifacts are ignored through your Git global excludes file, not by auto-editing the repository `.gitignore`; config saves configure or update that global excludes file automatically.
 - [`docs/reference/.envctl.example`](docs/reference/.envctl.example) is the reference file for managed keys and defaults, not the primary onboarding flow.

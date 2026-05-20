@@ -79,6 +79,168 @@ class PrereqPolicyTests(unittest.TestCase):
             self.assertTrue(ok)
             self.assertIsNone(reason)
 
+    def test_no_deps_worktree_start_does_not_require_docker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "true",
+                    "REDIS_ENABLE": "true",
+                    "SUPABASE_MAIN_ENABLE": "true",
+                    "N8N_ENABLE": "true",
+                }
+            )
+            route = parse_route(["--tree", "--no-deps"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary == "docker":
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertTrue(ok)
+            self.assertIsNone(reason)
+
+    def test_shared_deps_worktree_start_uses_main_docker_prereq(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "MAIN_REDIS_ENABLE": "true",
+                    "TREES_REDIS_ENABLE": "false",
+                }
+            )
+            route = parse_route(["--trees", "--shared-deps"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary == "docker":
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("docker", str(reason).lower())
+
+    def test_default_worktree_start_uses_main_shared_docker_prereq(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "MAIN_REDIS_ENABLE": "true",
+                    "TREES_REDIS_ENABLE": "false",
+                }
+            )
+            route = parse_route(["--trees"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary == "docker":
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("docker", str(reason).lower())
+
+    def test_only_app_worktree_start_does_not_require_docker(self) -> None:
+        for flag in ("--only-backend", "--only-frontend"):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as tmpdir:
+                repo = Path(tmpdir) / "repo"
+                runtime = Path(tmpdir) / "runtime"
+                (repo / ".git").mkdir(parents=True, exist_ok=True)
+                config = load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "POSTGRES_MAIN_ENABLE": "true",
+                        "REDIS_ENABLE": "true",
+                        "SUPABASE_MAIN_ENABLE": "true",
+                        "N8N_ENABLE": "true",
+                    }
+                )
+                route = parse_route(["--tree", flag], env={})
+
+                def fake_which(binary: str) -> str | None:
+                    if binary == "git":
+                        return "/usr/bin/git"
+                    if binary == "docker":
+                        return None
+                    return f"/usr/bin/{binary}"
+
+                with (
+                    patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                    patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+                ):
+                    ok, reason = cli.check_prereqs(route, config)
+
+                self.assertTrue(ok)
+                self.assertIsNone(reason)
+
+    def test_no_infra_worktree_start_does_not_require_docker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "true",
+                    "REDIS_ENABLE": "true",
+                    "SUPABASE_MAIN_ENABLE": "true",
+                    "N8N_ENABLE": "true",
+                }
+            )
+            route = parse_route(["--tree", "--no-infra"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary == "docker":
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertTrue(ok)
+            self.assertIsNone(reason)
+
     def test_start_fails_when_runtime_dependencies_are_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -176,6 +338,73 @@ class PrereqPolicyTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("cmux", str(reason))
             self.assertIn("opencode", str(reason))
+
+    def test_plan_omx_team_route_requires_omx_tmux_script_and_codex(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config({
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(runtime),
+                "POSTGRES_MAIN_ENABLE": "false",
+                "REDIS_ENABLE": "false",
+                "SUPABASE_MAIN_ENABLE": "false",
+                "N8N_ENABLE": "false",
+            })
+            route = parse_route(["--plan", "feature-a", "--omx", "--team", "--codex"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary in {"omx", "tmux", "script", "codex"}:
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which), patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True)):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("omx", str(reason))
+            self.assertIn("tmux", str(reason))
+            self.assertIn("script", str(reason))
+            self.assertIn("codex", str(reason))
+
+    def test_plan_omx_route_requires_omx_tmux_and_codex(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                }
+            )
+            route = parse_route(["--plan", "feature-a", "--omx", "--codex"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary in {"omx", "tmux", "script", "codex"}:
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("omx", str(reason))
+            self.assertIn("tmux", str(reason))
+            self.assertIn("script", str(reason))
+            self.assertIn("codex", str(reason))
 
     def test_plan_workspace_override_implies_plan_agent_prereqs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -280,6 +509,186 @@ class PrereqPolicyTests(unittest.TestCase):
 
             self.assertTrue(ok)
             self.assertIsNone(reason)
+
+    def test_superset_alias_requires_superset_and_codex_not_cmux(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "SUPERSET": "true",
+                    "SUPERSET_PROJECT": "proj-1",
+                }
+            )
+            route = parse_route(["--plan", "feature-a"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary in {"superset", "codex"}:
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("superset", str(reason))
+            self.assertIn("codex", str(reason))
+            self.assertNotIn("cmux", str(reason))
+
+    def test_superset_project_alias_alone_requires_superset_and_codex_not_cmux(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "SUPERSET_PROJECT": "proj-1",
+                }
+            )
+            route = parse_route(["--plan", "feature-a"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary in {"superset", "codex"}:
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("superset", str(reason))
+            self.assertIn("codex", str(reason))
+            self.assertNotIn("cmux", str(reason))
+
+    def test_canonical_superset_project_requires_superset_and_codex_not_cmux(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "ENVCTL_PLAN_AGENT_SUPERSET_PROJECT": "proj-1",
+                }
+            )
+            route = parse_route(["--plan", "feature-a"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary in {"superset", "codex"}:
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("superset", str(reason))
+            self.assertIn("codex", str(reason))
+            self.assertNotIn("cmux", str(reason))
+
+    def test_superset_workspace_override_implies_plan_agent_prereqs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "SUPERSET_WORKSPACE": "workspace-1",
+                }
+            )
+            route = parse_route(["--plan", "feature-a"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary in {"superset", "codex"}:
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("superset", str(reason))
+            self.assertIn("codex", str(reason))
+
+    def test_tmux_route_overrides_superset_alias_prereqs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "POSTGRES_MAIN_ENABLE": "false",
+                    "REDIS_ENABLE": "false",
+                    "SUPABASE_MAIN_ENABLE": "false",
+                    "N8N_ENABLE": "false",
+                    "SUPERSET": "true",
+                    "SUPERSET_PROJECT": "proj-1",
+                }
+            )
+            route = parse_route(["--plan", "feature-a", "--tmux"], env={})
+
+            def fake_which(binary: str) -> str | None:
+                if binary == "git":
+                    return "/usr/bin/git"
+                if binary == "tmux":
+                    return None
+                return f"/usr/bin/{binary}"
+
+            with (
+                patch("envctl_engine.runtime.cli.shutil.which", side_effect=fake_which),
+                patch("envctl_engine.runtime.cli._python_dependency_available", return_value=True),
+            ):
+                ok, reason = cli.check_prereqs(route, config)
+
+            self.assertFalse(ok)
+            self.assertIn("tmux", str(reason))
+            self.assertNotIn("superset", str(reason))
 
 
 if __name__ == "__main__":

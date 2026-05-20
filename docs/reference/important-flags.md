@@ -10,12 +10,16 @@ These are the highest-value flags for daily use.
 | `--version` | Print the current `envctl` package version and exit without repo/bootstrap/runtime startup. |
 | `--headless` | Non-interactive startup and execution (preferred). |
 | `--batch` | Legacy alias for `--headless`. |
+| `--interactive` | Opt specific action commands back into prompts/interactive target selection. |
 | `--main` | Run main mode only (skip trees). |
 | `--tree` / `--trees` | Explicit trees-mode switch. |
 | `--doctor` | Run diagnostics and exit. |
 | `--dashboard` | Show runtime dashboard and exit. |
 | `show-config --json` | Print the effective managed config without starting services. |
 | `show-state --json` | Print the latest saved runtime state. |
+| `endpoints --project <name> --json` | Print project-scoped frontend/backend/dependency endpoints from active runtime state. |
+| `qa-user ensure --update-password --update-metadata` | Explicitly mutate an existing QA Auth user; omitted update flags reuse existing users unchanged. |
+| `playwright --project <name> -- <command>` | Run a passthrough command with `QA_BASE_URL` plus `ENVCTL_ENDPOINTS_JSON` pointing at the selected endpoint artifact. |
 | `explain-startup --json` | Print the runtime's startup decision before executing it. |
 
 Config note: `ENVCTL_DEFAULT_MODE` sets default startup mode when no mode flag is passed.
@@ -23,6 +27,9 @@ Allowed values are `main` and `trees` (default: `main`).
 Engine note: Python runtime is the only supported runtime path.
 Launcher note: `--repo` is resolved by the launcher/runtime entrypoints rather than the command router registry.
 Launcher note: `--version` is launcher-owned and intentionally stays out of the runtime supported-command inventory.
+Action note: explicit action commands such as `kill-all`, `stop`, `blast-all`, `logs`, `health`,
+`errors`, `test`, `pr`, `commit`, `review`, and `migrate` default to non-interactive execution;
+pass `--interactive` only when you want prompts.
 
 ## Targeting
 | Flag | Purpose |
@@ -30,6 +37,20 @@ Launcher note: `--version` is launcher-owned and intentionally stays out of the 
 | `--project <name>` | Target one project (repeatable). |
 | `--projects <a,b>` | Target multiple projects. |
 | `--service <name>` | Target one service. |
+| `--backend` | Runtime scope: run or stop backend app services only. |
+| `--frontend` | Runtime scope: run or stop frontend app services only. |
+| `--fullstack` | Runtime scope: run or stop backend and frontend app services. |
+| `--both` | Alias for `--fullstack`. |
+| `--dependencies` | Runtime scope: run or stop dependencies only (DB/Redis/etc.), without app services. |
+| `--deps` | Alias for `--dependencies`. |
+| `--entire-system` | Runtime scope: run or stop dependencies plus backend and frontend services. |
+| `--only-frontend` | Startup/plan modifier: launch only the frontend app service; skip backend, managed dependencies, and dependency prep. |
+| `--only-backend` | Startup/plan modifier: launch only the backend app service; skip frontend, managed dependencies, and dependency prep. |
+| `--no-deps` | Startup/plan modifier: skip managed dependencies and plan-agent dependency prep. |
+| `--no-infra` | Startup/plan modifier: skip backend, frontend, managed dependencies, and plan-agent dependency prep. |
+| `--isolated-deps` | Tree startup modifier: use isolated managed dependencies for worktrees. |
+| `--separate-deps` | Alias for `--isolated-deps`. |
+| `--strict` | For `health`, make optional-only degradation return non-zero while preserving non-blocking semantics in JSON. |
 | `--all` | Target all projects/services. |
 | `--untested` | Target untested projects for test workflows. |
 | `--failed` | Rerun only the saved failed tests/files for the selected test targets. Refuses to run if the saved git state is stale. |
@@ -45,12 +66,24 @@ Launcher note: `--version` is launcher-owned and intentionally stays out of the 
 | `--setup-worktree <FEATURE> <ITER>` | Create one worktree iteration directly. |
 | `--include-existing-worktrees <a,b>` | Include specific existing iterations. |
 | `--keep-plan` | Keep planning files in place after execution. |
+| `--tmux` | For `--plan`, have envctl create or reuse an envctl-owned tmux session/window for the implementation prompt workflow. |
+| `--opencode` | With `--plan --tmux`, launch OpenCode instead of Codex. |
+| `--ulw` | With `--plan --tmux --opencode`, explicitly force the OpenCode `/ulw-loop` prompt prefix; this is already the default for OpenCode launches. |
+| `--tmux-new-session` | For AI-driven `--plan` launches, create a fresh tmux or OMX-managed session instead of attaching to an existing one. |
+| `--omx` | For `--plan`, launch the Codex implementation session through OMX-managed detached tmux instead of envctl creating the tmux window directly; envctl selects a deterministic OMX state root under the worktree so prompt handoff remains discoverable when OMX boxes unsafe runtime state. |
+| `--ultragoal` | OMX workflow modifier for `--plan --omx`; starts the default/recommended Ultragoal workflow inside the OMX-managed Codex session after optional Codex `/goal` framing. |
+| `--ralph` | OMX workflow modifier for `--plan --omx`; starts the Ralph compatibility workflow inside the OMX-managed Codex session after optional Codex `/goal` framing. |
+| `--team` | OMX workflow modifier for `--plan --omx`; starts the Team workflow inside the OMX-managed Codex session after optional Codex `/goal` framing. |
+
+Plan-agent handoff note: if `--plan --tmux/--omx --headless` starts the implementation AI session but local services cannot start, envctl reports a degraded handoff with `attach:` guidance instead of a plain fatal startup summary. For OMX-managed launches, envctl revalidates the tmux attach target before printing `attach:` guidance; stale, exited, wrong-worktree, or removed-worktree OMX sessions are reported as a failed/degraded handoff with diagnostic metadata instead of a copy-pastable stale attach command. Those OMX failures include a `recovery:` command that switches the same plan selector to native envctl-owned `--tmux`, preserves relevant scope/headless flags, includes `--tmux-new-session`, and omits OMX-only workflow flags. Non-plan commands and plan runs without a running AI session remain fatal.
 
 ## Performance and Reliability
 | Flag | Purpose |
 | --- | --- |
 | `--fast` | Enable startup caches. |
 | `--refresh-cache` | Force full scan and refresh cached metadata. |
+| `--deps-parallel` / `--parallel-deps` | Force managed dependency startup to run in parallel. |
+| `--deps-sequential` / `--sequential-deps` | Force managed dependency startup to run one dependency at a time. |
 | `--parallel-trees` | Enable parallel tree startup workers. |
 | `--parallel-trees-max <n>` | Max parallel tree startup workers. |
 | `--service-parallel` / `--service-sequential` | Run backend+frontend startup attach in parallel or sequential mode (default: parallel). |
@@ -100,5 +133,9 @@ When a plan is scaled to zero through `envctl --plan`, envctl blasts the related
 
 - active: `todo/plans/backend/checkout.md`
 - archived: `todo/done/backend/checkout.md`
+
+Envctl-managed worktree creation for `--plan`, `--setup-worktree(s)`, and `ensure-worktree` disables repo-local Git
+hooks by default with a command-scoped Git config override. Set `ENVCTL_WORKTREE_GIT_HOOKS=inherit` to opt into
+repo-local hooks for those worktree creation commands.
 
 For fuller operational guidance, see [Python Engine Guide](../user/python-engine-guide.md).

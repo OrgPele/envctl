@@ -9,7 +9,9 @@ from envctl_engine.actions.actions_worktree import delete_worktree_path
 
 def run_ensure_worktree_command(runtime: Any, route: object) -> int:
     flags = getattr(route, "flags", {}) or {}
-    passthrough_args = [str(token).strip() for token in (getattr(route, "passthrough_args", []) or []) if str(token).strip()]
+    passthrough_args = [
+        str(token).strip() for token in (getattr(route, "passthrough_args", []) or []) if str(token).strip()
+    ]
     json_output = bool(flags.get("json"))
     dry_run = bool(flags.get("dry_run"))
     recreate_existing = bool(flags.get("setup_worktree_recreate"))

@@ -14,6 +14,7 @@ LOAD_STATE_COMMANDS: Final[frozenset[str]] = frozenset(
         "health",
         "errors",
         "blast-worktree",
+        "self-destruct-worktree",
         "pr",
         "commit",
         "review",
@@ -24,15 +25,29 @@ LOAD_STATE_COMMANDS: Final[frozenset[str]] = frozenset(
 SKIP_STARTUP_ONLY_COMMANDS: Final[frozenset[str]] = frozenset({"debug-pack", "debug-report", "debug-last"})
 
 DIRECT_INSPECTION_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"list-commands", "list-targets", "list-trees", "show-config", "show-state", "explain-startup", "preflight"}
+    {
+        "list-commands",
+        "list-targets",
+        "list-trees",
+        "session",
+        "show-config",
+        "show-state",
+        "endpoints",
+        "explain-startup",
+        "preflight",
+    }
 )
-UTILITY_COMMANDS: Final[frozenset[str]] = frozenset({"install-prompts", "codex-tmux", "ensure-worktree"})
-DASHBOARD_ALWAYS_HIDDEN_COMMANDS: Final[frozenset[str]] = frozenset({"install-prompts", "codex-tmux", "ensure-worktree"})
+UTILITY_COMMANDS: Final[frozenset[str]] = frozenset(
+    {"install-prompts", "codex-tmux", "ensure-worktree", "supabase-user", "qa-user", "playwright"}
+)
+DASHBOARD_ALWAYS_HIDDEN_COMMANDS: Final[frozenset[str]] = frozenset(
+    {"install-prompts", "codex-tmux", "ensure-worktree", "supabase-user", "qa-user", "playwright"}
+)
 
 LIFECYCLE_CLEANUP_COMMANDS: Final[frozenset[str]] = frozenset({"stop", "stop-all", "blast-all"})
 STATE_ACTION_COMMANDS: Final[frozenset[str]] = frozenset({"logs", "clear-logs", "health", "errors"})
 ACTION_COMMANDS: Final[frozenset[str]] = frozenset(
-    {"test", "delete-worktree", "blast-worktree", "pr", "commit", "review", "migrate"}
+    {"test", "delete-worktree", "blast-worktree", "self-destruct-worktree", "pr", "commit", "review", "migrate"}
 )
 STARTUP_COMMANDS: Final[frozenset[str]] = frozenset({"restart", "plan", "start"})
 
@@ -52,10 +67,8 @@ def apply_mode_token(token: str, *, flags: dict[str, object], current_mode: str)
     if token in {"main=false", "MAIN=false"}:
         return "trees"
     if token in {"--main", "--main=true", "main=true", "MAIN=true"}:
-        flags["no_resume"] = True
         return "main"
     if token in {"--tree=false", "--trees=false", "tree=false", "trees=false", "TREE=false", "TREES=false"}:
-        flags["no_resume"] = True
         return "main"
     return current_mode
 

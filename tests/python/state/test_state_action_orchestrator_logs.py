@@ -13,6 +13,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.engine_runtime_runtime_support import normalize_log_line
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.state.action_orchestrator import StateActionOrchestrator
 from envctl_engine.test_output.parser_base import strip_ansi
@@ -24,6 +25,7 @@ class _RuntimeStub:
         self._state = state
         self.env: dict[str, str] = {}
         self.config = SimpleNamespace(raw={})
+        self.events: list[dict[str, object]] = []
         self.seen_logs_state: RunState | None = None
 
     def _try_load_existing_state(self, *, mode: str, strict_mode_match: bool = False):  # noqa: ANN001, ARG002
@@ -63,6 +65,13 @@ class _RuntimeStub:
 
     def _select_grouped_targets(self, **_kwargs):  # noqa: ANN001
         return TargetSelection(cancelled=True)
+
+    @staticmethod
+    def _normalize_log_line(line: str, *, no_color: bool) -> str:
+        return normalize_log_line(line, no_color=no_color)
+
+    def _emit(self, event: str, **payload: object) -> None:
+        self.events.append({"event": event, **payload})
 
 
 class StateActionOrchestratorLogsTests(unittest.TestCase):
@@ -109,6 +118,34 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
             {"alpha backend", "alpha frontend"},
         )
 
+    def test_logs_service_filter_accepts_additional_service_slug_and_display_forms(self) -> None:
+        state = RunState(
+            run_id="run-generic-service",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd="/tmp/main"),
+                "Main Voice Runtime": ServiceRecord(
+                    name="Main Voice Runtime",
+                    type="voice-runtime",
+                    cwd="/tmp/main/voice-runtime",
+                    project="Main",
+                    service_slug="voice-runtime",
+                ),
+            },
+        )
+        for selector in ("voice-runtime", "service:voice-runtime", "Voice Runtime", "Main Voice Runtime"):
+            with self.subTest(selector=selector):
+                runtime = _RuntimeStub(state)
+                orchestrator = StateActionOrchestrator(runtime)
+                route = Route(command="logs", mode="main", flags={"services": [selector]})
+
+                code = orchestrator.execute(route)
+
+                self.assertEqual(code, 0)
+                self.assertIsNotNone(runtime.seen_logs_state)
+                assert runtime.seen_logs_state is not None
+                self.assertEqual(set(runtime.seen_logs_state.services), {"Main Voice Runtime"})
+
     def test_health_prints_enabled_dependency_statuses(self) -> None:
         state = RunState(
             run_id="run-1",
@@ -154,6 +191,94 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
         self.assertIn("port=6380", rendered)
         self.assertIn("port=5678", rendered)
         self.assertNotIn("Main supabase:", rendered)
+
+    def test_health_uses_cross_for_bad_statuses_and_counts_by_severity(self) -> None:
+        state = RunState(
+            run_id="run-bad",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend", type="backend", cwd="/tmp/main", status="failed", actual_port=8000
+                ),
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend", type="frontend", cwd="/tmp/main", status="unknown", actual_port=9000
+                ),
+                "Main Worker": ServiceRecord(
+                    name="Main Worker", type="worker", cwd="/tmp/main", status="running", actual_port=9100
+                ),
+            },
+            requirements={
+                "Main": RequirementsResult(
+                    project="Main",
+                    n8n={"enabled": True, "runtime_status": "unreachable", "final": 5678, "success": False},
+                    failures=["n8n unreachable"],
+                )
+            },
+        )
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+
+        route = Route(command="health", mode="main")
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(route)
+
+        rendered = strip_ansi(output.getvalue())
+        self.assertEqual(code, 1)
+        self.assertIn("status: healthy/running=1 starting/simulated=1 issues=2", rendered)
+        self.assertIn("✗ Backend", rendered)
+        self.assertIn("• Frontend", rendered)
+        self.assertIn("✓ Main Worker", rendered)
+        self.assertIn("✗ n8n", rendered)
+        self.assertNotIn("! Backend", rendered)
+        self.assertNotIn("! n8n", rendered)
+
+    def test_state_actions_emit_spinner_lifecycle_events_after_target_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "backend.log"
+            log_path.write_text("line1\nWARNING cache warmup failed\n", encoding="utf-8")
+            commands = ("logs", "clear-logs", "health", "errors")
+            for command in commands:
+                with self.subTest(command=command):
+                    state = RunState(
+                        run_id=f"run-{command}",
+                        mode="main",
+                        services={
+                            "Main Backend": ServiceRecord(
+                                name="Main Backend",
+                                type="backend",
+                                cwd="/tmp/main",
+                                status="running",
+                                log_path=str(log_path),
+                            )
+                        },
+                    )
+                    runtime = _RuntimeStub(state)
+                    orchestrator = StateActionOrchestrator(runtime)
+                    route = Route(command=command, mode="main", flags={"all": True, "logs_tail": 10})
+                    with redirect_stdout(StringIO()):
+                        orchestrator.execute(route)
+
+                    action_events = [event for event in runtime.events if event.get("event") == "state.action.start"]
+                    finish_events = [event for event in runtime.events if event.get("event") == "state.action.finish"]
+                    self.assertEqual(len(action_events), 1, msg=runtime.events)
+                    self.assertEqual(len(finish_events), 1, msg=runtime.events)
+                    self.assertEqual(action_events[0]["command"], command)
+                    self.assertEqual(action_events[0]["run_id"], f"run-{command}")
+                    self.assertEqual(action_events[0]["service_count"], 1)
+                    self.assertEqual(action_events[0]["mode"], "main")
+                    self.assertEqual(finish_events[0]["command"], command)
+                    self.assertIn(finish_events[0]["code"], {0, 1})
+                    reconcile_indexes = [
+                        index for index, event in enumerate(runtime.events) if event.get("event") == "state.reconcile"
+                    ]
+                    if reconcile_indexes:
+                        start_index = next(
+                            index
+                            for index, event in enumerate(runtime.events)
+                            if event.get("event") == "state.action.start"
+                        )
+                        self.assertLess(start_index, reconcile_indexes[0], msg=runtime.events)
 
     def test_clear_logs_truncates_service_log_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -324,6 +449,7 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
         state = RunState(
             run_id="run-1",
             mode="main",
+            metadata={"dependency_mode": "shared", "shared_dependencies": True},
             services={
                 "Main Backend": ServiceRecord(
                     name="Main Backend", type="backend", cwd="/tmp/main", status="running", actual_port=8000
@@ -347,10 +473,342 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
 
         payload = json.loads(output.getvalue())
         self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["overall"], "healthy")
+        self.assertFalse(payload["blocking"])
+        self.assertTrue(payload["critical_services_healthy"])
+        self.assertEqual(payload["dependency_mode"], "shared")
+        self.assertTrue(payload["shared_dependencies"])
         self.assertTrue(payload["healthy"])
         self.assertEqual(payload["run_id"], "run-1")
         self.assertEqual(payload["services"][0]["name"], "Main Backend")
         self.assertEqual(payload["dependencies"][0]["component"], "redis")
+
+    def test_health_json_reports_dependency_resource_ports(self) -> None:
+        state = RunState(
+            run_id="run-supabase-resources",
+            mode="main",
+            requirements={
+                "Main": RequirementsResult(
+                    project="Main",
+                    supabase={
+                        "enabled": True,
+                        "runtime_status": "healthy",
+                        "success": True,
+                        "resources": {"db": 5574, "api": 54463, "primary": 5574, "requested": 5662},
+                    },
+                )
+            },
+        )
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+
+        route = Route(command="health", mode="main", flags={"json": True})
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(route)
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        dependency = payload["dependencies"][0]
+        self.assertEqual(dependency["component"], "supabase")
+        self.assertEqual(dependency["port"], 54463)
+        self.assertEqual(dependency["resources"], {"api": 54463, "db": 5574, "primary": 5574})
+
+    def test_health_project_missing_json_fails_closed_without_active_rows(self) -> None:
+        state = RunState(
+            run_id="run-wrong-project",
+            mode="trees",
+            services={
+                "Active Backend": ServiceRecord(
+                    name="Active Backend",
+                    type="backend",
+                    cwd="/tmp/active",
+                    project="active",
+                    status="running",
+                    actual_port=8001,
+                )
+            },
+        )
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+        route = Route(command="health", mode="trees", projects=["missing"], flags={"json": True})
+
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(route)
+
+        self.assertEqual(code, 1)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(
+            payload,
+            {
+                "ok": False,
+                "error": "requested_project_not_running",
+                "requested_project": "missing",
+                "active_projects": ["active"],
+            },
+        )
+        self.assertNotIn("services", payload)
+        events = [event for event in runtime.events if event.get("event") == "state.project_resolution.failed"]
+        self.assertEqual(len(events), 1, msg=runtime.events)
+        self.assertEqual(events[0]["command"], "health")
+        self.assertEqual(events[0]["requested_project"], "missing")
+        self.assertEqual(events[0]["requested_projects"], ["missing"])
+        self.assertEqual(events[0]["selected_projects"], [])
+        self.assertEqual(events[0]["active_projects"], ["active"])
+        self.assertEqual(events[0]["run_id"], "run-wrong-project")
+        self.assertEqual(events[0]["mode"], "trees")
+
+    def test_health_project_active_json_filters_services_and_dependencies(self) -> None:
+        state = RunState(
+            run_id="run-filter",
+            mode="trees",
+            services={
+                "Alpha Backend": ServiceRecord(
+                    name="Alpha Backend", type="backend", cwd="/tmp/a", project="Alpha", status="running"
+                ),
+                "Beta Backend": ServiceRecord(
+                    name="Beta Backend", type="backend", cwd="/tmp/b", project="Beta", status="running"
+                ),
+            },
+            requirements={
+                "Alpha": RequirementsResult(project="Alpha", redis={"enabled": True, "success": True}),
+                "Beta": RequirementsResult(project="Beta", redis={"enabled": True, "success": True}),
+            },
+        )
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+        route = Route(command="health", mode="trees", projects=["Alpha"], flags={"json": True})
+
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(route)
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual([service["project"] for service in payload["services"]], ["Alpha"])
+        self.assertEqual([dependency["project"] for dependency in payload["dependencies"]], ["Alpha"])
+
+    def test_health_optional_degraded_service_is_non_blocking_unless_strict(self) -> None:
+        state = RunState(
+            run_id="run-optional",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend", type="backend", cwd="/tmp/main", status="running", critical=True
+                ),
+                "Main Voice Runtime": ServiceRecord(
+                    name="Main Voice Runtime",
+                    type="voice-runtime",
+                    cwd="/tmp/main/voice",
+                    status="failed",
+                    service_slug="voice-runtime",
+                    critical=False,
+                    degraded=True,
+                    failure_detail="startup failed",
+                ),
+            },
+        )
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(Route(command="health", mode="main", flags={"json": True}))
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["overall"], "degraded")
+        self.assertFalse(payload["blocking"])
+        self.assertTrue(payload["critical_services_healthy"])
+        self.assertEqual(payload["optional_failures"], ["voice-runtime"])
+        self.assertEqual(payload["critical_failures"], [])
+
+        strict_output = StringIO()
+        with redirect_stdout(strict_output):
+            strict_code = orchestrator.execute(Route(command="health", mode="main", flags={"json": True, "strict": True}))
+
+        strict_payload = json.loads(strict_output.getvalue())
+        self.assertEqual(strict_code, 1)
+        self.assertTrue(strict_payload["ok"])
+        self.assertFalse(strict_payload["blocking"])
+        self.assertTrue(strict_payload["strict_blocking"])
+
+    def test_health_critical_failure_is_blocking(self) -> None:
+        state = RunState(
+            run_id="run-critical",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend", type="backend", cwd="/tmp/main", status="failed", critical=True
+                )
+            },
+        )
+        runtime = _RuntimeStub(state)
+        runtime._reconcile_state_truth = lambda _state: ["Main Backend"]  # type: ignore[method-assign]
+        orchestrator = StateActionOrchestrator(runtime)
+
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(Route(command="health", mode="main", flags={"json": True}))
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 1)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["overall"], "unhealthy")
+        self.assertTrue(payload["blocking"])
+        self.assertFalse(payload["critical_services_healthy"])
+        self.assertEqual(payload["critical_failures"], ["Main Backend"])
+
+
+    def test_project_selector_success_emits_resolution_ok_event(self) -> None:
+        state = RunState(
+            run_id="run-resolution-ok",
+            mode="trees",
+            services={
+                "Alpha Backend": ServiceRecord(
+                    name="Alpha Backend", type="backend", cwd="/repo/trees/alpha/1/api", project="Alpha", status="running"
+                ),
+                "Beta Backend": ServiceRecord(
+                    name="Beta Backend", type="backend", cwd="/repo/trees/beta/1/api", project="Beta", status="running"
+                ),
+            },
+            metadata={"project_roots": {"Alpha": "/repo/trees/alpha/1", "Beta": "/repo/trees/beta/1"}},
+        )
+        runtime = _RuntimeStub(state)
+        runtime.env["ENVCTL_INVOCATION_CWD"] = "/repo/trees/alpha/1/api"
+        orchestrator = StateActionOrchestrator(runtime)
+
+        with redirect_stdout(StringIO()):
+            code = orchestrator.execute(Route(command="health", mode="trees", projects=["Alpha"], flags={"json": True}))
+
+        self.assertEqual(code, 0)
+        events = [event for event in runtime.events if event.get("event") == "state.project_resolution.ok"]
+        self.assertEqual(len(events), 1, msg=runtime.events)
+        self.assertEqual(events[0]["command"], "health")
+        self.assertEqual(events[0]["run_id"], "run-resolution-ok")
+        self.assertEqual(events[0]["mode"], "trees")
+        self.assertEqual(events[0]["requested_projects"], ["Alpha"])
+        self.assertEqual(events[0]["selected_projects"], ["Alpha"])
+        self.assertEqual(events[0]["active_projects"], ["Alpha", "Beta"])
+        self.assertEqual(events[0]["cwd_project"], "Alpha")
+
+    def test_health_json_emits_cwd_runtime_mismatch_event(self) -> None:
+        state = RunState(
+            run_id="run-cwd-json",
+            mode="trees",
+            services={
+                "Beta Backend": ServiceRecord(
+                    name="Beta Backend", type="backend", cwd="/repo/trees/beta/1/api", project="Beta", status="running"
+                ),
+            },
+            metadata={"project_roots": {"Alpha": "/repo/trees/alpha/1", "Beta": "/repo/trees/beta/1"}},
+        )
+        runtime = _RuntimeStub(state)
+        runtime.env["ENVCTL_INVOCATION_CWD"] = "/repo/trees/alpha/1/api"
+        orchestrator = StateActionOrchestrator(runtime)
+        output = StringIO()
+
+        with redirect_stdout(output):
+            code = orchestrator.execute(Route(command="health", mode="trees", flags={"json": True}))
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["warnings"][0]["code"], "cwd_runtime_mismatch")
+        events = [event for event in runtime.events if event.get("event") == "state.cwd_runtime_mismatch"]
+        self.assertEqual(len(events), 1, msg=runtime.events)
+        self.assertEqual(events[0]["command"], "health")
+        self.assertEqual(events[0]["run_id"], "run-cwd-json")
+        self.assertEqual(events[0]["mode"], "trees")
+        self.assertEqual(events[0]["cwd_project"], "Alpha")
+        self.assertEqual(events[0]["active_projects"], ["Beta"])
+
+    def test_health_recent_failure_for_optional_service_is_degraded_not_blocking(self) -> None:
+        state = RunState(
+            run_id="run-recent-optional",
+            mode="main",
+            metadata={"failed": True},
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd="/tmp/main", status="running", critical=True),
+                "Main Voice Runtime": ServiceRecord(
+                    name="Main Voice Runtime",
+                    type="voice-runtime",
+                    cwd="/tmp/main/voice",
+                    status="running",
+                    service_slug="voice-runtime",
+                    critical=False,
+                ),
+            },
+        )
+        runtime = _RuntimeStub(state)
+        runtime._recent_failure_messages = lambda: ["voice-runtime startup failed: exit 1"]  # type: ignore[method-assign]
+        orchestrator = StateActionOrchestrator(runtime)
+        output = StringIO()
+
+        with redirect_stdout(output):
+            code = orchestrator.execute(Route(command="health", mode="main", flags={"json": True}))
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["overall"], "degraded")
+        self.assertFalse(payload["blocking"])
+        self.assertEqual(payload["optional_failures"], ["voice-runtime"])
+        self.assertEqual(payload["critical_failures"], [])
+
+    def test_health_recent_failure_for_unknown_service_is_critical(self) -> None:
+        state = RunState(
+            run_id="run-recent-critical",
+            mode="main",
+            metadata={"failed": True},
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd="/tmp/main", status="running", critical=True),
+            },
+        )
+        runtime = _RuntimeStub(state)
+        runtime._recent_failure_messages = lambda: ["unknown worker startup failed: exit 1"]  # type: ignore[method-assign]
+        orchestrator = StateActionOrchestrator(runtime)
+        output = StringIO()
+
+        with redirect_stdout(output):
+            code = orchestrator.execute(Route(command="health", mode="main", flags={"json": True}))
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 1)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["overall"], "unhealthy")
+        self.assertTrue(payload["blocking"])
+        self.assertEqual(payload["critical_failures"], ["unknown worker startup failed: exit 1"])
+
+    def test_health_human_summary_reports_critical_and_optional_counts(self) -> None:
+        state = RunState(
+            run_id="run-human-summary",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd="/tmp/main", status="failed", critical=True),
+                "Main Voice Runtime": ServiceRecord(
+                    name="Main Voice Runtime",
+                    type="voice-runtime",
+                    cwd="/tmp/main/voice",
+                    status="failed",
+                    service_slug="voice-runtime",
+                    critical=False,
+                    degraded=True,
+                ),
+            },
+        )
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+        output = StringIO()
+
+        with redirect_stdout(output):
+            code = orchestrator.execute(Route(command="health", mode="main"))
+
+        rendered = strip_ansi(output.getvalue())
+        self.assertEqual(code, 1)
+        self.assertIn("summary: critical_issues=1 optional_degraded=1", rendered)
 
     def test_errors_supports_json_output(self) -> None:
         state = RunState(
@@ -375,6 +833,109 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["failed_services"][0]["name"], "Main Backend")
         self.assertEqual(payload["failed_services"][0]["status"], "failed")
+
+
+    def test_errors_reports_warning_lines_from_running_service_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "backend.log"
+            log_path.write_text(
+                "timestamp=2026-04-27T20:20:53 level=INFO message=ok\n"
+                "timestamp=2026-04-27T20:20:54 level=WARNING event=public_content.seed.failed "
+                "error_type=ModuleNotFoundError error_message=No module named 'frontmatter'\n",
+                encoding="utf-8",
+            )
+            state = RunState(
+                run_id="run-6",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd="/tmp/main",
+                        status="running",
+                        log_path=str(log_path),
+                    ),
+                },
+            )
+            runtime = _RuntimeStub(state)
+            runtime.env["ENVCTL_UI_COLOR_MODE"] = "on"
+            orchestrator = StateActionOrchestrator(runtime)
+
+            route = Route(command="errors", mode="main", flags={"interactive_command": True})
+            output = StringIO()
+            with redirect_stdout(output):
+                code = orchestrator.execute(route)
+
+            rendered = output.getvalue()
+            self.assertEqual(code, 1)
+            self.assertNotIn("No known service errors", rendered)
+            self.assertIn("Main Backend: log issues", strip_ansi(rendered))
+            self.assertIn("level=WARNING", strip_ansi(rendered))
+            self.assertIn("No module named 'frontmatter'", strip_ansi(rendered))
+            self.assertIn("\x1b[", rendered)
+
+    def test_errors_json_includes_warning_lines_from_running_service_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "backend.log"
+            log_path.write_text(
+                "INFO all good\n"
+                "WARNING cache warmup failed with ModuleNotFoundError\n",
+                encoding="utf-8",
+            )
+            state = RunState(
+                run_id="run-7",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd="/tmp/main",
+                        status="running",
+                        log_path=str(log_path),
+                    ),
+                },
+            )
+            runtime = _RuntimeStub(state)
+            orchestrator = StateActionOrchestrator(runtime)
+
+            route = Route(command="errors", mode="main", flags={"json": True})
+            output = StringIO()
+            with redirect_stdout(output):
+                code = orchestrator.execute(route)
+
+            payload = json.loads(output.getvalue())
+            self.assertEqual(code, 1)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["log_issues"][0]["service"], "Main Backend")
+            self.assertIn("WARNING cache warmup failed", payload["log_issues"][0]["lines"][0])
+
+    def test_errors_highlights_failure_keywords_for_interactive_output(self) -> None:
+        state = RunState(
+            run_id="run-5",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd="/tmp/main",
+                    status="failed",
+                    log_path="/tmp/backend.log",
+                ),
+            },
+        )
+        runtime = _RuntimeStub(state)
+        runtime.env["ENVCTL_UI_COLOR_MODE"] = "on"
+        orchestrator = StateActionOrchestrator(runtime)
+
+        route = Route(command="errors", mode="main", flags={"interactive_command": True})
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(route)
+
+        rendered = output.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("\x1b[", rendered)
+        self.assertIn("Main Backend: status=failed", strip_ansi(rendered))
 
 
 if __name__ == "__main__":

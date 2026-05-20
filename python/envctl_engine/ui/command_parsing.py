@@ -43,9 +43,29 @@ def recover_single_letter_command_from_escape_fragment(raw: str) -> str:
         candidate = ss3_match.group(1).lower()
         return candidate if candidate in allowed else ""
 
+    ss3_suffix_match = re.fullmatch(r"\x1bO[A-D]([A-Za-z])", stripped)
+    if ss3_suffix_match:
+        candidate = ss3_suffix_match.group(1).lower()
+        return candidate if candidate in allowed else ""
+
     csi_modifier_match = re.fullmatch(r"\x1b\[[0-9;?]+([A-Za-z])", stripped)
     if csi_modifier_match:
         candidate = csi_modifier_match.group(1).lower()
+        return candidate if candidate in allowed else ""
+
+    csi_suffix_match = re.fullmatch(r"\x1b\[[A-D]([A-Za-z])", stripped)
+    if csi_suffix_match:
+        candidate = csi_suffix_match.group(1).lower()
+        return candidate if candidate in allowed else ""
+
+    partial_csi_suffix_match = re.fullmatch(r"\[[A-D]([A-Za-z])", stripped)
+    if partial_csi_suffix_match:
+        candidate = partial_csi_suffix_match.group(1).lower()
+        return candidate if candidate in allowed else ""
+
+    bracket_suffix_match = re.fullmatch(r"\[([a-z])", stripped)
+    if bracket_suffix_match:
+        candidate = bracket_suffix_match.group(1).lower()
         return candidate if candidate in allowed else ""
     return ""
 

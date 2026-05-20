@@ -25,6 +25,10 @@ engine_runtime_module = importlib.import_module("envctl_engine.runtime.engine_ru
 
 default_test_command = actions_test_module.default_test_command
 default_test_commands = actions_test_module.default_test_commands
+rich_test_command_suggestions = actions_test_module.test_command_suggestions
+frontend_test_path_suggestions = actions_test_module.frontend_test_path_suggestions
+suggest_backend_test_command = actions_test_module.suggest_backend_test_command
+suggest_frontend_test_command = actions_test_module.suggest_frontend_test_command
 _configured_or_default_test_spec = action_test_support_module._configured_or_default_test_spec
 ActionCommandOrchestrator = action_command_orchestrator_module.ActionCommandOrchestrator
 parse_route = command_router_module.parse_route
@@ -739,6 +743,31 @@ class ActionsParityTests(unittest.TestCase):
             )
             self.assertEqual(env.get("ENVCTL_ACTION_INTERACTIVE"), "0")
 
+    def test_action_env_marks_default_headless_pr_routes_non_interactive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            target_root = repo / "trees" / "feature-a" / "1"
+            target_root.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            route = parse_route(
+                ["pr", "--project", "feature-a-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+            target = SimpleNamespace(name="feature-a-1", root=target_root)
+
+            env = engine.action_command_orchestrator.action_env(
+                "pr",
+                [target],
+                route=route,
+                target=target,
+                extra=engine.action_command_orchestrator.action_extra_env(route),
+            )
+
+            self.assertEqual(env.get("ENVCTL_ACTION_INTERACTIVE"), "0")
+
     def test_action_env_keeps_interactive_pr_routes_interactive(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -792,6 +821,40 @@ class ActionsParityTests(unittest.TestCase):
             expected_root = engine.state_repository.tree_diffs_dir_path(None)
             self.assertEqual(env.get("ENVCTL_ACTION_TREE_DIFFS_ROOT"), str(expected_root))
             self.assertEqual(env.get("ENVCTL_ACTION_RUNTIME_ROOT"), str(engine.state_repository.runtime_root))
+
+    def test_action_env_strips_repo_wrapper_launcher_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            target_root = repo / "trees" / "feature-a" / "1"
+            target_root.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={
+                    "ENVCTL_USE_REPO_WRAPPER": "1",
+                    "ENVCTL_WRAPPER_ORIGINAL_ARGV0": "envctl",
+                    "ENVCTL_WRAPPER_PYTHON_REEXEC": "1",
+                },
+            )
+            route = parse_route(
+                ["test", "--project", "feature-a-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+            target = SimpleNamespace(name="feature-a-1", root=target_root)
+
+            env = engine.action_command_orchestrator.action_env(
+                "test",
+                [target],
+                route=route,
+                target=target,
+                extra=None,
+            )
+
+            self.assertNotIn("ENVCTL_USE_REPO_WRAPPER", env)
+            self.assertNotIn("ENVCTL_WRAPPER_ORIGINAL_ARGV0", env)
+            self.assertNotIn("ENVCTL_WRAPPER_PYTHON_REEXEC", env)
 
     def test_action_explicit_main_mode_does_not_fallback_to_tree_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -961,7 +1024,7 @@ class ActionsParityTests(unittest.TestCase):
 
             route = parse_route(["review", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.launch_review_agent_terminal") as launch_mock:
+            with patch("envctl_engine.ui.dashboard.orchestrator.launch_review_agent_terminal") as launch_mock:
                 code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
@@ -988,7 +1051,7 @@ class ActionsParityTests(unittest.TestCase):
 
             route = parse_route(["review", "--headless"], env={"ENVCTL_DEFAULT_MODE": "main"})
 
-            with patch("envctl_engine.planning.plan_agent_launch_support.launch_review_agent_terminal") as launch_mock:
+            with patch("envctl_engine.ui.dashboard.orchestrator.launch_review_agent_terminal") as launch_mock:
                 code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
@@ -4449,6 +4512,150 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(commands[1].command, ["pnpm", "run", "test"])
             self.assertEqual(commands[1].cwd, repo / "frontend")
 
+    def test_test_command_suggestions_describe_backend_and_frontend_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+            frontend = repo / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (frontend / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+            with (
+                patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"),
+                patch(
+                    "envctl_engine.shared.node_tooling.shutil.which",
+                    side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
+                ),
+            ):
+                suggestions = rich_test_command_suggestions(repo)
+                commands = default_test_commands(repo)
+
+            self.assertEqual([suggestion.source for suggestion in suggestions], ["backend_pytest", "frontend_package_test"])
+            self.assertEqual(suggestions[0].command_text, "/usr/bin/python3 -m pytest " + str(repo / "backend" / "tests"))
+            self.assertEqual(suggestions[0].label, "Backend pytest")
+            self.assertEqual(suggestions[0].confidence, "high")
+            self.assertIn("backend/tests", suggestions[0].reason)
+            self.assertEqual(suggestions[1].command_text, "pnpm run test")
+            self.assertEqual(suggestions[1].cwd, repo / "frontend")
+            self.assertEqual([command.source for command in commands], ["backend_pytest", "frontend_package_test"])
+
+    def test_test_command_suggestions_include_root_pytest_before_unittest_when_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "pyproject.toml").write_text(
+                "[tool.pytest.ini_options]\ntestpaths = ['tests']\n",
+                encoding="utf-8",
+            )
+
+            with patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"):
+                suggestions = rich_test_command_suggestions(repo, include_backend=True, include_frontend=False)
+                commands = default_test_commands(repo, include_backend=True, include_frontend=False)
+
+            self.assertEqual([suggestion.source for suggestion in suggestions], ["root_pytest"])
+            self.assertEqual(suggestions[0].command_text, "/usr/bin/python3 -m pytest tests")
+            self.assertIn("root pytest", suggestions[0].label.lower())
+            self.assertEqual(commands[0].source, "root_pytest")
+            self.assertEqual(commands[0].command, ["/usr/bin/python3", "-m", "pytest", "tests"])
+
+    def test_test_action_uses_root_pytest_when_root_pytest_config_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "tests" / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+            (repo / "pytest.ini").write_text("[pytest]\ntestpaths = tests\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            with patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"):
+                route = parse_route(
+                    ["test", "--project", "feature-a-1", "frontend=false"],
+                    env={"ENVCTL_DEFAULT_MODE": "trees"},
+                )
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(fake_runner.run_calls), 1, msg=fake_runner.run_calls)
+            command, cwd = fake_runner.run_calls[0]
+            self.assertEqual(command[:3], ("/usr/bin/python3", "-m", "pytest"))
+            self.assertIn("envctl_engine.test_output.pytest_progress_plugin", command)
+            self.assertIn("tests", command)
+            self.assertEqual(Path(cwd).resolve(), repo.resolve())
+
+    def test_test_command_suggestions_keep_root_unittest_as_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / "tests").mkdir(parents=True, exist_ok=True)
+
+            with patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"):
+                suggestions = rich_test_command_suggestions(repo, include_backend=True, include_frontend=False)
+
+            self.assertEqual([suggestion.source for suggestion in suggestions], ["root_unittest"])
+            self.assertEqual(
+                suggestions[0].command_text,
+                "/usr/bin/python3 -m unittest discover -s tests -t . -p test_*.py",
+            )
+            self.assertEqual(suggestions[0].confidence, "medium")
+
+    def test_single_value_suggestion_wrappers_remain_compatible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+            frontend = repo / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (frontend / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+            with (
+                patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"),
+                patch(
+                    "envctl_engine.shared.node_tooling.shutil.which",
+                    side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
+                ),
+            ):
+                backend = suggest_backend_test_command(repo)
+                frontend_command = suggest_frontend_test_command(repo)
+
+            self.assertEqual(backend, "/usr/bin/python3 -m pytest " + str(repo / "backend" / "tests"))
+            self.assertEqual(frontend_command, "pnpm run test")
+
+    def test_frontend_test_path_suggestions_label_detected_and_common_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            frontend = repo / "frontend"
+            (frontend / "src").mkdir(parents=True, exist_ok=True)
+            (frontend / "tests").mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (frontend / "src" / "app.test.ts").write_text("it('works', () => {})\n", encoding="utf-8")
+
+            suggestions = frontend_test_path_suggestions(repo)
+
+            self.assertEqual([suggestion.path for suggestion in suggestions], ["frontend/src", "frontend/tests"])
+            self.assertEqual(suggestions[0].confidence, "high")
+            self.assertIn("test/spec", suggestions[0].reason)
+            self.assertEqual(suggestions[1].confidence, "low")
+
     def test_default_test_commands_append_frontend_test_path_when_configured(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -4737,6 +4944,75 @@ class ActionsParityTests(unittest.TestCase):
         self.assertIsNotNone(frontend_spec)
         self.assertEqual(backend_spec.source, "backend_pytest")
         self.assertEqual(frontend_spec.source, "frontend_package_test")
+
+    def test_configured_backend_python_test_command_uses_poetry_project_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            backend = repo / "backend"
+            backend.mkdir(parents=True, exist_ok=True)
+            (backend / "pyproject.toml").write_text("[tool.poetry]\nname = 'backend'\n", encoding="utf-8")
+            target = action_test_support_module.TestTargetContext(
+                project_name="Main",
+                project_root=repo,
+                target_obj=None,
+            )
+
+            with patch("envctl_engine.actions.action_test_support.shutil.which", return_value="/usr/bin/poetry"):
+                backend_spec = _configured_or_default_test_spec(
+                    raw_command="python3.12 -m pytest backend/tests",
+                    target=target,
+                    repo_root=repo,
+                    include_backend=True,
+                    include_frontend=False,
+                    frontend_test_path=None,
+                    split_command=lambda raw, _replacements: raw.split(),
+                    replacements_for_target=lambda _target: {},
+                )
+
+            self.assertIsNotNone(backend_spec)
+            self.assertEqual(backend_spec.source, "backend_pytest")
+            self.assertEqual(
+                backend_spec.command,
+                ["poetry", "--project", str(backend), "run", "python", "-m", "pytest", "backend/tests"],
+            )
+
+    def test_failed_only_backend_pytest_rerun_uses_poetry_project_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            backend = repo / "backend"
+            backend.mkdir(parents=True, exist_ok=True)
+            (backend / "pyproject.toml").write_text("[tool.poetry]\nname = 'backend'\n", encoding="utf-8")
+            entry = action_test_support_module.FailedTestManifestEntry(
+                source="backend_pytest",
+                suite="Backend (pytest)",
+                failed_tests=("backend/tests/test_auth.py::test_signup_regression",),
+                failed_files=(),
+            )
+
+            with patch("envctl_engine.actions.action_test_support.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"):
+                spec = action_test_support_module._failed_rerun_spec_for_entry(
+                    entry,
+                    project_name="Main",
+                    project_root=repo,
+                    repo_root=repo,
+                    target_obj=None,
+                )
+
+            self.assertFalse(isinstance(spec, str))
+            self.assertIsNotNone(spec)
+            self.assertEqual(
+                spec.spec.command,
+                [
+                    "poetry",
+                    "--project",
+                    str(backend),
+                    "run",
+                    "python",
+                    "-m",
+                    "pytest",
+                    "backend/tests/test_auth.py::test_signup_regression",
+                ],
+            )
 
     def test_shared_configured_root_unittest_command_keeps_repository_suite_label(self) -> None:
         target = action_test_support_module.TestTargetContext(
@@ -6452,6 +6728,49 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(cleanup_calls, [("feature-a-1", tree_a.resolve(), "delete-worktree")])
             self.assertFalse(tree_a.exists())
 
+    def test_delete_worktree_removes_recorded_cgc_context_before_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_a = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (tree_a / ".envctl-state").mkdir(parents=True, exist_ok=True)
+            (tree_a / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+            (tree_a / ".envctl-state" / "code-intelligence.json").write_text(
+                json.dumps({"cgc_context": "Repo-feature-a-1"}) + "\n",
+                encoding="utf-8",
+            )
+
+            class _DeleteRunner(_FakeRunner):
+                def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                    self.run_calls.append((tuple(str(token) for token in cmd), str(cwd)))
+                    self.run_envs.append(dict(env) if isinstance(env, dict) else None)
+                    command = [str(token) for token in cmd]
+                    if command[:2] == ["sh", "-c"]:
+                        return SimpleNamespace(returncode=0, stdout="deleted\n", stderr="")
+                    return SimpleNamespace(returncode=1, stdout="", stderr="git failed")
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _DeleteRunner(returncode=1)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+            engine._blast_worktree_before_delete = lambda **_kwargs: []  # type: ignore[assignment]
+            route = parse_route(
+                ["delete-worktree", "--project", "feature-a-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertFalse(tree_a.exists())
+            self.assertGreaterEqual(len(fake_runner.run_calls), 2)
+            self.assertEqual(fake_runner.run_calls[0][0][:2], ("sh", "-c"))
+            self.assertEqual(
+                fake_runner.run_envs[0].get("ENVCTL_CGC_CONTEXT_TO_DELETE") if fake_runner.run_envs[0] else None,
+                "Repo-feature-a-1",
+            )
+            self.assertIn("cgc context delete", fake_runner.run_calls[0][0][2])
+            self.assertEqual(fake_runner.run_calls[1][0][:5], ("git", "-C", str(repo.resolve()), "worktree", "remove"))
+
     def test_blast_worktree_alias_routes_to_delete_flow_with_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -6509,6 +6828,7 @@ class ActionsParityTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(cleanup_calls, [])
             self.assertTrue(tree_a.exists())
+            self.assertEqual(fake_runner.run_calls, [])
 
 
 if __name__ == "__main__":

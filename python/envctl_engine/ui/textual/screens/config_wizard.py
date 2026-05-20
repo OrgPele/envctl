@@ -6,11 +6,15 @@ import re
 from typing import Callable
 
 from ....actions.actions_test import (
+    TestCommandSuggestion,
+    TestPathSuggestion,
+    frontend_test_path_suggestions,
     suggest_backend_test_command,
     suggest_frontend_test_command,
     suggest_frontend_test_path,
+    test_command_suggestions,
 )
-from ....config import LocalConfigState, StartupProfile
+from ....config import AppServiceConfig, LocalConfigState, StartupProfile
 from ....config.persistence import (
     ConfigSaveResult,
     ManagedConfigValues,
@@ -21,6 +25,7 @@ from ....config.persistence import (
 )
 from ....requirements.core import dependency_definitions
 from ....runtime.command_resolution import suggest_service_directory, suggest_service_start_command
+from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.capabilities import textual_importable as _textual_importable
 from envctl_engine.ui.textual.compat import (
     apply_textual_driver_compat,
@@ -85,11 +90,28 @@ _PORT_FIELDS: tuple[tuple[str, str], ...] = (
     ("port_spacing", "Port spacing"),
 )
 
+_ADDITIONAL_SERVICE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("slug", "Service slug"),
+    ("dir_name", "Service directory"),
+    ("start_cmd", "Start command"),
+    ("port_base", "Base port"),
+    ("listener_expected", "Wait for listener"),
+    ("enabled_main", "Enable in main"),
+    ("enabled_trees", "Enable in trees"),
+    ("test_cmd", "Test command"),
+    ("public_url", "Public URL template"),
+    ("health_url", "Health URL template"),
+    ("depends_on", "Dependencies"),
+    ("start_order", "Start order"),
+    ("critical", "Critical"),
+)
+
 _STEP_TITLES = {
     "welcome": "Welcome / Source",
     "default_mode": "Default Mode",
     "components": "Components",
     "service_startup": "Long-Running Service",
+    "additional_services": "Additional App Services",
     "directories": "Directories",
     "commands": "Entrypoints / Commands",
     "ports": "Ports",
@@ -110,6 +132,10 @@ _STEP_HELP_TEXT = {
         "This looks like a backend-only project. Choose whether envctl should keep it running automatically in "
         "main and trees. CLI tools usually should not stay running."
     ),
+    "additional_services": (
+        "Review advanced declarative app services managed through ENVCTL_ADDITIONAL_SERVICES and "
+        "ENVCTL_SERVICE_<SUFFIX>_* keys."
+    ),
     "directories": "Set only the directories needed by the components currently configured in main or trees.",
     "commands": (
         "Set only the entrypoints and test commands needed by the components currently configured in main or trees."
@@ -127,6 +153,10 @@ def _port_input_id(field_name: str) -> str:
     return f"port-{_TEXTUAL_ID_INVALID_CHARS.sub('-', field_name).strip('-')}"
 
 
+def _additional_service_input_id(field_name: str) -> str:
+    return f"additional-service-{_TEXTUAL_ID_INVALID_CHARS.sub('-', field_name).strip('-')}"
+
+
 def _directory_input_id(field_name: str) -> str:
     return f"directory-{_TEXTUAL_ID_INVALID_CHARS.sub('-', field_name).strip('-')}"
 
@@ -141,9 +171,14 @@ def _directory_error_id(field_name: str) -> str:
     return f"directory-error-{normalized}"
 
 
+def _directory_hint_id(field_name: str) -> str:
+    normalized = _TEXTUAL_ID_INVALID_CHARS.sub("-", field_name).strip("-")
+    return f"directory-hint-{normalized}"
+
+
 def _directory_field_name_from_input_id(input_id: str | None) -> str | None:
     normalized = str(input_id or "").strip()
-    for field_name, _label in _DIRECTORY_FIELDS:
+    for field_name, _label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS):
         if normalized == _directory_input_id(field_name):
             return field_name
     return None
@@ -175,10 +210,40 @@ def _entrypoint_validation_message(label: str, raw: str) -> str | None:
     return None
 
 
-def _wizard_steps(values: ManagedConfigValues, *, include_service_startup: bool) -> list[str]:
+def _field_placeholder(field_name: str) -> str:
+    return {
+        "additional_service_slug": "optional; e.g. voice-runtime",
+        "additional_service_dir_name": "repo-relative; e.g. voice-runtime",
+        "additional_service_start_cmd": "e.g. scripts/envctl/start-voice-runtime.sh {port}",
+        "additional_service_port_base": "required when listener waiting is true; e.g. 8010",
+        "additional_service_listener_expected": "true or false",
+        "additional_service_enabled_main": "true or false",
+        "additional_service_enabled_trees": "true or false",
+        "additional_service_test_cmd": "optional; e.g. scripts/envctl/test-voice-runtime.sh",
+        "additional_service_public_url": "optional; supports envctl template variables",
+        "additional_service_health_url": "optional; supports envctl template variables",
+        "additional_service_depends_on": "optional comma list; e.g. backend,redis",
+        "additional_service_start_order": "integer; lower starts first within a dependency layer",
+        "additional_service_critical": "true or false",
+        "backend_start_cmd": "e.g. python -m uvicorn app.main:app --host 127.0.0.1 --port {port}",
+        "frontend_start_cmd": "e.g. npm run dev -- --port {port} --host 127.0.0.1",
+        "backend_test_cmd": "e.g. python -m pytest backend/tests",
+        "frontend_test_cmd": "e.g. npm run test",
+        "frontend_test_path": "optional; e.g. frontend/src",
+    }.get(field_name, "")
+
+
+def _wizard_steps(
+    values: ManagedConfigValues,
+    *,
+    include_service_startup: bool,
+    include_additional_services: bool = False,
+) -> list[str]:
     steps = ["welcome", "default_mode", "components"]
     if include_service_startup:
         steps.append("service_startup")
+    if include_additional_services or values.additional_services:
+        steps.append("additional_services")
     if _visible_directory_fields(values):
         steps.append("directories")
     if _visible_command_fields(values):
@@ -221,7 +286,68 @@ def _clone_values(values: ManagedConfigValues) -> ManagedConfigValues:
         frontend_test_cmd=values.frontend_test_cmd,
         action_test_cmd=values.action_test_cmd,
         frontend_test_path=values.frontend_test_path,
+        public_host=values.public_host,
+        ui_visual_host=values.ui_visual_host,
+        additional_services=tuple(
+            AppServiceConfig(
+                name=service.name,
+                env_suffix=service.env_suffix,
+                enabled_main=service.enabled_main,
+                enabled_trees=service.enabled_trees,
+                dir_name=service.dir_name,
+                start_cmd=service.start_cmd,
+                test_cmd=service.test_cmd,
+                port_base=service.port_base,
+                expect_listener=service.expect_listener,
+                health_url_template=service.health_url_template,
+                public_url_template=service.public_url_template,
+                startup_group=service.startup_group,
+                depends_on=service.depends_on,
+                start_order=service.start_order,
+                critical=service.critical,
+            )
+            for service in values.additional_services
+        ),
     )
+
+
+def _additional_service_field_value(service: AppServiceConfig | None, field_name: str) -> str:
+    if service is None:
+        defaults = {
+            "listener_expected": "true",
+            "enabled_main": "false",
+            "enabled_trees": "false",
+            "start_order": "100",
+            "critical": "true",
+        }
+        return defaults.get(field_name, "")
+    if field_name == "slug":
+        return service.name
+    if field_name == "dir_name":
+        return service.dir_name
+    if field_name == "start_cmd":
+        return service.start_cmd
+    if field_name == "port_base":
+        return "" if service.port_base is None else str(service.port_base)
+    if field_name == "listener_expected":
+        return "true" if service.expect_listener else "false"
+    if field_name == "enabled_main":
+        return "true" if service.enabled_main else "false"
+    if field_name == "enabled_trees":
+        return "true" if service.enabled_trees else "false"
+    if field_name == "test_cmd":
+        return service.test_cmd
+    if field_name == "public_url":
+        return service.public_url_template
+    if field_name == "health_url":
+        return service.health_url_template
+    if field_name == "depends_on":
+        return ",".join(service.depends_on)
+    if field_name == "start_order":
+        return str(service.start_order)
+    if field_name == "critical":
+        return "true" if service.critical else "false"
+    return ""
 
 
 def _hydrate_wizard_values(values: ManagedConfigValues, *, base_dir: Path) -> ManagedConfigValues:
@@ -399,6 +525,7 @@ def run_config_wizard_textual(
             Binding("ctrl+c", "cancel", "Cancel"),
             Binding("escape", "cancel", "Cancel"),
             Binding("d", "toggle_component_split", "Split"),
+            Binding("ctrl+s", "cycle_command_suggestion", "Suggest"),
             Binding("tab", "focus_next", "Next"),
             Binding("shift+tab", "focus_previous", "Prev"),
         ]
@@ -456,6 +583,10 @@ def run_config_wizard_textual(
             height: 1fr;
             overflow: auto;
         }
+        #config-additional-services {
+            height: 1fr;
+            overflow: auto;
+        }
         #config-directories {
             height: 1fr;
             overflow: auto;
@@ -475,10 +606,18 @@ def run_config_wizard_textual(
             margin-top: -1;
             margin-bottom: 1;
         }
+        .directory-hint {
+            color: $text-muted;
+            margin-top: -1;
+            margin-bottom: 1;
+        }
         .directory-error-visible {
             color: $error;
         }
         .port-field {
+            margin-bottom: 1;
+        }
+        .additional-service-field {
             margin-bottom: 1;
         }
         #config-review-scroll {
@@ -506,9 +645,11 @@ def run_config_wizard_textual(
             _ = default_wizard_type
             self.step_index = 0
             self.values = _hydrate_wizard_values(values, base_dir=local_state.base_dir)
+            self._suggestions_by_field = self._build_suggestions_by_field()
             self._save_result: ConfigSaveResult | None = None
             self._steps: list[str] = []
             self._suppress_list_selected_once = False
+            self._last_status_message = ""
             self.values.main_profile.backend_enable = bool(self.values.main_profile.backend_enable)
             self.values.main_profile.frontend_enable = bool(self.values.main_profile.frontend_enable)
             self.values.trees_profile.backend_enable = bool(self.values.trees_profile.backend_enable)
@@ -517,7 +658,38 @@ def run_config_wizard_textual(
             self._split_component_fields = {
                 field_name for field_name, _label in _COMPONENT_FIELDS if self._component_values_differ(field_name)
             }
+            self._emit_detected_suggestions()
             self._sync_steps(current_step="welcome")
+
+        def _build_suggestions_by_field(self) -> dict[str, tuple[TestCommandSuggestion | TestPathSuggestion, ...]]:
+            return {
+                "backend_test_cmd": tuple(
+                    test_command_suggestions(
+                        local_state.base_dir,
+                        include_backend=True,
+                        include_frontend=False,
+                    )
+                ),
+                "frontend_test_cmd": tuple(
+                    test_command_suggestions(
+                        local_state.base_dir,
+                        include_backend=False,
+                        include_frontend=True,
+                    )
+                ),
+                "frontend_test_path": tuple(frontend_test_path_suggestions(local_state.base_dir)),
+            }
+
+        def _emit_detected_suggestions(self) -> None:
+            for field_name, suggestions in self._suggestions_by_field.items():
+                for suggestion in suggestions:
+                    _emit(
+                        emit,
+                        "ui.config_wizard.suggestion.detected",
+                        field=field_name,
+                        source=suggestion.source,
+                        confidence=suggestion.confidence,
+                    )
 
         def compose(self) -> ComposeResult:
             with Vertical(id="config-shell"):
@@ -535,8 +707,10 @@ def run_config_wizard_textual(
                             yield Input(
                                 value=str(self._field_value(field_name)),
                                 id=_directory_input_id(field_name),
+                                placeholder=_field_placeholder(field_name),
                                 classes="directory-field",
                             )
+                            yield Static("", id=_directory_hint_id(field_name), classes="directory-hint")
                             yield Static("", id=_directory_error_id(field_name), classes="directory-error")
                     with VerticalScroll(id="config-ports"):
                         for field_name, label in _PORT_FIELDS:
@@ -545,6 +719,18 @@ def run_config_wizard_textual(
                                 value=str(self._field_value(field_name)),
                                 id=_port_input_id(field_name),
                                 classes="port-field",
+                            )
+                    with VerticalScroll(id="config-additional-services"):
+                        for field_name, label in _ADDITIONAL_SERVICE_FIELDS:
+                            yield Label(label, id=_field_label_id("additional-service", field_name))
+                            yield Input(
+                                value=_additional_service_field_value(
+                                    self.values.additional_services[0] if self.values.additional_services else None,
+                                    field_name,
+                                ),
+                                id=_additional_service_input_id(field_name),
+                                placeholder=_field_placeholder(f"additional_service_{field_name}"),
+                                classes="additional-service-field",
                             )
                     with VerticalScroll(id="config-review-scroll"):
                         yield Static("", id="config-review")
@@ -602,6 +788,11 @@ def run_config_wizard_textual(
                 self.action_cursor_up()
                 return
             if event.key == "down":
+                if self._text_input_has_focus() and self._focused_suggestion_field() is not None:
+                    event.stop()
+                    event.prevent_default()
+                    self.action_cycle_command_suggestion()
+                    return
                 event.stop()
                 event.prevent_default()
                 self.action_cursor_down()
@@ -622,6 +813,15 @@ def run_config_wizard_textual(
             focused = self.focused
             return isinstance(focused, Input)
 
+        def _focused_suggestion_field(self) -> str | None:
+            focused = self.focused
+            if not isinstance(focused, Input):
+                return None
+            field_name = _directory_field_name_from_input_id(getattr(focused, "id", None))
+            if field_name in self._suggestions_by_field:
+                return field_name
+            return None
+
         def _button_has_focus(self) -> bool:
             focused = self.focused
             return isinstance(focused, Button)
@@ -631,6 +831,7 @@ def run_config_wizard_textual(
             if field_name is None:
                 return
             self._refresh_directory_validation(field_name, raw=event.value)
+            self._refresh_field_hint(field_name, raw=event.value)
             if self._current_step() in {"directories", "commands"}:
                 self._refresh_status()
 
@@ -653,6 +854,7 @@ def run_config_wizard_textual(
             self._steps = _wizard_steps(
                 self.values,
                 include_service_startup=self._should_show_service_startup_step(),
+                include_additional_services=str(default_wizard_type).strip().lower() == "advanced",
             )
             if not self._steps:
                 self.step_index = 0
@@ -696,12 +898,21 @@ def run_config_wizard_textual(
             empty = self.query_one("#config-empty", Static)
             directories = self.query_one("#config-directories", VerticalScroll)
             ports = self.query_one("#config-ports", VerticalScroll)
+            additional_services = self.query_one("#config-additional-services", VerticalScroll)
             review_scroll = self.query_one("#config-review-scroll", VerticalScroll)
             review = self.query_one("#config-review", Static)
             welcome.display = step == "welcome"
-            list_view.display = step not in {"welcome", "directories", "commands", "ports", "review"}
+            list_view.display = step not in {
+                "welcome",
+                "additional_services",
+                "directories",
+                "commands",
+                "ports",
+                "review",
+            }
             directories.display = step in {"directories", "commands"}
             ports.display = step == "ports"
+            additional_services.display = step == "additional_services"
             review_scroll.display = step == "review"
             empty.display = False
             if step == "welcome":
@@ -728,6 +939,9 @@ def run_config_wizard_textual(
                 return
             if step == "service_startup":
                 self._render_service_startup_step(list_view)
+                return
+            if step == "additional_services":
+                self._sync_additional_service_inputs()
                 return
             if step == "directories":
                 visible_fields = _visible_directory_fields(self.values)
@@ -764,11 +978,39 @@ def run_config_wizard_textual(
                         values=self.values,
                         source_label=source_label,
                         ignore_warning=(
-                            "envctl local artifacts are managed through Git global excludes instead of repo .gitignore. "
-                            "Configure core.excludesFile to keep .envctl, MAIN_TASK.md, OLD_TASK_*.md, trees/, and trees-* out of git status."
+                            "envctl local artifacts are managed through Git global excludes instead of repo "
+                            ".gitignore. On save, envctl configures or updates core.excludesFile to keep "
+                            ".envctl, MAIN_TASK.md, OLD_TASK_*.md, trees/, and trees-* out of git status."
                         ),
                     )
                 )
+
+
+        def _render_additional_services_step(self, list_view) -> None:
+            list_view.clear()
+            items: list[ListItem] = []
+            selected_flags: list[bool] = []
+            for service in self.values.additional_services:
+                modes = []
+                if service.enabled_main:
+                    modes.append("main")
+                if service.enabled_trees:
+                    modes.append("trees")
+                mode_text = "+".join(modes) if modes else "disabled"
+                port_text = str(service.port_base) if service.port_base is not None else "non-listener"
+                critical_text = "critical" if service.critical else "non-critical"
+                deps = ",".join(service.depends_on) if service.depends_on else "none"
+                label = (
+                    f"{service.name} | dir={service.dir_name} | mode={mode_text} | "
+                    f"port={port_text} | deps={deps} | {critical_text}"
+                )
+                items.append(ListItem(Label(label, markup=False), classes=selectable_list_row_classes("config-row")))
+                selected_flags.append(False)
+            if not items:
+                items.append(ListItem(Label("No additional app services configured.", markup=False)))
+                selected_flags.append(False)
+            list_view.extend(items)
+            apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
 
         def _render_choice_step(self, list_view, *, selected: str, options: tuple[tuple[str, str], ...]) -> None:
             list_view.clear()
@@ -876,15 +1118,19 @@ def run_config_wizard_textual(
             for field_name, _label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS):
                 label = self.query_one(f"#{_field_label_id('directory', field_name)}", Label)
                 directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
+                hint = self.query_one(f"#{_directory_hint_id(field_name)}", Static)
                 error = self.query_one(f"#{_directory_error_id(field_name)}", Static)
                 label.display = field_name in visible_names
                 directory_input.display = field_name in visible_names
+                hint.display = field_name in visible_names
                 error.display = field_name in visible_names
                 if field_name in visible_names:
                     directory_input.value = str(self._field_value(field_name))
                     self._refresh_directory_validation(field_name)
+                    self._refresh_field_hint(field_name, raw=directory_input.value)
                 else:
                     directory_input.remove_class("directory-invalid")
+                    hint.update("")
                     error.update("")
                     error.remove_class("directory-error-visible")
 
@@ -898,6 +1144,67 @@ def run_config_wizard_textual(
                 if field_name in visible_names:
                     port_input.value = str(self._field_value(field_name))
 
+        def _sync_additional_service_inputs(self) -> None:
+            service = self.values.additional_services[0] if self.values.additional_services else None
+            for field_name, _label in _ADDITIONAL_SERVICE_FIELDS:
+                service_input = self.query_one(f"#{_additional_service_input_id(field_name)}", Input)
+                service_input.value = _additional_service_field_value(service, field_name)
+
+        def _additional_service_input_value(self, field_name: str) -> str:
+            return str(self.query_one(f"#{_additional_service_input_id(field_name)}", Input).value or "").strip()
+
+        def _apply_additional_service_inputs(self) -> bool:
+            raw_name = self._additional_service_input_value("slug").lower()
+            if not raw_name:
+                self.values.additional_services = self.values.additional_services[1:]
+                return True
+            dir_name = self._additional_service_input_value("dir_name")
+            start_cmd = self._additional_service_input_value("start_cmd")
+            port_raw = self._additional_service_input_value("port_base")
+            start_order_raw = self._additional_service_input_value("start_order") or "100"
+            if port_raw:
+                if not port_raw.isdigit() or int(port_raw) < 1:
+                    self._refresh_status("Base port must be a positive integer.")
+                    self.query_one(f"#{_additional_service_input_id('port_base')}", Input).focus()
+                    return False
+                port_base: int | None = int(port_raw)
+            else:
+                port_base = None
+            if not start_order_raw.isdigit():
+                self._refresh_status("Start order must be a non-negative integer.")
+                self.query_one(f"#{_additional_service_input_id('start_order')}", Input).focus()
+                return False
+            enabled_main = parse_bool(self._additional_service_input_value("enabled_main"), False)
+            enabled_trees = parse_bool(self._additional_service_input_value("enabled_trees"), False)
+            expect_listener = parse_bool(self._additional_service_input_value("listener_expected"), True)
+            critical = parse_bool(self._additional_service_input_value("critical"), True)
+            service = AppServiceConfig(
+                name=raw_name,
+                env_suffix=raw_name.upper().replace("-", "_"),
+                enabled_main=enabled_main,
+                enabled_trees=enabled_trees,
+                dir_name=dir_name,
+                start_cmd=start_cmd,
+                test_cmd=self._additional_service_input_value("test_cmd"),
+                port_base=port_base,
+                expect_listener=expect_listener,
+                public_url_template=self._additional_service_input_value("public_url"),
+                health_url_template=self._additional_service_input_value("health_url"),
+                depends_on=tuple(
+                    item.strip().lower()
+                    for item in self._additional_service_input_value("depends_on").split(",")
+                    if item.strip()
+                ),
+                start_order=int(start_order_raw),
+                critical=critical,
+            )
+            self.values.additional_services = (service, *self.values.additional_services[1:])
+            validation = validate_managed_values(self.values, require_directories=False, require_entrypoints=False)
+            if not validation.valid:
+                self._refresh_status(validation.errors[0])
+                return False
+            return True
+
         def _refresh_actions(self) -> None:
             back = self.query_one("#btn-back", Button)
             next_button = self.query_one("#btn-next", Button)
@@ -907,11 +1214,12 @@ def run_config_wizard_textual(
         def _refresh_status(self, message: str | None = None) -> None:
             status = self.query_one("#config-status", Static)
             if message is not None:
+                self._last_status_message = message
                 status.update(message)
                 self.refresh_bindings()
                 return
             step = self._current_step()
-            if step in {"components", "service_startup", "review"}:
+            if step in {"components", "service_startup", "additional_services", "review"}:
                 validation = validate_managed_values(
                     self.values,
                     require_entrypoints=step == "review",
@@ -935,6 +1243,11 @@ def run_config_wizard_textual(
                             "and whether it should wait for a listener before continuing. "
                             "Disable listener waiting for long-running scripts or workers "
                             "that do not open a port. Use Space to toggle rows; Enter only moves forward."
+                        )
+                    elif step == "additional_services":
+                        status.update(
+                            "Edit the first additional app service. "
+                            "Leave the slug blank to keep no services configured."
                         )
                     else:
                         status.update("Configuration is valid.")
@@ -961,7 +1274,10 @@ def run_config_wizard_textual(
                     if directory_error is not None:
                         status.update(directory_error)
                     else:
-                        status.update("Only entrypoints and test commands for configured components are shown.")
+                        status.update(
+                            "Test commands are optional; detected suggestions are shown under each field. "
+                            "Use Ctrl+S or Down on a focused suggestion field to cycle alternatives."
+                        )
                 else:
                     status.update("No entrypoints or test commands are needed for the configured components.")
                 self.refresh_bindings()
@@ -1000,6 +1316,8 @@ def run_config_wizard_textual(
                     self.query_one(f"#{_port_input_id(visible_fields[0][0])}", Input).focus()
                 else:
                     self.query_one("#btn-next", Button).focus()
+            elif step == "additional_services":
+                self.query_one(f"#{_additional_service_input_id('slug')}", Input).focus()
             elif step == "review":
                 self.query_one("#config-review-scroll", VerticalScroll).focus()
             else:
@@ -1091,10 +1409,115 @@ def run_config_wizard_textual(
             return candidate
 
         def _directory_label(self, field_name: str) -> str:
-            for candidate, label in _DIRECTORY_FIELDS:
+            for candidate, label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS):
                 if candidate == field_name:
                     return label
             return "Directory"
+
+        def _config_key_for_field(self, field_name: str) -> str | None:
+            return {
+                "backend_start_cmd": "ENVCTL_BACKEND_START_CMD",
+                "frontend_start_cmd": "ENVCTL_FRONTEND_START_CMD",
+                "backend_test_cmd": "ENVCTL_BACKEND_TEST_CMD",
+                "frontend_test_cmd": "ENVCTL_FRONTEND_TEST_CMD",
+                "frontend_test_path": "ENVCTL_FRONTEND_TEST_PATH",
+            }.get(field_name)
+
+        def _field_has_existing_config_value(self, field_name: str) -> bool:
+            key = self._config_key_for_field(field_name)
+            if not key or key not in local_state.parsed_values:
+                return False
+            return bool(str(local_state.parsed_values.get(key) or "").strip())
+
+        def _suggestion_value(self, suggestion: TestCommandSuggestion | TestPathSuggestion) -> str:
+            if isinstance(suggestion, TestCommandSuggestion):
+                return suggestion.command_text
+            return suggestion.path
+
+        def _matching_suggestion(
+            self,
+            field_name: str,
+            value: str,
+        ) -> TestCommandSuggestion | TestPathSuggestion | None:
+            normalized = str(value or "").strip()
+            if not normalized:
+                return None
+            for suggestion in self._suggestions_by_field.get(field_name, ()):
+                if self._suggestion_value(suggestion) == normalized:
+                    return suggestion
+            return None
+
+        def _refresh_field_hint(self, field_name: str, *, raw: str | None = None) -> None:
+            hint = self.query_one(f"#{_directory_hint_id(field_name)}", Static)
+            hint.update(self._field_hint_text(field_name, raw=raw))
+
+        def _field_hint_text(self, field_name: str, *, raw: str | None = None) -> str:
+            value = str(self._field_value(field_name)) if raw is None else str(raw)
+            if field_name in {"backend_test_cmd", "frontend_test_cmd"}:
+                return self._test_command_hint(field_name, value=value)
+            if field_name == "frontend_test_path":
+                return self._frontend_test_path_hint(value=value)
+            if field_name in {"backend_start_cmd", "frontend_start_cmd"} and not value.strip():
+                return "No entrypoint detected; enter the command envctl should run for this service."
+            return ""
+
+        def _test_command_hint(self, field_name: str, *, value: str) -> str:
+            suggestions = self._suggestions_by_field.get(field_name, ())
+            if self._field_has_existing_config_value(field_name):
+                return "Existing value from .envctl; detection will not overwrite it."
+            stripped = value.strip()
+            if stripped:
+                match = self._matching_suggestion(field_name, stripped)
+                if isinstance(match, TestCommandSuggestion):
+                    suffix = (
+                        " Multiple suggestions available; press Ctrl+S or Down to cycle."
+                        if len(suggestions) > 1
+                        else ""
+                    )
+                    return f"Detected: {match.label} — {match.reason}{suffix}"
+                return "Manual value; detection will not overwrite it."
+            if suggestions:
+                first = suggestions[0]
+                if isinstance(first, TestCommandSuggestion):
+                    if len(suggestions) > 1:
+                        return (
+                            "Multiple suggestions available; press Ctrl+S or Down to accept "
+                            f"{first.label}: {first.command_text}"
+                        )
+                    return f"Detected suggestion available; press Ctrl+S or Down to accept {first.label}."
+            return (
+                "No test command detected; leave blank to let envctl try runtime defaults when `envctl test` runs, "
+                "or enter one manually."
+            )
+
+        def _frontend_test_path_hint(self, *, value: str) -> str:
+            suggestions = self._suggestions_by_field.get("frontend_test_path", ())
+            if self._field_has_existing_config_value("frontend_test_path"):
+                return "Existing value from .envctl; detection will not overwrite it."
+            stripped = value.strip()
+            if stripped:
+                match = self._matching_suggestion("frontend_test_path", stripped)
+                if isinstance(match, TestPathSuggestion):
+                    suffix = (
+                        " Multiple suggestions available; press Ctrl+S or Down to cycle."
+                        if len(suggestions) > 1
+                        else ""
+                    )
+                    return f"Detected: {match.path} — {match.reason}{suffix}"
+                return "Manual frontend test path; detection will not overwrite it."
+            if suggestions:
+                first = suggestions[0]
+                if isinstance(first, TestPathSuggestion):
+                    if any(isinstance(item, TestPathSuggestion) and item.confidence == "high" for item in suggestions):
+                        return (
+                            "Frontend test path suggestions available; press Ctrl+S or Down to accept "
+                            f"{first.path}."
+                        )
+                    return (
+                        "No high-confidence frontend test directory detected; leave blank unless you want to scope "
+                        f"frontend tests. Press Ctrl+S or Down to cycle suggestions such as {first.path}."
+                    )
+            return "No frontend test directory detected; leave blank when the package test script scopes tests itself."
 
         def _directory_validation_error(self, field_name: str, *, raw: str | None = None) -> str | None:
             label = self._directory_label(field_name)
@@ -1300,12 +1723,47 @@ def run_config_wizard_textual(
             self.screen.focus_previous()
             self._refresh_status()
 
+        def action_cycle_command_suggestion(self) -> None:
+            field_name = self._focused_suggestion_field()
+            if field_name is None:
+                return
+            suggestions = self._suggestions_by_field.get(field_name, ())
+            if not suggestions:
+                self._refresh_status("No suggestions are available for the focused field.")
+                return
+            focused = self.focused
+            if not isinstance(focused, Input):
+                return
+            current_value = str(focused.value or "").strip()
+            values = [self._suggestion_value(suggestion) for suggestion in suggestions]
+            try:
+                current_index = values.index(current_value)
+            except ValueError:
+                current_index = -1
+            suggestion = suggestions[(current_index + 1) % len(suggestions)]
+            next_value = self._suggestion_value(suggestion)
+            focused.value = next_value
+            setattr(self.values, field_name, next_value)
+            self._refresh_directory_validation(field_name, raw=next_value)
+            self._refresh_field_hint(field_name, raw=next_value)
+            _emit(
+                emit,
+                "ui.config_wizard.suggestion.accepted",
+                field=field_name,
+                source=suggestion.source,
+                confidence=suggestion.confidence,
+            )
+            self._refresh_status(f"Accepted suggestion for {self._directory_label(field_name)}.")
+
         def action_cancel(self) -> None:
             self.exit(None)
 
         def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
             if action == "toggle_component_split":
                 return True if self._component_split_available() else False
+            if action == "cycle_command_suggestion":
+                field_name = self._focused_suggestion_field()
+                return True if field_name is not None and bool(self._suggestions_by_field.get(field_name)) else False
             return super().check_action(action, parameters)
 
         def action_go_back(self) -> None:
@@ -1342,9 +1800,19 @@ def run_config_wizard_textual(
             step = self._current_step()
             if step in {"directories", "commands"} and not self._apply_directory_inputs():
                 return
+            if step == "additional_services" and not self._apply_additional_service_inputs():
+                return
             if step == "ports" and not self._apply_port_inputs():
                 return
-            if step in {"components", "service_startup", "directories", "commands", "ports", "review"}:
+            if step in {
+                "components",
+                "service_startup",
+                "additional_services",
+                "directories",
+                "commands",
+                "ports",
+                "review",
+            }:
                 validation = validate_managed_values(
                     self.values,
                     require_directories=step in {"directories", "commands", "ports", "review"},
@@ -1357,7 +1825,7 @@ def run_config_wizard_textual(
                 save_result = save_local_config_with_ignore_policy(
                     local_state=local_state,
                     values=self.values,
-                    update_global_ignores=False,
+                    update_global_ignores=True,
                 )
                 self._save_result = save_result
                 self.exit(ConfigWizardResult(values=self.values, save_result=save_result))
@@ -1383,6 +1851,7 @@ def run_config_wizard_textual(
                 else:
                     directory_error = _directory_validation_message(local_state.base_dir, label, raw)
                 self._refresh_directory_validation(field_name, raw=raw)
+                self._refresh_field_hint(field_name, raw=raw)
                 if directory_error is not None:
                     self._refresh_status(directory_error)
                     directory_input.focus()

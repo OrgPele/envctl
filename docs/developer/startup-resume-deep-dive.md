@@ -371,11 +371,15 @@ Possible outcomes:
 - computes requirement enablement once into `enabled_lookup`
 - pre-populates disabled definitions as skipped outcomes with zero timing
 - decides requirement-level parallelism with:
+  - `--deps-parallel` / `--parallel-deps` / `--requirements-parallel`
+  - `--deps-sequential` / `--sequential-deps` / `--requirements-sequential`
   - `ENVCTL_REQUIREMENTS_PARALLEL`
   - `ENVCTL_REQUIREMENTS_PARALLEL_MAX`
 - runs only enabled definitions in the executor
 
 This means requirement parallelism is intra-project parallelism and is independent from tree-level parallelism.
+The default is parallel except on macOS, where managed Docker requirements start sequentially unless explicitly
+overridden because Docker Desktop port publishing can stall when multiple containers publish ports at once.
 
 ### Requirement startup mechanics
 
@@ -843,7 +847,7 @@ This appendix lists every file on the startup/resume path that matters to the cu
 - [python/envctl_engine/startup/startup_progress.py](../../python/envctl_engine/startup/startup_progress.py)
   Startup progress routing and startup-specific spinner group wrapper.
 - [python/envctl_engine/startup/progress_shared.py](../../python/envctl_engine/startup/progress_shared.py)
-  Rich-backed per-project spinner implementation shared by startup and resume.
+  Rich-backed per-project spinner implementation shared by startup and resume. Completed project rows rely on the Rich finished symbol (`✓` for success, `✗` for failure) and keep task descriptions free of legacy `+`/`!` prefixes.
 - [python/envctl_engine/startup/requirements_startup_domain.py](../../python/envctl_engine/startup/requirements_startup_domain.py)
   Requirement start implementation, native adapter path, listener waiting, adapter timing and retry telemetry.
 - [python/envctl_engine/startup/service_bootstrap_domain.py](../../python/envctl_engine/startup/service_bootstrap_domain.py)
@@ -907,7 +911,7 @@ This appendix lists every file on the startup/resume path that matters to the cu
 - [python/envctl_engine/requirements/redis.py](../../python/envctl_engine/requirements/redis.py)
   Native Redis container lifecycle.
 - [python/envctl_engine/requirements/supabase.py](../../python/envctl_engine/requirements/supabase.py)
-  Native Supabase DB/compose lifecycle and reliability contract handling.
+  Native Supabase DB/compose lifecycle and reliability contract handling. Managed Supabase readiness is two-phase: the DB listener must become healthy first, then Auth/Kong must answer `/auth/v1/health` on the published API port. After DB health, the adapter uses a loopback probe for local readiness and performs bounded, service-scoped Auth/Kong restart and recreate recovery before returning a transient probe failure.
 - [python/envctl_engine/requirements/n8n.py](../../python/envctl_engine/requirements/n8n.py)
   Native n8n container lifecycle.
 

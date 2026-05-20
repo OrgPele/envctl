@@ -15,7 +15,7 @@ Use:
 
 The Python runtime expects a repo-local `.envctl` for normal operational commands.
 
-`envctl` keeps `.envctl` as a repo-local file, but envctl-owned local workflow artifacts are expected to be hidden through your Git global excludes configuration rather than by mutating the repository `.gitignore`.
+`envctl` keeps `.envctl` as a repo-local file, but envctl-owned local workflow artifacts are hidden through your Git global excludes configuration rather than by mutating the repository `.gitignore`.
 
 That global-ignore contract covers the current envctl local artifact set:
 
@@ -25,7 +25,7 @@ That global-ignore contract covers the current envctl local artifact set:
 - `trees/`
 - `trees-*`
 
-If `core.excludesFile` is not configured, `envctl config` still saves `.envctl` but warns that local envctl artifacts may continue to appear in `git status` until global excludes are configured.
+On config save, `envctl` updates the envctl-managed block in your configured Git global excludes file. If `core.excludesFile` is not configured, `envctl config` configures it to `~/.gitignore_global` and writes the envctl-managed artifact patterns there.
 
 Useful commands:
 
@@ -35,32 +35,56 @@ Useful commands:
 
 ## Service Launch Env Templates In `.envctl`
 
-`envctl` also supports user-owned launch env sections inside `.envctl`. These are env vars injected into the backend/frontend processes that `envctl` starts.
+`envctl` also supports user-owned launch env sections inside `.envctl`. These are env vars injected into the backend/frontend processes and configured additional app services that `envctl` starts.
 
 ```dotenv
 # >>> envctl backend launch env >>>
 DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # generic DB URL; e.g. postgresql://user:pass@host:5432/dbname
 APP_DATABASE_URL=${DATABASE_URL}?sslmode=disable
 REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}  # Redis URL; e.g. redis://host:6379/0
+SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}
+SUPABASE_JWKS_URL=${ENVCTL_SOURCE_SUPABASE_JWKS_URL}
+SUPABASE_SERVICE_ROLE_KEY=${ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY}
 # <<< envctl backend launch env <<<
 
 # >>> envctl frontend launch env >>>
 VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}  # frontend-only Supabase URL
+VITE_SUPABASE_ANON_KEY=${ENVCTL_SOURCE_SUPABASE_ANON_KEY}  # frontend-safe Supabase anon key
 # <<< envctl frontend launch env <<<
+
+# >>> envctl service voice-runtime launch env >>>
+VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}
+# <<< envctl service voice-runtime launch env <<<
+
+# >>> envctl main service voice-runtime launch env >>>
+PELE_API_BASE_URL=${ENVCTL_SOURCE_BACKEND_URL}
+# <<< envctl main service voice-runtime launch env <<<
 ```
 
 These sections are separate from the managed startup block:
 
 - the backend section applies only to backend launches
 - the frontend section applies only to frontend launches
+- `service <slug>` sections apply only to the matching additional app service
+- `main service <slug>` and `trees service <slug>` sections apply only for that startup mode
 - old shared sections are still understood for compatibility, but new `.envctl` files only seed backend/frontend sections
 - `envctl config` seeds these sections when missing, but does not edit or normalize them afterward
 - for a given service, only vars defined in its applicable sections are emitted
 - you can rename, delete, add, or reorder emitted env vars manually
 - later lines can reference earlier emitted values with `${VAR}`
 - `ENVCTL_SOURCE_*` names are template-only inputs built from envctl's canonical dependency outputs
-- if a referenced `ENVCTL_SOURCE_*` value is unavailable for the current run, that line is skipped
-- custom aliases/templates are injected into launched processes only; backend `.env` writeback stays canonical
+- active backend/frontend launch templates for core database/cache inputs (`ENVCTL_SOURCE_DATABASE_URL`,
+  `ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL`, `ENVCTL_SOURCE_ASYNC_DATABASE_URL`, and `ENVCTL_SOURCE_REDIS_URL`) also
+  request envctl-managed PostgreSQL/Redis dynamically when the matching dependency toggle is absent
+- when Main-mode dependency port bases are left at the built-in defaults, envctl applies a per-session offset to managed
+  dependency ports so generated DB/Redis URLs do not bind the same well-known host ports on every run
+- explicit dependency toggles still win; for example `MAIN_POSTGRES_ENABLE=false` keeps PostgreSQL disabled even when a
+  template references `ENVCTL_SOURCE_DATABASE_URL`
+- a dependency already configured as managed/enabled stays managed even if the default app `.env` contains an old
+  dependency URL from a previous run
+- if any other referenced `ENVCTL_SOURCE_*` value is unavailable for the current run, that line is skipped
+- custom aliases/templates are injected into launched processes only; the default backend `.env` is not rewritten with
+  per-run managed PostgreSQL or Redis URLs
 - after envctl seeds the launch env sections, `envctl config` leaves them unchanged
 
 Supported template inputs include:
@@ -69,6 +93,13 @@ Supported template inputs include:
 - `ENVCTL_SOURCE_REDIS_URL`
 - `ENVCTL_SOURCE_N8N_URL`
 - `ENVCTL_SOURCE_SUPABASE_URL`
+- `ENVCTL_SOURCE_SUPABASE_PUBLIC_URL`
+- `ENVCTL_SOURCE_SUPABASE_PUBLIC_PORT`
+- `ENVCTL_SOURCE_SUPABASE_API_PORT`
+- `ENVCTL_SOURCE_SUPABASE_ANON_KEY`
+- `ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY`
+- `ENVCTL_SOURCE_SUPABASE_JWT_SECRET`
+- `ENVCTL_SOURCE_SUPABASE_JWKS_URL`
 - `ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL`
 - `ENVCTL_SOURCE_ASYNC_DATABASE_URL`
 - `ENVCTL_SOURCE_DB_HOST`
@@ -80,8 +111,117 @@ Supported template inputs include:
 - `ENVCTL_SOURCE_N8N_PORT`
 - `ENVCTL_SOURCE_SUPABASE_DB_PASSWORD`
 - `ENVCTL_SOURCE_SUPABASE_DB_PORT`
+- `ENVCTL_SOURCE_BACKEND_HOST`
+- `ENVCTL_SOURCE_BACKEND_PORT`
+- `ENVCTL_SOURCE_BACKEND_URL`
+- `ENVCTL_SOURCE_FRONTEND_HOST`
+- `ENVCTL_SOURCE_FRONTEND_PORT`
+- `ENVCTL_SOURCE_FRONTEND_URL`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_HOST`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_PORT`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_URL`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_PUBLIC_URL`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_HEALTH_URL`
+- `ENVCTL_SOURCE_SUPABASE_USER_<SUFFIX>_ID`
+- `ENVCTL_SOURCE_SUPABASE_USER_<SUFFIX>_EMAIL`
+- `ENVCTL_SOURCE_SUPABASE_USER_<SUFFIX>_PASSWORD`
+- `ENVCTL_SOURCE_SUPABASE_TEST_USER_ID`
+- `ENVCTL_SOURCE_SUPABASE_TEST_USER_EMAIL`
+- `ENVCTL_SOURCE_SUPABASE_TEST_USER_PASSWORD`
 
 Only simple `${VAR}` placeholders are supported. Shell-style defaults, command substitution, and other expansion syntax are intentionally not supported.
+
+Frontend launch-env sections may use `ENVCTL_SOURCE_SUPABASE_URL` and `ENVCTL_SOURCE_SUPABASE_ANON_KEY`. They cannot reference `ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY`; envctl rejects that mapping before launching the frontend process.
+
+## Managed Supabase Ports
+
+Managed Supabase exposes two distinct local resources:
+
+- `DB_PORT` / `ENVCTL_SOURCE_SUPABASE_DB_PORT` is the PostgreSQL host port used for database URLs such as `DATABASE_URL` and `SQLALCHEMY_DATABASE_URL`.
+- `SUPABASE_PUBLIC_PORT` / `ENVCTL_SOURCE_SUPABASE_PUBLIC_PORT` is the public Supabase API gateway port. `ENVCTL_SOURCE_SUPABASE_URL` and `ENVCTL_SOURCE_SUPABASE_PUBLIC_URL` point here, not at Postgres. Browser auth clients should use this URL for `/auth/v1/*` calls.
+
+The managed Supabase compose stack publishes Kong on `SUPABASE_PUBLIC_PORT` and readiness checks `/auth/v1/health`. If Postgres is healthy but Kong/Auth is unreachable, startup reports that split explicitly instead of marking Supabase healthy from the database listener alone. The readiness probe uses the local loopback URL for the published port, even when the projected `SUPABASE_PUBLIC_URL` points at a LAN or public host for browser access.
+
+## Managed Supabase Auth Users
+
+Declare local/E2E Auth users in `.envctl` when managed Supabase is enabled:
+
+```dotenv
+MAIN_SUPABASE_ENABLE=true
+ENVCTL_SUPABASE_AUTH_USERS=e2e
+ENVCTL_SUPABASE_USER_E2E_EMAIL=e2e@example.test
+ENVCTL_SUPABASE_USER_E2E_PASSWORD=change-me-local-only
+ENVCTL_SUPABASE_USER_E2E_USER_METADATA_JSON={"company_name":"E2E Co"}
+ENVCTL_SUPABASE_USER_E2E_APP_METADATA_JSON={"role":"tester"}
+ENVCTL_SUPABASE_AUTH_USERS_STRICT=true
+```
+
+User slugs must use lowercase letters, numbers, and hyphens. Env suffixes use uppercase with hyphens changed to underscores, so `admin-user` maps to `ENVCTL_SUPABASE_USER_ADMIN_USER_*` and `ENVCTL_SOURCE_SUPABASE_USER_ADMIN_USER_*`. Startup provisions enabled users through the Supabase Auth Admin API after managed Supabase is healthy and before app services launch.
+
+`ENVCTL_SUPABASE_AUTH_USERS_STRICT=false` allows startup to continue after provisioning failures, but malformed user config still fails early. Passwords are never included in JSON command output or the runtime artifact.
+
+## QA User Seed Hooks
+
+`envctl qa-user ensure --seed <name>` can call project-provided deterministic seed hooks after the Auth user is created or reused. Configure either one generic command or per-seed commands:
+
+```dotenv
+ENVCTL_QA_USER_SEED_CMD=scripts/envctl/seed-qa-user.sh
+ENVCTL_QA_USER_SEED_CRM_CMD=scripts/envctl/seed-crm-qa-user.sh
+```
+
+Seed commands run from the selected project root when envctl can infer it from active runtime state. They receive `ENVCTL_QA_USER_ID`, `ENVCTL_QA_USER_EMAIL`, `ENVCTL_QA_USER_LOCALE`, `ENVCTL_QA_USER_SEEDS`, `ENVCTL_PROJECT_NAME`, and available managed dependency connection env such as local Supabase URLs/keys for backend-only seeding. When no hook is configured, envctl reports the requested seed as skipped with `reason=no_seed_hook_configured` instead of assuming an app schema.
+
+`qa-user ensure` writes a redacted `qa-user-ensure.json` artifact under the active run directory. The artifact includes user id/email, created/reused/updated flags, selected seeds, seed results, timestamp, dependency mode, and redacted credentials. Use `--update-password` and `--update-metadata` to mutate an existing user; without those flags an existing user is reused unchanged.
+
+## Additional App Services
+
+Additional app services are long-running application processes owned by the repo, not managed infrastructure dependencies. They are enabled through `.envctl` and participate in normal startup, state, runtime-map, logs, health, dashboard, and `envctl test --service <slug>` flows.
+
+Example HTTP sidecar plus non-listener worker:
+
+```dotenv
+ENVCTL_ADDITIONAL_SERVICES=voice-runtime,worker
+
+ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE=true
+ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime
+ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010
+ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=scripts/envctl/start-voice-runtime.sh {port}
+ENVCTL_SERVICE_VOICE_RUNTIME_EXPECT_LISTENER=true
+ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz
+ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}
+ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD=scripts/envctl/test-voice-runtime.sh
+
+ENVCTL_SERVICE_WORKER_ENABLE=true
+ENVCTL_SERVICE_WORKER_DIR=backend
+ENVCTL_SERVICE_WORKER_START_CMD=python -m app.worker
+ENVCTL_SERVICE_WORKER_EXPECT_LISTENER=false
+ENVCTL_SERVICE_WORKER_TEST_CMD=python -m pytest tests/test_worker.py
+```
+
+Supported keys use `ENVCTL_SERVICE_<SUFFIX>_...`, where `<SUFFIX>` is the uppercase slug with hyphens changed to underscores. For `voice-runtime`, the suffix is `VOICE_RUNTIME`.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ENVCTL_ADDITIONAL_SERVICES` | unset | Comma-separated ordered service slugs, such as `voice-runtime,worker`. |
+| `ENVCTL_SERVICE_<SUFFIX>_ENABLE` | `true` | Both-mode enable default for a declared service. |
+| `ENVCTL_SERVICE_<SUFFIX>_MAIN_ENABLE` | `ENABLE` | Main-mode override. |
+| `ENVCTL_SERVICE_<SUFFIX>_TREES_ENABLE` | `ENABLE` | Trees-mode override. |
+| `ENVCTL_SERVICE_<SUFFIX>_DIR` | `.` | Repo-relative service working directory. Startup fails if a configured non-root directory is missing or escapes the project root. |
+| `ENVCTL_SERVICE_<SUFFIX>_START_CMD` | unset | Required for enabled services. Supports `{port}`, `{project_root}`, `{service_dir}`, and `{service_name}` placeholders. |
+| `ENVCTL_SERVICE_<SUFFIX>_TEST_CMD` | unset | Command used by `envctl test --service <slug>`. Runs from the configured service directory. If this is unset, `envctl test --service <slug>` fails clearly instead of falling back to generic backend/frontend tests. |
+| `ENVCTL_SERVICE_<SUFFIX>_PORT_BASE` | unset | Required when `EXPECT_LISTENER=true`; gets normal per-project port spacing. |
+| `ENVCTL_SERVICE_<SUFFIX>_EXPECT_LISTENER` | `true` | Set `false` for workers and schedulers that do not bind a port. |
+| `ENVCTL_SERVICE_<SUFFIX>_HEALTH_URL` | unset | Template stored/projected for tooling and launch env aliases. |
+| `ENVCTL_SERVICE_<SUFFIX>_PUBLIC_URL` | derived from host/port | Template for the service public URL source variable. |
+| `ENVCTL_SERVICE_<SUFFIX>_START_ORDER` | `100` | Coarse ordering for additional services after built-in service descriptors. |
+| `ENVCTL_SERVICE_<SUFFIX>_DEPENDS_ON` | unset | Comma-separated references to `backend`, `frontend`, configured additional services, or configured dependency ids. Unknown references and service cycles fail validation/startup with actionable diagnostics. Dependency ids such as `redis`, `postgres`, `supabase`, or `n8n` validate the relationship and influence service ordering/metadata, but they do not by themselves enable disabled infrastructure; keep the matching `MAIN_*_ENABLE` / `TREES_*_ENABLE` dependency setting enabled when the service requires that infrastructure at runtime. |
+| `ENVCTL_SERVICE_<SUFFIX>_CRITICAL` | `true` | `true` keeps fail-fast startup. `false` records a degraded failed service with cwd/log/port/failure metadata and allows healthy independent services to continue. |
+
+Reserved additional-service slugs include `backend`, `frontend`, managed dependency ids, `all`, `services`, and `dependencies`.
+
+Startup plans application services in dependency layers. Built-in backend/frontend behavior is unchanged when no additional service dependencies are configured. Inside a layer, `START_ORDER` and slug order are deterministic tie-breakers; a service that depends on another app service starts only after that dependency's layer completes. Listener services use strict listener truth, while `EXPECT_LISTENER=false` workers persist `port: null`, `url: null`, and `listener_expected: false` but still keep static health/public URLs if configured.
+
+Runtime state, `show-state --json`, runtime maps, dashboard rows, and `health --json` expose canonical `project`, `service_slug`, `public_url`, `health_url`, `critical`, `degraded`, and `failure_detail` fields so external tooling does not need to parse display names. Dashboard rows render additional listener services with final rebound URLs, public/health URLs, log paths, and port rebind notes; non-listener workers render as non-listener rows instead of unreachable URLs. Service targeting accepts `<slug>`, `service:<slug>`, exact display names, and full service names for logs, errors, tests, stop, restart, and other actions where service filters are supported.
 
 ## Migrate Env Resolution
 
@@ -106,6 +246,8 @@ Runtime dependency projection also applies to migrate:
 - inherited shell backend keys such as `DATABASE_URL`, `APP_ENV_FILE`, `SQLALCHEMY_DATABASE_URL`, `ASYNC_DATABASE_URL`, and `DB_*` are scrubbed before target-specific merge
 - if the selected project already has saved requirements state, envctl reuses its canonical dependency URLs such as `DATABASE_URL`, `SQLALCHEMY_DATABASE_URL`, `ASYNC_DATABASE_URL`, and `REDIS_URL`
 - the default backend `.env` is not authoritative for those projected dependency URLs during migrate or startup bootstrap
+- default backend `.env` writeback is limited to cleanup of stale DB alias keys and does not persist current run
+  `DATABASE_URL`, `SQLALCHEMY_DATABASE_URL`, `ASYNC_DATABASE_URL`, or `REDIS_URL` values
 - an explicit non-default backend env override file remains authoritative for DB-family keys, matching the existing `SKIP_LOCAL_DB_ENV` semantics
 
 Relevant keys:
@@ -160,7 +302,7 @@ Compatibility aliases from the shell era are still accepted where relevant, for 
 - `SUPABASE_MAIN_ENABLE`
 - `N8N_MAIN_ENABLE`
 
-The current config wizard writes the canonical managed keys. Launch env templates are edited manually in `.envctl` and are not exposed in the wizard.
+The current config wizard writes, edits, and preserves the canonical managed keys, including declared additional app services. Launch env template sections remain user-owned and are preserved as-is.
 
 ## Current Wizard Coverage
 
@@ -170,7 +312,10 @@ The current setup/editor wizard covers:
 - services and dependencies
 - optional backend-only long-running service startup
 - backend/frontend directories
+- entrypoints and backend/frontend test command suggestions
+- optional frontend test directory suggestions
 - canonical ports
+- advanced additional app service definitions: slug, directory, start command, port base, listener expectation, main/trees enablement, optional test command, public URL, health URL, dependencies, start order, and critical/non-critical behavior
 
 The current flow is:
 
@@ -178,11 +323,17 @@ The current flow is:
 2. `Default Mode`
 3. `Components`
 4. optional `Long-Running Service`
-5. `Directories`
-6. `Ports`
-7. `Review / Save`
+5. advanced `Additional App Services` fields when services are configured or the advanced wizard is requested
+6. `Directories`
+7. `Entrypoints / Commands`
+8. `Ports`
+9. `Review / Save`
 
-There is no simple/advanced split in the current UI.
+There is no separate visible simple/advanced chooser in the current UI; callers can request the advanced wizard path to show additional-service fields even before a service exists.
+
+The `Entrypoints / Commands` step shows only the command fields needed for the enabled backend/frontend components. For test commands, the wizard displays detected suggestions with source labels (for example backend pytest from `backend/tests` or a frontend package test script from `frontend/package.json`). Test command fields are optional: leaving one blank means `envctl test` may still try runtime defaults later. The wizard does not execute test commands during setup.
+
+The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_TEST_CMD`, `ENVCTL_FRONTEND_TEST_CMD`, and `ENVCTL_FRONTEND_TEST_PATH` when applicable. Shared `ENVCTL_ACTION_TEST_CMD` remains a lower-level override for config/API payload compatibility and is not a first-run wizard field.
 
 ## Core
 | Variable | Default | Purpose |
@@ -190,6 +341,7 @@ There is no simple/advanced split in the current UI.
 | `ENVCTL_SKIP_DEFAULT_INFRASTRUCTURE` | `false` | Global skip for built-in PostgreSQL and Redis startup. |
 | `ENVCTL_DEFAULT_MODE` | `main` | Startup default when no mode flag is passed (`main` or `trees`). |
 | `ENVCTL_PLANNING_DIR` | `todo/plans` | Planning root used by `--plan`, `--sequential-plan`, and `--planning-prs`. Plans scaled to zero are archived into sibling `done/` under the same parent (for example `todo/done`). |
+| `ENVCTL_WORKTREE_GIT_HOOKS` | `disabled` | Git hook policy for envctl-managed worktree creation. Default `disabled` applies a command-scoped `core.hooksPath=/dev/null` override so repo-local hooks cannot break `--plan`, `--setup-worktree(s)`, or `ensure-worktree`; set `inherit` to run repo-local hooks for those operations. |
 | `ENVCTL_CONFIG_FILE` | unset | Explicit config file path override. |
 | `RUN_SH_RUNTIME_DIR` | `/tmp/envctl-runtime` | Runtime artifact root (Python artifacts are under `python-engine/`). |
 | `ENVCTL_STRICT_N8N_BOOTSTRAP` | `false` | Treat n8n owner/bootstrap endpoint mismatch as hard failure. |
@@ -201,20 +353,44 @@ There is no simple/advanced split in the current UI.
 | --- | --- | --- |
 | `ENVCTL_SERVICE_ATTACH_PARALLEL` | `true` | Run backend+frontend service attach in parallel when both are selected. |
 | `ENVCTL_SERVICE_PREP_PARALLEL` | follows `ENVCTL_SERVICE_ATTACH_PARALLEL` | Override backend+frontend bootstrap prep parallelism independently from attach mode. |
+| `ENVCTL_REQUIREMENTS_PARALLEL` | platform default | Run managed dependency startup in parallel. Default is `true` except on macOS, where Docker Desktop port publishing is serialized by default. |
+| `ENVCTL_REQUIREMENTS_PARALLEL_MAX` | `4` | Max concurrently starting managed dependencies when requirement parallel mode is enabled. |
 | `ENVCTL_ACTION_TEST_PARALLEL` | `true` | Run backend/frontend test suites in parallel when both suites are detected. |
 | `ENVCTL_ACTION_TEST_PARALLEL_MAX` | `4` | Max concurrently running test suites when parallel test mode is enabled. |
 
 ## Plan Agent Launch
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` cmux terminal launch for newly created worktrees. When enabled without an explicit workspace override, envctl targets a sibling workspace named `"<current workspace> implementation"`. |
+| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` agent launch for newly created worktrees. The default workspace-backed transport is cmux. |
+| `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` | `cmux` | Workspace-backed launch transport for default `--plan` launches. Accepted values are `cmux` and `superset`; `--tmux`, `--omx`, and `--opencode` route flags override this setting. |
 | `ENVCTL_PLAN_AGENT_CLI` | `codex` | AI CLI selection for launched surfaces (`codex` or `opencode`). |
-| `ENVCTL_PLAN_AGENT_PRESET` | `implement_task` | Prompt preset name typed after the AI CLI starts. Codex launches send `/prompts:<preset>`; OpenCode launches send `/<preset>`. `implement_plan` remains available as a backward-compatible preset. |
-| `ENVCTL_PLAN_AGENT_CODEX_CYCLES` | `1` | Codex-only queued workflow count for the post-`--plan` launcher. The default `1` queues `implement_task` plus `finalize_task`. `0` keeps the existing one-shot preset launch. `2` adds a first follow-up telling Codex to commit, push, and open or update the PR before the final `continue_task` -> `implement_task` -> `finalize_task` round. Higher values keep that first follow-up, use commit/push-only follow-ups for intermediate rounds, and reserve `finalize_task` for the final round. OpenCode ignores this setting. Envctl only appends prompt commands/messages in this mode; it does not execute those shell commands itself. |
+| `ENVCTL_PLAN_AGENT_PRESET` | `implement_task` | Prompt preset name submitted after the AI CLI starts. OpenCode cmux launches send `/<preset>`; `--tmux --opencode` submits the rendered prompt body directly. Codex resolves the preset from the envctl-managed Codex prompt file and submits that prompt body directly. `implement_plan` remains available as a backward-compatible preset. |
+| `ENVCTL_PLAN_AGENT_DIRECT_PROMPT` | transport/CLI dependent | Use direct prompt-body submission instead of slash-command submission when supported. Defaults to true for `--tmux --opencode`. |
+| `ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX` | transport/CLI dependent | Prefix OpenCode direct prompts with `/ulw-loop` when supported. Defaults to true for `--tmux --opencode`. |
+| `ENVCTL_PLAN_AGENT_APPEND_ULW` | `false` | Append ULW guidance for slash-command mode. |
+| `ENVCTL_PLAN_AGENT_CODEX_CYCLES` | `2` | Codex TUI queued workflow count for the post-`--plan` launcher, including envctl-owned cmux/tmux Codex and OMX-managed Codex sessions. The default `2` queues a first follow-up telling Codex to commit, push, open or update the PR, and wait for GitHub status checks before the final `continue_task` -> `implement_task` -> `finalize_task` round, then queues the enabled browser-E2E and PR-review-comment follow-ups after finalization. `0` submits the single implementation prompt and queues enabled follow-ups for Codex/OMX surfaces. `1` queues `implement_task`, `finalize_task`, and enabled follow-ups. Higher values keep that first follow-up, use commit/push-only follow-ups for intermediate rounds, and reserve `finalize_task` plus enabled follow-ups for the final round. OpenCode ignores this setting. Envctl only appends prompt commands/messages in this mode; it does not execute those shell commands itself. |
+| `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE` | `true` | Toggle Codex `/goal` session framing before the initial implementation prompt. Applies to Codex cmux, tmux, OMX-managed tmux, and local Superset launches, including `--omx --ultragoal`, `--omx --ralph`, and `--omx --team`; OpenCode ignores it. Route flags `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch. |
+| `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE` | `true` | Toggle the Codex/OMX `$browser` E2E follow-up. When true, envctl queues a browser validation prompt after implementation/finalization to re-read `MAIN_TASK.md`, validate the feature end-to-end against the full `envctl --entire-system --headless` stack, capture browser evidence where possible, and fix implementation-introduced issues. Set this to `false` in `.envctl` or the environment to skip that follow-up. |
+| `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE` | `true` | Toggle the final Codex/OMX PR review-comments follow-up. When true, envctl queues a `$gh-address-comments` prompt after the current implementation/E2E prompts to inspect unresolved PR comments, address all actionable feedback, commit/push fixes, and wait for final PR confirmation. Set this to `false` in `.envctl` or the environment to skip that follow-up. |
 | `ENVCTL_PLAN_AGENT_SHELL` | `zsh` | Shell command used when respawning the new cmux surface. |
 | `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT` | `true` | Require caller `CMUX_WORKSPACE_ID` so envctl can derive the default `"<current workspace> implementation"` target. If false, envctl falls back to the selected cmux workspace title when available. |
-| `ENVCTL_PLAN_AGENT_CLI_CMD` | unset | Optional raw AI CLI command override typed into the launched shell. |
+| `ENVCTL_PLAN_AGENT_CODEX_YOLO` | `true` | When envctl owns a Codex cmux/tmux launch and `ENVCTL_PLAN_AGENT_CLI_CMD` is unset, append `--dangerously-bypass-approvals-and-sandbox`. Set to `false` in `.envctl` when your Codex wrapper or config already supplies that flag. |
+| `ENVCTL_PLAN_AGENT_CLI_CMD` | unset | Optional raw AI CLI command override typed into the launched shell. When set, this raw command wins over the default Codex YOLO command builder. |
 | `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` | unset | Explicit cmux workspace target for new surfaces. Accepts a workspace ref/UUID/index or a workspace title such as `envctl`. When set, it also enables plan-agent terminal launch even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset. If a named workspace does not already exist, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT` | unset | Superset project id/name used when `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=superset` creates or reuses a Superset-managed workspace for the worktree branch. Required unless `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE` is set. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE` | unset | Existing Superset workspace id for `superset agents run --workspace ...`. When set, it also enables plan-agent launch and selects the Superset transport unless the canonical transport key is set. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_HOST` | unset | Superset host target. When set, envctl passes `--host <host>` instead of `--local` to `superset workspaces create`. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_LOCAL` | `true` | Pass `--local` to Superset workspace creation when no host is configured. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_OPEN` | `true` | Run `superset workspaces open <workspace-id>` after a successful Superset launch when a workspace id is available. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_DESKTOP_BRIDGE` | `true` | When Superset CLI creates a workspace that has not reached Superset desktop's local caches, mirror the host workspace into the desktop `local.db` and TanStack workspace cache so the desktop can resolve the id. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_DESKTOP_VERIFY` | `true` | After opening a Superset workspace, verify that the local Superset desktop cache can resolve the returned workspace id when `~/.superset/local.db` exists. Disable only for headless/cloud-only Superset flows. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_DESKTOP_RESTART` | `true` | Restart Superset desktop after applying the local desktop bridge if the already-running app still cannot resolve the returned workspace id. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_DESKTOP_VERIFY_TIMEOUT` | `5` | Seconds to wait for the Superset desktop cache to receive the returned workspace id before treating the Superset handoff as failed. |
+
+Enabled plan-agent launches prepare backend/frontend dependencies in the selected worktree before prompt submission.
+This reuses the normal backend/frontend bootstrap logic, skips migrations, and does not start services. Configured backend
+commands that begin with generic Python (`python`, `python3`, or `python3.12`) are resolved through the prepared Poetry
+runner or backend virtualenv when available.
 
 Dashboard review-tab note:
 
@@ -227,16 +403,31 @@ Alias env vars:
 
 - `CMUX=true` is a shorthand alias for enabling plan-agent launch with the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=<value>`
+- `SUPERSET=true` enables plan-agent launch and selects `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=superset` unless the canonical transport key is set
+- `SUPERSET_PROJECT=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT=<value>` and selects Superset transport unless the canonical transport key is set
+- `SUPERSET_WORKSPACE=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE=<value>` and selects Superset transport unless the canonical transport key is set
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - canonical `ENVCTL_PLAN_AGENT_*` keys win when both canonical and alias forms are set
 - `CYCLES` only changes the effective Codex cycle count; it does not enable plan-agent launch by itself
 
 Cycle mode notes:
 
-- the queued cycle workflow is active only for Codex and only when `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is a positive integer
-- invalid or negative values are ignored and the launcher stays on the one-shot workflow
+- the queued cycle workflow is active for Codex TUI surfaces (cmux, tmux, and OMX-managed tmux) when `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is a positive integer; enabled browser-E2E and PR-review-comment follow-ups are queued for Codex/OMX surfaces even when the cycle count is `0`
+- invalid or negative values are ignored and the launcher stays on the single implementation prompt plus enabled follow-ups
 - very large values are bounded internally for safety before the workflow is expanded
 - if queue injection fails after the initial `implement_task` submit, envctl falls back to the initial one-shot launch and leaves the Codex surface running
+- the global default remains `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`; `$envctl-create-plan-auto-codex` computes a `0` through `8` recommendation and uses that command-scoped value for the envctl command it launches
+- `$envctl-create-plan-auto-opencode` ignores Codex cycles and uses `--tmux --opencode` with the default `/ulw-loop` prefix
+- `$envctl-create-plan-auto-omx` uses `--omx --ultragoal`; Codex `/goal` framing is submitted first when enabled, Ultragoal wraps the initial prompt, and envctl can queue the same Codex follow-up cycle workflow used by plain Codex TUI launches. Use `--omx --ralph` explicitly when you need the Ralph compatibility workflow.
+
+Superset transport notes:
+
+- Superset launches use public CLI commands for workspace creation/opening: `superset workspaces create`, `superset agents run`, and optionally `superset workspaces open`.
+- `SUPERSET_PROJECT`, `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT`, `SUPERSET_WORKSPACE`, and `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE` select the Superset transport by default unless `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` is explicitly set.
+- Superset public CLI accepts project and branch, not an explicit worktree path; exact envctl worktree adoption is a future extension point.
+- For local Superset Codex launches with goal framing enabled, envctl registers a per-worktree Superset host agent wrapper. That wrapper starts a real Codex TUI, types `/goal ...`, submits it with an explicit Enter keypress, waits until Codex reports `Goal active`, then pastes and submits the implementation prompt. If no local Superset host DB is available, envctl falls back to the public prompt-only path. Codex cycle queueing, screen polling, tab renaming, cmux surfaces, and dashboard review tabs are not supported through Superset public CLI.
+- Superset auth and host errors are surfaced from the Superset command output; configure OAuth login or `SUPERSET_API_KEY` as Superset requires.
+- When `ENVCTL_PLAN_AGENT_SUPERSET_OPEN=true`, envctl treats a returned workspace id as usable only after Superset desktop can resolve it locally. If the Superset CLI created the host workspace but the desktop cache has not received it, envctl mirrors the workspace into Superset desktop's local cache and restarts the desktop once when needed. This prevents false-success handoffs where the CLI lists a workspace but the desktop opens to "Workspace not found."
 
 ## Debug and Diagnostics
 | Variable | Default | Purpose |
@@ -264,6 +455,15 @@ Cycle mode notes:
 | `ENVCTL_UI_SPINNER` | `true` | Compatibility toggle; still honored when mode is `auto`. |
 | `ENVCTL_UI_RICH` | `true` | Compatibility toggle for rich-backed UI rendering when mode is `auto`. |
 | `ENVCTL_UI_HYPERLINK_MODE` | `auto` | Local-path hyperlink policy for human-facing CLI output (`auto`, `on`, `off`). `auto` only emits OSC-8 links on supported interactive terminals; JSON output stays raw. |
+| `ENVCTL_PUBLIC_HOST` | `localhost` | Host/IP injected into browser-facing frontend environment URLs such as `VITE_BACKEND_URL` and `VITE_API_URL`. Dashboard visual URLs use this host by default. Ports remain dynamically allocated per project/worktree; service binding, probes, and persisted runtime maps are unchanged. |
+| `ENVCTL_UI_VISUAL_HOST` | `ENVCTL_PUBLIC_HOST` | Optional dashboard-only override for visual service URLs. Leave unset/blank to reuse `ENVCTL_PUBLIC_HOST`. This does not change service binding, probes, persisted runtime maps, or frontend/backend environment URLs. |
+
+Spinner configuration affects whether animated progress is shown, but not final status semantics: envctl-owned final/status lines use `✓` for success, `✗` for failure/error, and neutral glyphs such as `•`, `~`, or `○` for non-terminal or non-error states. Headless/non-TTY output remains deterministic and does not emit animated spinner frames.
+
+## Experimental
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ENVCTL_EXPERIMENTAL_CODEX_SKILLS` | `false` | Legacy compatibility toggle; Codex install-prompts now installs explicit-only skills under `~/.codex/skills/envctl-*` by default. |
 
 Selector implementation is controlled separately from dashboard backend policy:
 
@@ -282,8 +482,22 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 | `DB_USER` | `postgres` | PostgreSQL user. |
 | `DB_PASSWORD` | `postgres` | PostgreSQL password. |
 | `DB_NAME` | `postgres` | PostgreSQL DB name. |
+| `ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS` | `true` when DB/Redis ports use built-in defaults | Apply a per-session offset to Main-mode managed dependency ports while keeping app ports stable. Set to `false` to bind exactly to `DB_PORT`, `REDIS_PORT`, and `N8N_PORT_BASE`. |
 | `MAIN_SUPABASE_ENABLE` | `false` | Canonical Supabase toggle for Main mode. Compatibility alias: `SUPABASE_MAIN_ENABLE`. |
 | `TREES_SUPABASE_ENABLE` | `false` | Canonical Supabase toggle for Trees mode. |
+| `SUPABASE_PUBLIC_PORT` | `54321` | Public Supabase API/Kong port used for `ENVCTL_SOURCE_SUPABASE_URL`. |
+| `ENVCTL_SUPABASE_AUTH_PROBE_TIMEOUT_SECONDS` | `5.0` | Per-phase timeout for managed Supabase Auth/Kong `/auth/v1/health` readiness probes. |
+| `ENVCTL_SUPABASE_AUTH_RESTART_ON_PROBE_FAILURE` | `true` | Restart only Auth/Kong after DB is healthy but the public API health probe fails. |
+| `ENVCTL_SUPABASE_AUTH_RESTART_PROBE_ATTEMPTS` | `1` | Number of Auth/Kong health probe windows after scoped restart; clamped to at least 1. |
+| `ENVCTL_SUPABASE_AUTH_RECREATE_ON_PROBE_FAILURE` | `true` | Stop/remove/recreate only Auth/Kong after restart recovery is exhausted. Does not remove the Supabase DB service or volumes. |
+| `ENVCTL_SUPABASE_AUTH_RECREATE_PROBE_ATTEMPTS` | `1` | Number of Auth/Kong health probe windows after scoped recreate; clamped to at least 1. |
+| `ENVCTL_SUPABASE_NETWORK_RECOVERY_ALLOW_GLOBAL_EMPTY_CLEANUP` | `false` | Allow stale missing-network recovery to fall back from current-project cleanup to broader empty `envctl-supabase-*` network cleanup. Address-pool exhaustion recovery still uses the existing empty envctl Supabase network cleanup path. |
+| `ENVCTL_SUPABASE_AUTH_USERS` | unset | Comma-separated managed Supabase Auth user slugs for local/E2E provisioning. |
+| `ENVCTL_SUPABASE_USER_<SUFFIX>_EMAIL` | unset | Required email for an enabled managed Auth user. |
+| `ENVCTL_SUPABASE_USER_<SUFFIX>_PASSWORD` | unset | Required local/E2E password for an enabled managed Auth user. |
+| `ENVCTL_SUPABASE_USER_<SUFFIX>_USER_METADATA_JSON` | unset | Optional JSON object passed as Supabase user metadata. |
+| `ENVCTL_SUPABASE_USER_<SUFFIX>_APP_METADATA_JSON` | unset | Optional JSON object passed as Supabase app metadata. |
+| `ENVCTL_SUPABASE_AUTH_USERS_STRICT` | `true` | Fail startup when enabled Auth users cannot be provisioned. |
 
 ## Redis
 | Variable | Default | Purpose |

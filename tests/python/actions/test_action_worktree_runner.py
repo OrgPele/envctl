@@ -10,6 +10,7 @@ from unittest.mock import patch
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.actions.action_worktree_runner import run_delete_worktree_action  # noqa: E402
+from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator  # noqa: E402
 from envctl_engine.runtime.command_router import parse_route  # noqa: E402
 
 
@@ -148,6 +149,38 @@ class ActionWorktreeRunnerTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(cleanup_calls, [])
             delete_mock.assert_called_once()
+
+    def test_self_destruct_worktree_spawns_detached_delete_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            tree_root = repo_root / "trees" / "feature-a" / "1"
+            (repo_root / ".git").mkdir(parents=True, exist_ok=True)
+            tree_root.mkdir(parents=True, exist_ok=True)
+
+            process_runner = SimpleNamespace(
+                run=lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=f"{repo_root}\n", stderr=""),
+                start_background=lambda cmd, **kwargs: SimpleNamespace(pid=4321, cmd=cmd, kwargs=kwargs),
+            )
+            runtime = SimpleNamespace(
+                env={},
+                config=SimpleNamespace(base_dir=repo_root),
+                raw={},
+                process_runner=process_runner,
+                _emit=lambda *_args, **_kwargs: None,
+                _trees_root_for_worktree=lambda _path: repo_root / "trees",
+                _discover_projects=lambda *, mode: [SimpleNamespace(name="feature-a-1", root=tree_root)],
+                _selectors_from_passthrough=lambda _args: set(),
+                _try_load_existing_state=lambda *args, **kwargs: None,
+                _project_name_from_service=lambda _name: "",
+                _select_project_targets=lambda **_kwargs: None,
+                _blast_worktree_before_delete=lambda **_kwargs: [],
+            )
+            orchestrator = ActionCommandOrchestrator(runtime)
+
+            with patch("envctl_engine.actions.action_command_orchestrator.Path.cwd", return_value=tree_root):
+                code = orchestrator.run_self_destruct_worktree_action(parse_route(["self-destruct-worktree"], env={}))
+
+            self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":

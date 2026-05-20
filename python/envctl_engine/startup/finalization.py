@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+from typing import cast
+
+from envctl_engine.dashboard_metadata import (
+    APP_SERVICE_TYPES,
+    DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
+    serialize_dashboard_project_configured_services,
+)
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
 from envctl_engine.startup.run_reuse_support import build_startup_identity_metadata
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
@@ -31,8 +39,9 @@ def build_planning_dashboard_state(
     metadata = build_startup_identity_metadata(
         runtime,
         runtime_mode=runtime_mode,
-        project_contexts=project_contexts,
+        project_contexts=cast(list[object], project_contexts),
         base_metadata=base_metadata,
+        route=route,
     )
     metadata.update(
         {
@@ -73,8 +82,9 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
     metadata = build_startup_identity_metadata(
         runtime,
         runtime_mode=session.runtime_mode,
-        project_contexts=session.selected_contexts,
+        project_contexts=cast(list[object], session.selected_contexts),
         base_metadata=session.base_metadata,
+        route=session.effective_route,
     )
     metadata.update(
         {
@@ -82,6 +92,71 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
             "repo_scope_id": runtime.config.runtime_scope_id,
         }
     )
+    dependency_mode = effective_dependency_scope(session.effective_route, session.runtime_mode)
+    metadata["dependency_mode"] = dependency_mode
+    metadata["shared_dependencies"] = dependency_mode == "shared"
+    metadata["frontend_dependency_env_projection_active"] = _frontend_dependency_env_projection_active(runtime)
+    launch_diagnostics = session.effective_route.flags.get("_runtime_launch_diagnostics")
+    if isinstance(launch_diagnostics, dict) and launch_diagnostics:
+        metadata["runtime_launch_diagnostics"] = launch_diagnostics
+    requested_dependency_scope = session.effective_route.flags.get("dependency_scope")
+    if requested_dependency_scope is not None:
+        metadata["dependency_scope_requested"] = str(requested_dependency_scope)
+    project_configured_services = _project_configured_services_metadata(runtime, session)
+    if project_configured_services:
+        metadata[DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY] = project_configured_services
+    shared_dependency_project = _shared_dependency_dashboard_project(session)
+    if shared_dependency_project:
+        metadata["dashboard_dependency_scope"] = "shared"
+        metadata["dashboard_shared_dependency_project"] = shared_dependency_project
+    if session.warnings:
+        metadata["warnings"] = list(session.warnings)
+    if session.plan_agent_launch_result is not None:
+        launch_result = session.plan_agent_launch_result
+        metadata["plan_agent_launch_status"] = str(getattr(launch_result, "status", "")).strip()
+        metadata["plan_agent_launch_reason"] = str(getattr(launch_result, "reason", "")).strip()
+        if metadata["plan_agent_launch_status"] == "failed":
+            metadata["plan_agent_launch_failed"] = True
+        launch_outcomes: list[dict[str, object]] = []
+        for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
+            launch_outcomes.append(
+                {
+                    "worktree_name": str(getattr(outcome, "worktree_name", "")).strip(),
+                    "worktree_root": str(getattr(outcome, "worktree_root", "")).strip(),
+                    "surface_id": getattr(outcome, "surface_id", None),
+                    "status": str(getattr(outcome, "status", "")).strip(),
+                    "reason": getattr(outcome, "reason", None),
+                }
+            )
+        if launch_outcomes:
+            metadata["plan_agent_launch_outcomes"] = launch_outcomes
+    if session.plan_agent_handoff_degraded or session.local_startup_failures:
+        metadata["plan_agent_handoff_degraded"] = bool(session.plan_agent_handoff_degraded)
+        metadata["implementation_session_running"] = bool(session.plan_agent_session_started)
+        metadata["local_startup_failed"] = bool(session.local_startup_failures)
+        metadata["local_startup_failures"] = [failure.to_metadata() for failure in session.local_startup_failures]
+    if session.plan_agent_handoff_validation_reason:
+        metadata["plan_agent_handoff_degraded"] = True
+        metadata["implementation_session_running"] = False
+        metadata["plan_agent_handoff_validation_reason"] = session.plan_agent_handoff_validation_reason
+    if session.plan_agent_stale_session_name:
+        metadata["plan_agent_stale_session_name"] = session.plan_agent_stale_session_name
+    if session.plan_agent_stale_attach_command:
+        metadata["plan_agent_stale_attach_command"] = session.plan_agent_stale_attach_command
+    if session.plan_agent_recovery_command:
+        metadata["plan_agent_recovery_command"] = session.plan_agent_recovery_command
+    attach_target = session.plan_agent_attach_target
+    if attach_target is None and session.plan_agent_launch_result is not None:
+        attach_target = getattr(session.plan_agent_launch_result, "attach_target", None)
+    if attach_target is not None:
+        session_name = str(getattr(attach_target, "session_name", "")).strip()
+        attach_command = " ".join(
+            str(part).strip() for part in getattr(attach_target, "attach_command", ()) if str(part).strip()
+        )
+        if session_name:
+            metadata["plan_agent_session_name"] = session_name
+        if attach_command:
+            metadata["plan_agent_attach_command"] = attach_command
     run_state = RunState(
         run_id=session.run_id,
         mode=session.runtime_mode,
@@ -94,6 +169,45 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
         run_state.metadata["failed"] = True
     run_state.pointers = _build_pointer_map(runtime, session.run_id)
     return run_state
+
+
+def _project_configured_services_metadata(
+    runtime: StartupRuntime, session: StartupSession
+) -> dict[str, list[str]]:
+    configured: dict[str, list[str]] = {}
+    for context in session.selected_contexts:
+        service_types = [
+            service_type
+            for service_type in APP_SERVICE_TYPES
+            if runtime._service_enabled_for_mode(session.runtime_mode, service_type)
+        ]
+        if service_types:
+            configured[str(context.name)] = service_types
+    return serialize_dashboard_project_configured_services(configured)
+
+
+def _frontend_dependency_env_projection_active(runtime: StartupRuntime) -> bool:
+    config = runtime.config
+    return bool(
+        getattr(config, "dependency_env_section_present", False)
+        or getattr(config, "frontend_dependency_env_section_present", False)
+        or getattr(config, "main_frontend_dependency_env_section_present", False)
+        or getattr(config, "trees_frontend_dependency_env_section_present", False)
+        or bool(getattr(config, "service_dependency_env_section_present", {}) or {})
+        or bool(getattr(config, "mode_service_dependency_env_section_present", {}) or {})
+    )
+
+
+def _shared_dependency_dashboard_project(session: StartupSession) -> str | None:
+    if session.runtime_mode != "trees":
+        return None
+    if effective_dependency_scope(session.effective_route, session.runtime_mode) != "shared":
+        return None
+    for requirements in session.merged_requirements.values():
+        project = str(getattr(requirements, "project", "") or "").strip()
+        if project:
+            return project
+    return "Main"
 
 
 def _build_pointer_map(runtime: StartupRuntime, run_id: str) -> dict[str, str]:

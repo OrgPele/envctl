@@ -36,6 +36,13 @@ def load_state(path: str, *, allowed_root: str | None = None) -> RunState:
             started_at=parse_float_or_none(svc.get("started_at")),
             listener_pids=_parse_listener_pids(svc.get("listener_pids")),
             listener_expected=parse_bool(svc.get("listener_expected"), True),
+            project=str(svc.get("project") or "") or None,
+            service_slug=str(svc.get("service_slug") or "") or None,
+            public_url=str(svc.get("public_url") or "") or None,
+            health_url=str(svc.get("health_url") or "") or None,
+            failure_detail=str(svc.get("failure_detail") or "") or None,
+            critical=parse_bool(svc.get("critical"), True),
+            degraded=parse_bool(svc.get("degraded"), False),
         )
         for name, svc in data.get("services", {}).items()
     }
@@ -168,6 +175,13 @@ def state_to_dict(state: RunState) -> dict[str, object]:
                 "started_at": svc.started_at,
                 "listener_pids": svc.listener_pids,
                 "listener_expected": svc.listener_expected,
+                "project": svc.project,
+                "service_slug": svc.service_slug,
+                "public_url": svc.public_url,
+                "health_url": svc.health_url,
+                "failure_detail": svc.failure_detail,
+                "critical": svc.critical,
+                "degraded": svc.degraded,
             }
             for name, svc in state.services.items()
         },

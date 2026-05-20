@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 
 _ITERATION_RE = re.compile(r"^(?:\d+|iter[-_]?\d+)$", re.IGNORECASE)
+OMX_ARTIFACT_DIR_NAME = ".omx"
+ENVCTL_STATE_DIR_NAME = ".envctl-state"
+STATE_ONLY_TREE_PROJECT_ROOT_ENTRIES = frozenset({OMX_ARTIFACT_DIR_NAME, ENVCTL_STATE_DIR_NAME})
 _IGNORED_DIR_NAMES = {
     ".git",
     ".hg",
     ".svn",
     ".venv",
+    OMX_ARTIFACT_DIR_NAME,
+    ENVCTL_STATE_DIR_NAME,
     "venv",
     "__pycache__",
     "node_modules",
@@ -19,6 +25,14 @@ _IGNORED_DIR_NAMES = {
     "backend",
     "frontend",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanProjectPrediction:
+    name: str
+    root: Path
+    plan_file: str
+    action: str
 
 
 def list_planning_files(planning_dir: Path) -> list[str]:
@@ -97,6 +111,7 @@ def resolve_planning_files(
     planning_files: list[str],
     base_dir: Path,
     planning_dir: Path,
+    requested_cli: str = "",
 ) -> OrderedDict[str, int]:
     if not selection_raw.strip():
         raise ValueError("empty planning selection")
@@ -105,6 +120,8 @@ def resolve_planning_files(
 
     tokenized = [part.strip() for part in selection_raw.split(",")]
     plan_counts: OrderedDict[str, int] = OrderedDict()
+
+    duplicate_for_both = str(requested_cli or "").strip().lower() == "both"
 
     for token in tokenized:
         if not token:
@@ -127,7 +144,8 @@ def resolve_planning_files(
         if not match:
             raise ValueError(f"Planning file not found: {token}")
 
-        plan_counts[match] = plan_counts.get(match, 0) + 1
+        increment = 2 if duplicate_for_both else 1
+        plan_counts[match] = plan_counts.get(match, 0) + increment
 
     if not plan_counts:
         raise ValueError("No planning files selected.")
@@ -171,6 +189,72 @@ def select_projects_for_plan_files(
             seen.add(dedupe_key)
 
     return selected
+
+
+def predict_plan_projects(
+    *,
+    projects: list[tuple[str, Path]],
+    plan_counts: OrderedDict[str, int],
+    base_dir: Path,
+    trees_dir_name: str,
+) -> list[PlanProjectPrediction]:
+    if not plan_counts:
+        return []
+
+    predictions: list[PlanProjectPrediction] = []
+    seen: set[str] = set()
+
+    for plan_file, count in plan_counts.items():
+        if count <= 0:
+            continue
+        feature = planning_feature_name(plan_file)
+        candidates = [
+            project
+            for project in projects
+            if project[0].lower() == feature.lower() or project[0].lower().startswith(f"{feature.lower()}-")
+        ]
+        candidates.sort(key=lambda project: _project_sort_key(project[0], feature))
+        for name, root in candidates[:count]:
+            dedupe_key = f"{name}|{root}"
+            if dedupe_key in seen:
+                continue
+            predictions.append(
+                PlanProjectPrediction(
+                    name=name,
+                    root=Path(root),
+                    plan_file=plan_file,
+                    action="reuse",
+                )
+            )
+            seen.add(dedupe_key)
+
+        existing_iterations = _existing_feature_iterations(candidates, feature=feature)
+        feature_root = _preferred_tree_root_for_feature(
+            base_dir=base_dir,
+            trees_dir_name=trees_dir_name,
+            feature=feature,
+        )
+        missing = max(0, count - len(candidates))
+        for _ in range(missing):
+            iteration = _next_available_iteration(existing_iterations)
+            root = feature_root / str(iteration)
+            name = f"{feature}-{iteration}"
+            dedupe_key = f"{name}|{root}"
+            if dedupe_key in seen:
+                existing_iterations.add(iteration)
+                continue
+            predictions.append(
+                PlanProjectPrediction(
+                    name=name,
+                    root=root,
+                    plan_file=plan_file,
+                    action="create",
+                )
+            )
+            seen.add(dedupe_key)
+            existing_iterations.add(iteration)
+
+    return predictions
 
 
 def planning_existing_counts(
@@ -233,6 +317,8 @@ def _append_feature_projects(
     )
     if nested_iters:
         for iter_dir in nested_iters:
+            if not _looks_like_tree_project_root(iter_dir):
+                continue
             project_name = f"{feature_name}-{iter_dir.name}"
             dedupe_key = f"{project_name}|{iter_dir.resolve()}"
             if dedupe_key in seen:
@@ -241,11 +327,24 @@ def _append_feature_projects(
             projects.append((project_name, iter_dir))
         return
 
+    if not _looks_like_tree_project_root(feature_dir):
+        return
     dedupe_key = f"{feature_name}|{feature_dir.resolve()}"
     if dedupe_key in seen:
         return
     seen.add(dedupe_key)
     projects.append((feature_name, feature_dir))
+
+
+def _looks_like_tree_project_root(path: Path) -> bool:
+    try:
+        entries = list(path.iterdir())
+    except OSError:
+        return False
+    entry_names = {entry.name for entry in entries}
+    if entry_names and entry_names.issubset(STATE_ONLY_TREE_PROJECT_ROOT_ENTRIES):
+        return False
+    return True
 
 
 def _slugify_underscore(value: str) -> str:
@@ -276,6 +375,51 @@ def _normalize_selection_token(*, token: str, base_dir: Path, planning_dir: Path
         normalized = normalized[len(planning_rel) + 1 :]
 
     return normalized
+
+
+def _preferred_tree_root_for_feature(*, base_dir: Path, trees_dir_name: str, feature: str) -> Path:
+    normalized = trees_dir_name.strip().rstrip("/")
+    if not normalized:
+        return base_dir / "trees" / feature
+    flat_candidate = base_dir / f"{normalized}-{feature}"
+    if flat_candidate.is_dir():
+        return flat_candidate
+    return base_dir / normalized / feature
+
+
+def _existing_feature_iterations(candidates: list[tuple[str, Path]], *, feature: str) -> set[int]:
+    iterations: set[int] = set()
+    prefix = f"{feature.lower()}-"
+    for name, root in candidates:
+        lowered = str(name).strip().lower()
+        suffix = lowered[len(prefix):] if lowered.startswith(prefix) else ""
+        parsed = _parse_iteration_suffix(suffix)
+        if parsed is not None:
+            iterations.add(parsed)
+            continue
+        parsed = _parse_iteration_suffix(Path(root).name)
+        if parsed is not None:
+            iterations.add(parsed)
+    return iterations
+
+
+def _parse_iteration_suffix(value: str) -> int | None:
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return None
+    if normalized.isdigit():
+        return int(normalized)
+    match = re.fullmatch(r"iter[-_]?(\d+)", normalized)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _next_available_iteration(existing_iters: set[int]) -> int:
+    candidate = 1
+    while candidate in existing_iters:
+        candidate += 1
+    return candidate
 
 
 def _project_sort_key(project_name: str, feature: str) -> tuple[int, object]:

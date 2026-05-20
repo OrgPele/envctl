@@ -20,7 +20,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.ui.dashboard.orchestrator import DashboardOrchestrator
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.ui.dashboard.pr_flow import PrFlowResult
-from envctl_engine.state.models import RunState, ServiceRecord
+from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.ui.target_selector import TargetSelection
 
 
@@ -174,8 +174,38 @@ class _RuntimeStubMissingProjectResolver(_RuntimeStub):
 
 
 class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
-    def test_interactive_stop_defers_selection_to_lifecycle_cleanup(self) -> None:
+    @staticmethod
+    def _state_with_active_frontend_and_project_configured_services(
+        configured_services: list[str],
+        *,
+        stopped_services: list[dict[str, str]] | None = None,
+    ) -> RunState:
+        metadata: dict[str, object] = {
+            "project_roots": {"Main": "."},
+            "dashboard_project_configured_services": {"Main": configured_services},
+        }
+        if stopped_services is not None:
+            metadata["dashboard_stopped_services"] = stopped_services
+        return RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend",
+                    type="frontend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=9000,
+                    actual_port=9000,
+                    status="running",
+                ),
+            },
+            metadata=metadata,
+        )
+
+    def test_interactive_stop_shortcut_opens_scope_selector(self) -> None:
         runtime = _RuntimeStub()
+        runtime.next_selection = TargetSelection(project_names=["Dependencies only"])
         orchestrator = DashboardOrchestrator(runtime)
         state = RunState(
             run_id="run-1",
@@ -189,19 +219,185 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
                     requested_port=8000,
                     actual_port=8000,
                     status="running",
-                )
+                ),
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend",
+                    type="frontend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=9000,
+                    actual_port=9000,
+                    status="running",
+                ),
             },
+            requirements={"Main": RequirementsResult(project="Main", db={"enabled": True, "final": 5432})},
         )
         runtime._latest_state = state
 
-        should_continue, next_state = orchestrator._run_interactive_command("s", state, runtime)
+        selector_calls: list[dict[str, object]] = []
+
+        def fake_stop_selector(**kwargs):  # noqa: ANN001
+            selector_calls.append(kwargs)
+            return ["__STOP__:dependency:Main:postgres"]
+
+        out = StringIO()
+        with redirect_stdout(out), patch(
+            "envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl",
+            side_effect=fake_stop_selector,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("s", state, runtime)
 
         self.assertTrue(should_continue)
         self.assertIs(next_state, state)
         self.assertEqual(runtime.selection_calls, [])
+        self.assertEqual(len(selector_calls), 1)
+        self.assertIn("a selects all", selector_calls[0]["prompt"])
+        self.assertTrue(selector_calls[0]["multi"])
+        self.assertNotIn("exclusive_token", selector_calls[0])
+        labels = [item.label for item in selector_calls[0]["options"]]
+        self.assertIn("All resources — apps + dependencies", labels)
+        self.assertIn("Backend — Main", labels)
+        self.assertIn("Frontend — Main", labels)
+        self.assertIn("postgres", labels)
+        self.assertNotIn("Custom services/projects...", labels)
+        sections = [item.section for item in selector_calls[0]["options"]]
+        self.assertIn("Resources", sections)
         self.assertIsNotNone(runtime.last_dispatched_route)
         assert runtime.last_dispatched_route is not None
         self.assertEqual(runtime.last_dispatched_route.command, "stop")
+        self.assertEqual(runtime.last_dispatched_route.flags.get("stop_dependency_components"), ["Main:postgres"])
+        self.assertTrue(runtime.last_dispatched_route.flags.get("stop_preserve_requirements"))
+        self.assertNotIn("attach:", out.getvalue())
+
+    def test_interactive_stop_groups_resources_by_worktree_when_multiple_projects_exist(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="trees",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=100),
+                "Feature Frontend": ServiceRecord(name="Feature Frontend", type="frontend", cwd=".", pid=101),
+            },
+            requirements={
+                "Main": RequirementsResult(project="Main", db={"enabled": True, "final": 5432}),
+                "Feature": RequirementsResult(project="Feature", redis={"enabled": True, "final": 6379}),
+            },
+        )
+        runtime._latest_state = state
+        selector_calls: list[dict[str, object]] = []
+
+        def fake_stop_selector(**kwargs):  # noqa: ANN001
+            selector_calls.append(kwargs)
+            return ["__STOP__:worktree:Feature"]
+
+        with patch("envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl", side_effect=fake_stop_selector):
+            should_continue, next_state = orchestrator._run_interactive_command("s", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(len(selector_calls), 1)
+        options = selector_calls[0]["options"]
+        labels = [item.label for item in options]
+        sections = [item.section for item in options]
+        self.assertIn("▸ Main", sections)
+        self.assertIn("▸ Feature", sections)
+        self.assertIn("▸ Feature — entire worktree (apps + dependencies)", labels)
+        self.assertIn("  ↳ Frontend — Feature Frontend", labels)
+        self.assertIn("  ↳ redis", labels)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["Feature Frontend"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("stop_dependency_components"), ["Feature:redis"])
+        self.assertTrue(runtime.last_dispatched_route.flags.get("stop_preserve_requirements"))
+
+    def test_interactive_stop_all_resources_row_selects_all_single_worktree_services(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=100),
+                "Main Frontend": ServiceRecord(name="Main Frontend", type="frontend", cwd=".", pid=101),
+            },
+        )
+        runtime._latest_state = state
+        selector_calls: list[dict[str, object]] = []
+
+        def fake_stop_selector(**kwargs):  # noqa: ANN001
+            selector_calls.append(kwargs)
+            return ["__STOP__:worktree:Main"]
+
+        with patch("envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl", side_effect=fake_stop_selector):
+            should_continue, next_state = orchestrator._run_interactive_command("s", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        labels = [item.label for item in selector_calls[0]["options"]]
+        self.assertIn("All resources — apps + dependencies", labels)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["Main Backend", "Main Frontend"])
+        self.assertTrue(runtime.last_dispatched_route.flags.get("stop_preserve_requirements"))
+
+    def test_interactive_sessions_word_points_to_inline_dashboard_rows(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(run_id="run-1", mode="main")
+        runtime._latest_state = state
+
+        out = StringIO()
+        with (
+            redirect_stdout(out),
+            patch(
+                "envctl_engine.runtime.session_management.list_tmux_sessions",
+                side_effect=AssertionError("sessions command should not list tmux sessions"),
+            ),
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("sessions", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(runtime.selection_calls, [])
+        self.assertIsNone(runtime.last_dispatched_route)
+        self.assertIn("shown inline", out.getvalue())
+        self.assertNotIn("attach:", out.getvalue())
+
+    def test_interactive_kill_word_kills_ai_sessions_not_services(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=100),
+            },
+        )
+        runtime._latest_state = state
+
+        out = StringIO()
+        with (
+            redirect_stdout(out),
+            patch(
+                "envctl_engine.runtime.session_management.list_tmux_sessions",
+                return_value=[
+                    {
+                        "name": "omx-main",
+                        "windows": "sh",
+                        "attach": "tmux attach-session -t omx-main",
+                        "kill": "tmux kill-session -t omx-main",
+                    }
+                ],
+            ),
+            patch("envctl_engine.runtime.session_management.kill_session", return_value=True) as kill_session,
+            patch("envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl", return_value=["omx-main"]),
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("kill", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertIsNone(runtime.last_dispatched_route)
+        kill_session.assert_called_once_with("omx-main")
+        self.assertIn("Killing: omx-main", out.getvalue())
 
     def test_hidden_dashboard_command_is_rejected_without_dispatch(self) -> None:
         runtime = _RuntimeStub()
@@ -671,6 +867,299 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         self.assertEqual(updated.flags.get("services"), ["Main Backend"])
         self.assertEqual(updated.flags.get("restart_service_types"), ["backend"])
         self.assertFalse(bool(updated.flags.get("restart_include_requirements")))
+
+    def test_interactive_restart_can_start_stopped_service_from_resource_selector(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+            },
+            requirements={"Main": RequirementsResult(project="Main", db={"enabled": True, "final": 5432})},
+            metadata={
+                "dashboard_stopped_services": [
+                    {"name": "Main Frontend", "project": "Main", "type": "frontend"},
+                ],
+                "dashboard_configured_service_types": ["backend", "frontend"],
+            },
+        )
+        runtime._latest_state = state
+        selector_calls: list[dict[str, object]] = []
+
+        def fake_restart_selector(**kwargs: object) -> list[str]:
+            selector_calls.append(kwargs)
+            return ["__RESTART__:service:Main Frontend"]
+
+        with patch(
+            "envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl",
+            side_effect=fake_restart_selector,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("r", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(runtime.selection_calls, [])
+        self.assertEqual(len(selector_calls), 1)
+        self.assertIn("a selects all", selector_calls[0]["prompt"])
+        labels = [item.label for item in selector_calls[0]["options"]]
+        self.assertIn("All resources — apps + dependencies", labels)
+        self.assertIn("Backend — Main", labels)
+        self.assertIn("Frontend — Main (stopped)", labels)
+        self.assertIn("postgres", labels)
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.command, "restart")
+        self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["Main Frontend"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("restart_service_types"), ["frontend"])
+        self.assertFalse(bool(runtime.last_dispatched_route.flags.get("restart_include_requirements")))
+
+    def test_interactive_restart_offers_running_dependencies_even_without_stopped_services(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                ),
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend",
+                    type="frontend",
+                    cwd=".",
+                    pid=101,
+                    requested_port=9000,
+                    actual_port=9000,
+                    status="running",
+                ),
+            },
+            requirements={
+                "Main": RequirementsResult(
+                    project="Main",
+                    redis={"enabled": True, "runtime_status": "healthy", "final": 6379, "success": True},
+                    n8n={"enabled": True, "runtime_status": "healthy", "final": 5678, "success": True},
+                )
+            },
+        )
+        runtime._latest_state = state
+        selector_calls: list[dict[str, object]] = []
+
+        def fake_restart_selector(**kwargs: object) -> list[str]:
+            selector_calls.append(kwargs)
+            return ["__RESTART__:dependency:Main:redis"]
+
+        with patch(
+            "envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl",
+            side_effect=fake_restart_selector,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("r", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(runtime.selection_calls, [])
+        labels = [item.label for item in selector_calls[0]["options"]]
+        self.assertIn("redis", labels)
+        self.assertIn("n8n", labels)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("services"), [])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("restart_service_types"), [])
+        self.assertTrue(runtime.last_dispatched_route.flags.get("restart_include_requirements"))
+
+    def test_interactive_restart_offers_project_configured_missing_backend(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = self._state_with_active_frontend_and_project_configured_services(["backend", "frontend"])
+        runtime._latest_state = state
+        selector_calls: list[dict[str, object]] = []
+
+        def fake_restart_selector(**kwargs: object) -> list[str]:
+            selector_calls.append(kwargs)
+            return ["__RESTART__:service:Main Backend"]
+
+        with patch(
+            "envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl",
+            side_effect=fake_restart_selector,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("r", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        self.assertEqual(runtime.selection_calls, [])
+        self.assertEqual(len(selector_calls), 1)
+        labels = [item.label for item in selector_calls[0]["options"]]
+        self.assertIn("Backend — Main (stopped)", labels)
+        self.assertIn("Frontend — Main", labels)
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.command, "restart")
+        self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["Main Backend"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("restart_service_types"), ["backend"])
+        self.assertFalse(bool(runtime.last_dispatched_route.flags.get("restart_include_requirements")))
+
+    def test_interactive_restart_does_not_offer_unconfigured_missing_backend(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = self._state_with_active_frontend_and_project_configured_services(["frontend"])
+        route = Route(command="restart", mode="main", raw_args=["restart"], passthrough_args=[], projects=[], flags={})
+
+        updated = orchestrator._apply_restart_selection(route, state, runtime)
+
+        self.assertIsNotNone(updated)
+        self.assertNotIn("Main Backend", updated.flags.get("services", []))  # type: ignore[union-attr]
+
+    def test_restart_services_merges_configured_missing_and_stopped_services_without_duplicates(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = self._state_with_active_frontend_and_project_configured_services(
+            ["backend", "frontend"],
+            stopped_services=[
+                {"name": "Main Backend", "project": "Main", "type": "backend"},
+            ],
+        )
+
+        self.assertEqual(
+            orchestrator._restart_services_by_project(state, runtime),
+            {"Main": [("Main Backend", "backend", True), ("Main Frontend", "frontend", False)]},
+        )
+
+    def test_restart_selector_offers_configured_missing_additional_service(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = self._state_with_active_frontend_and_project_configured_services(["backend", "frontend", "voice-runtime"])
+        runtime._latest_state = state
+        selector_calls: list[dict[str, object]] = []
+
+        def fake_restart_selector(**kwargs: object) -> list[str]:
+            selector_calls.append(kwargs)
+            return ["__RESTART__:service:Main Voice Runtime"]
+
+        with patch(
+            "envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl",
+            side_effect=fake_restart_selector,
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("r", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        labels = [item.label for item in selector_calls[0]["options"]]
+        self.assertIn("Voice Runtime — Main (stopped)", labels)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.projects, ["Main"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("services"), ["Main Voice Runtime"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("restart_service_types"), ["voice-runtime"])
+
+    def test_restart_selector_uses_service_record_project_for_active_additional_service(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        project_name = "refactoring_app_bootstrap_performance_redesign-1"
+        state = RunState(
+            run_id="run-trees",
+            mode="trees",
+            services={
+                f"{project_name} Voice Runtime": ServiceRecord(
+                    name=f"{project_name} Voice Runtime",
+                    type="voice-runtime",
+                    cwd=".",
+                    pid=101,
+                    requested_port=8117,
+                    actual_port=8117,
+                    status="running",
+                    project=project_name,
+                    service_slug="voice-runtime",
+                ),
+            },
+            requirements={
+                project_name: RequirementsResult(
+                    project=project_name,
+                    redis={"enabled": True, "success": True, "final": 6485},
+                ),
+            },
+            metadata={"project_roots": {project_name: "."}},
+        )
+        runtime._latest_state = state
+
+        with patch(
+            "envctl_engine.ui.dashboard.orchestrator._run_selector_with_impl",
+            return_value=[f"__RESTART__:service:{project_name} Voice Runtime"],
+        ):
+            should_continue, next_state = orchestrator._run_interactive_command("r", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertIs(next_state, state)
+        assert runtime.last_dispatched_route is not None
+        self.assertEqual(runtime.last_dispatched_route.projects, [project_name])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("services"), [f"{project_name} Voice Runtime"])
+        self.assertEqual(runtime.last_dispatched_route.flags.get("restart_service_types"), ["voice-runtime"])
+
+    def test_service_names_for_projects_and_types_filters_configured_missing_services(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = self._state_with_active_frontend_and_project_configured_services(["backend", "frontend"])
+
+        self.assertEqual(
+            orchestrator._service_names_for_projects_and_types(
+                state,
+                runtime,
+                project_names=["Main"],
+                service_types=["backend"],
+            ),
+            ["Main Backend"],
+        )
+        self.assertEqual(
+            orchestrator._service_names_for_projects_and_types(
+                state,
+                runtime,
+                project_names=["Other"],
+                service_types=["backend", "frontend"],
+            ),
+            [],
+        )
+
+    def test_configured_missing_restart_event_is_emitted_only_when_missing_services_exist(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime._emit = lambda event, **payload: events.append((event, payload))  # type: ignore[method-assign]
+
+        configured_state = self._state_with_active_frontend_and_project_configured_services(["backend", "frontend"])
+        orchestrator._restart_services_by_project(configured_state, runtime)
+        self.assertEqual(
+            events,
+            [
+                (
+                    "dashboard.restart.configured_missing_offered",
+                    {
+                        "run_id": "run-1",
+                        "services": {"Main": ["backend"]},
+                        "metadata_key": "dashboard_project_configured_services",
+                    },
+                )
+            ],
+        )
+
+        events.clear()
+        frontend_only_state = self._state_with_active_frontend_and_project_configured_services(["frontend"])
+        orchestrator._restart_services_by_project(frontend_only_state, runtime)
+        self.assertEqual(events, [])
 
     def test_interactive_shortcuts_map_to_action_commands(self) -> None:
         runtime = _RuntimeStub()
@@ -2147,7 +2636,10 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         rendered = strip_ansi(out.getvalue())
         self.assertNotIn("Test failure summary for Main:", rendered)
         self.assertNotIn("/tmp/runtime/run_1/ft_deadbeef00.txt", rendered)
-        self.assertEqual(runtime.read_prompts, ["Press Enter to return to dashboard: "])
+        self.assertEqual(
+            runtime.read_prompts,
+            ["Press Enter to return to dashboard (manual confirmation required): "],
+        )
 
     def test_interactive_test_success_pauses_before_returning_to_dashboard(self) -> None:
         runtime = _RuntimeStub()
@@ -2173,7 +2665,10 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
 
         self.assertTrue(should_continue)
         self.assertEqual(next_state.run_id, "run-1")
-        self.assertEqual(runtime.read_prompts, ["Press Enter to return to dashboard: "])
+        self.assertEqual(
+            runtime.read_prompts,
+            ["Press Enter to return to dashboard (manual confirmation required): "],
+        )
 
     def test_interactive_test_interrupt_returns_to_dashboard_without_failure_summary_block(self) -> None:
         runtime = _RuntimeStub()
@@ -2210,7 +2705,41 @@ class DashboardOrchestratorRestartSelectorTests(unittest.TestCase):
         rendered = out.getvalue()
         self.assertNotIn("Command failed (exit 1).", rendered)
         self.assertNotIn("Test failure summary for Main:", rendered)
-        self.assertEqual(runtime.read_prompts, ["Press Enter to return to dashboard: "])
+        self.assertEqual(
+            runtime.read_prompts,
+            ["Press Enter to return to dashboard (manual confirmation required): "],
+        )
+
+    def test_interactive_errors_pauses_before_returning_to_dashboard(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = DashboardOrchestrator(runtime)
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=100,
+                    requested_port=8000,
+                    actual_port=8000,
+                    status="running",
+                )
+            },
+        )
+        runtime._latest_state = state
+
+        should_continue, next_state = orchestrator._run_interactive_command("e", state, runtime)
+
+        self.assertTrue(should_continue)
+        self.assertEqual(next_state.run_id, "run-1")
+        self.assertIsNotNone(runtime.last_dispatched_route)
+        self.assertEqual(runtime.last_dispatched_route.command, "errors")
+        self.assertEqual(
+            runtime.read_prompts,
+            ["Press Enter to return to dashboard (manual confirmation required): "],
+        )
 
     def test_interactive_migrate_failure_prints_summary_and_failure_log_path(self) -> None:
         runtime = _RuntimeStub()

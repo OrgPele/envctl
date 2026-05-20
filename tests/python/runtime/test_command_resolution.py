@@ -62,6 +62,130 @@ class CommandResolutionTests(unittest.TestCase):
             self.assertEqual(result.source, "configured")
             self.assertEqual(result.command, ["venv/bin/python", "app.py"])
 
+    def test_configured_command_rejects_env_assignment_prefix_with_targeted_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            with self.assertRaises(CommandResolutionError) as cm:
+                resolve_service_start_command(
+                    service_name="frontend",
+                    project_root=root,
+                    port=9000,
+                    env={"ENVCTL_FRONTEND_START_CMD": "VITE_API_URL=http://localhost:8000 npm run dev"},
+                    config_raw={},
+                    command_exists=lambda exe: exe == "npm",
+                )
+
+            self.assertEqual(cm.exception.code, "unsupported_command_env_prefix")
+            self.assertIn("Use service env overlays", str(cm.exception))
+
+    def test_configured_command_allows_explicit_shell_wrapper_for_env_assignment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            result = resolve_service_start_command(
+                service_name="frontend",
+                project_root=root,
+                port=9000,
+                env={"ENVCTL_FRONTEND_START_CMD": "sh -c 'VITE_API_URL=http://localhost:8000 npm run dev'"},
+                config_raw={},
+                command_exists=lambda exe: exe == "sh",
+            )
+
+            self.assertEqual(result.command[:2], ["sh", "-c"])
+
+    def test_configured_backend_generic_python_uses_prepared_venv_python(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            backend = root / "backend"
+            (backend / "venv" / "bin").mkdir(parents=True, exist_ok=True)
+            backend_python = backend / "venv" / "bin" / "python"
+            backend_python.write_text("", encoding="utf-8")
+
+            result = resolve_service_start_command(
+                service_name="backend",
+                project_root=root,
+                port=8000,
+                env={},
+                config_raw={
+                    "BACKEND_DIR": "backend",
+                    "ENVCTL_BACKEND_START_CMD": "python -m uvicorn app.main:app --host 127.0.0.1 --port {port}",
+                },
+                command_exists=lambda exe: exe in {"python", "python3", "python3.12"},
+            )
+
+            self.assertEqual(result.source, "configured")
+            self.assertEqual(Path(result.command[0]).resolve(), backend_python.resolve())
+            self.assertEqual(result.command[1:4], ["-m", "uvicorn", "app.main:app"])
+            self.assertIn("8000", result.command)
+
+    def test_configured_backend_generic_python_uses_poetry_runner_when_prepared(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            backend = root / "backend"
+            backend.mkdir(parents=True, exist_ok=True)
+            (backend / "pyproject.toml").write_text("[tool.poetry]\nname='demo'\n", encoding="utf-8")
+
+            result = resolve_service_start_command(
+                service_name="backend",
+                project_root=root,
+                port=8000,
+                env={},
+                config_raw={
+                    "BACKEND_DIR": "backend",
+                    "ENVCTL_BACKEND_START_CMD": "python -m uvicorn app.main:app --host 127.0.0.1 --port {port}",
+                },
+                command_exists=lambda exe: exe == "poetry",
+            )
+
+            self.assertEqual(result.source, "configured")
+            self.assertEqual(result.command[:5], ["poetry", "run", "python", "-m", "uvicorn"])
+            self.assertIn("8000", result.command)
+
+    def test_configured_backend_command_rejects_missing_backend_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".omx").mkdir(parents=True, exist_ok=True)
+
+            with self.assertRaises(CommandResolutionError) as cm:
+                resolve_service_start_command(
+                    service_name="backend",
+                    project_root=root,
+                    port=8000,
+                    env={},
+                    config_raw={
+                        "BACKEND_DIR": "backend",
+                        "ENVCTL_BACKEND_START_CMD": "python -m uvicorn app.main:app --host 127.0.0.1 --port {port}",
+                    },
+                    command_exists=lambda exe: exe in {"python", "python3", "python3.12"},
+                )
+
+            self.assertEqual(cm.exception.code, "missing_service_directory")
+            self.assertIn("Configured backend directory not found", str(cm.exception))
+            self.assertIn(str(root / "backend"), str(cm.exception))
+
+    def test_configured_backend_explicit_runner_is_not_rewritten(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            backend = root / "backend"
+            backend.mkdir(parents=True, exist_ok=True)
+            (backend / "pyproject.toml").write_text("[tool.poetry]\nname='demo'\n", encoding="utf-8")
+
+            result = resolve_service_start_command(
+                service_name="backend",
+                project_root=root,
+                port=8000,
+                env={},
+                config_raw={
+                    "BACKEND_DIR": "backend",
+                    "ENVCTL_BACKEND_START_CMD": "poetry run uvicorn app.main:app --port {port}",
+                },
+                command_exists=lambda exe: exe == "poetry",
+            )
+
+            self.assertEqual(result.source, "configured")
+            self.assertEqual(result.command[:3], ["poetry", "run", "uvicorn"])
+
     def test_service_resolution_prefers_backend_venv_python_when_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

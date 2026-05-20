@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os as _os
 import shutil as _shutil
 import sys as _sys
 import uuid
@@ -125,6 +126,7 @@ from envctl_engine.runtime.engine_runtime_env import (
     project_service_env_internal as runtime_project_service_env_internal,
     requirement_enabled_for_mode as runtime_requirement_enabled_for_mode,
     requirements_ready as runtime_requirements_ready,
+    service_env_overlays as runtime_service_env_overlays,
     service_enabled_for_mode as runtime_service_enabled_for_mode,
     runtime_env_overrides as runtime_env_overrides,
     skipped_requirement as runtime_skipped_requirement,
@@ -159,6 +161,7 @@ from envctl_engine.runtime.engine_runtime_service_truth import (
 )
 from envctl_engine.runtime.engine_runtime_service_policy import (
     service_listener_timeout as runtime_service_listener_timeout,
+    service_startup_progress_timeout as runtime_service_startup_progress_timeout,
     service_rebound_max_delta as runtime_service_rebound_max_delta,
     service_startup_grace_seconds as runtime_service_startup_grace_seconds,
     service_truth_timeout as runtime_service_truth_timeout,
@@ -203,8 +206,8 @@ from envctl_engine.runtime.command_router import (
     MODE_MAIN_TOKENS,
     MODE_TREE_TOKENS,
     Route,
-    list_supported_commands,
 )
+from envctl_engine.runtime.help_text import render_help_text as runtime_render_help_text
 from envctl_engine.config.command_support import run_config_command
 from envctl_engine.config import EngineConfig
 from envctl_engine.shared.hooks import HookInvocationResult
@@ -212,6 +215,7 @@ from envctl_engine.runtime.lifecycle_cleanup_orchestrator import LifecycleCleanu
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
 from envctl_engine.state.runtime_map import build_runtime_map as build_runtime_map
 from envctl_engine.shared.ports import PortPlanner
+from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.shared.process_probe import (
     ProcessProbe,
     ProbeBackend,
@@ -299,6 +303,11 @@ from envctl_engine.planning.worktree_orchestrator import PlanningWorktreeOrchest
 shutil = _shutil
 sys = _sys
 PsutilProbeBackend = _PsutilProbeBackend
+
+
+
+def _render_help_text(route: Route | None) -> str:
+    return runtime_render_help_text(route)
 
 
 @dataclass(slots=True)
@@ -405,6 +414,12 @@ class PythonEngineRuntime:
             db_base=config.db_port_base,
             redis_base=config.redis_port_base,
             n8n_base=config.n8n_port_base,
+            supabase_api_base=config.port_defaults.dependency_port("supabase", "api"),
+            additional_service_bases={
+                service.name: int(service.port_base)
+                for service in getattr(config, "additional_services", ())
+                if getattr(service, "port_base", None)
+            },
             lock_dir=str(self.runtime_root / "locks"),
             event_handler=self._on_port_event,
             availability_mode=config.port_availability_mode,
@@ -413,6 +428,11 @@ class PythonEngineRuntime:
                 config.raw.get("ENVCTL_PORT_PREFERRED_STRATEGY", "project_slot"),
             ),
             scope_key=config.runtime_scope_id,
+            dynamic_main_dependency_ports=parse_bool(
+                self.env.get("ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS")
+                or config.raw.get("ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS"),
+                config.db_port_base == 5432 and config.redis_port_base == 6379,
+            ),
         )
         self.requirements = RequirementsOrchestrator()
         self.services = ServiceManager()
@@ -548,12 +568,28 @@ class PythonEngineRuntime:
         scoped_locks = self.runtime_root / "locks"
         scoped_locks.mkdir(parents=True, exist_ok=True)
         legacy_locks = self.runtime_legacy_root / "locks"
+        if legacy_locks.is_symlink():
+            if legacy_locks.resolve(strict=False) == scoped_locks.resolve(strict=False):
+                return
+            try:
+                legacy_locks.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                return
         if legacy_locks.exists():
             return
         try:
             legacy_locks.symlink_to(scoped_locks, target_is_directory=True)
+        except FileExistsError:
+            return
         except OSError:
-            legacy_locks.mkdir(parents=True, exist_ok=True)
+            if _os.path.lexists(legacy_locks):
+                return
+            try:
+                legacy_locks.mkdir(parents=True, exist_ok=True)
+            except FileExistsError:
+                return
 
     def add_emit_listener(self, listener: Callable[[str, dict[str, object]], None]) -> Callable[[], None]:
         self._emit_listeners.append(listener)
@@ -675,8 +711,8 @@ class PythonEngineRuntime:
     def _discover_projects(self, *, mode: str) -> list[ProjectContext]:
         return runtime_discover_projects(self, mode=mode, context_factory=ProjectContext)  # type: ignore[return-value]
 
-    def _reserve_project_ports(self, context: ProjectContext) -> None:
-        runtime_reserve_project_ports(self, context)
+    def _reserve_project_ports(self, context: ProjectContext, route: Route | None = None) -> None:
+        runtime_reserve_project_ports(self, context, route=route)
 
     def _start_requirements_for_project(
         self,
@@ -726,11 +762,8 @@ class PythonEngineRuntime:
     def _print_summary(self, state: RunState, contexts: list[ProjectContext]) -> None:
         runtime_print_summary(self, state, contexts)
 
-    def _print_help(self) -> None:
-        print("envctl Python runtime")
-        print("Commands: " + ", ".join(list_supported_commands()))
-        print("Mode flags: --main, --tree, --trees, trees=true, main=true")
-        print("Non-interactive: --headless (preferred), --batch (compatibility alias)")
+    def _print_help(self, route: Route | None = None) -> None:
+        print(_render_help_text(route))
 
     def _config(self, route: Route) -> int:
         return run_config_command(self, route)
@@ -1413,6 +1446,9 @@ class PythonEngineRuntime:
     ) -> dict[str, str]:
         return runtime_project_service_env_internal(self, context, requirements=requirements, route=route)
 
+    def _service_env_overlays(self, *, service_name: str, base_env: Mapping[str, str]) -> dict[str, str]:
+        return runtime_service_env_overlays(self, service_name=service_name, base_env=base_env)
+
     def _runtime_env_overrides(self, route: Route | None) -> dict[str, str]:
         return runtime_env_overrides(route)
 
@@ -1464,8 +1500,12 @@ class PythonEngineRuntime:
     def _supabase_reinit_required_message() -> str:
         return runtime_supabase_reinit_required_message()
 
-    def _run_supabase_reinit(self, *, project_root: Path, project_name: str, db_port: int) -> str | None:
-        return runtime_run_supabase_reinit(self, project_root=project_root, project_name=project_name, db_port=db_port)
+    def _run_supabase_reinit(
+        self, *, project_root: Path, project_name: str, db_port: int, public_port: int | None = None
+    ) -> str | None:
+        return runtime_run_supabase_reinit(
+            self, project_root=project_root, project_name=project_name, db_port=db_port, public_port=public_port
+        )
 
     @staticmethod
     def _command_result_error_text(*, result: object) -> str:
@@ -1495,6 +1535,7 @@ class PythonEngineRuntime:
         service_name: str,
         debug_listener_group: str = "",
         debug_pid_wait_group: str = "",
+        log_path: str | None = None,
     ) -> int | None:
         return runtime_detect_service_actual_port(
             self,
@@ -1503,6 +1544,7 @@ class PythonEngineRuntime:
             service_name=service_name,
             debug_listener_group=debug_listener_group,
             debug_pid_wait_group=debug_pid_wait_group,
+            log_path=log_path,
         )
 
     def _service_rebound_max_delta(self) -> int:
@@ -1510,6 +1552,9 @@ class PythonEngineRuntime:
 
     def _service_listener_timeout(self) -> float:
         return runtime_service_listener_timeout(self)
+
+    def _service_startup_progress_timeout(self) -> float:
+        return runtime_service_startup_progress_timeout(self)
 
     def _dashboard_truth_refresh_seconds(self) -> float:
         return runtime_dashboard_truth_refresh_seconds(self)
@@ -1599,8 +1644,9 @@ class PythonEngineRuntime:
         *,
         port: int | None = None,
         replacements: Mapping[str, str] | None = None,
+        cwd: str | Path | None = None,
     ) -> list[str]:
-        return runtime_split_command(self, raw, port=port, replacements=replacements)
+        return runtime_split_command(self, raw, port=port, replacements=replacements, cwd=cwd)
 
     def _command_env(self, *, port: int, extra: Mapping[str, str] | None = None) -> dict[str, str]:
         return runtime_command_env(self, port=port, extra=extra)

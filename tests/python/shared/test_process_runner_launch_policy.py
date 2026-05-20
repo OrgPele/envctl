@@ -34,6 +34,7 @@ class ProcessRunnerLaunchPolicyTests(unittest.TestCase):
 
         kwargs = popen_mock.call_args.kwargs
         self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
+        self.assertTrue(bool(kwargs["start_new_session"]))
         self.assertTrue(any(name == "process.launch" for name, _payload in events))
         launch_event = [payload for name, payload in events if name == "process.launch"][-1]
         self.assertEqual(launch_event["launch_intent"], "background_service")

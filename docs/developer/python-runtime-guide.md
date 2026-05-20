@@ -332,7 +332,9 @@ Current design intent:
 - progress helpers decide how to report it
 - shared spinner group code owns rich progress UI and lifecycle events
 
-That separation matters for maintainability and for interactive diagnostics. Avoid re-embedding spinner or progress-print logic directly into orchestration branches.
+Status glyph ownership is centralized under `ui/status_symbols.py`. Envctl-owned terminal and dashboard status lines use `✓` for success/good/running, `✗` for failure/error/stale/unreachable, `•` or `~` for starting/unknown/simulated, and `○` only for neutral stopped/configured or selector-style states. Orchestration code should emit semantic events or statuses such as `ui.status`, `state.action.start`, or lifecycle events; it should not hard-code spinner frames or legacy `+`/`!` status prefixes.
+
+That separation matters for maintainability and for interactive diagnostics. Avoid re-embedding spinner, glyph, or progress-print logic directly into orchestration branches.
 
 ## Resume Architecture
 

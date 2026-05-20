@@ -21,6 +21,7 @@ from .common import (
     container_host_port,
     container_state_error,
     container_status,
+    docker_port_publish_lock,
     is_bind_conflict,
     is_missing_port_mapping_error,
     run_docker,
@@ -439,13 +440,14 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
                 stage="start.inspect.failed",
             )
         if status != "running":
-            start_result, start_error = run_docker(
-                template.process_runner,
-                ["start", template.container_name],
-                cwd=template.project_root,
-                env=template.env,
-                timeout=120.0,
-            )
+            with docker_port_publish_lock(template.env):
+                start_result, start_error = run_docker(
+                    template.process_runner,
+                    ["start", template.container_name],
+                    cwd=template.project_root,
+                    env=template.env,
+                    timeout=120.0,
+                )
             if start_result is None:
                 state_error_text, _ = container_state_error(
                     template.process_runner,
@@ -546,6 +548,15 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
                         failure_class=reason_code_to_string(RequirementLifecycleReason.BIND_CONFLICT_RETRYABLE),
                         stage="start.bind_conflict.unresolved",
                     )
+                if template.retryable_probe_error(create_error):
+                    return _failure(
+                        create_error,
+                        reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
+                        failure_class=reason_code_to_string(
+                            RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE
+                        ),
+                        stage="start.create.probe_timeout",
+                    )
                 return _failure(
                     create_error,
                     reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
@@ -562,8 +573,11 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
     )
     listener_wait_ms += _add_stage_duration("listener_wait", listener_started)
     listener_error = f"probe timeout waiting for readiness on port {effective_port}"
+    probe_error_text = listener_error
+    local_settle_attempted = False
     if not listener_ready:
         if timeout_recovered_create or port_adopted:
+            local_settle_attempted = True
             settled, settled_error = _attempt_local_settle(
                 listener_ready=False,
                 probe_error_text=listener_error,
@@ -589,12 +603,14 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
                         port_mismatch_action=mismatch_action,
                     )
                 )
-            return _failure(
-                settled_error,
-                reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
-                failure_class=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
-                stage="probe.timeout_recovered_create.failed",
-            )
+            probe_error_text = settled_error
+            if not template.restart_on_listener_timeout:
+                return _failure(
+                    settled_error,
+                    reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
+                    failure_class=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
+                    stage="probe.timeout_recovered_create.failed",
+                )
         if not template.restart_on_listener_timeout:
             return _failure(
                 listener_error,
@@ -603,7 +619,6 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
                 stage="probe.listener_timeout",
             )
 
-    probe_error_text = listener_error
     if listener_ready:
         probe_started = time.monotonic()
         ready, probe_error_text = template.probe_readiness(template.probe_attempts)
@@ -623,7 +638,7 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
             )
 
     retryable = template.retryable_probe_error(probe_error_text)
-    if (timeout_recovered_create or port_adopted) and retryable:
+    if (timeout_recovered_create or port_adopted) and retryable and not local_settle_attempted:
         settled, settled_error = _attempt_local_settle(
             listener_ready=True,
             probe_error_text=probe_error_text,
@@ -659,13 +674,14 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
             reason=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
         )
         restart_started = time.monotonic()
-        restart_result, restart_error = run_docker(
-            template.process_runner,
-            ["restart", template.container_name],
-            cwd=template.project_root,
-            env=template.env,
-            timeout=120.0,
-        )
+        with docker_port_publish_lock(template.env):
+            restart_result, restart_error = run_docker(
+                template.process_runner,
+                ["restart", template.container_name],
+                cwd=template.project_root,
+                env=template.env,
+                timeout=120.0,
+            )
         if restart_result is None:
             _add_stage_duration("restart", restart_started)
             detail = (restart_error or "").strip()
@@ -751,14 +767,25 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
             if recreate_error:
                 if not (timeout_error(recreate_error) and _recover_timeout_created_container(recreate=True)):
                     _add_stage_duration("recreate", recreate_started)
+                    if template.retryable_probe_error(recreate_error):
+                        return _failure(
+                            f"failed recreating {template.service_name} container: {recreate_error}",
+                            reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
+                            failure_class=reason_code_to_string(
+                                RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE
+                            ),
+                            stage="probe.retry.recreate.probe_timeout",
+                        )
                     return _failure(
                         f"failed recreating {template.service_name} container: {recreate_error}",
                         reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
                         stage="probe.retry.recreate.failed",
                     )
-            elif not port_adopted:
+            else:
                 effective_port = int(template.port)
                 port_adopted = False
+                if mismatch_action == "adopt_existing":
+                    mismatch_action = "recreate_after_adopted_existing_unreachable"
             recreate_listener_started = time.monotonic()
             recreate_listener_ready = wait_for_port_ready(
                 template.process_runner,

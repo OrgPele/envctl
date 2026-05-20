@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -42,6 +44,22 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
         path = worktree_root / ".envctl-state" / "worktree-provenance.json"
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def _worktree_add_index(self, command: list[str]) -> int:
+        try:
+            index = command.index("worktree")
+        except ValueError as exc:
+            raise AssertionError(f"not a worktree command: {command}") from exc
+        self.assertLess(index + 1, len(command))
+        self.assertEqual(command[index + 1], "add")
+        return index
+
+    def _assert_hooks_disabled_for_worktree_add(self, command: list[str]) -> None:
+        c_index = command.index("-C")
+        self.assertEqual(command[c_index - 2 : c_index], ["-c", "core.hooksPath=/dev/null"])
+
+    def _assert_hooks_inherited_for_worktree_add(self, command: list[str]) -> None:
+        self.assertNotIn("core.hooksPath=/dev/null", command)
+
     def test_invalid_planning_selection_is_strict_and_no_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -62,6 +80,88 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
 
             self.assertEqual(selected, [])
             self.assertIn("Planning file not found", out.getvalue())
+
+    def test_plan_selection_uses_execution_root_plans_from_linked_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            runtime = root / "runtime"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\n", encoding="utf-8")
+            (worktree / "todo" / "plans" / "features").mkdir(parents=True, exist_ok=True)
+            (worktree / "todo" / "plans" / "features" / "task.md").write_text("# task\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            engine = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_EXECUTION_ROOT": str(worktree),
+                    "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                },
+            )
+            route = parse_route(["--plan", "features/task"], env={})
+
+            selected = engine._select_plan_projects(route, [])
+
+            self.assertEqual(engine.config.base_dir, repo.resolve())
+            self.assertEqual(engine.config.planning_dir, (worktree / "todo" / "plans").resolve())
+            self.assertEqual([ctx.name for ctx in selected], ["features_task-1"])
+            self.assertEqual(
+                (repo / "trees" / "features_task" / "1" / "MAIN_TASK.md").read_text(encoding="utf-8"),
+                "# task\n",
+            )
+
+
+    def test_interactive_plan_dry_run_previews_without_syncing_worktrees_or_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = self._runtime(repo, runtime)
+            orchestrator = engine.planning_worktree_orchestrator
+            route = parse_route(["--plan", "--dry-run"], env={})
+            sync_calls: list[dict[str, int]] = []
+            save_calls: list[dict[str, int]] = []
+
+            def fake_menu(
+                planning_files: list[str],
+                selected_counts: dict[str, int],
+                existing_counts: dict[str, int],
+            ) -> dict[str, int]:
+                self.assertEqual(planning_files, ["feature/task.md"])
+                self.assertEqual(existing_counts, {"feature/task.md": 0})
+                return {"feature/task.md": 1}
+
+            def fake_sync(**kwargs: object) -> object:
+                sync_calls.append(dict(kwargs["plan_counts"]))  # type: ignore[index,arg-type]
+                return engine._sync_plan_worktrees_from_plan_counts(**kwargs)  # type: ignore[arg-type]
+
+            def fake_save(chosen: dict[str, int]) -> None:
+                save_calls.append(dict(chosen))
+
+            with (
+                patch.object(orchestrator, "_run_planning_selection_menu", side_effect=fake_menu),
+                patch.object(orchestrator, "_sync_plan_worktrees_from_plan_counts", side_effect=fake_sync),
+                patch.object(orchestrator, "_save_plan_selection_memory", side_effect=fake_save),
+                patch.object(sys.stdin, "isatty", return_value=True),
+                patch.object(sys.stdout, "isatty", return_value=True),
+            ):
+                selected = engine._select_plan_projects(route, [])
+
+            self.assertEqual([ctx.name for ctx in selected], ["feature_task-1"])
+            self.assertEqual(sync_calls, [])
+            self.assertEqual(save_calls, [])
+            self.assertFalse((repo / "trees" / "feature_task" / "1").exists())
+            result = orchestrator.last_plan_selection_result()
+            self.assertEqual([worktree.name for worktree in result.created_worktrees], ["feature_task-1"])
 
     def test_plan_selection_creates_missing_worktrees_for_requested_count(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -347,8 +447,12 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             (repo / "backend" / "venv").mkdir(parents=True, exist_ok=True)
             (repo / "backend" / ".env").write_text("ENVIRONMENT=development\n", encoding="utf-8")
             (repo / "frontend" / "node_modules").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena" / "project.yml").write_text('project_name: "repo"\n', encoding="utf-8")
+            (repo / ".serena" / ".gitignore").write_text("memories/\n", encoding="utf-8")
+            (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
 
-            engine = self._runtime(repo, runtime)
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "false"})
 
             def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
                 _ = cwd, env, timeout
@@ -357,10 +461,13 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
                 if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
-                if command[3:6] == ["worktree", "add", "-b"]:
-                    self.assertEqual(command[6], "feature-a-1")
-                    self.assertEqual(command[8], "origin/dev")
-                    target = Path(command[7])
+                if "worktree" in command:
+                    index = self._worktree_add_index(command)
+                    self._assert_hooks_disabled_for_worktree_add(command)
+                    self.assertEqual(command[index + 2], "-b")
+                    self.assertEqual(command[index + 3], "feature-a-1")
+                    self.assertEqual(command[index + 5], "origin/dev")
+                    target = Path(command[index + 4])
                     target.mkdir(parents=True, exist_ok=True)
                     (target / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
@@ -378,10 +485,537 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             )
             self.assertTrue((repo / "trees" / "feature-a" / "1" / "backend" / ".env").is_symlink())
             self.assertTrue((repo / "trees" / "feature-a" / "1" / "frontend" / "node_modules").is_symlink())
+            self.assertEqual(
+                (repo / "trees" / "feature-a" / "1" / ".serena" / "project.yml").read_text(encoding="utf-8"),
+                'project_name: "repo-feature-a-1"\n',
+            )
+            self.assertEqual(
+                (repo / "trees" / "feature-a" / "1" / ".serena" / ".gitignore").read_text(encoding="utf-8"),
+                "memories/\n",
+            )
+            self.assertEqual(
+                (repo / "trees" / "feature-a" / "1" / ".cgcignore").read_text(encoding="utf-8"),
+                ".git/\n",
+            )
             provenance = self._read_provenance(repo / "trees" / "feature-a" / "1")
             self.assertEqual(provenance.get("source_branch"), "dev")
             self.assertEqual(provenance.get("source_ref"), "origin/dev")
             self.assertEqual(provenance.get("resolution_reason"), "attached_branch")
+            metadata = json.loads(
+                (repo / "trees" / "feature-a" / "1" / ".envctl-state" / "code-intelligence.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(metadata.get("schema_version"), 1)
+            self.assertEqual(metadata.get("serena_project_name"), "repo-feature-a-1")
+            self.assertEqual(metadata.get("cgc_context"), "Repo-feature-a-1")
+            self.assertEqual(
+                metadata.get("files"),
+                {
+                    ".serena/project.yml": True,
+                    ".serena/.gitignore": True,
+                    ".cgcignore": True,
+                },
+            )
+            self.assertFalse(metadata.get("cgc_index_requested"))
+
+    def test_setup_worktree_can_disable_code_intelligence_bootstrap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena" / "project.yml").write_text('project_name: "repo"\n', encoding="utf-8")
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CODE_INTELLIGENCE": "off"})
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+
+            error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertFalse((target_root / ".serena" / "project.yml").exists())
+
+    def test_setup_worktree_can_run_cgc_index_for_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
+            cgc_calls: list[tuple[list[str], Path | None]] = []
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true"})
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = env, timeout
+                command = [str(token) for token in cmd]
+                if command[:3] == ["cgc", "context", "create"]:
+                    cgc_calls.append((command, cwd))
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="created\n", stderr="")
+                if command[:2] == ["cgc", "index"]:
+                    cgc_calls.append((command, cwd))
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=True):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertEqual(len(cgc_calls), 2)
+            self.assertEqual(
+                cgc_calls[0][0],
+                ["cgc", "context", "create", "Repo-feature-a-1", "--database", "kuzudb"],
+            )
+            self.assertEqual(cgc_calls[0][1].resolve() if cgc_calls[0][1] else None, target_root.resolve())
+            self.assertEqual(cgc_calls[1][0][:3], ["cgc", "index", str(target_root.resolve())])
+            self.assertEqual(cgc_calls[1][0][3:], ["--context", "Repo-feature-a-1"])
+            self.assertEqual(cgc_calls[1][1].resolve() if cgc_calls[1][1] else None, target_root.resolve())
+            metadata = json.loads((target_root / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
+            self.assertTrue(metadata.get("cgc_index_requested"))
+            self.assertTrue(metadata.get("cgc_context_created"))
+            self.assertTrue(metadata.get("cgc_index_succeeded"))
+            self.assertEqual(metadata.get("cgc_database"), "kuzudb")
+            self.assertEqual(
+                [item.get("command") for item in metadata.get("cgc_commands", [])],
+                [
+                    ["cgc", "context", "create", "Repo-feature-a-1", "--database", "kuzudb"],
+                    ["cgc", "index", str(target_root.resolve()), "--context", "Repo-feature-a-1"],
+                ],
+            )
+
+    def test_setup_worktree_rewrites_serena_project_name_and_preserves_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature.a/with spaces" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena" / "project.yml").write_text(
+                "project_name: envctl\n"
+                "language: python\n"
+                "ignored_paths:\n"
+                "  - trees/**\n",
+                encoding="utf-8",
+            )
+
+            engine = self._runtime(repo, runtime)
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+
+            error = engine._create_single_worktree(feature="feature.a/with spaces", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertEqual(
+                (target_root / ".serena" / "project.yml").read_text(encoding="utf-8"),
+                "project_name: envctl-feature-a_with_spaces-1\n"
+                "language: python\n"
+                "ignored_paths:\n"
+                "  - trees/**\n",
+            )
+
+    def test_setup_worktree_prepends_serena_project_name_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena" / "project.yml").write_text("language: python\n", encoding="utf-8")
+
+            engine = self._runtime(repo, runtime)
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+
+            error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertEqual(
+                (target_root / ".serena" / "project.yml").read_text(encoding="utf-8"),
+                "project_name: repo-feature-a-1\nlanguage: python\n",
+            )
+
+    def test_setup_worktree_code_intelligence_templates_override_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena" / "project.yml").write_text("project_name: repo\n", encoding="utf-8")
+            (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
+
+            engine = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_WORKTREE_CGC_CONTEXT_TEMPLATE": "ctx_{project}_{feature}_{iteration}",
+                    "ENVCTL_WORKTREE_SERENA_PROJECT_TEMPLATE": "serena_{worktree}",
+                    "ENVCTL_WORKTREE_CGC_DATABASE": "custom db",
+                    "ENVCTL_WORKTREE_CGC_INDEX": "true",
+                },
+            )
+            cgc_calls: list[list[str]] = []
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[:3] == ["cgc", "context", "create"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                if command[:2] == ["cgc", "index"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=True):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertEqual(
+                (target_root / ".serena" / "project.yml").read_text(encoding="utf-8"),
+                "project_name: serena_feature-a-1\n",
+            )
+            self.assertEqual(cgc_calls[0], ["cgc", "context", "create", "ctx_Repo_feature-a_1", "--database", "custom_db"])
+            self.assertEqual(
+                cgc_calls[1],
+                ["cgc", "index", str(target_root.resolve()), "--context", "ctx_Repo_feature-a_1"],
+            )
+
+    def test_setup_worktree_forced_cgc_index_skips_when_cgc_is_not_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena" / "project.yml").write_text('project_name: "repo"\n', encoding="utf-8")
+            cgc_calls: list[list[str]] = []
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true"})
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[:2] == ["cgc", "index"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=False):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertEqual(cgc_calls, [])
+            self.assertEqual(
+                (target_root / ".serena" / "project.yml").read_text(encoding="utf-8"),
+                'project_name: "repo-feature-a-1"\n',
+            )
+            metadata = json.loads((target_root / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
+            self.assertTrue(metadata.get("cgc_index_requested"))
+            self.assertFalse(metadata.get("cgc_available"))
+            self.assertEqual(metadata.get("cgc_database"), "kuzudb")
+
+    def test_setup_worktree_cgc_launch_failure_does_not_fail_worktree_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            emitted: list[dict[str, object]] = []
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true"})
+            engine._emit = lambda event, **payload: emitted.append({"event": event, **payload})  # type: ignore[method-assign]
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[:3] == ["cgc", "context", "create"]:
+                    raise FileNotFoundError("cgc")
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=True):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertTrue(target_root.is_dir())
+            self.assertTrue(
+                any(
+                    event.get("event") == "setup.worktree.code_intelligence.cgc_context"
+                    and event.get("target") == str(target_root.resolve())
+                    and event.get("context") == "Repo-feature-a-1"
+                    and event.get("success") is False
+                    and event.get("error") == "cgc"
+                    for event in emitted
+                )
+            )
+
+    def test_setup_worktree_existing_cgc_context_message_continues_to_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
+            emitted: list[dict[str, object]] = []
+            cgc_calls: list[list[str]] = []
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true"})
+            engine._emit = lambda event, **payload: emitted.append({"event": event, **payload})  # type: ignore[method-assign]
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[:3] == ["cgc", "context", "create"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="context already exists")
+                if command[:2] == ["cgc", "index"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=True):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertEqual(len(cgc_calls), 2)
+            self.assertTrue(
+                any(
+                    item.get("event") == "setup.worktree.code_intelligence.cgc_context"
+                    and item.get("already_exists") is True
+                    and item.get("success") is True
+                    for item in emitted
+                )
+            )
+            metadata = json.loads((target_root / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
+            self.assertFalse(metadata.get("cgc_context_created"))
+            self.assertTrue(metadata.get("cgc_context_already_exists"))
+            self.assertTrue(metadata.get("cgc_index_succeeded"))
+
+    def test_setup_worktree_cgc_context_failure_skips_index_but_preserves_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
+            emitted: list[dict[str, object]] = []
+            cgc_calls: list[list[str]] = []
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true"})
+            engine._emit = lambda event, **payload: emitted.append({"event": event, **payload})  # type: ignore[method-assign]
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[:3] == ["cgc", "context", "create"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=2, stdout="", stderr="database failed")
+                if command[:2] == ["cgc", "index"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=True):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertEqual(cgc_calls, [["cgc", "context", "create", "Repo-feature-a-1", "--database", "kuzudb"]])
+            self.assertTrue(
+                any(
+                    item.get("event") == "setup.worktree.code_intelligence.cgc_context"
+                    and item.get("success") is False
+                    and item.get("returncode") == 2
+                    and item.get("stderr") == "database failed"
+                    for item in emitted
+                )
+            )
+            metadata = json.loads((target_root / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
+            self.assertFalse(metadata.get("cgc_index_succeeded"))
+            self.assertEqual(metadata.get("cgc_context_returncode"), 2)
+            self.assertEqual(metadata.get("cgc_database"), "kuzudb")
+
+    def test_setup_worktree_without_serena_or_cgc_config_does_not_fail_or_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            cgc_calls: list[list[str]] = []
+
+            engine = self._runtime(repo, runtime)
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[:2] == ["cgc", "index"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=True):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertEqual(cgc_calls, [])
+            self.assertFalse((target_root / ".serena").exists())
+            self.assertFalse((target_root / ".cgcignore").exists())
+
+    def test_setup_worktree_creation_can_inherit_git_hooks_by_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_GIT_HOOKS": "inherit"})
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    self._worktree_add_index(command)
+                    self._assert_hooks_inherited_for_worktree_add(command)
+                    target = Path(command[-2])
+                    target.mkdir(parents=True, exist_ok=True)
+                    (target / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+
+            error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+
+    def test_invalid_worktree_git_hooks_policy_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_GIT_HOOKS": "maybe"})
+
+            with self.assertRaisesRegex(RuntimeError, "ENVCTL_WORKTREE_GIT_HOOKS"):
+                engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
 
     def test_plan_sync_created_worktrees_write_provenance_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -389,6 +1023,8 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             repo = root / "repo"
             runtime = root / "runtime"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena" / "project.yml").write_text('project_name: "repo"\n', encoding="utf-8")
             (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
             (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
 
@@ -401,10 +1037,13 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="release/2026.03\n", stderr="")
                 if command[3:] == ["rev-parse", "--verify", "origin/release/2026.03"]:
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
-                if command[3:6] == ["worktree", "add", "-b"]:
-                    self.assertEqual(command[6], "implementations_task-1")
-                    self.assertEqual(command[8], "origin/release/2026.03")
-                    target = Path(command[7])
+                if "worktree" in command:
+                    index = self._worktree_add_index(command)
+                    self._assert_hooks_disabled_for_worktree_add(command)
+                    self.assertEqual(command[index + 2], "-b")
+                    self.assertEqual(command[index + 3], "implementations_task-1")
+                    self.assertEqual(command[index + 5], "origin/release/2026.03")
+                    target = Path(command[index + 4])
                     target.mkdir(parents=True, exist_ok=True)
                     (target / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
@@ -423,6 +1062,185 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             self.assertEqual(provenance.get("source_branch"), "release/2026.03")
             self.assertEqual(provenance.get("source_ref"), "origin/release/2026.03")
             self.assertEqual(provenance.get("plan_file"), "implementations/task.md")
+            self.assertEqual(
+                (repo / "trees" / "implementations_task" / "1" / ".serena" / "project.yml").read_text(
+                    encoding="utf-8"
+                ),
+                'project_name: "repo-implementations_task-1"\n',
+            )
+
+    def test_setup_worktree_real_git_smoke_writes_isolated_code_intelligence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            bin_dir = root / "bin"
+            cgc_log = root / "cgc.log"
+            repo.mkdir(parents=True, exist_ok=True)
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+            (repo / "README.md").write_text("# repo\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=repo, check=True)
+            (repo / ".serena").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena" / "project.yml").write_text("project_name: repo\nlanguage: python\n", encoding="utf-8")
+            (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
+            cgc = bin_dir / "cgc"
+            cgc.write_text(
+                "#!/bin/sh\n"
+                f"printf '%s\\n' \"$*\" >> {cgc_log}\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            cgc.chmod(0o755)
+
+            env = {
+                "ENVCTL_WORKTREE_CGC_INDEX": "true",
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            }
+            engine = self._runtime(repo, runtime, env=env)
+
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=True):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            target = repo / "trees" / "feature-a" / "1"
+            self.assertIsNone(error)
+            self.assertTrue((target / ".git").exists())
+            self.assertEqual(
+                (target / ".serena" / "project.yml").read_text(encoding="utf-8"),
+                "project_name: repo-feature-a-1\nlanguage: python\n",
+            )
+            self.assertEqual((target / ".cgcignore").read_text(encoding="utf-8"), ".git/\n")
+            metadata = json.loads((target / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata.get("serena_project_name"), "repo-feature-a-1")
+            self.assertEqual(metadata.get("cgc_context"), "Repo-feature-a-1")
+            self.assertEqual(metadata.get("cgc_database"), "kuzudb")
+            self.assertTrue(metadata.get("cgc_index_succeeded"))
+            self.assertEqual(
+                cgc_log.read_text(encoding="utf-8").splitlines(),
+                [
+                    "context create Repo-feature-a-1 --database kuzudb",
+                    f"index {target.resolve()} --context Repo-feature-a-1",
+                ],
+            )
+
+    def test_setup_worktree_recovers_partial_git_worktree_after_late_hook_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "venv").mkdir(parents=True, exist_ok=True)
+
+            engine = self._runtime(repo, runtime)
+            events: list[dict[str, object]] = []
+            engine._emit = lambda event, **payload: events.append({"event": event, **payload})  # type: ignore[method-assign]
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/late-hook-failure\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=1,
+                        stdout="",
+                        stderr="post-checkout hook failed",
+                    )
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+
+            error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertTrue((target_root / ".git").exists())
+            self.assertTrue((target_root / "backend" / "venv").is_symlink())
+            self.assertEqual(self._read_provenance(target_root).get("source_branch"), "dev")
+            self.assertTrue(
+                any(item.get("event") == "setup.worktree.partial_git_failure_recovered" for item in events)
+            )
+
+    def test_plan_sync_recovers_partial_git_worktree_without_advancing_iteration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "implementations_task" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = self._runtime(repo, runtime)
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/late-hook-failure\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="hook failed")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+
+            result = engine._sync_plan_worktrees_from_plan_counts(  # noqa: SLF001
+                plan_counts={"implementations/task.md": 1},
+                raw_projects=[],
+                keep_plan=True,
+            )
+
+            self.assertIsNone(result.error)
+            self.assertEqual([item.name for item in result.created_worktrees], ["implementations_task-1"])
+            self.assertTrue((target_root / "MAIN_TASK.md").is_file())
+            self.assertFalse((repo / "trees" / "implementations_task" / "2").exists())
+
+    def test_hook_inheritance_surfaces_late_hook_failure_even_when_target_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_GIT_HOOKS": "inherit"})
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/hook-failure\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=1,
+                        stdout="",
+                        stderr="post-checkout hook failed",
+                    )
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+
+            error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNotNone(error)
+            self.assertIn("post-checkout hook failed", error or "")
 
     def test_plan_sync_reports_created_worktree_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -495,6 +1313,141 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             self.assertEqual([ctx.name for ctx in selected], ["implementations_task-1"])
             self.assertEqual([item.name for item in selection_result.created_worktrees], ["implementations_task-1"])
 
+    def test_plan_selection_with_new_session_launch_creates_and_targets_next_iteration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
+            (repo / "trees" / "implementations_task" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true"})
+            contexts = engine._discover_projects(mode="trees")
+            route = parse_route(
+                ["--plan", "implementations/task", "--tmux", "--opencode", "--headless", "--tmux-new-session"],
+                env={},
+            )
+
+            selected = engine._select_plan_projects(route, contexts)
+
+            selection_result = engine.planning_worktree_orchestrator.last_plan_selection_result()
+            self.assertEqual([ctx.name for ctx in selected], ["implementations_task-2"])
+            self.assertEqual([item.name for item in selection_result.created_worktrees], ["implementations_task-2"])
+            self.assertTrue((repo / "trees" / "implementations_task" / "1").is_dir())
+            self.assertTrue((repo / "trees" / "implementations_task" / "2").is_dir())
+
+    def test_fresh_ai_worktree_is_not_scaled_down_while_session_marker_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
+            for iteration in ("1", "2", "3"):
+                worktree = repo / "trees" / "implementations_task" / iteration
+                worktree.mkdir(parents=True, exist_ok=True)
+                (worktree / ".git").write_text(f"gitdir: /tmp/worktree-{iteration}\n", encoding="utf-8")
+            protected = repo / "trees" / "implementations_task" / "3"
+            (protected / ".envctl-state").mkdir(parents=True, exist_ok=True)
+            (protected / ".envctl-state" / "worktree-provenance.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "plan_file": "implementations/task.md",
+                        "created_for_fresh_ai_launch": True,
+                        "fresh_ai_launch_status": "launching",
+                        "launch_transport": "omx",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            engine = self._runtime(repo, runtime)
+            events: list[dict[str, object]] = []
+            engine._emit = lambda event, **payload: events.append({"event": event, **payload})  # type: ignore[method-assign]
+            raw_projects = [(ctx.name, ctx.root) for ctx in engine._discover_projects(mode="trees")]  # noqa: SLF001
+
+            def fake_delete_worktree_path(**kwargs):  # noqa: ANN001
+                shutil.rmtree(Path(kwargs["worktree_root"]))
+
+                class _Result:
+                    success = True
+                    message = ""
+
+                return _Result()
+
+            with patch("envctl_engine.planning.worktree_domain.delete_worktree_path", side_effect=fake_delete_worktree_path):
+                result = engine._sync_plan_worktrees_from_plan_counts(  # noqa: SLF001
+                    plan_counts={"implementations/task.md": 1},
+                    raw_projects=raw_projects,
+                    keep_plan=True,
+                )
+
+            self.assertIsNone(result.error)
+            self.assertTrue(protected.is_dir())
+            self.assertTrue(
+                any(
+                    event.get("event") == "planning.worktree.cleanup.skipped_active_ai_session"
+                    and event.get("worktree") == "implementations_task-3"
+                    for event in events
+                )
+            )
+
+    def test_stale_fresh_ai_worktree_can_be_scaled_down_after_session_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
+            for iteration in ("1", "2"):
+                worktree = repo / "trees" / "implementations_task" / iteration
+                worktree.mkdir(parents=True, exist_ok=True)
+                (worktree / ".git").write_text(f"gitdir: /tmp/worktree-{iteration}\n", encoding="utf-8")
+            stale = repo / "trees" / "implementations_task" / "2"
+            (stale / ".envctl-state").mkdir(parents=True, exist_ok=True)
+            (stale / ".envctl-state" / "worktree-provenance.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "plan_file": "implementations/task.md",
+                        "created_for_fresh_ai_launch": True,
+                        "fresh_ai_launch_status": "launched",
+                        "launch_transport": "omx",
+                        "session_name": "omx-missing-session",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            engine = self._runtime(repo, runtime)
+            raw_projects = [(ctx.name, ctx.root) for ctx in engine._discover_projects(mode="trees")]  # noqa: SLF001
+
+            def fake_delete_worktree_path(**kwargs):  # noqa: ANN001
+                shutil.rmtree(Path(kwargs["worktree_root"]))
+
+                class _Result:
+                    success = True
+                    message = ""
+
+                return _Result()
+
+            with patch("envctl_engine.planning.worktree_domain.delete_worktree_path", side_effect=fake_delete_worktree_path):
+                result = engine._sync_plan_worktrees_from_plan_counts(  # noqa: SLF001
+                    plan_counts={"implementations/task.md": 1},
+                    raw_projects=raw_projects,
+                    keep_plan=True,
+                )
+
+            self.assertIsNone(result.error)
+            self.assertFalse(stale.exists())
+
     def test_setup_worktree_creation_resets_existing_branch_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -513,10 +1466,13 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="abc123\n", stderr="")
                 if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
-                if command[3:6] == ["worktree", "add", "-B"]:
-                    self.assertEqual(command[6], "feature-a-1")
-                    self.assertEqual(command[8], "origin/dev")
-                    target = Path(command[7])
+                if "worktree" in command:
+                    index = self._worktree_add_index(command)
+                    self._assert_hooks_disabled_for_worktree_add(command)
+                    self.assertEqual(command[index + 2], "-B")
+                    self.assertEqual(command[index + 3], "feature-a-1")
+                    self.assertEqual(command[index + 5], "origin/dev")
+                    target = Path(command[index + 4])
                     target.mkdir(parents=True, exist_ok=True)
                     (target / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
@@ -554,10 +1510,13 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="new-base\n", stderr="")
                 if command[3:] == ["rev-parse", "--verify", "origin/new-base"]:
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
-                if command[3:6] == ["worktree", "add", "-b"]:
-                    self.assertEqual(command[6], "feature-a-1")
-                    self.assertEqual(command[8], "origin/new-base")
-                    target = Path(command[7])
+                if "worktree" in command:
+                    index = self._worktree_add_index(command)
+                    self._assert_hooks_disabled_for_worktree_add(command)
+                    self.assertEqual(command[index + 2], "-b")
+                    self.assertEqual(command[index + 3], "feature-a-1")
+                    self.assertEqual(command[index + 5], "origin/new-base")
+                    target = Path(command[index + 4])
                     target.mkdir(parents=True, exist_ok=True)
                     (target / ".git").write_text("gitdir: /tmp/recreated-worktree\n", encoding="utf-8")
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
@@ -635,9 +1594,12 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
                 if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
-                if command[3:6] == ["worktree", "add", "-b"]:
-                    self.assertEqual(command[6], "feature-a-1")
-                    self.assertEqual(command[8], "origin/dev")
+                if "worktree" in command:
+                    index = self._worktree_add_index(command)
+                    self._assert_hooks_disabled_for_worktree_add(command)
+                    self.assertEqual(command[index + 2], "-b")
+                    self.assertEqual(command[index + 3], "feature-a-1")
+                    self.assertEqual(command[index + 5], "origin/dev")
                     return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="git failure")
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
 

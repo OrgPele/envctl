@@ -818,16 +818,22 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "errors",
             "delete-worktree",
             "blast-worktree",
+            "self-destruct-worktree",
             "pr",
             "commit",
             "review",
             "migrate",
             "migrate-hooks",
+            "endpoints",
+            "qa-user",
+            "playwright",
+            "supabase-user",
             "install-prompts",
             "codex-tmux",
             "list-commands",
             "list-targets",
             "list-trees",
+            "session",
             "show-config",
             "show-state",
             "explain-startup",
@@ -839,7 +845,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "debug-last",
         }
         self.assertEqual(set(lines), expected_commands)
-        self.assertEqual(len(lines), 36, "Should have exactly 36 commands")
+        self.assertEqual(len(lines), 42, "Should have exactly 42 commands")
 
     def test_public_command_inventory_matches_supported_commands(self) -> None:
         self.assertEqual(
@@ -852,7 +858,11 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
                 "config",
                 "doctor",
                 "ensure-worktree",
+                "endpoints",
+                "qa-user",
+                "playwright",
                 "migrate-hooks",
+                "supabase-user",
                 "install-prompts",
                 "codex-tmux",
                 "debug-pack",
@@ -877,10 +887,12 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
                 "errors",
                 "delete-worktree",
                 "blast-worktree",
+                "self-destruct-worktree",
                 "stop",
                 "restart",
                 "stop-all",
                 "blast-all",
+                "session",
             },
         )
 
@@ -891,14 +903,124 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             code = runtime.dispatch(parse_route(["--help"], env={}))
 
         self.assertEqual(code, 0)
-        lines = [line.strip() for line in buffer.getvalue().splitlines() if line.strip()]
-        self.assertGreaterEqual(len(lines), 3)
-        self.assertEqual(lines[0], "envctl Python runtime")
-        self.assertTrue(lines[1].startswith("Commands: "))
-        help_commands = {item.strip() for item in lines[1].split("Commands: ", 1)[1].split(",") if item.strip()}
+        output = buffer.getvalue()
+        self.assertIn("envctl - run, inspect, test, and ship repo services/worktrees", output)
+        self.assertIn("Usage:", output)
+        self.assertIn("Command families:", output)
+        self.assertIn("Workflow commands (may start services or open interactive flows):", output)
+        self.assertIn("Specific action commands (non-interactive/headless by default):", output)
+        self.assertIn("Inspection and diagnostics:", output)
+        self.assertIn("Targeting and runtime scopes:", output)
+        self.assertIn("Examples:", output)
+        self.assertIn("Get focused help:", output)
+        self.assertIn("envctl <command> --help", output)
+        self.assertIn("envctl help <command>", output)
+        self.assertIn("pass --interactive to opt back into prompts", output)
+
+        command_line = next(line for line in output.splitlines() if line.startswith("  all commands: "))
+        help_commands = {item.strip() for item in command_line.split("all commands: ", 1)[1].split(",") if item.strip()}
         self.assertEqual(help_commands, set(list_supported_commands()))
-        self.assertIn("Mode flags: --main, --tree, --trees, trees=true, main=true", lines[2])
-        self.assertIn("Non-interactive: --headless (preferred), --batch (compatibility alias)", lines[3])
+
+    def test_all_supported_commands_have_focused_help(self) -> None:
+        runtime = self._runtime()
+        for command in list_supported_commands():
+            if command == "help":
+                continue
+            with self.subTest(command=command):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = runtime.dispatch(parse_route([command, "--help"], env={}))
+
+                output = buffer.getvalue()
+                self.assertEqual(code, 0)
+                self.assertIn(f"envctl {command}", output)
+                self.assertIn("What it does:", output)
+                self.assertIn("Usage:", output)
+                self.assertIn("Examples:", output)
+
+    def test_action_command_help_explains_headless_default_and_interactive_opt_in(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["pr", "--help"], env={}))
+
+        output = buffer.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("envctl pr", output)
+        self.assertIn("Default interactivity:", output)
+        self.assertIn("headless by default", output)
+        self.assertIn("--interactive", output)
+        self.assertIn("--pr-base", output)
+
+    def test_workflow_command_help_explains_when_headless_is_optional(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["start", "--help"], env={}))
+
+        output = buffer.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("envctl start", output)
+        self.assertIn("Default interactivity:", output)
+        self.assertIn("interactive-capable", output)
+        self.assertIn("--headless", output)
+
+    def test_help_output_for_plan_is_command_specific(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--plan", "--help"], env={}))
+
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("envctl plan", output)
+        self.assertIn("--dry-run", output)
+        self.assertIn("--ulw", output)
+        self.assertIn("--omx --ultragoal", output)
+        self.assertIn("--omx --ralph", output)
+        self.assertIn("preview selected/reused/created worktrees without mutating", output)
+
+    def test_help_prefix_forms_are_command_specific(self) -> None:
+        runtime = self._runtime()
+        for argv, expected in (
+            (["help", "pr"], "envctl pr"),
+            (["--help", "pr"], "envctl pr"),
+            (["help", "--plan"], "envctl plan"),
+            (["--help", "--command", "pr"], "envctl pr"),
+        ):
+            with self.subTest(argv=argv):
+                route = parse_route(argv, env={})
+                self.assertEqual(route.command, "help")
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = runtime.dispatch(route)
+
+                self.assertEqual(code, 0)
+                self.assertIn(expected, buffer.getvalue())
+
+    def test_help_output_for_codex_tmux_is_command_specific(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["codex-tmux", "--help"], env={}))
+
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("envctl codex-tmux", output)
+        self.assertIn("--dry-run [--json]", output)
+        self.assertIn("--dangerously-bypass-approvals-and-sandbox", output)
+
+    def test_help_output_for_install_prompts_is_command_specific(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["install-prompts", "--help"], env={}))
+
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("envctl install-prompts", output)
+        self.assertIn("~/.codex/skills", output)
+        self.assertIn("manual $envctl-", output)
 
     def test_generated_parity_manifest_matches_repository_file(self) -> None:
         manifest_path = REPO_ROOT / "contracts" / "python_engine_parity_manifest.json"
@@ -980,7 +1102,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         lines = [line.strip() for line in buffer.getvalue().strip().split("\n") if line.strip()]
         self.assertGreater(len(lines), 0, "Should discover at least one project via --list-trees")
 
-    def test_list_trees_json_includes_preselected_and_running(self) -> None:
+    def test_list_trees_json_reports_selected_state_presence_and_service_truth(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
         repo = Path(tmpdir.name) / "repo"
@@ -997,9 +1119,9 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             state=RunState(
                 run_id="run-prev",
                 mode="trees",
-                services={"feature-1 Backend": ServiceRecord(name="feature-1 Backend", type="backend", cwd=".")},
+                services={"feature-1 Backend": ServiceRecord(name="feature-1 Backend", type="backend", cwd=".", status="unknown")},
                 requirements={},
-                metadata={"repo_scope_id": config.runtime_scope_id},
+                metadata={"repo_scope_id": config.runtime_scope_id, "project_roots": {"feature-1": str(feature_dir)}},
             ),
             emit=lambda *args, **kwargs: None,
             runtime_map_builder=lambda _state: {},
@@ -1012,7 +1134,12 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["mode"], "trees")
         self.assertGreaterEqual(payload["count"], 1)
-        self.assertTrue(any(project["preselected"] for project in payload["projects"]))
+        feature = payload["projects"][0]
+        self.assertTrue(feature["selected"])
+        self.assertTrue(feature["preselected"])
+        self.assertTrue(feature["state_present"])
+        self.assertFalse(feature["services_running"])
+        self.assertFalse(feature["running"])
 
     def test_show_config_json_prints_effective_payload(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
@@ -1028,9 +1155,44 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             code = runtime.dispatch(parse_route(["--show-config", "--json"], env={}))
         self.assertEqual(code, 0)
         payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["base_dir"], str(repo.resolve()))
+        self.assertEqual(payload["execution_root"], str(repo.resolve()))
         self.assertEqual(payload["effective"]["default_mode"], "trees")
         self.assertEqual(payload["effective"]["directories"]["backend"], "api")
         self.assertEqual(payload["effective"]["profiles"]["main"]["startup_enabled"], False)
+
+    def test_show_config_json_reports_launch_env_inferred_dynamic_dependencies(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / ".envctl").write_text(
+            "\n".join(
+                [
+                    "# >>> envctl managed startup config >>>",
+                    "ENVCTL_DEFAULT_MODE=main",
+                    "# <<< envctl managed startup config <<<",
+                    "",
+                    "# >>> envctl backend launch env >>>",
+                    "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}",
+                    "REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}",
+                    "# <<< envctl backend launch env <<<",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime")})
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--show-config", "--json"], env={}))
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+
+        self.assertTrue(payload["effective"]["profiles"]["main"]["dependencies"]["postgres"])
+        self.assertTrue(payload["effective"]["profiles"]["main"]["dependencies"]["redis"])
 
     def test_show_config_json_reports_plan_agent_codex_cycles(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
@@ -1077,6 +1239,90 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["plan_agent"]["codex_cycles"], 3)
 
+
+    def test_show_config_json_reports_additional_service_validation_errors_and_metadata(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / ".envctl").write_text(
+            "\n".join(
+                [
+                    "ENVCTL_ADDITIONAL_SERVICES=voice-runtime,worker",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=python -m voice_runtime --port {port}",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_DEPENDS_ON=worker",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_CRITICAL=false",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL=https://voice.example.test",
+                    "ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL=https://voice.example.test/readyz",
+                    "ENVCTL_SERVICE_WORKER_DIR=worker",
+                    "ENVCTL_SERVICE_WORKER_START_CMD=python worker.py",
+                    "ENVCTL_SERVICE_WORKER_EXPECT_LISTENER=false",
+                    "ENVCTL_SERVICE_WORKER_DEPENDS_ON=voice-runtime",
+                    "",
+                    "# >>> envctl service voice-runtime launch env >>>",
+                    "VOICE_PUBLIC=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}",
+                    "# <<< envctl service voice-runtime launch env <<<",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime")})
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--show-config", "--json"], env={}))
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertIn("additional service dependency cycle: voice-runtime -> worker -> voice-runtime", payload["additional_service_errors"])
+        self.assertTrue(payload["service_dependency_env_section_present"]["voice-runtime"])
+        self.assertEqual(payload["service_dependency_env_templates"]["voice-runtime"][0]["name"], "VOICE_PUBLIC")
+
+    def test_show_state_json_includes_runtime_map_for_additional_services(self) -> None:
+        runtime = self._runtime()
+        state = RunState(
+            run_id="run-voice",
+            mode="main",
+            services={
+                "Main Voice Runtime": ServiceRecord(
+                    name="Main Voice Runtime",
+                    type="voice-runtime",
+                    cwd="/tmp/repo/voice-runtime",
+                    pid=123,
+                    requested_port=8010,
+                    actual_port=8012,
+                    status="running",
+                    listener_expected=True,
+                    project="Main",
+                    service_slug="voice-runtime",
+                    public_url="https://voice.example.test",
+                    health_url="https://voice.example.test/readyz",
+                    log_path="/tmp/voice.log",
+                )
+            },
+        )
+        runtime.state_repository.save_resume_state(
+            state=state,
+            emit=runtime._emit,
+            runtime_map_builder=engine_runtime_module.build_runtime_map,
+        )
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--show-state", "--json"], env={}))
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        service = payload["state"]["services"]["Main Voice Runtime"]
+        projected = payload["runtime_map"]["projects"]["Main"]["services"]["voice-runtime"]
+        self.assertEqual(service["project"], "Main")
+        self.assertEqual(service["service_slug"], "voice-runtime")
+        self.assertEqual(projected["url"], "http://localhost:8012")
+        self.assertEqual(projected["public_url"], "https://voice.example.test")
+        self.assertEqual(projected["health_url"], "https://voice.example.test/readyz")
+
     def test_runtime_uses_legacy_spacing_strategy_when_requested(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
@@ -1095,6 +1341,46 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(plans["backend"].final, 8040)
         self.assertEqual(plans["frontend"].final, 9040)
         self.assertEqual(plans["db"].final, 5434)
+
+    def test_runtime_uses_session_scoped_main_dependency_ports_by_default(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+            }
+        )
+
+        runtime = PythonEngineRuntime(config, env={})
+        plans = runtime.port_planner.plan_project_stack("Main", index=0)
+
+        self.assertEqual(plans["backend"].final, 8000)
+        self.assertEqual(plans["frontend"].final, 9000)
+        self.assertNotEqual(plans["db"].final, 5432)
+        self.assertNotEqual(plans["redis"].final, 6379)
+        self.assertEqual(plans["db"].final - 5432, plans["redis"].final - 6379)
+
+    def test_runtime_can_disable_session_scoped_main_dependency_ports(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+            }
+        )
+
+        runtime = PythonEngineRuntime(config, env={"ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS": "false"})
+        plans = runtime.port_planner.plan_project_stack("Main", index=0)
+
+        self.assertEqual(plans["db"].final, 5432)
+        self.assertEqual(plans["redis"].final, 6379)
+        self.assertEqual(plans["n8n"].final, 5678)
 
     def test_show_config_plain_output_reports_preferred_port_strategy(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
@@ -1152,6 +1438,78 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertTrue(payload["headless"])
         self.assertEqual(payload["selection"]["reason"], "headless_tree_start_requires_explicit_selection")
+
+
+    def test_explain_startup_json_includes_enabled_additional_services_urls_and_warnings(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "voice-runtime" / "app").mkdir(parents=True, exist_ok=True)
+        (repo / "voice-runtime" / "app" / "main.py").write_text("# runtime\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PUBLIC_HOST": "72.61.80.25",
+                "ENVCTL_ADDITIONAL_SERVICES": "voice-runtime",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_DIR": "voice-runtime",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD": "scripts/envctl/start-voice-runtime.sh {port}",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE": "8014",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL": "${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}/readyz",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE_IF_PATH": "voice-runtime/app/main.py",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["services"]["voice-runtime"], True)
+        self.assertEqual(
+            payload["additional_service_urls"]["voice-runtime"],
+            {
+                "port": 8014,
+                "public_url": "http://72.61.80.25:8014",
+                "health_url": "http://72.61.80.25:8014/readyz",
+            },
+        )
+        warning = payload["warnings"][0]
+        self.assertEqual(warning["service"], "voice-runtime")
+        self.assertEqual(warning["reason"], "missing_command_path")
+        self.assertIn("scripts/envctl/start-voice-runtime.sh", warning["path"])
+
+    def test_preflight_json_skips_additional_service_when_enable_if_path_is_absent(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_ADDITIONAL_SERVICES": "voice-runtime",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_DIR": "voice-runtime",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD": "scripts/envctl/start-voice-runtime.sh {port}",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE": "8014",
+                "ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE_IF_PATH": "voice-runtime/app/main.py",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["preflight", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        startup = payload["startup"]
+        self.assertEqual(startup["services"]["voice-runtime"], False)
+        self.assertNotIn("voice-runtime", startup["additional_service_urls"])
+        self.assertEqual(startup["warnings"], [])
 
     def test_preflight_json_wraps_startup_explanation_in_versioned_contract(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
@@ -1277,6 +1635,87 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["selection"]["reason"], "no_planning_files")
         self.assertEqual(payload["selection"]["selected_projects"], [])
 
+    def test_explain_startup_json_predicts_plan_worktrees_before_creation(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["selection"]["selected_projects"], ["feature_task-1"])
+        self.assertEqual(payload["selection"]["predicted_projects"][0]["action"], "create")
+        self.assertTrue(payload["selection"]["predicted_projects"][0]["root"].endswith("trees/feature_task/1"))
+        self.assertEqual(payload["run_reuse"]["selected_projects"][0]["name"], "feature_task-1")
+
+    def test_plan_dry_run_previews_without_creating_worktrees(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--plan", "feature/task", "--headless", "--dry-run"], env={}))
+
+        self.assertEqual(code, 0)
+        rendered = buffer.getvalue()
+        self.assertIn("Dry run: no worktrees, git state, or services were modified.", rendered)
+        self.assertIn("feature_task-1: create", rendered)
+        self.assertNotIn("Starting project", rendered)
+        self.assertFalse((repo / "trees" / "feature_task" / "1").exists())
+
+    def test_plan_dry_run_with_omx_ultragoal_does_not_launch_agent_or_start_services(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_ENABLED": "true",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(
+                parse_route(["--plan", "feature/task", "--headless", "--dry-run", "--omx", "--ultragoal"], env={})
+            )
+
+        self.assertEqual(code, 0)
+        rendered = buffer.getvalue()
+        self.assertIn("Dry run: no worktrees, git state, or services were modified.", rendered)
+        self.assertNotIn("Plan agent launch", rendered)
+        self.assertNotIn("Starting project", rendered)
+        self.assertFalse((repo / "trees" / "feature_task" / "1").exists())
+
     def test_explain_startup_json_reports_plan_agent_launch_state(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
@@ -1303,7 +1742,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["plan_agent_launch"]["cli"], "codex")
         self.assertEqual(payload["plan_agent_launch"]["preset"], "implement_task")
         self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "codex_cycles")
-        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 1)
+        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
         self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], None)
         self.assertEqual(payload["plan_agent_launch"]["workspace_id"], None)
         self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
@@ -1390,6 +1829,66 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "single_prompt")
         self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
 
+    def test_explain_startup_json_reports_omx_plan_agent_transport(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--omx", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["plan_agent_launch"]["transport"], "omx")
+        self.assertEqual(payload["plan_agent_launch"]["cli"], "codex")
+        self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
+
+    def test_explain_startup_json_reports_omx_workflow_modifier(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+            }
+        )
+
+        for token, workflow_name in (("--ultragoal", "ultragoal"), ("--ralph", "ralph"), ("--team", "team")):
+            with self.subTest(token=token):
+                runtime = PythonEngineRuntime(config, env={})
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = runtime.dispatch(
+                        parse_route(["--explain-startup", "--plan", "feature/task", "--omx", token, "--json"], env={})
+                    )
+
+                self.assertEqual(code, 0)
+                payload = json.loads(buffer.getvalue())
+                self.assertEqual(payload["plan_agent_launch"]["transport"], "omx")
+                self.assertEqual(payload["plan_agent_launch"]["omx_workflow"], workflow_name)
+                self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "codex_cycles")
+                self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
+                self.assertIsNone(payload["plan_agent_launch"]["workflow_warning"])
+                self.assertTrue(payload["plan_agent_launch"]["codex_goal_enable"])
+
     def test_explain_startup_json_reports_plan_agent_workspace_override(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
@@ -1445,6 +1944,146 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["plan_agent_launch"]["workspace_id"], None)
         self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], None)
         self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
+
+    def test_explain_startup_json_reports_superset_transport_and_project(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "SUPERSET": "true",
+                "SUPERSET_PROJECT": "proj-1",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertTrue(payload["plan_agent_launch"]["enabled"])
+        self.assertEqual(payload["plan_agent_launch"]["transport"], "superset")
+        self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "single_prompt")
+        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
+        self.assertEqual(payload["plan_agent_launch"]["superset_project"], "proj-1")
+        self.assertIsNone(payload["plan_agent_launch"]["configured_workspace"])
+        self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
+
+    def test_explain_startup_json_reports_superset_transport_for_project_alias_only(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "SUPERSET_PROJECT": "proj-1",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertTrue(payload["plan_agent_launch"]["enabled"])
+        self.assertEqual(payload["plan_agent_launch"]["transport"], "superset")
+        self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "single_prompt")
+        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
+        self.assertEqual(payload["plan_agent_launch"]["superset_project"], "proj-1")
+        self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
+
+    def test_explain_startup_json_reports_superset_transport_for_canonical_project_only(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_SUPERSET_PROJECT": "proj-1",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertTrue(payload["plan_agent_launch"]["enabled"])
+        self.assertEqual(payload["plan_agent_launch"]["transport"], "superset")
+        self.assertEqual(payload["plan_agent_launch"]["workflow_mode"], "single_prompt")
+        self.assertEqual(payload["plan_agent_launch"]["codex_cycles"], 2)
+        self.assertEqual(payload["plan_agent_launch"]["superset_project"], "proj-1")
+        self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
+
+    def test_explain_startup_json_reports_superset_missing_project_reason(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "SUPERSET": "true",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["plan_agent_launch"]["transport"], "superset")
+        self.assertEqual(payload["plan_agent_launch"]["reason"], "missing_superset_project")
+
+    def test_explain_startup_json_reports_invalid_surface_transport(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "supersurface",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={"CMUX_WORKSPACE_ID": "workspace:4"})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["plan_agent_launch"]["transport"], "cmux")
+        self.assertEqual(payload["plan_agent_launch"]["reason"], "invalid_surface_transport")
 
 
 if __name__ == "__main__":

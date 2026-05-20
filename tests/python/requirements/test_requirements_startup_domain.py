@@ -85,6 +85,7 @@ class _ComponentRuntime(_FakeRuntime):
             error=None,
             effective_port=6399,
             port_adopted=True,
+            container_name="envctl-redis-main-test",
         )
 
     def _requirement_command_resolved(self, *, service_name: str, port: int, project_root: Path):  # noqa: ANN001
@@ -122,6 +123,18 @@ class RequirementsStartupDomainTests(unittest.TestCase):
                     container_name="envctl-postgres-main-test",
                     stage_events=[
                         {"stage": "discover", "reason": None, "detail": None, "elapsed_ms": 1.1},
+                        {
+                            "stage": "supabase.db.probe",
+                            "reason": "ready",
+                            "detail": "port=5432 attempts=1",
+                            "elapsed_ms": 1.5,
+                        },
+                        {
+                            "stage": "supabase.auth.inspect",
+                            "reason": "initial_probe_failed",
+                            "detail": "supabase-auth:status=running",
+                            "elapsed_ms": 1.8,
+                        },
                         {
                             "stage": "probe.retry.restart",
                             "reason": "transient_probe_timeout_retryable",
@@ -167,6 +180,13 @@ class RequirementsStartupDomainTests(unittest.TestCase):
         self.assertIn("requirements.adapter.retry_path", emitted_names)
         self.assertIn("requirements.adapter.port_mismatch", emitted_names)
         self.assertIn("requirements.adapter", emitted_names)
+        emitted_stages = [
+            str(event.get("stage", ""))
+            for event in runtime.events
+            if event.get("event") == "requirements.adapter.stage"
+        ]
+        self.assertIn("supabase.db.probe", emitted_stages)
+        self.assertIn("supabase.auth.inspect", emitted_stages)
 
         adapter_events = [item for item in runtime.events if item.get("event") == "requirements.adapter"]
         self.assertTrue(adapter_events)
@@ -204,6 +224,7 @@ class RequirementsStartupDomainTests(unittest.TestCase):
 
         self.assertTrue(outcome.success)
         self.assertEqual(int(outcome.final_port), 6399)
+        self.assertEqual(outcome.container_name, "envctl-redis-main-test")
         self.assertEqual(int(plan.final), 6399)
         self.assertTrue(runtime.port_planner.calls)
         self.assertEqual(runtime.port_planner.calls[-1]["source"], "adopt_existing")

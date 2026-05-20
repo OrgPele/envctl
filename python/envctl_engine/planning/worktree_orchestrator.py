@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.planning.plan_agent_launch_support import PlanSelectionResult, PlanWorktreeSyncResult
+from envctl_engine.planning.plan_agent.models import PlanSelectionResult, PlanWorktreeSyncResult
 from envctl_engine.planning.worktree_domain import (
     _apply_setup_worktree_selection as domain_apply_setup_worktree_selection,
     _initial_plan_selected_counts as domain_initial_plan_selected_counts,

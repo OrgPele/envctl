@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shlex
 import shutil
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
@@ -90,10 +91,25 @@ def resolve_service_start_command(
     env_key = f"ENVCTL_{service_name.upper()}_START_CMD"
     raw = _override_value(env_key, env=env, config_raw=config_raw)
     if raw is not None:
+        _validate_configured_service_layout(
+            service_name=service_name,
+            project_root=project_root,
+            config_raw=config_raw,
+            raw_command=raw,
+        )
         service_root = _configured_service_root(
             service_name=service_name,
             project_root=project_root,
             config_raw=config_raw,
+        )
+        python_runner_prefix = (
+            _prepared_backend_python_runner_prefix(
+                service_root=service_root,
+                project_root=project_root,
+                command_exists=exists,
+            )
+            if service_name == "backend"
+            else ()
         )
         return CommandResolutionResult(
             command=_split_and_validate(
@@ -101,6 +117,7 @@ def resolve_service_start_command(
                 port=port,
                 command_exists=exists,
                 search_roots=[service_root, project_root],
+                python_runner_prefix=python_runner_prefix,
             ),
             source="configured",
         )
@@ -428,16 +445,60 @@ def _configured_service_root(*, service_name: str, project_root: Path, config_ra
     return project_root
 
 
+def _validate_configured_service_layout(
+    *,
+    service_name: str,
+    project_root: Path,
+    config_raw: Mapping[str, str],
+    raw_command: str,
+) -> None:
+    if service_name != "backend":
+        return
+    if not _configured_command_requires_python_backend_layout(raw_command):
+        return
+    raw_dir = str(config_raw.get("BACKEND_DIR", "backend") or "backend").strip() or "backend"
+    candidate = (project_root / raw_dir).resolve()
+    if candidate.is_dir():
+        return
+    raise CommandResolutionError(
+        "missing_service_directory",
+        f"Configured backend directory not found: {candidate}",
+    )
+
+
+def _configured_command_requires_python_backend_layout(raw_command: str) -> bool:
+    try:
+        parts = shlex.split(raw_command.replace("{port}", "0"))
+    except ValueError:
+        return False
+    if len(parts) < 4:
+        return False
+    executable = parts[0]
+    if executable not in {"python", "python3", "python3.12"}:
+        return False
+    return parts[1:4] == ["-m", "uvicorn", "app.main:app"]
+
+
 def _split_and_validate(
     raw: str,
     *,
     port: int,
     command_exists: CommandExists,
     search_roots: list[Path] | None = None,
+    python_runner_prefix: tuple[str, ...] = (),
 ) -> list[str]:
     parsed = shlex.split(raw.replace("{port}", str(port)))
     if not parsed:
         raise CommandResolutionError("invalid_command", "Resolved command is empty")
+    if _looks_like_env_assignment(parsed[0]):
+        raise CommandResolutionError(
+            "unsupported_command_env_prefix",
+            (
+                "Use service env overlays instead of shell-prefix env assignments, "
+                "or wrap explicitly in `sh -c`."
+            ),
+        )
+    parsed = _normalize_configured_python_command(parsed, runner_prefix=python_runner_prefix)
     executable = parsed[0]
     if not _command_exists_for_roots(executable, command_exists=command_exists, search_roots=search_roots or []):
         raise CommandResolutionError(
@@ -445,6 +506,13 @@ def _split_and_validate(
             f"Resolved command executable not found: {executable}",
         )
     return parsed
+
+
+def _looks_like_env_assignment(token: str) -> bool:
+    if "=" not in token or token.startswith("="):
+        return False
+    name, _value = token.split("=", 1)
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name))
 
 
 def _default_command_exists(executable: str) -> bool:
@@ -471,3 +539,35 @@ def _command_exists_for_roots(
         if resolved.exists():
             return True
     return False
+
+
+def _normalize_configured_python_command(command: list[str], *, runner_prefix: tuple[str, ...]) -> list[str]:
+    if not command or not runner_prefix:
+        return command
+    executable = command[0]
+    if executable not in {"python", "python3", "python3.12"}:
+        return command
+    return [*runner_prefix, *command[1:]]
+
+
+def _prepared_backend_python_runner_prefix(
+    *,
+    service_root: Path,
+    project_root: Path,
+    command_exists: CommandExists,
+) -> tuple[str, ...]:
+    pyproject = service_root / "pyproject.toml"
+    if pyproject.is_file() and _pyproject_uses_poetry(pyproject) and command_exists("poetry"):
+        return ("poetry", "run", "python")
+    python_bin = _detect_python_bin(project_root=project_root, service_root=service_root, command_exists=command_exists)
+    if python_bin is None or "/" not in python_bin:
+        return ()
+    return (python_bin,)
+
+
+def _pyproject_uses_poetry(pyproject_file: Path) -> bool:
+    try:
+        text = pyproject_file.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "[tool.poetry]" in text or "[tool.pdm]" in text

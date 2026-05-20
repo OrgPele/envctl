@@ -5,6 +5,9 @@ from typing import Any
 from envctl_engine.runtime.ensure_worktree_support import run_ensure_worktree_command
 from envctl_engine.runtime.codex_tmux_support import run_codex_tmux_command
 from envctl_engine.runtime.prompt_install_support import run_install_prompts_command
+from envctl_engine.runtime.playwright_command_support import run_playwright_command
+from envctl_engine.runtime.qa_user_command_support import run_qa_user_command
+from envctl_engine.runtime.supabase_user_command_support import run_supabase_user_command
 
 
 def dispatch_utility_command(runtime: Any, route: object) -> int:
@@ -15,4 +18,10 @@ def dispatch_utility_command(runtime: Any, route: object) -> int:
         return run_codex_tmux_command(runtime, route)
     if command == "ensure-worktree":
         return run_ensure_worktree_command(runtime, route)
+    if command == "supabase-user":
+        return run_supabase_user_command(runtime, route)
+    if command == "qa-user":
+        return run_qa_user_command(runtime, route)
+    if command == "playwright":
+        return run_playwright_command(runtime, route)
     raise RuntimeError(f"Unsupported utility command: {command}")

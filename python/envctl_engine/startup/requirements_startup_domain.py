@@ -11,6 +11,7 @@ from typing import Protocol
 from envctl_engine.requirements.common import ContainerStartResult
 from envctl_engine.runtime.command_resolution import CommandResolutionError
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.startup.public_urls import browser_backend_url, resolve_public_host
 from envctl_engine.requirements.core import dependency_definition
 from envctl_engine.state.models import PortPlan
 from envctl_engine.shared.protocols import CommandResult, PortAllocator, ProcessRuntime
@@ -68,7 +69,9 @@ class _RequirementsRuntime(Protocol):
     def _supabase_fingerprint_path(self, project_name: str) -> Path: ...
     def _supabase_auto_reinit_enabled(self) -> bool: ...
     def _supabase_reinit_required_message(self) -> str: ...
-    def _run_supabase_reinit(self, *, project_root: Path, project_name: str, db_port: int) -> str | None: ...
+    def _run_supabase_reinit(
+        self, *, project_root: Path, project_name: str, db_port: int, public_port: int | None = None
+    ) -> str | None: ...
     def _requirement_command_resolved(
         self, *, service_name: str, port: int, project_root: Path
     ) -> tuple[list[str], str]: ...
@@ -132,6 +135,13 @@ def _coerce_returncode(value: object) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 1
+
+
+def _coerce_float(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 @dataclass(slots=True)
@@ -263,7 +273,8 @@ def _start_requirement_component(
 
             fingerprint_path = self._supabase_fingerprint_path(context.name)
             previous = read_supabase_fingerprint(fingerprint_path)
-            if previous is not None and previous != contract.fingerprint:
+            compatible_fingerprints = set(getattr(contract, "compatible_fingerprints", ()) or ())
+            if previous is not None and previous != contract.fingerprint and previous not in compatible_fingerprints:
                 self._emit(
                     "supabase.fingerprint.changed",
                     project=context.name,
@@ -274,16 +285,28 @@ def _start_requirement_component(
                     self._emit("supabase.reinit.required", project=context.name, fingerprint_path=str(fingerprint_path))
                     return False, self._supabase_reinit_required_message()
                 reinit_error = self._run_supabase_reinit(
-                    project_root=context.root, project_name=context.name, db_port=port
+                    project_root=context.root,
+                    project_name=context.name,
+                    db_port=port,
+                    public_port=_context_port(context, "supabase_api"),
                 )
                 if reinit_error is not None:
                     return False, reinit_error
                 self._emit("supabase.reinit.executed", project=context.name, fingerprint_path=str(fingerprint_path))
+            elif previous is not None and previous in compatible_fingerprints:
+                self._emit(
+                    "supabase.fingerprint.compatible",
+                    project=context.name,
+                    previous=previous,
+                    current=contract.fingerprint,
+                    fingerprint_path=str(fingerprint_path),
+                )
             pending_supabase_fingerprint = contract.fingerprint
 
         nonlocal command_source
         nonlocal native_effective_port
         nonlocal native_port_adopted
+        nonlocal native_container_name
         adapter_result = self._start_requirement_with_native_adapter(
             context=context,
             service_name=name,
@@ -296,6 +319,7 @@ def _start_requirement_component(
                 int(adapter_result.effective_port) if isinstance(adapter_result.effective_port, int) else None
             )
             native_port_adopted = bool(adapter_result.port_adopted)
+            native_container_name = adapter_result.container_name
             return adapter_result.success, adapter_result.error
 
         command, resolved_source = self._requirement_command_resolved(
@@ -424,6 +448,15 @@ def _requirement_listener_timeout_seconds(self: _RequirementsRuntime) -> float:
     return parsed
 
 
+def _context_port(context: ProjectContextLike, name: str) -> int | None:
+    ports = getattr(context, "ports", {})
+    if not isinstance(ports, dict):
+        return None
+    plan = ports.get(name)
+    value = getattr(plan, "final", None)
+    return int(value) if isinstance(value, int) and value > 0 else None
+
+
 def _start_requirement_with_native_adapter(
     self: _RequirementsRuntime,
     *,
@@ -492,12 +525,23 @@ def _start_requirement_with_native_adapter(
         )
     else:
         command_env = dict(command_env)
-        command_env.setdefault("ENVCTL_SUPABASE_DB_START_NATIVE", "true")
+        public_port = _context_port(context, "supabase_api")
+        if isinstance(public_port, int) and public_port > 0:
+            command_env.setdefault("SUPABASE_PUBLIC_PORT", str(public_port))
+            command_env.setdefault("SUPABASE_API_PORT", str(public_port))
+            command_env.setdefault(
+                "SUPABASE_PUBLIC_URL",
+                browser_backend_url(
+                    host=resolve_public_host(env=getattr(self, "env", None), config=getattr(self, "config", None)),
+                    port=public_port,
+                ),
+            )
         result = native_starter(
             process_runner=process_runner,
             project_root=context.root,
             project_name=context.name,
             db_port=port,
+            public_port=public_port,
             runtime_root=self.runtime_root,
             env=command_env,
         )
@@ -506,7 +550,9 @@ def _start_requirement_with_native_adapter(
     stage_events = [item for item in stage_events_raw if isinstance(item, dict)]
     stage_durations_ms = result.stage_durations_ms if isinstance(result.stage_durations_ms, dict) else {}
     listener_wait_ms = float(result.listener_wait_ms or 0.0)
-    probe_attempts = _extract_probe_attempts(command_timings, service_name=service_name)
+    result_probe_attempts_raw = result.probe_attempts if isinstance(result.probe_attempts, list) else []
+    result_probe_attempts = [item for item in result_probe_attempts_raw if isinstance(item, dict)]
+    probe_attempts = result_probe_attempts or _extract_probe_attempts(command_timings, service_name=service_name)
     effective_port = (
         int(result.effective_port)
         if isinstance(result.effective_port, int) and result.effective_port > 0
@@ -545,9 +591,13 @@ def _start_requirement_with_native_adapter(
             port=port,
             listener_wait_ms=round(listener_wait_ms, 2),
         )
-        restart_used = any(str(item.get("stage", "")).startswith("probe.retry.restart") for item in stage_events)
+        restart_used = any(
+            str(item.get("stage", "")).startswith(("probe.retry.restart", "supabase.auth.restart"))
+            for item in stage_events
+        )
         recreate_used = bool(result.container_recreated) or any(
-            str(item.get("stage", "")).startswith("probe.retry.recreate") for item in stage_events
+            str(item.get("stage", "")).startswith(("probe.retry.recreate", "supabase.auth.recreate"))
+            for item in stage_events
         )
         self._emit(
             "requirements.adapter.retry_path",
@@ -564,10 +614,13 @@ def _start_requirement_with_native_adapter(
                 project=context.name,
                 service=service_name,
                 port=port,
-                attempt=int(attempt.get("attempt", 0) or 0),
-                duration_ms=round(float(attempt.get("duration_ms", 0.0) or 0.0), 2),
+                attempt=_coerce_returncode(attempt.get("attempt", 0)),
+                phase=attempt.get("phase"),
+                action=attempt.get("action"),
+                duration_ms=round(_coerce_float(attempt.get("duration_ms", 0.0)), 2),
                 returncode=_coerce_returncode(attempt.get("returncode", 1)),
                 timed_out=bool(attempt.get("timed_out", False)),
+                error=attempt.get("error"),
             )
         if mismatch_action is not None:
             self._emit(
@@ -593,7 +646,7 @@ def _start_requirement_with_native_adapter(
                 order=index,
                 stage=_classify_docker_stage(command_tokens),
                 command=command_tokens,
-                duration_ms=round(float(command_item.get("duration_ms", 0.0) or 0.0), 2),
+                duration_ms=round(_coerce_float(command_item.get("duration_ms", 0.0)), 2),
                 timeout_s=command_item.get("timeout_s"),
                 returncode=_coerce_returncode(command_item.get("returncode", 1)),
                 timed_out=bool(command_item.get("timed_out", False)),

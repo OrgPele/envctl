@@ -41,11 +41,126 @@ class CliRouterTests(unittest.TestCase):
         route = parse_route(["--resume"], env={})
         self.assertEqual(route.command, "resume")
 
+    def test_supabase_user_aliases_and_passthrough_args_are_parsed(self) -> None:
+        for token in ("supabase-user", "supabase-users", "auth-user", "--supabase-user"):
+            with self.subTest(token=token):
+                route = parse_route([token, "sync", "--json", "--dry-run", "--mode", "trees"], env={})
+                self.assertEqual(route.command, "supabase-user")
+                self.assertEqual(route.passthrough_args, ["sync"])
+                self.assertTrue(route.flags.get("json"))
+                self.assertTrue(route.flags.get("dry_run"))
+                self.assertEqual(route.mode, "trees")
+
+    def test_supabase_user_create_flags_are_parsed(self) -> None:
+        route = parse_route(
+            [
+                "supabase-user",
+                "create",
+                "e2e@example.test",
+                "--password",
+                "secret",
+                "--metadata-json",
+                '{"company":"E2E"}',
+                "--app-metadata-json={\"role\":\"tester\"}",
+                "--confirm",
+            ],
+            env={},
+        )
+
+        self.assertEqual(route.command, "supabase-user")
+        self.assertEqual(route.passthrough_args, ["create", "e2e@example.test"])
+        self.assertEqual(route.flags.get("password"), "secret")
+        self.assertEqual(route.flags.get("metadata_json"), '{"company":"E2E"}')
+        self.assertEqual(route.flags.get("app_metadata_json"), '{"role":"tester"}')
+        self.assertTrue(route.flags.get("confirm"))
+
     def test_non_interactive_aliases_enable_batch_flag(self) -> None:
         for token in ("--headless", "--batch", "--non-interactive", "--no-interactive", "-b"):
             route = parse_route(["--dashboard", token], env={})
             self.assertEqual(route.command, "dashboard")
             self.assertTrue(route.flags.get("batch"), msg=token)
+
+    def test_tmux_and_opencode_flags_are_parsed(self) -> None:
+        route = parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--ulw", "--tmux-new-session", "--headless"], env={})
+        self.assertEqual(route.command, "plan")
+        self.assertTrue(route.flags.get("tmux"))
+        self.assertTrue(route.flags.get("opencode"))
+        self.assertTrue(route.flags.get("ulw"))
+        self.assertTrue(route.flags.get("tmux_new_session"))
+        self.assertTrue(route.flags.get("batch"))
+
+    def test_tmux_and_codex_flags_are_parsed(self) -> None:
+        route = parse_route(["--plan", "feature-a", "--tmux", "--codex"], env={})
+        self.assertEqual(route.command, "plan")
+        self.assertTrue(route.flags.get("tmux"))
+        self.assertTrue(route.flags.get("codex"))
+
+    def test_omx_flag_is_parsed(self) -> None:
+        route = parse_route(["--plan", "feature-a", "--omx", "--codex"], env={})
+        self.assertEqual(route.command, "plan")
+        self.assertTrue(route.flags.get("omx"))
+        self.assertTrue(route.flags.get("codex"))
+
+    def test_omx_workflow_flags_are_parsed(self) -> None:
+        for token, flag_name in (("--ultragoal", "ultragoal"), ("--ralph", "ralph"), ("--team", "team")):
+            with self.subTest(token=token):
+                route = parse_route(["--plan", "feature-a", "--omx", token, "--codex"], env={})
+                self.assertEqual(route.command, "plan")
+                self.assertTrue(route.flags.get("omx"))
+                self.assertTrue(route.flags.get(flag_name))
+                self.assertTrue(route.flags.get("codex"))
+
+    def test_omx_workflow_flags_require_omx_and_are_mutually_exclusive(self) -> None:
+        for args in (
+            ["--plan", "feature-a", "--ultragoal"],
+            ["--plan", "feature-a", "--ralph"],
+            ["--plan", "feature-a", "--team"],
+            ["--plan", "feature-a", "--tmux", "--ultragoal"],
+            ["--plan", "feature-a", "--tmux", "--team"],
+            ["--plan", "feature-a", "--omx", "--ultragoal", "--ralph"],
+            ["--plan", "feature-a", "--omx", "--ultragoal", "--team"],
+            ["--plan", "feature-a", "--omx", "--ralph", "--team"],
+        ):
+            with self.subTest(args=args):
+                with self.assertRaises(RouteError):
+                    parse_route(args, env={})
+
+    def test_codex_goal_flags_are_parsed(self) -> None:
+        for token, flag_name in (
+            ("--goal", "goal"),
+            ("--codex-goal", "codex_goal"),
+            ("--no-goal", "no_goal"),
+            ("--no-codex-goal", "no_codex_goal"),
+        ):
+            with self.subTest(token=token):
+                route = parse_route(["--plan", "feature-a", token], env={})
+                self.assertEqual(route.command, "plan")
+                self.assertTrue(route.flags.get(flag_name))
+
+    def test_codex_goal_positive_flags_reject_opencode(self) -> None:
+        for args in (
+            ["--plan", "feature-a", "--goal", "--opencode"],
+            ["--plan", "feature-a", "--codex-goal", "--opencode"],
+        ):
+            with self.subTest(args=args):
+                with self.assertRaises(RouteError):
+                    parse_route(args, env={})
+
+    def test_codex_goal_negative_flags_allow_opencode(self) -> None:
+        for token in ("--no-goal", "--no-codex-goal"):
+            with self.subTest(token=token):
+                route = parse_route(["--plan", "feature-a", token, "--opencode"], env={})
+                self.assertTrue(route.flags.get("opencode"))
+
+    def test_plan_agent_cli_flags_reject_conflicting_or_unsupported_combinations(self) -> None:
+        for args in (
+            ["--plan", "feature-a", "--codex", "--opencode"],
+            ["--plan", "feature-a", "--tmux", "--codex", "--opencode"],
+            ["--plan", "feature-a", "--omx", "--opencode"],
+        ):
+            with self.subTest(args=args):
+                with self.assertRaises(RouteError):
+                    parse_route(args, env={})
 
     def test_list_trees_alias_routes_to_list_trees_command(self) -> None:
         route = parse_route(["--list-trees"], env={})
@@ -64,15 +179,6 @@ class CliRouterTests(unittest.TestCase):
             self.assertEqual(route.command, "explain-startup")
             self.assertEqual(route.mode, "trees")
             self.assertEqual(route.passthrough_args, ["feature-a"])
-            self.assertTrue(bool(route.flags.get("json")))
-
-    def test_preflight_alias_routes_to_explain_startup(self) -> None:
-        for argv in (
-            ["preflight", "--json"],
-            ["--preflight", "--plan", "feature-a", "--json"],
-        ):
-            route = parse_route(argv, env={})
-            self.assertEqual(route.command, "preflight")
             self.assertTrue(bool(route.flags.get("json")))
 
 

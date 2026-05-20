@@ -30,6 +30,13 @@ class ServiceRecord:
     started_at: float | None = None
     listener_pids: list[int] | None = None
     listener_expected: bool = True
+    project: str | None = None
+    service_slug: str | None = None
+    public_url: str | None = None
+    health_url: str | None = None
+    failure_detail: str | None = None
+    critical: bool = True
+    degraded: bool = False
 
 
 @dataclass(slots=True)

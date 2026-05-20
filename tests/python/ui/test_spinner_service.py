@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from pathlib import Path
+from typing import Any, cast
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
@@ -76,12 +77,14 @@ class SpinnerServicePolicyTests(unittest.TestCase):
 
     def test_spinner_auto_uses_prompt_toolkit_when_rich_missing(self) -> None:
         with (
+            patch.dict("os.environ", {}, clear=True),
             patch("envctl_engine.ui.spinner_service._rich_available", return_value=False),
             patch("envctl_engine.ui.spinner_service._prompt_toolkit_available", return_value=True),
         ):
             policy = resolve_spinner_policy(
                 {
                     "ENVCTL_UI_SPINNER_MODE": "auto",
+                    "CI": "",
                 },
                 stream_isatty=True,
             )
@@ -119,7 +122,7 @@ class SpinnerServicePolicyTests(unittest.TestCase):
         events: list[dict[str, object]] = []
 
         def emit(event_name: str, **payload: object) -> None:
-            item = {"event": event_name}
+            item: dict[str, object] = {"event": event_name}
             item.update(payload)
             events.append(item)
 
@@ -227,7 +230,7 @@ class SpinnerServicePolicyTests(unittest.TestCase):
                 min_ms=0,
                 verbose_events=False,
             ),
-            stream=stream,
+            stream=cast(Any, stream),
             start_immediately=False,
         )
         operation._started = True  # noqa: SLF001
@@ -257,7 +260,7 @@ class SpinnerServicePolicyTests(unittest.TestCase):
                 min_ms=0,
                 verbose_events=False,
             ),
-            stream=stream,
+            stream=cast(Any, stream),
             start_immediately=False,
         )
         operation._started = True  # noqa: SLF001
@@ -298,6 +301,28 @@ class SpinnerServicePolicyTests(unittest.TestCase):
 
         self.assertTrue(output.raw)
         self.assertIn("✓ commit complete\n", output.raw)
+
+    def test_deferred_failure_fallback_uses_cross_marker_not_legacy_bang(self) -> None:
+        stream = _TtyStream()
+        operation = RichSpinnerOperation(
+            message="Running cleanup...",
+            policy=SpinnerPolicy(
+                mode="on",
+                enabled=True,
+                reason="",
+                backend="rich",
+                min_ms=120,
+                verbose_events=False,
+            ),
+            stream=cast(Any, stream),
+            start_immediately=False,
+        )
+        operation.fail("cleanup failed")
+        operation.end()
+
+        rendered = "".join(stream.writes)
+        self.assertIn("✗ cleanup failed\n", rendered)
+        self.assertNotIn("! cleanup failed", rendered)
 
 
 if __name__ == "__main__":

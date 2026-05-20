@@ -7,9 +7,11 @@ import hashlib
 import concurrent.futures
 import os
 from pathlib import Path
+import tempfile
 import re
 import subprocess
 import sys
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping, cast
 
 from envctl_engine.actions.actions_analysis import default_review_command, default_migrate_command
@@ -41,14 +43,16 @@ from envctl_engine.actions.action_test_support import (
 )
 from envctl_engine.actions.action_test_runner import run_test_action as run_test_action_impl
 from envctl_engine.actions.action_worktree_runner import run_delete_worktree_action as run_delete_worktree_action_impl
+from envctl_engine.planning import discover_tree_projects
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.launcher_support import main_repo_root_for_linked_worktree
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.service_bootstrap_domain import (
     _resolve_backend_env_contract,
 )
 from envctl_engine.state.models import PortPlan, RequirementsResult
 from envctl_engine.state.runtime_map import build_runtime_map
-from envctl_engine.test_output.failure_summary import extract_failure_summary_excerpt, summary_excerpt_from_entry
+from envctl_engine.test_output.failure_summary import extract_failure_summary_excerpt
 from envctl_engine.test_output.test_runner import TestRunner
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.test_output.symbols import format_duration
@@ -213,6 +217,10 @@ class ActionCommandOrchestrator:
 
     def execute(self, route: Route) -> int:
         rt = self.runtime
+        if route.command == "self-destruct-worktree":
+            code = self.run_self_destruct_worktree_action(route)
+            rt.emit("action.command.finish", command=route.command, code=code)
+            return code
         if route.command in {"delete-worktree", "blast-worktree"}:
             code = self.run_delete_worktree_action(route)
             rt.emit("action.command.finish", command=route.command, code=code)
@@ -347,6 +355,15 @@ class ActionCommandOrchestrator:
 
     def resolve_targets(self, route: Route, *, trees_only: bool) -> tuple[list[object], str | None]:
         rt = self.runtime
+        if trees_only and route.command == "self-destruct-worktree":
+            current = self._resolve_current_worktree_target()
+            if current is not None:
+                return [current], None
+            return [], "self-destruct-worktree must be run from inside a discovered worktree."
+        if not trees_only and route.mode == "main" and route.command in {"commit", "pr", "test"}:
+            current = self._resolve_current_worktree_target(require_configured_main_root=True)
+            if current is not None:
+                return [current], None
         if trees_only:
             candidates = rt.discover_projects(mode="trees")
         else:
@@ -406,12 +423,210 @@ class ActionCommandOrchestrator:
             return [], f"No matching targets found for: {requested}"
         return selected, None
 
+    def run_self_destruct_worktree_action(self, route: Route) -> int:
+        targets, error = self.resolve_targets(route, trees_only=True)
+        if error is not None:
+            print(error)
+            return 1
+        if len(targets) != 1:
+            print("self-destruct-worktree requires exactly one current worktree target.")
+            return 1
+        target = targets[0]
+        target_root = Path(str(getattr(target, "root"))).resolve()
+        target_name = str(getattr(target, "name", target_root.name))
+        cwd = Path.cwd().resolve()
+        if target_root != cwd:
+            print("self-destruct-worktree must be launched from the worktree root.")
+            return 1
+
+        warnings = self.runtime._blast_worktree_before_delete(
+            project_name=target_name,
+            project_root=target_root,
+            source_command="self-destruct-worktree",
+        )
+        for warning in warnings:
+            print(f"Warning: {warning}")
+
+        repo_root = self._main_repo_root_for_worktree(target_root)
+        if repo_root is None:
+            print("Could not determine main repo root for current worktree.")
+            return 1
+        trees_root = self.runtime._trees_root_for_worktree(target_root)
+        if not self._spawn_self_destruct_helper(
+            repo_root=repo_root,
+            trees_root=trees_root,
+            worktree_root=target_root,
+        ):
+            print("Failed to launch detached worktree self-destruct helper.")
+            return 1
+
+        print(f"Self-destruct launched for {target_name}. This worktree will be removed after envctl exits.")
+        return 0
+
+    def _resolve_current_worktree_target(self, *, require_configured_main_root: bool = False) -> object | None:
+        invocation_cwd = str(self.runtime.env.get("ENVCTL_INVOCATION_CWD") or "").strip()
+        cwd = Path(invocation_cwd).expanduser().resolve() if invocation_cwd else Path.cwd().resolve()
+        configured_root = getattr(self.runtime.raw_runtime.config, "base_dir", None)
+        configured_root_path = (
+            Path(str(configured_root)).expanduser().resolve()
+            if configured_root is not None
+            else None
+        )
+        if require_configured_main_root and configured_root_path == cwd:
+            return None
+        trees_dir_name = str(getattr(self.runtime.raw_runtime.config, "trees_dir_name", "trees"))
+        if require_configured_main_root:
+            if configured_root_path is None:
+                return None
+            repo_root = self._repo_root_from_worktree_layout(cwd, trees_dir_name)
+            if repo_root is None:
+                repo_root = main_repo_root_for_linked_worktree(cwd)
+            if repo_root is None or repo_root.resolve() != configured_root_path:
+                return None
+        else:
+            repo_root = self._main_repo_root_for_worktree(cwd, trees_dir_name=trees_dir_name)
+            if repo_root is None:
+                return None
+        candidates = [
+            SimpleNamespace(name=name, root=root)
+            for name, root in discover_tree_projects(repo_root, trees_dir_name)
+        ]
+        matches = [candidate for candidate in candidates if Path(str(getattr(candidate, "root"))).resolve() == cwd]
+        if len(matches) != 1:
+            return None
+        return matches[0]
+
+    def _main_repo_root_for_worktree(self, worktree_root: Path, *, trees_dir_name: str | None = None) -> Path | None:
+        configured_trees_dir = trees_dir_name or getattr(self.runtime.raw_runtime.config, "trees_dir_name", "trees")
+        normalized_trees_dir = str(configured_trees_dir).strip().rstrip("/")
+        repo_root_from_layout = self._repo_root_from_worktree_layout(worktree_root, normalized_trees_dir)
+        if repo_root_from_layout is not None:
+            return repo_root_from_layout
+
+        completed = self.runtime.raw_runtime.process_runner.run(  # type: ignore[attr-defined]
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=worktree_root,
+            timeout=10.0,
+        )
+        if getattr(completed, "returncode", 1) != 0:
+            return None
+        top_level = Path(str(getattr(completed, "stdout", "") or "").strip()).resolve()
+
+        common = self.runtime.raw_runtime.process_runner.run(  # type: ignore[attr-defined]
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=worktree_root,
+            timeout=10.0,
+        )
+        if getattr(common, "returncode", 1) != 0:
+            return top_level
+        common_dir_raw = str(getattr(common, "stdout", "") or "").strip()
+        if not common_dir_raw:
+            return top_level
+        common_dir_path = Path(common_dir_raw)
+        common_dir = (
+            (worktree_root / common_dir_path).resolve()
+            if not common_dir_path.is_absolute()
+            else common_dir_path.resolve()
+        )
+        if common_dir.name == ".git":
+            return common_dir.parent
+        if common_dir.name == "worktrees" and common_dir.parent.name == ".git":
+            return common_dir.parent.parent
+        return top_level
+
+    @staticmethod
+    def _repo_root_from_worktree_layout(worktree_root: Path, trees_dir_name: str) -> Path | None:
+        normalized = str(trees_dir_name).strip().rstrip("/")
+        if not normalized:
+            return None
+
+        resolved_target = worktree_root.resolve()
+        nested_suffix = Path(normalized)
+        flat_prefix = f"{nested_suffix.name}-"
+
+        ancestors = [resolved_target, *resolved_target.parents]
+        for candidate_repo_root in ancestors:
+            nested_root = candidate_repo_root / nested_suffix
+            if nested_root == resolved_target or nested_root in resolved_target.parents:
+                return candidate_repo_root
+
+            flat_parent = nested_root.parent
+            if flat_parent == resolved_target or flat_parent not in ancestors:
+                continue
+            current = resolved_target
+            while current != flat_parent and flat_parent in current.parents:
+                if current.parent == flat_parent and current.name.startswith(flat_prefix):
+                    return candidate_repo_root
+                current = current.parent
+        return None
+
+    def _spawn_self_destruct_helper(self, *, repo_root: Path, trees_root: Path, worktree_root: Path) -> bool:
+        rt = self.runtime.raw_runtime
+        helper_dir = Path(tempfile.mkdtemp(prefix="envctl-self-destruct-", dir=str(repo_root)))
+        helper_script = helper_dir / "self_destruct.py"
+        helper_script.write_text(
+            """
+from __future__ import annotations
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+repo_root = Path(sys.argv[1]).resolve()
+trees_root = Path(sys.argv[2]).resolve()
+worktree_root = Path(sys.argv[3]).resolve()
+parent_pid = int(sys.argv[4])
+
+for _ in range(200):
+    try:
+        subprocess.run(
+            ["kill", "-0", str(parent_pid)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(0.1)
+    except Exception:
+        break
+
+result = subprocess.run(
+    ["git", "-C", str(repo_root), "worktree", "remove", "--force", str(worktree_root)],
+    capture_output=True,
+    text=True,
+    timeout=30.0,
+)
+if result.returncode != 0:
+    sys.exit(result.returncode)
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        completed = rt.process_runner.start_background(  # type: ignore[attr-defined]
+            [
+                "python3",
+                str(helper_script),
+                str(repo_root),
+                str(trees_root),
+                str(worktree_root),
+                str(os.getpid()),
+            ],
+            cwd=repo_root,
+            stdout_path=helper_dir / "self_destruct.log",
+            stderr_path=helper_dir / "self_destruct.log",
+        )
+        return getattr(completed, "pid", 0) > 0
+
     def _interactive_selection_allowed(self, route: Route) -> bool:
         return interactive_selection_allowed(self.runtime.raw_runtime, route, allow_dashboard_override=True)
 
     def projects_for_services(self, service_targets: list[object]) -> list[str]:
         rt = self.runtime
-        normalized_targets = [str(target).strip().lower() for target in service_targets if str(target).strip()]
+        normalized_targets = [
+            str(target).strip().lower().removeprefix("service:")
+            for target in service_targets
+            if str(target).strip()
+        ]
         if not normalized_targets:
             return []
 
@@ -420,8 +635,9 @@ class ActionCommandOrchestrator:
         for target in normalized_targets:
             matched = False
             if state is not None:
-                for service_name in state.services:
-                    if service_name.lower() == target:
+                for service_name, service in state.services.items():
+                    service_type = str(getattr(service, "type", "") or "").strip().lower()
+                    if service_name.lower() == target or service_type == target:
                         project = rt.project_name_from_service(service_name)
                         if project:
                             resolved.append(project)
@@ -570,7 +786,11 @@ class ActionCommandOrchestrator:
             print_noninteractive_successes=False,
         )
         if not interactive_command:
-            target_names = [str(getattr(target, "name", "")).strip() for target in targets if str(getattr(target, "name", "")).strip()]
+            target_names = [
+                str(getattr(target, "name", "")).strip()
+                for target in targets
+                if str(getattr(target, "name", "")).strip()
+            ]
             self._deferred_post_action_output = lambda: self._print_migrate_result_summary(
                 mode=route.mode,
                 project_names=target_names,
@@ -636,6 +856,13 @@ class ActionCommandOrchestrator:
             ).strip()
             or None
         )
+        service_specs = self._additional_service_test_execution_specs(
+            route=route,
+            targets=targets,
+            target_contexts=target_contexts,
+        )
+        if service_specs:
+            return service_specs
         return build_test_execution_specs(
             shared_raw_command=shared_raw,
             backend_raw_command=backend_raw,
@@ -658,6 +885,60 @@ class ActionCommandOrchestrator:
             replacements_for_target=lambda target: self.action_replacements(targets, target=target),
             is_legacy_tree_test_script=self._is_legacy_tree_test_script,
         )
+
+    def _additional_service_test_execution_specs(
+        self,
+        *,
+        route: Route,
+        targets: list[object],
+        target_contexts: list[TestTargetContext],
+    ) -> list["_TestExecutionSpec"]:
+        from envctl_engine.actions.action_test_support import TestCommandSpec, TestExecutionSpec
+
+        service_types = self._service_types_from_route_services(route) - {"backend", "frontend"}
+        if not service_types:
+            return []
+        rt = self.runtime
+        specs: list[TestExecutionSpec] = []
+        for service_name in sorted(service_types):
+            service = rt.config.app_service_by_name(service_name) if hasattr(rt.config, "app_service_by_name") else None
+            if service is None:
+                raise RuntimeError(f"Unknown additional service {service_name!r} for envctl test --service")
+            raw_command = str(getattr(service, "test_cmd", "") or "").strip()
+            if not raw_command:
+                env_suffix = str(getattr(service, "env_suffix", "") or service_name.upper().replace("-", "_"))
+                raise RuntimeError(
+                    f"No test command configured for additional service {service_name!r}. "
+                    f"Set ENVCTL_SERVICE_{env_suffix}_TEST_CMD to use envctl test --service {service_name}."
+                )
+            dir_name = str(getattr(service, "dir_name", "") or "").strip()
+            for target in target_contexts:
+                replacements = dict(self.action_replacements(targets, target=target.target_obj))
+                command = rt.split_command(raw_command, replacements=replacements)
+                cwd = target.project_root / dir_name if dir_name and dir_name != "." else target.project_root
+                specs.append(
+                    TestExecutionSpec(
+                        index=0,
+                        spec=TestCommandSpec(command=command, cwd=cwd, source=f"configured_service:{service_name}"),
+                        args=[],
+                        resolved_source=f"configured_service:{service_name}",
+                        project_name=target.project_name,
+                        project_root=target.project_root,
+                        target_obj=target.target_obj,
+                    )
+                )
+        return [
+            TestExecutionSpec(
+                index=index,
+                spec=spec.spec,
+                args=spec.args,
+                resolved_source=spec.resolved_source,
+                project_name=spec.project_name,
+                project_root=spec.project_root,
+                target_obj=spec.target_obj,
+            )
+            for index, spec in enumerate(specs, start=1)
+        ]
 
     def _build_failed_test_execution_specs(
         self,
@@ -919,6 +1200,43 @@ class ActionCommandOrchestrator:
             target=target,
             extra=extra,
         )
+
+    def test_action_extra_env(
+        self,
+        *,
+        route: Route | None,
+        target: object | None,
+        suite_source: str,
+    ) -> dict[str, str]:
+        normalized_source = str(suite_source or "").strip().lower()
+        if normalized_source not in {"backend_pytest", "root_unittest"}:
+            return {}
+        if target is None:
+            return {}
+        project_name = str(getattr(target, "name", "") or "").strip()
+        target_root_raw = str(getattr(target, "root", "") or "").strip()
+        if not project_name or not target_root_raw:
+            return {}
+        rt = self.runtime
+        state = rt.load_existing_state(mode=getattr(route, "mode", None))
+        if state is None:
+            return {}
+        requirements = state.requirements.get(project_name)
+        if requirements is None:
+            return {}
+        target_root = Path(target_root_raw)
+        context = self._migrate_project_context(
+            project_name=project_name,
+            project_root=target_root,
+            requirements=requirements,
+        )
+        projector = getattr(rt.raw_runtime, "_project_service_env", None)
+        if not callable(projector):
+            return {}
+        projected = projector(context, requirements=requirements, route=route, service_name="backend")
+        if not isinstance(projected, dict):
+            return {}
+        return {str(key): str(value) for key, value in projected.items() if isinstance(key, str) and value is not None}
 
     @staticmethod
     def action_extra_env(route: Route) -> dict[str, str]:
@@ -1255,7 +1573,12 @@ class ActionCommandOrchestrator:
                 use_color=use_color,
             )
             if record.status == "success":
-                print(f"{ActionCommandOrchestrator._render_migrate_symbol('✓', status='success', use_color=use_color)} migrate succeeded for {project_name}")
+                success_symbol = ActionCommandOrchestrator._render_migrate_symbol(
+                    "✓",
+                    status="success",
+                    use_color=use_color,
+                )
+                print(f"{success_symbol} migrate succeeded for {project_name}")
                 continue
             if record.status != "failed":
                 continue
@@ -1288,7 +1611,9 @@ class ActionCommandOrchestrator:
     def _shared_migrate_hint_lines(records: list[_MigrateResultRecord]) -> tuple[str, ...]:
         if len(records) <= 1:
             return ()
-        visible_hint_lists = [ActionCommandOrchestrator._visible_migrate_hint_lines(record.hint_lines) for record in records]
+        visible_hint_lists = [
+            ActionCommandOrchestrator._visible_migrate_hint_lines(record.hint_lines) for record in records
+        ]
         if not visible_hint_lists:
             return ()
         shared = set(visible_hint_lists[0])
@@ -1437,7 +1762,8 @@ class ActionCommandOrchestrator:
 
     @staticmethod
     def _review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str, object]:
-        cleaned = strip_ansi("\n".join(part for part in [str(stdout or ""), str(stderr or "")] if str(part or "").strip()))
+        output_parts = [str(stdout or ""), str(stderr or "")]
+        cleaned = strip_ansi("\n".join(part for part in output_parts if str(part or "").strip()))
         lines = [line.rstrip() for line in cleaned.splitlines()]
         label_map = {
             "output directory": "output_dir",
@@ -2020,6 +2346,8 @@ class ActionCommandOrchestrator:
     def _suite_display_name(source: str, *, failed_only: bool = False) -> str:
         if source == "backend_pytest":
             return "Backend (pytest, failed only)" if failed_only else "Backend (pytest)"
+        if source == "root_pytest":
+            return "Repository tests (pytest, failed only)" if failed_only else "Repository tests (pytest)"
         if source == "configured_backend":
             return "Backend (failed only)" if failed_only else "Backend"
         if source == "frontend_package_test":
@@ -2095,7 +2423,11 @@ class ActionCommandOrchestrator:
         normalized = cleaned.replace("\\", "/").lower()
         if "alembic/env.py" not in normalized:
             return []
-        if "validationerror" not in normalized and "field required" not in normalized and "type=missing" not in normalized:
+        if (
+            "validationerror" not in normalized
+            and "field required" not in normalized
+            and "type=missing" not in normalized
+        ):
             return []
 
         missing_vars = [
@@ -2107,10 +2439,12 @@ class ActionCommandOrchestrator:
             return []
         joined_vars = ", ".join(missing_vars)
         return [
-            f"hint: migrate failed before Alembic reached revisions because required env vars were missing ({joined_vars}).",
+            "hint: migrate failed before Alembic reached revisions because required env vars "
+            f"were missing ({joined_vars}).",
             "hint: envctl migrate loads backend env from backend/.env by default.",
             "hint: BACKEND_ENV_FILE_OVERRIDE or MAIN_ENV_FILE_PATH can redirect the env file.",
-            "hint: APP_ENV_FILE is exported when an env file is found, and running projects reuse current dependency URLs when available.",
+            "hint: APP_ENV_FILE is exported when an env file is found, and running projects "
+            "reuse current dependency URLs when available.",
         ]
 
     @staticmethod
@@ -2509,8 +2843,12 @@ class ActionCommandOrchestrator:
                     prefix = "  " if multi_project else ""
                     label = self._colorize("failure summary:", fg="gray")
                     print(f"{prefix}{label}")
+                    summary_env = dict(getattr(self.runtime, "env", {}))
+                    hyperlink_mode = str(summary_env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
+                    if hyperlink_mode not in {"off", "false", "no", "0"}:
+                        summary_env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
                     rendered_path = render_path_for_terminal(
-                        summary_path, env=getattr(self.runtime, "env", {}), stream=sys.stdout
+                        summary_path, env=summary_env, stream=sys.stdout
                     )
                     print(f"{prefix}{rendered_path}")
             if multi_project:
@@ -2533,4 +2871,10 @@ class ActionCommandOrchestrator:
 
     def _test_target_contexts(self, targets: list[object]) -> list[TestTargetContext]:
         rt = self.runtime
-        return build_test_target_contexts(targets, repo_root=rt.config.base_dir)  # type: ignore[attr-defined]
+        repo_root = Path(rt.config.base_dir)  # type: ignore[attr-defined]
+        run_repo_root_raw = str(getattr(rt, "env", {}).get("RUN_REPO_ROOT", "")).strip()  # type: ignore[attr-defined]
+        if run_repo_root_raw:
+            candidate = Path(run_repo_root_raw).expanduser()
+            if candidate.exists():
+                repo_root = candidate.resolve()
+        return build_test_target_contexts(targets, repo_root=repo_root)

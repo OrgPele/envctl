@@ -86,7 +86,7 @@ def run_dashboard_command_loop(
                 print("")
                 rt._print_dashboard_snapshot(current_state)
                 print(f"{magenta}Commands:{reset} (q)uit")
-                lifecycle_commands = [("(s)top", "stop"), ("(r)estart", "restart")]
+                lifecycle_commands = [("(s)top services/deps", "stop"), ("(r)estart services", "restart")]
                 visible_lifecycle = [label for label, command in lifecycle_commands if command not in hidden_commands]
                 if visible_lifecycle:
                     print(f"  {magenta}Lifecycle:{reset} " + " | ".join(visible_lifecycle))
@@ -100,6 +100,10 @@ def run_dashboard_command_loop(
                 visible_actions = [label for label, command in action_commands if command not in hidden_commands]
                 if visible_actions:
                     print(f"  {magenta}Actions:{reset} " + " | ".join(visible_actions))
+                session_commands = [
+                    ("(k)ill AI sessions", "kill-session"),
+                ]
+                print(f"  {magenta}AI Sessions:{reset} " + " | ".join(label for label, _ in session_commands))
                 inspect_commands = [
                     ("(l)ogs", "logs"),
                     ("(x) clear-logs", "clear-logs"),
@@ -271,7 +275,7 @@ def run_dashboard_command_loop(
             )
 
             if not should_continue:
-                print("Exiting interactive mode (services continue running).")
+                print(_interactive_exit_message(normalized_command))
                 rt._emit("ui.command_loop.exit", reason="user_exit")
                 return 0
     finally:
@@ -424,6 +428,12 @@ def _command_success_message(command: str | None, *, exiting: bool) -> str | Non
     return f"{command} complete"
 
 
+def _interactive_exit_message(command: str | None) -> str:
+    if command in {"stop-all", "blast-all"}:
+        return "Exiting interactive mode."
+    return "Exiting interactive mode (services continue running)."
+
+
 def _command_label(command: str | None) -> str:
     if not command:
         return "Command"
@@ -544,6 +554,20 @@ def _spinner_message_for_event(event_name: str, payload: Mapping[str, object]) -
         return f"Preparing planning PRs for {project_count} project(s)..."
     if event_name == "state.resume":
         return "Resuming previous runtime state..."
+    if event_name == "state.action.start":
+        command = _payload_text(payload, "command")
+        service_count = _payload_count(payload, "service_count")
+        if command == "logs":
+            return _state_action_progress_message("Loading logs", service_count)
+        if command == "clear-logs":
+            return _state_action_progress_message("Clearing logs", service_count)
+        if command == "health":
+            return _state_action_progress_message("Checking health", service_count)
+        if command == "errors":
+            return _state_action_progress_message("Inspecting errors", service_count)
+        return f"Running {command}..." if command else "Running state action..."
+    if event_name == "config.command.start":
+        return "Opening configuration..."
     if event_name == "requirements.start":
         service = _payload_text(payload, "service") or "dependency"
         project = _payload_text(payload, "project")
@@ -601,6 +625,8 @@ def _spinner_starts_for_event(event_name: str) -> bool:
         "action.command.start",
         "startup.execution",
         "state.resume",
+        "state.action.start",
+        "config.command.start",
         "requirements.start",
         "service.bootstrap",
         "service.start",
@@ -617,6 +643,15 @@ def _spinner_failure_message_for_event(event_name: str, payload: Mapping[str, ob
         if code is not None and code != 0:
             command = _payload_text(payload, "command") or "command"
             return f"{command} failed (exit {code})"
+    if event_name == "state.action.finish":
+        code = _coerce_int(payload.get("code"))
+        if code is not None and code != 0:
+            command = _payload_text(payload, "command") or "state action"
+            return f"{command} failed (exit {code})"
+    if event_name == "config.command.finish":
+        code = _coerce_int(payload.get("code"))
+        if code is not None and code != 0:
+            return f"config failed (exit {code})"
     if event_name == "planning.projects.finish":
         code = _coerce_int(payload.get("code"))
         if code is not None and code != 0:
@@ -660,7 +695,25 @@ def _payload_count(payload: Mapping[str, object], key: str) -> int | None:
         return len(value)
     if isinstance(value, tuple):
         return len(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            return int(stripped)
     return None
+
+
+def _state_action_progress_message(prefix: str, count: int | None) -> str:
+    if count is None:
+        return f"{prefix}..."
+    return f"{prefix} for {_service_count_label(count)}..."
+
+
+def _service_count_label(count: int | None) -> str:
+    if count is None:
+        return "selected service(s)"
+    return f"{count} service(s)"
 
 
 def _coerce_int(value: object) -> int | None:

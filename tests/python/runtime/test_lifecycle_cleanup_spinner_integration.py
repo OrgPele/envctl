@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -10,24 +11,29 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.lifecycle_cleanup_orchestrator import LifecycleCleanupOrchestrator
-from envctl_engine.state.models import RunState, ServiceRecord
+from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.ui.spinner_service import SpinnerPolicy
 from envctl_engine.ui.target_selector import TargetSelection
 
 
 class _StateRepoStub:
+    def __init__(self) -> None:
+        self.saved_states: list[RunState] = []
+        self.purge_calls: list[bool] = []
+
     def save_selected_stop_state(self, *, state, emit, runtime_map_builder):  # noqa: ANN001
-        _ = state, emit, runtime_map_builder
+        _ = emit, runtime_map_builder
+        self.saved_states.append(state)
         return {}
 
     def purge(self, *, aggressive: bool = False) -> None:
-        _ = aggressive
+        self.purge_calls.append(aggressive)
 
 
 class _RuntimeStub:
     def __init__(self) -> None:
         self.env: dict[str, str] = {}
-        self.config = SimpleNamespace(raw={})
+        self.config = SimpleNamespace(raw={}, base_dir=Path("/tmp"))
         self.events: list[dict[str, object]] = []
         self.state_repository = _StateRepoStub()
         self.selection_calls: list[dict[str, object]] = []
@@ -157,6 +163,242 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(code, 1)
 
+    def test_stop_runtime_scope_backend_selects_backend_services_without_prompt(self) -> None:
+        runtime = _RuntimeStub()
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=1),
+                "Main Frontend": ServiceRecord(name="Main Frontend", type="frontend", cwd=".", pid=2),
+                "Other Backend": ServiceRecord(name="Other Backend", type="backend", cwd=".", pid=3),
+            },
+        )
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+        route = Route(command="stop", mode="main", flags={"runtime_scope": "backend", "batch": True})
+
+        selected = orchestrator._select_services_for_stop(state, route)
+
+        self.assertEqual(selected, {"Main Backend", "Other Backend"})
+        self.assertEqual(runtime.selection_calls, [])
+
+    def test_stop_service_selector_accepts_additional_service_slug_and_display_forms(self) -> None:
+        runtime = _RuntimeStub()
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=1),
+                "Main Voice Runtime": ServiceRecord(
+                    name="Main Voice Runtime",
+                    type="voice-runtime",
+                    cwd="/repo/voice-runtime",
+                    pid=2,
+                    project="Main",
+                    service_slug="voice-runtime",
+                ),
+            },
+        )
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+
+        for selector in ("voice-runtime", "service:voice-runtime", "Voice Runtime", "Main Voice Runtime"):
+            with self.subTest(selector=selector):
+                route = Route(command="stop", mode="main", flags={"services": [selector], "batch": True})
+                selected = orchestrator._select_services_for_stop(state, route)
+                self.assertEqual(selected, {"Main Voice Runtime"})
+
+    def test_stopped_dashboard_metadata_preserves_additional_service_slug(self) -> None:
+        runtime = _RuntimeStub()
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Voice Runtime": ServiceRecord(
+                    name="Main Voice Runtime",
+                    type="voice-runtime",
+                    cwd="/repo/voice-runtime",
+                    pid=2,
+                    project="Main",
+                    service_slug="voice-runtime",
+                ),
+            },
+            metadata={"project_roots": {"Main": "/repo"}},
+        )
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+
+        orchestrator._remember_dashboard_stopped_services(state, {"Main Voice Runtime"})
+
+        self.assertEqual(
+            state.metadata.get("dashboard_stopped_services"),
+            [{"name": "Main Voice Runtime", "project": "Main", "type": "voice-runtime"}],
+        )
+        self.assertIn("voice-runtime", state.metadata.get("dashboard_configured_service_types", []))
+
+    def test_stop_dependencies_scope_releases_requirements_without_terminating_services(self) -> None:
+        runtime = _RuntimeStub()
+        released: list[int] = []
+        terminated: list[set[str] | None] = []
+        runtime.port_planner = SimpleNamespace(release=lambda port: released.append(port))
+        runtime._terminate_services_from_state = lambda _state, **kwargs: terminated.append(  # type: ignore[method-assign]
+            kwargs.get("selected_services")
+        )
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=1),
+            },
+            requirements={
+                "Main": RequirementsResult(project="Main", db={"enabled": True, "final": 5432}),
+            },
+        )
+        runtime._try_load_existing_state = lambda *args, **kwargs: state  # type: ignore[method-assign]
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+        route = Route(command="stop", mode="main", flags={"runtime_scope": "dependencies", "batch": True})
+
+        code = orchestrator.execute(route)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(terminated, [])
+        self.assertEqual(released, [5432])
+        self.assertEqual(state.services.keys(), {"Main Backend"})
+        self.assertEqual(state.requirements, {})
+        self.assertEqual(runtime.state_repository.saved_states[0].services.keys(), {"Main Backend"})
+
+    def test_stop_selected_dependency_component_preserves_services_and_other_dependencies(self) -> None:
+        runtime = _RuntimeStub()
+        released: list[int] = []
+        terminated: list[set[str] | None] = []
+        runtime.port_planner = SimpleNamespace(release=lambda port: released.append(port))
+        runtime._terminate_services_from_state = lambda _state, **kwargs: terminated.append(  # type: ignore[method-assign]
+            kwargs.get("selected_services")
+        )
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=1),
+            },
+            requirements={
+                "Main": RequirementsResult(
+                    project="Main",
+                    db={"enabled": True, "final": 5432},
+                    redis={"enabled": True, "final": 6379},
+                ),
+            },
+        )
+        runtime._try_load_existing_state = lambda *args, **kwargs: state  # type: ignore[method-assign]
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+        route = Route(
+            command="stop",
+            mode="main",
+            flags={
+                "stop_dependency_components": ["Main:redis"],
+                "stop_preserve_requirements": True,
+                "batch": True,
+            },
+        )
+
+        code = orchestrator.execute(route)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(terminated, [])
+        self.assertEqual(released, [6379])
+        self.assertIn("Main Backend", state.services)
+        self.assertIn("Main", state.requirements)
+        self.assertFalse(state.requirements["Main"].redis.get("enabled", False))
+        self.assertTrue(state.requirements["Main"].db.get("enabled", False))
+        self.assertEqual(runtime.state_repository.saved_states[0].services.keys(), {"Main Backend"})
+
+    def test_stop_selected_services_can_leave_dependencies_running(self) -> None:
+        runtime = _RuntimeStub()
+        released: list[int] = []
+        terminated: list[set[str] | None] = []
+        runtime.port_planner = SimpleNamespace(release=lambda port: released.append(port))
+        runtime._terminate_services_from_state = lambda _state, **kwargs: terminated.append(  # type: ignore[method-assign]
+            kwargs.get("selected_services")
+        )
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd=".", pid=1),
+            },
+            requirements={
+                "Main": RequirementsResult(project="Main", db={"enabled": True, "final": 5432}),
+            },
+        )
+        runtime._try_load_existing_state = lambda *args, **kwargs: state  # type: ignore[method-assign]
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+        route = Route(
+            command="stop",
+            mode="main",
+            flags={
+                "services": ["Main Backend"],
+                "stop_preserve_requirements": True,
+                "batch": True,
+            },
+        )
+
+        code = orchestrator.execute(route)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(terminated, [{"Main Backend"}])
+        self.assertEqual(released, [])
+        self.assertEqual(state.services, {})
+        self.assertIn("Main", state.requirements)
+        self.assertEqual(runtime.state_repository.saved_states[0].requirements.keys(), {"Main"})
+        stopped_services = runtime.state_repository.saved_states[0].metadata.get("dashboard_stopped_services")
+        self.assertEqual(
+            stopped_services,
+            [{"name": "Main Backend", "project": "Main", "type": "backend"}],
+        )
+
+    def test_interactive_stop_all_services_preserves_stopped_dashboard_state(self) -> None:
+        runtime = _RuntimeStub()
+        terminated: list[set[str] | None] = []
+        runtime._terminate_services_from_state = lambda _state, **kwargs: terminated.append(  # type: ignore[method-assign]
+            kwargs.get("selected_services")
+        )
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd="/repo/backend", pid=1),
+                "Main Frontend": ServiceRecord(name="Main Frontend", type="frontend", cwd="/repo/frontend", pid=2),
+            },
+            metadata={"project_roots": {"Main": "/repo"}},
+        )
+        runtime._try_load_existing_state = lambda *args, **kwargs: state  # type: ignore[method-assign]
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+        route = Route(
+            command="stop",
+            mode="main",
+            flags={
+                "services": ["Main Backend", "Main Frontend"],
+                "stop_preserve_requirements": True,
+                "interactive_command": True,
+                "batch": True,
+            },
+        )
+
+        code = orchestrator.execute(route)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(terminated, [{"Main Backend", "Main Frontend"}])
+        self.assertEqual(state.services, {})
+        self.assertEqual(runtime.state_repository.purge_calls, [])
+        self.assertEqual(len(runtime.state_repository.saved_states), 1)
+        saved = runtime.state_repository.saved_states[0]
+        self.assertEqual(saved.services, {})
+        self.assertEqual(
+            saved.metadata.get("dashboard_stopped_services"),
+            [
+                {"name": "Main Backend", "project": "Main", "type": "backend"},
+                {"name": "Main Frontend", "project": "Main", "type": "frontend"},
+            ],
+        )
+
     def test_stop_selection_routes_through_runtime_backend_selector(self) -> None:
         runtime = _RuntimeStub()
         runtime._try_load_existing_state = lambda *args, **kwargs: RunState(  # type: ignore[method-assign]
@@ -193,6 +435,42 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         self.assertEqual(selected, {"Main Backend"})
         self.assertEqual(runtime.selection_calls[0]["prompt"], "Stop services")
         flush_mock.assert_not_called()
+
+    def test_docker_volume_cleanup_uses_warning_glyph_for_nonfatal_volume_removal_miss(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+        route = Route(
+            command="blast-all",
+            mode="main",
+            flags={"blast_keep_worktree_volumes": False, "blast_remove_main_volumes": False},
+        )
+
+        def fake_run(command: list[str], *, timeout: float | None = None):  # noqa: ANN001
+            _ = timeout
+            if command[:3] == ["docker", "ps", "-a"]:
+                return 0, "abc123|postgres:16|feature-postgres\n", ""
+            if command[:3] == ["docker", "inspect", "-f"]:
+                return 0, "envctl_feature_postgres_data\nenvctl_feature_postgres_busy\n", ""
+            if command[:3] == ["docker", "rm", "-f"]:
+                return 0, "", ""
+            if command[:3] == ["docker", "volume", "rm"]:
+                if command[-1] == "envctl_feature_postgres_data":
+                    return 0, "", ""
+                return 1, "", "volume is in use"
+            return 127, "", "unexpected"
+
+        output = StringIO()
+        with (
+            patch.object(orchestrator, "run_best_effort_command", side_effect=fake_run),
+            redirect_stdout(output),
+        ):
+            removed = orchestrator.blast_all_docker_cleanup(route=route)
+
+        self.assertEqual(removed, 1)
+        rendered = output.getvalue()
+        self.assertIn("✓ removed volume", rendered)
+        self.assertIn("⚠ volume not removed (in use or already deleted)", rendered)
+        self.assertNotIn("! volume not removed", rendered)
 
 
 if __name__ == "__main__":

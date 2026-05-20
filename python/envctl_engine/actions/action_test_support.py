@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import shutil
 import sys
 import threading
 from typing import Any, Callable, Mapping, Sequence
@@ -64,7 +65,7 @@ class FailedTestManifest:
 
 
 def sanitize_failed_test_identifiers(*, source: str, failed_tests: Sequence[str]) -> tuple[tuple[str, ...], int]:
-    if source != "backend_pytest":
+    if source not in {"backend_pytest", "root_pytest"}:
         if source == "root_unittest":
             kept: list[str] = []
             invalid = 0
@@ -333,6 +334,7 @@ def _configured_or_default_test_spec(
                 source = "backend_pytest"
             elif is_unittest_command(command):
                 source = "root_unittest"
+            command = normalize_backend_python_test_command(command, target.project_root)
         if include_frontend and is_package_test_command(command):
             command = append_frontend_test_path(
                 command,
@@ -369,6 +371,30 @@ def _configured_test_command_cwd(project_root: Path, *, include_frontend: bool) 
     if include_frontend and (project_root / "frontend" / "package.json").is_file():
         return project_root / "frontend"
     return project_root
+
+
+def normalize_backend_python_test_command(command: Sequence[str], project_root: Path) -> list[str]:
+    rendered = [str(part) for part in command]
+    if not rendered or rendered[0] not in {"python", "python3", "python3.12"}:
+        return rendered
+
+    backend_root = project_root / "backend"
+    pyproject = backend_root / "pyproject.toml"
+    if pyproject.is_file() and _pyproject_uses_poetry(pyproject) and shutil.which("poetry"):
+        return ["poetry", "--project", str(backend_root), "run", "python", *rendered[1:]]
+
+    python_exe = detect_python_bin(backend_root, project_root)
+    if python_exe and "/" in python_exe:
+        return [python_exe, *rendered[1:]]
+    return rendered
+
+
+def _pyproject_uses_poetry(pyproject: Path) -> bool:
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "[tool.poetry]" in text or "[tool.pdm]" in text
 
 
 def build_failed_test_execution_specs(
@@ -507,19 +533,27 @@ def _failed_rerun_spec_for_entry(
     target_obj: object | None,
 ) -> TestExecutionSpec | str | None:
     source = entry.source
-    if source == "backend_pytest":
+    if source in {"backend_pytest", "root_pytest"}:
         if not entry.failed_tests:
             return None
-        python_exe = detect_python_bin(project_root / "backend", project_root, repo_root)
+        python_roots = (project_root / "backend", project_root, repo_root) if source == "backend_pytest" else (
+            project_root,
+            repo_root,
+        )
+        python_exe = detect_python_bin(*python_roots)
         if not python_exe:
+            suite_name = "backend pytest" if source == "backend_pytest" else "root pytest"
             return (
-                f"Failed-only reruns are unavailable for {project_name} backend pytest "
+                f"Failed-only reruns are unavailable for {project_name} {suite_name} "
                 "because no Python interpreter was found."
             )
+        command = [python_exe, "-m", "pytest", *entry.failed_tests]
+        if source == "backend_pytest":
+            command = normalize_backend_python_test_command(command, project_root)
         return TestExecutionSpec(
             index=0,
             spec=TestCommandSpec(
-                command=[python_exe, "-m", "pytest", *entry.failed_tests],
+                command=command,
                 cwd=project_root,
                 source=source,
             ),
@@ -756,7 +790,7 @@ class TestSuiteSpinnerGroup:
 
     def _suite_color(self, source: str) -> str:
         normalized = str(source).strip().lower()
-        if normalized in {"backend_pytest", "root_unittest"}:
+        if normalized in {"backend_pytest", "root_pytest", "root_unittest"}:
             return "cyan"
         if normalized == "frontend_package_test":
             return "magenta"

@@ -133,6 +133,16 @@ To confirm the release gate runs the same test lane:
 .venv/bin/python scripts/release_shipability_gate.py --repo . --check-tests
 ```
 
+Serena is the repo's symbolic code navigation tool. It is configured by `.serena/project.yml` and should be used for
+architecture discovery, dependency tracing, and refactor planning when available:
+
+```bash
+serena project health-check
+```
+
+Serena is not a CI gate for this repository. Keep CI-style validation centered on pytest, ruff, build, and the release
+shipability gate. Use Serena as an interactive symbol/reference layer before broad text search.
+
 Use narrower scopes while iterating, then widen before finishing. Targeted `unittest` runs remain useful for focused module work, but `pytest -q` is the authoritative repo-wide signal.
 
 ## How to Choose Test Scope

@@ -117,6 +117,27 @@ Major collaborators include:
 - startup/resume/dashboard/action/state orchestrators
 - doctor/debug support
 
+Application service startup flows through descriptor construction in `startup/service_execution.py` before calling
+`ServiceManager.start_services_with_attach(...)`. Backend and frontend still keep their specialized prep/env-file logic,
+while additional services are built from declarative `.envctl` `ENVCTL_ADDITIONAL_SERVICES` entries and share the same
+retry, listener detection, log, state, and runtime-map machinery. App descriptors are executed in dependency layers:
+`ENVCTL_SERVICE_<SUFFIX>_DEPENDS_ON` may reference backend, frontend, other additional services, or managed dependency ids.
+Unknown references and cycles fail before processes launch; `START_ORDER` remains the deterministic tie-breaker within a
+ready layer.
+
+Managed Supabase records and projections distinguish the Postgres resource from the public API gateway resource. `DB_PORT` remains the database listener, while `SUPABASE_PUBLIC_PORT` publishes Kong and backs `ENVCTL_SOURCE_SUPABASE_URL`. Supabase startup validates both the DB listener and `/auth/v1/health`, so failures where Postgres is healthy but Auth/Kong is unreachable are reported as dependency failures instead of producing a browser-only login refusal.
+
+Additional services also carry canonical state fields (`project`, `service_slug`, `public_url`, `health_url`, `critical`,
+`degraded`, and `failure_detail`). Critical services fail fast. Non-critical additional services produce degraded service
+records with cwd/log/port metadata and allow independent healthy layers to continue, making the failure visible through
+state, runtime maps, dashboard, and `health --json`. The dashboard renderer consumes runtime-map service projections for
+additional service rows, so listener sidecars show final rebound URLs plus public/health URLs while non-listener workers
+show explicit non-listener status. Stopped dashboard metadata stores arbitrary service slugs, not just backend/frontend.
+Direct stop/restart selection normalizes `<slug>`, `service:<slug>`, display names, and full service names through the
+shared service selector helper; restart target discovery uses canonical `project`/`service_slug` state fields when present.
+The Textual config wizard exposes the same managed additional-service fields before review/save, so dependency references,
+cycles, mode enablement, listener settings, URLs, start order, and criticality are validated before writing `.envctl`.
+
 Guideline:
 
 - add policy to domain modules
@@ -183,8 +204,8 @@ Operational commands include:
 - `start`
 - `plan`
 - `resume`
-- `restart`
-- `stop`
+- `restart` (including additional-service slug/display-name selectors)
+- `stop` (including additional-service slug/display-name selectors and stopped dashboard metadata)
 - `stop-all`
 - `blast-all`
 - dashboard/state/action commands

@@ -43,6 +43,24 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
 
         self.assertEqual(released, [5432, 5678])
 
+    def test_release_requirement_ports_skips_external_dependency_ports(self) -> None:
+        released: list[int] = []
+        runtime = SimpleNamespace(port_planner=SimpleNamespace(release=lambda port: released.append(port)))
+        requirements = RequirementsResult(
+            project="Main",
+            redis={
+                "enabled": True,
+                "success": True,
+                "external": True,
+                "final": 6382,
+                "resources": {"primary": 6382},
+            },
+        )
+
+        release_requirement_ports(runtime, requirements)
+
+        self.assertEqual(released, [])
+
     def test_requirement_key_for_project_matches_case_insensitive(self) -> None:
         state = RunState(run_id="run-1", mode="main", requirements={"Main": RequirementsResult(project="Main")})
         self.assertEqual(requirement_key_for_project(state, "main"), "Main")
@@ -87,6 +105,53 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
 
         self.assertEqual(terminated, [1])
         self.assertEqual(released, [8000])
+
+    def test_terminate_service_record_prefers_process_group_termination(self) -> None:
+        calls: list[tuple[str, int]] = []
+        runtime = SimpleNamespace(
+            _emit=lambda *args, **kwargs: None,
+            process_runner=SimpleNamespace(
+                terminate_process_group=lambda pid, **kwargs: calls.append(("group", pid)) or True,
+                terminate=lambda pid, **kwargs: calls.append(("single", pid)) or True,
+            ),
+        )
+
+        terminated = terminate_service_record(
+            runtime,
+            SimpleNamespace(name="Main Backend", pid=3210, actual_port=8000),
+            aggressive=False,
+            verify_ownership=False,
+        )
+
+        self.assertTrue(terminated)
+        self.assertEqual(calls, [("group", 3210)])
+
+    def test_terminate_service_record_accepts_verified_listener_child_ownership(self) -> None:
+        calls: list[tuple[str, int]] = []
+        skips: list[dict[str, object]] = []
+
+        def pid_owns_port(pid: int, port: int) -> bool:
+            return pid == 222 and port == 9000
+
+        runtime = SimpleNamespace(
+            _emit=lambda event, **payload: skips.append(payload) if event == "cleanup.skip" else None,
+            process_runner=SimpleNamespace(
+                pid_owns_port=pid_owns_port,
+                terminate_process_group=lambda pid, **kwargs: calls.append(("group", pid)) or True,
+                terminate=lambda pid, **kwargs: calls.append(("single", pid)) or True,
+            ),
+        )
+
+        terminated = terminate_service_record(
+            runtime,
+            SimpleNamespace(name="Main Frontend", pid=111, actual_port=9000, listener_pids=[222]),
+            aggressive=False,
+            verify_ownership=True,
+        )
+
+        self.assertTrue(terminated)
+        self.assertEqual(calls, [("group", 111)])
+        self.assertEqual(skips, [])
 
     def test_blast_worktree_before_delete_updates_state_and_emits_finish(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
@@ -262,6 +327,62 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
             self.assertIn(["docker", "volume", "rm", "vol-cid-postgres"], docker_commands)
             self.assertIn(["docker", "volume", "rm", "vol-cid-supabase"], docker_commands)
             self.assertEqual(events[-1][0], "cleanup.worktree.finish")
+
+    def test_blast_worktree_before_delete_self_destruct_kills_processes_in_worktree_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project_root = root / "trees" / "feature-a" / "1"
+            project_root.mkdir(parents=True, exist_ok=True)
+            external_root = root / "elsewhere"
+            external_root.mkdir(parents=True, exist_ok=True)
+
+            events: list[tuple[str, dict[str, object]]] = []
+            killed: list[tuple[int, set[int] | None]] = []
+
+            runtime = SimpleNamespace(
+                _emit=lambda event, **payload: events.append((event, payload)),
+                _try_load_existing_state=lambda **kwargs: None,
+                _project_name_from_service=lambda _name: "",
+                _terminate_services_from_state=lambda *args, **kwargs: None,
+                _blast_all_process_command=lambda pid: f"sleep {pid}",
+                _looks_like_docker_process=lambda command: False,
+                _blast_all_kill_pid_tree=lambda pid, skip_pids=None: killed.append((pid, skip_pids)),
+                port_planner=SimpleNamespace(release=lambda port: None),
+                state_repository=SimpleNamespace(save_selected_stop_state=lambda **kwargs: None),
+                process_runner=SimpleNamespace(),
+                env={},
+            )
+
+            proc_root = root / "proc"
+            (proc_root / "111").mkdir(parents=True, exist_ok=True)
+            (proc_root / "222").mkdir(parents=True, exist_ok=True)
+
+            def _resolve_proc_path(path_obj: Path, strict: bool = False) -> Path:  # noqa: ARG001
+                path_str = str(path_obj)
+                if path_str.endswith("/111/cwd"):
+                    return project_root
+                if path_str.endswith("/222/cwd"):
+                    return external_root
+                return path_obj
+
+            with (
+                patch("envctl_engine.runtime.engine_runtime_lifecycle_support.Path.iterdir", return_value=[proc_root / "111", proc_root / "222"]),
+                patch("pathlib.Path.resolve", autospec=True, side_effect=_resolve_proc_path),
+                patch(
+                    "envctl_engine.runtime.engine_runtime_lifecycle_support._remove_tree_containers",
+                    return_value=None,
+                ),
+            ):
+                warnings = blast_worktree_before_delete(
+                    runtime,
+                    project_name="Feature",
+                    project_root=project_root,
+                    source_command="self-destruct-worktree",
+                )
+
+            self.assertEqual(warnings, [])
+            self.assertEqual([pid for pid, _ in killed], [111])
+            self.assertTrue(any(event == "cleanup.worktree.cwd.kill" for event, _payload in events))
 
     def test_blast_worktree_before_delete_removes_legacy_truncated_dependency_container_names(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -8,6 +8,7 @@ import threading
 import time
 from typing import Callable, Mapping, TextIO
 from .color_policy import colors_enabled
+from .status_symbols import STATUS_FAILURE, STATUS_SUCCESS
 from envctl_engine.shared.parsing import parse_bool
 
 
@@ -28,8 +29,8 @@ def _prompt_toolkit_available() -> bool:
     return importlib.util.find_spec("prompt_toolkit") is not None
 
 
-_SPINNER_SUCCESS_SYMBOL = "✓"
-_SPINNER_FAILURE_SYMBOL = "✗"
+_SPINNER_SUCCESS_SYMBOL = STATUS_SUCCESS
+_SPINNER_FAILURE_SYMBOL = STATUS_FAILURE
 
 
 @dataclass(slots=True)
@@ -375,7 +376,20 @@ class RichSpinnerOperation:
                         pass
                 elif not ok:
                     # Failure should still be visible when spinner stayed deferred.
-                    print(f"! {message}", file=self._stream)
+                    try:
+                        write = getattr(self._stream, "write", None)
+                        if callable(write):
+                            write(f"{_SPINNER_FAILURE_SYMBOL} {message}\n")
+                            flush = getattr(self._stream, "flush", None)
+                            if callable(flush):
+                                flush()
+                        else:
+                            print(f"{_SPINNER_FAILURE_SYMBOL} {message}", file=sys.stderr)
+                    except Exception:
+                        try:
+                            print(f"{_SPINNER_FAILURE_SYMBOL} {message}", file=sys.stderr)
+                        except Exception:
+                            pass
             self._emit_lifecycle("stop", self._final_state[1] if self._final_state else self._message)
             self._stopped = True
             self._started = False

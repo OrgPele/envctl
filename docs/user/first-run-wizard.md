@@ -28,7 +28,7 @@ It is designed to:
 - seed user-owned launch env sections into `.envctl`
 - leave already running services unchanged until a later start or restart
 
-On save, `envctl` writes the repo-local `.envctl` and then checks whether your Git global excludes file is configured for envctl-managed local artifacts.
+On save, `envctl` writes the repo-local `.envctl` and then configures or updates your Git global excludes file for envctl-managed local artifacts. If `core.excludesFile` is missing, `envctl` sets it to `~/.gitignore_global`.
 
 That global-ignore contract keeps files such as `.envctl`, `MAIN_TASK.md`, archived `OLD_TASK_*.md`, and envctl worktree roots like `trees/` or `trees-*` out of normal `git status` without mutating the repository's tracked `.gitignore`.
 
@@ -41,8 +41,9 @@ The current wizard flow is:
 3. `Components`
 4. optional `Long-Running Service`
 5. `Directories`
-6. `Ports`
-7. `Review / Save`
+6. `Entrypoints / Commands`
+7. `Ports`
+8. `Review / Save`
 
 There is no simple/advanced split in the current UI.
 
@@ -120,10 +121,28 @@ Possible fields:
 
 - backend directory
 - frontend directory
+- frontend tests directory (optional)
 
 If a component is not configured, its directory field is not shown.
 
-## Step 6: Ports
+## Step 6: Entrypoints / Commands
+
+This screen shows only the entrypoint and test command fields needed for the components currently configured in `main` or `trees`.
+
+Possible fields:
+
+- backend entrypoint
+- frontend entrypoint
+- backend test command
+- frontend test command
+
+The wizard detects common test commands from local files without running them. Examples include backend pytest from `backend/tests` plus Python metadata, root unittest discovery from `tests/`, and frontend package test scripts from `frontend/package.json`. Detected values are shown with a short source label. When more than one safe suggestion exists, focus the field and use the suggestion shortcut shown in the status line to cycle alternatives, or edit the command manually.
+
+Test command fields are optional. If no command is detected, leaving the field blank is an explicit choice: `envctl test` can still try runtime defaults later, and you can fill the field once you know the preferred command. Existing `.envctl` values are labeled as existing/manual and are not overwritten by detection.
+
+The frontend tests directory field remains on the `Directories` step. It is optional and is only prefilled when test/spec files make a scoped path high-confidence; otherwise the wizard explains that the package test script may already scope tests itself.
+
+## Step 7: Ports
 
 This screen only shows the canonical ports needed for the components currently configured in `main` or `trees`.
 
@@ -140,7 +159,7 @@ Possible fields:
 
 The wizard validates these before allowing save.
 
-## Step 7: Review / Save
+## Step 8: Review / Save
 
 The final screen shows the managed `.envctl` block that will be written.
 
@@ -171,6 +190,18 @@ Edit them directly when you want to:
 - derive values from earlier lines with `${VAR}`
 - scope vars to backend-only or frontend-only launches
 
+Active backend launch templates for `ENVCTL_SOURCE_DATABASE_URL` and `ENVCTL_SOURCE_REDIS_URL` are treated as requests
+for envctl-managed dynamic PostgreSQL/Redis URLs when the matching dependency toggle is not present in `.envctl`.
+If you want the template line to stay present but the dependency to remain disabled, add the explicit toggle such as
+`MAIN_POSTGRES_ENABLE=false` or `MAIN_REDIS_ENABLE=false`.
+Those dynamic URLs are injected into launched processes for the current run; envctl does not rewrite the default
+backend `.env` with the current managed PostgreSQL or Redis port.
+
+For Main-mode managed dependencies that keep the built-in DB/Redis port defaults, envctl adds a per-session offset to
+the dependency ports before generating those URLs. Backend/frontend app ports remain at their configured bases. Set
+`ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS=false` only when Main-mode dependencies must bind the exact configured
+`DB_PORT`, `REDIS_PORT`, and `N8N_PORT_BASE` values.
+
 `envctl config` seeds these sections when missing, then preserves them as-is.
 
 ## Validation Rules
@@ -180,6 +211,9 @@ The wizard/save path currently enforces these user-visible rules:
 - default mode must be `main` or `trees`
 - required directory fields must not be empty
 - directory paths must exist and be directories
+- backend/frontend entrypoints must not be empty when the configured service is expected to run
+- backend/frontend test commands may be blank
+- optional frontend test paths must exist when provided
 - ports must be positive integers
 - a single mode cannot enable both PostgreSQL and Supabase at the same time
 

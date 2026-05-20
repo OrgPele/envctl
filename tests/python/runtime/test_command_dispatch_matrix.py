@@ -48,8 +48,8 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         runtime._debug_last = lambda _route: 0  # type: ignore[method-assign]
         runtime._discover_projects = lambda mode: []  # type: ignore[method-assign]
 
-        # Verify we have exactly 36 commands
-        self.assertEqual(len(commands), 36, f"Expected 36 commands, got {len(commands)}")
+        # Verify we have exactly 42 commands
+        self.assertEqual(len(commands), 42, f"Expected 42 commands, got {len(commands)}")
 
         # Expected command set
         expected_commands = {
@@ -64,6 +64,10 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "config",
             "doctor",
             "ensure-worktree",
+            "endpoints",
+            "qa-user",
+            "playwright",
+            "supabase-user",
             "test",
             "logs",
             "clear-logs",
@@ -71,6 +75,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "errors",
             "delete-worktree",
             "blast-worktree",
+            "self-destruct-worktree",
             "pr",
             "commit",
             "review",
@@ -80,6 +85,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "list-commands",
             "list-targets",
             "list-trees",
+            "session",
             "show-config",
             "show-state",
             "explain-startup",
@@ -130,18 +136,23 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "test": "action_command_orchestrator",
             "delete-worktree": "action_command_orchestrator",
             "blast-worktree": "action_command_orchestrator",
+            "self-destruct-worktree": "action_command_orchestrator",
             "pr": "action_command_orchestrator",
             "commit": "action_command_orchestrator",
             "review": "action_command_orchestrator",
             "migrate": "action_command_orchestrator",
             "install-prompts": "utility_dispatch",
             "codex-tmux": "utility_dispatch",
+            "supabase-user": "utility_dispatch",
+            "qa-user": "utility_dispatch",
+            "playwright": "utility_dispatch",
             # Direct handlers in dispatch
             "list-commands": "direct_dispatch",
             "list-targets": "direct_dispatch",
             "list-trees": "direct_dispatch",
             "show-config": "direct_dispatch",
             "show-state": "direct_dispatch",
+            "endpoints": "direct_dispatch",
             "explain-startup": "direct_dispatch",
             "preflight": "direct_dispatch",
             "help": "direct_dispatch",

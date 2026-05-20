@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from contextlib import contextmanager
 from contextvars import ContextVar
+import sys
 from typing import Iterator
 
 from .spinner_service import RichSpinnerOperation, SpinnerPolicy, resolve_spinner_policy
@@ -42,6 +43,16 @@ def spinner(message: str, *, enabled: bool, start_immediately: bool = True) -> I
         policy=policy,
         start_immediately=start_immediately,
     )
+    if not policy.enabled:
+        try:
+            write = getattr(sys.stderr, "write", None)
+            if callable(write):
+                write(f"  {message}\n")
+                flush = getattr(sys.stderr, "flush", None)
+                if callable(flush):
+                    flush()
+        except Exception:
+            pass
     try:
         yield s
     finally:

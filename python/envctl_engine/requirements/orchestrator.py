@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import re
 from typing import Callable
 
 from envctl_engine.requirements.common import is_bind_conflict
@@ -49,6 +50,9 @@ class RequirementsOrchestrator:
             "temporarily unavailable",
         )
         if any(token in normalized for token in transient_tokens):
+            return FailureClass.TRANSIENT_PROBE_TIMEOUT_RETRYABLE
+
+        if service_name == "supabase" and _is_supabase_docker_network_missing(normalized):
             return FailureClass.TRANSIENT_PROBE_TIMEOUT_RETRYABLE
 
         if service_name == "n8n" and (
@@ -182,3 +186,15 @@ class RequirementsOrchestrator:
                 error=final_error,
                 reason_code=reason_code,
             )
+
+
+def _is_supabase_docker_network_missing(normalized_error: str) -> bool:
+    if not normalized_error:
+        return False
+    if (
+        "failed to set up container networking" in normalized_error
+        and "network" in normalized_error
+        and "not found" in normalized_error
+    ):
+        return True
+    return bool(re.search(r"\bnetwork\s+[0-9a-f]{12,64}\s+not\s+found\b", normalized_error))

@@ -24,6 +24,8 @@ class PortPlanner:
         db_base: int = 5432,
         redis_base: int = 6379,
         n8n_base: int = 5678,
+        supabase_api_base: int = 54321,
+        additional_service_bases: dict[str, int] | None = None,
         lock_dir: str | None = None,
         session_id: str | None = None,
         stale_lock_seconds: int = 3600,
@@ -34,6 +36,7 @@ class PortPlanner:
         availability_mode: str = "auto",
         preferred_port_strategy: str = "project_slot",
         scope_key: str | None = None,
+        dynamic_main_dependency_ports: bool = False,
     ) -> None:
         self.backend_base = backend_base
         self.frontend_base = frontend_base
@@ -41,6 +44,12 @@ class PortPlanner:
         self.db_base = db_base
         self.redis_base = redis_base
         self.n8n_base = n8n_base
+        self.supabase_api_base = supabase_api_base
+        self.additional_service_bases = {
+            str(name).strip().lower(): int(port)
+            for name, port in (additional_service_bases or {}).items()
+            if str(name).strip() and int(port) > 0
+        }
         self.lock_dir = Path(lock_dir or "/tmp/envctl-python-locks")
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         self.session_id = session_id or f"session-{uuid.uuid4().hex[:8]}"
@@ -56,6 +65,7 @@ class PortPlanner:
             strategy = "project_slot"
         self.preferred_port_strategy = strategy
         self.scope_key = str(scope_key or "global").strip() or "global"
+        self.dynamic_main_dependency_ports = bool(dynamic_main_dependency_ports)
         self.max_port: Final[int] = 65000
 
     def plan_project(
@@ -106,9 +116,17 @@ class PortPlanner:
         sources = sources or {}
         retries = retries or {}
         plans = self.plan_project(project, index=index, requested=requested, sources=sources, retries=retries)
-        db_requested = requested.get("db", self._preferred_port(project, "db", self.db_base, index=index))
-        redis_requested = requested.get("redis", self._preferred_port(project, "redis", self.redis_base, index=index))
-        n8n_requested = requested.get("n8n", self._preferred_port(project, "n8n", self.n8n_base, index=index))
+        db_requested = requested.get("db", self._preferred_dependency_port(project, "db", self.db_base, index=index))
+        redis_requested = requested.get(
+            "redis", self._preferred_dependency_port(project, "redis", self.redis_base, index=index)
+        )
+        n8n_requested = requested.get(
+            "n8n", self._preferred_dependency_port(project, "n8n", self.n8n_base, index=index)
+        )
+        supabase_api_requested = requested.get(
+            "supabase_api",
+            self._preferred_dependency_port(project, "supabase_api", self.supabase_api_base, index=index),
+        )
         plans.update(
             {
                 "db": PortPlan(
@@ -135,8 +153,29 @@ class PortPlanner:
                     source=sources.get("n8n", "planner"),
                     retries=retries.get("n8n", 0),
                 ),
+                "supabase_api": PortPlan(
+                    project=project,
+                    requested=supabase_api_requested,
+                    assigned=supabase_api_requested,
+                    final=supabase_api_requested,
+                    source=sources.get("supabase_api", "planner"),
+                    retries=retries.get("supabase_api", 0),
+                ),
             }
         )
+        for service_name, base_port in self.additional_service_bases.items():
+            requested_port = requested.get(
+                service_name,
+                self._preferred_port(project, service_name, base_port, index=index),
+            )
+            plans[service_name] = PortPlan(
+                project=project,
+                requested=requested_port,
+                assigned=requested_port,
+                final=requested_port,
+                source=sources.get(service_name, "planner"),
+                retries=retries.get(service_name, 0),
+            )
         return plans
 
     def reserve_next(self, start_port: int, owner: str) -> int:
@@ -226,6 +265,11 @@ class PortPlanner:
         slot = self._project_slot(project)
         return base + slot
 
+    def _preferred_dependency_port(self, project: str, service_name: str, base: int, *, index: int) -> int:
+        if self._dynamic_main_dependency_ports_enabled(project):
+            return base + self._main_dependency_session_slot()
+        return self._preferred_port(project, service_name, base, index=index)
+
     def _project_slot(self, project: str) -> int:
         normalized = self._normalize_project_identity(project)
         if normalized in {"", "main"}:
@@ -233,6 +277,22 @@ class PortPlanner:
         span = self._project_slot_span()
         digest = hashlib.sha1(f"{self.scope_key}:{normalized}".encode("utf-8")).hexdigest()
         return int(digest[:8], 16) % span
+
+    def _dynamic_main_dependency_ports_enabled(self, project: str) -> bool:
+        if not self.dynamic_main_dependency_ports:
+            return False
+        normalized = self._normalize_project_identity(project)
+        return normalized in {"", "main"}
+
+    def _main_dependency_session_slot(self) -> int:
+        span = self._project_slot_span()
+        if span <= 1:
+            return 0
+        digest = hashlib.sha1(f"{self.scope_key}:{self.session_id}:main-dependencies".encode("utf-8")).hexdigest()
+        slot = int(digest[:8], 16) % span
+        # Keep envctl-managed Main dependencies off the well-known base ports
+        # while still staying inside the configured service port bands.
+        return slot or 1
 
     def _project_slot_span(self) -> int:
         bases = sorted(
@@ -364,12 +424,16 @@ class PortPlanner:
         if mode == "lock_only":
             return True
         if mode == "listener_query":
-            return self._is_port_available_via_listener_query(port)
+            host_available = self._is_port_available_via_listener_query(port)
+            return host_available and self._is_port_available_via_docker_publish_filter(port)
         if mode == "socket_bind":
-            return self._is_port_available_via_socket_bind(port, allow_permission_fallback=False)
+            host_available = self._is_port_available_via_socket_bind(port, allow_permission_fallback=False)
+            return host_available and self._is_port_available_via_docker_publish_filter(port)
         if mode == "auto":
-            return self._is_port_available_via_socket_bind(port, allow_permission_fallback=True)
-        return self._is_port_available_via_socket_bind(port, allow_permission_fallback=True)
+            host_available = self._is_port_available_via_socket_bind(port, allow_permission_fallback=True)
+            return host_available and self._is_port_available_via_docker_publish_filter(port)
+        host_available = self._is_port_available_via_socket_bind(port, allow_permission_fallback=True)
+        return host_available and self._is_port_available_via_docker_publish_filter(port)
 
     def _is_port_available_via_socket_bind(self, port: int, *, allow_permission_fallback: bool = True) -> bool:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -398,6 +462,37 @@ class PortPlanner:
             return not bool(completed.stdout.strip())
         # lsof returns non-zero when no matches exist.
         return True
+
+    def _is_port_available_via_docker_publish_filter(self, port: int) -> bool:
+        docker_bin = shutil.which("docker")
+        if docker_bin is None:
+            return True
+        timeout_raw = os.environ.get("ENVCTL_PORT_AVAILABILITY_DOCKER_TIMEOUT_SECONDS")
+        try:
+            timeout_seconds = max(0.2, float(timeout_raw)) if timeout_raw is not None else 2.0
+        except ValueError:
+            timeout_seconds = 2.0
+        try:
+            completed = subprocess.run(
+                [
+                    docker_bin,
+                    "ps",
+                    "-a",
+                    "--filter",
+                    f"publish={port}",
+                    "--format",
+                    "{{.ID}}",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=timeout_seconds,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return True
+        if completed.returncode != 0:
+            return True
+        return not bool(completed.stdout.strip())
 
     def _emit(self, event_name: str, **payload: object) -> None:
         if self.event_handler is None:

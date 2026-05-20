@@ -1,29 +1,100 @@
 from __future__ import annotations
 
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 import re
+import socket
 import tempfile
+import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.config import load_config
-from envctl_engine.planning.plan_agent_launch_support import PlanAgentLaunchResult
+from envctl_engine.planning.plan_agent_launch_support import (
+    PlanAgentAttachTarget,
+    PlanAgentLaunchOutcome,
+    PlanAgentLaunchResult,
+)
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.requirements.orchestrator import RequirementOutcome
 from envctl_engine.test_output.parser_base import strip_ansi
 import envctl_engine.runtime.engine_runtime_startup_support as startup_support
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
 from envctl_engine.runtime.engine_runtime import ProjectContext
 from envctl_engine.state import dump_state
+from envctl_engine.state.runtime_map import build_runtime_map
+
+FAKE_WORKTREE_GITDIR_CONTENT = "gitdir: /tmp/fake-worktree\n"
+
+
+class _HealthyHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/auth/v1/health":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok"}')
+            return
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
+@contextmanager
+def _healthy_http_server():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _HealthyHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+
+
+@contextmanager
+def _tcp_listener():
+    stop = threading.Event()
+    ready = threading.Event()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen()
+    sock.settimeout(0.1)
+    port = int(sock.getsockname()[1])
+
+    def serve() -> None:
+        ready.set()
+        while not stop.is_set():
+            try:
+                conn, _addr = sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            conn.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    ready.wait(timeout=1)
+    try:
+        yield port
+    finally:
+        stop.set()
+        sock.close()
+        thread.join(timeout=1)
 
 
 class _TtyStringIO(StringIO):
@@ -68,7 +139,10 @@ class _FakeProcessRunner:
         command = tuple(str(part) for part in cmd)
         if self.docker_connect_error and command and command[0] == "docker":
             return SimpleNamespace(returncode=1, stdout="", stderr=self.docker_connect_error)
-        if len(command) >= 5 and command[0] == "git" and command[3] == "worktree" and command[4] == "add":
+        if len(command) >= 5 and command[0] == "git" and "worktree" in command:
+            worktree_index = command.index("worktree")
+            if worktree_index + 1 >= len(command) or command[worktree_index + 1] != "add":
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
             target = Path(str(command[-1]))
             target.mkdir(parents=True, exist_ok=True)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -233,13 +307,17 @@ class _FakeSetupWorktreeRunner(_FakeProcessRunner):
 
     def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
         command = tuple(str(part) for part in cmd)
-        if len(command) >= 5 and command[0] == "git" and command[3] == "worktree" and command[4] == "add":
+        if len(command) >= 5 and command[0] == "git" and "worktree" in command:
+            worktree_index = command.index("worktree")
+            if worktree_index + 1 >= len(command) or command[worktree_index + 1] != "add":
+                return super().run(cmd, cwd=cwd, env=env, timeout=timeout)
             self.run_calls.append((tuple(cmd), str(cwd)))
             self.run_envs.append(dict(env) if env is not None else None)
             if self.fail_worktree_add:
                 return SimpleNamespace(returncode=1, stdout="", stderr="simulated git worktree failure")
             target = Path(str(command[-1]))
             target.mkdir(parents=True, exist_ok=True)
+            (target / ".git").write_text(FAKE_WORKTREE_GITDIR_CONTENT, encoding="utf-8")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return super().run(cmd, cwd=cwd, env=env, timeout=timeout)
 
@@ -284,6 +362,49 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
     @staticmethod
     def _planned_ports(engine: PythonEngineRuntime, project_name: str, *, index: int = 0) -> dict[str, PortPlan]:
         return engine.port_planner.plan_project_stack(project_name, index=index)
+
+    @staticmethod
+    def _frontend_envs(fake_runner: _FakeProcessRunner, frontend_dir: Path) -> list[dict[str, str]]:
+        frontend_root = str(frontend_dir.resolve())
+        return [
+            env
+            for call, env in zip(fake_runner.start_background_calls, fake_runner.start_background_envs, strict=True)
+            if str(Path(call[1]).resolve()) == frontend_root and isinstance(env, dict)
+        ]
+
+    @staticmethod
+    def _restart_route() -> object:
+        route = parse_route(["--restart", "--batch"], env={"ENVCTL_DEFAULT_MODE": "main"})
+        route.flags.update(
+            {
+                "services": ["Main Backend", "Main Frontend"],
+                "restart_service_types": ["backend", "frontend"],
+                "restart_include_requirements": False,
+                "interactive_command": True,
+            }
+        )
+        return route
+
+    def _backend_frontend_only_config(self, repo: Path, runtime: Path):
+        return self._config(
+            repo,
+            runtime,
+            extra={
+                "POSTGRES_MAIN_ENABLE": "false",
+                "REDIS_ENABLE": "false",
+                "N8N_ENABLE": "false",
+                "SUPABASE_MAIN_ENABLE": "false",
+                "MAIN_POSTGRES_ENABLE": "false",
+                "MAIN_REDIS_ENABLE": "false",
+                "MAIN_N8N_ENABLE": "false",
+                "MAIN_SUPABASE_ENABLE": "false",
+                "TREES_POSTGRES_ENABLE": "false",
+                "TREES_REDIS_ENABLE": "false",
+                "TREES_N8N_ENABLE": "false",
+                "TREES_SUPABASE_ENABLE": "false",
+                "ENVCTL_RUNTIME_TRUTH_MODE": "best_effort",
+            },
+        )
 
     def test_debug_session_materialized_when_debug_mode_off(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -335,13 +456,120 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
             self.assertGreaterEqual(len(fake_runner.run_calls), 3)
             self.assertGreaterEqual(len(fake_runner.start_background_calls), 2)
+
+    def test_main_restart_real_startup_path_preserves_ports_and_frontend_vite_backend_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._backend_frontend_only_config(repo, runtime),
+                env={"ENVCTL_UI_SPINNER_MODE": "off"},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.auto_track_listener_ports = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            with redirect_stdout(StringIO()):
+                self.assertEqual(engine.dispatch(parse_route(["--main", "--batch"], env={})), 0)
+            fake_runner.start_background_calls.clear()
+            fake_runner.start_background_envs.clear()
+
+            with redirect_stdout(StringIO()):
+                code = engine.dispatch(self._restart_route())
+
+            self.assertEqual(code, 0, [event for event in engine.events if event.get("event") == "startup.failed"])
+            state = engine._try_load_existing_state(mode="main", strict_mode_match=True)
+            self.assertIsNotNone(state)
+            assert state is not None
+            self.assertEqual(state.services["Main Backend"].actual_port, 8000)
+            self.assertEqual(state.services["Main Frontend"].actual_port, 9000)
+            frontend_envs = self._frontend_envs(fake_runner, repo / "frontend")
+            self.assertTrue(frontend_envs)
+            self.assertEqual(frontend_envs[-1].get("VITE_BACKEND_URL"), "http://localhost:8000")
+            self.assertEqual(frontend_envs[-1].get("VITE_API_URL"), "http://localhost:8000/api/v1")
+            runtime_map = build_runtime_map(state)
+            self.assertEqual(runtime_map["projection"]["Main"]["backend_url"], "http://localhost:8000")
+            self.assertEqual(runtime_map["projection"]["Main"]["frontend_url"], "http://localhost:9000")
+            with redirect_stdout(StringIO()) as dashboard_stdout:
+                engine._print_dashboard_snapshot(state)
+            dashboard_text = strip_ansi(dashboard_stdout.getvalue())
+            self.assertIn("http://localhost:8000", dashboard_text)
+            self.assertIn("http://localhost:9000", dashboard_text)
+            self.assertFalse(
+                [
+                    event
+                    for event in engine.events
+                    if event.get("event") == "port.rebound" and event.get("service") in {"backend", "frontend"}
+                ]
+            )
+
+    def test_main_restart_real_startup_path_rebounds_backend_and_updates_frontend_vite_backend_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._backend_frontend_only_config(repo, runtime),
+                env={"ENVCTL_UI_SPINNER_MODE": "off"},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.auto_track_listener_ports = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            with redirect_stdout(StringIO()):
+                self.assertEqual(engine.dispatch(parse_route(["--main", "--batch"], env={})), 0)
+            fake_runner.start_background_calls.clear()
+            fake_runner.start_background_envs.clear()
+            engine.port_planner.availability_checker = lambda port: port != 8000
+
+            with redirect_stdout(StringIO()):
+                code = engine.dispatch(self._restart_route())
+
+            self.assertEqual(code, 0, [event for event in engine.events if event.get("event") == "startup.failed"])
+            state = engine._try_load_existing_state(mode="main", strict_mode_match=True)
+            self.assertIsNotNone(state)
+            assert state is not None
+            self.assertEqual(state.services["Main Backend"].actual_port, 8001)
+            self.assertEqual(state.services["Main Frontend"].actual_port, 9000)
+            frontend_envs = self._frontend_envs(fake_runner, repo / "frontend")
+            self.assertTrue(frontend_envs)
+            self.assertEqual(frontend_envs[-1].get("VITE_BACKEND_URL"), "http://localhost:8001")
+            self.assertEqual(frontend_envs[-1].get("VITE_API_URL"), "http://localhost:8001/api/v1")
+            runtime_map = build_runtime_map(state)
+            self.assertEqual(runtime_map["projection"]["Main"]["backend_url"], "http://localhost:8001")
+            self.assertEqual(runtime_map["projection"]["Main"]["frontend_url"], "http://localhost:9000")
+            with redirect_stdout(StringIO()) as dashboard_stdout:
+                engine._print_dashboard_snapshot(state)
+            dashboard_text = strip_ansi(dashboard_stdout.getvalue())
+            self.assertIn("http://localhost:8001", dashboard_text)
+            self.assertIn("http://localhost:9000", dashboard_text)
+            backend_rebounds = [
+                event
+                for event in engine.events
+                if event.get("event") == "port.rebound" and event.get("service") == "backend"
+            ]
+            self.assertEqual(len(backend_rebounds), 1)
+            self.assertEqual(backend_rebounds[0].get("restart_preferred_port"), 8000)
+            self.assertEqual(backend_rebounds[0].get("port"), 8001)
+            self.assertEqual(backend_rebounds[0].get("restart_conflict_detail"), "listener")
 
     def test_backend_long_running_task_can_skip_listener_wait_and_start_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -463,7 +691,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -509,7 +737,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner = _FakeSetupWorktreeRunner()
             fake_runner.wait_for_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -551,7 +779,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = False
             fake_runner.wait_for_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -586,7 +814,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = False
             fake_runner.wait_for_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -622,7 +850,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = False
             fake_runner.wait_for_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -657,7 +885,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = False
             fake_runner.wait_for_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -682,7 +910,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = False
             fake_runner.start_log_line = "ModuleNotFoundError: No module named 'psycopg2'"
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             out = _TtyStringIO()
             with redirect_stdout(out):
@@ -719,7 +947,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 original_emit(event, **payload)
 
             engine._emit = capture_emit  # type: ignore[method-assign]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             out = StringIO()
             with redirect_stdout(out):
@@ -858,7 +1086,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
             planned_db_port = self._planned_ports(engine, "feature-a-1")["db"].final
 
             code = engine.dispatch(route)
@@ -978,6 +1206,20 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 "DATABASE_URL=postgresql+psycopg2://override_user:override_pass@db.internal/override_db",
                 override_file.read_text(encoding="utf-8"),
             )
+            backend_start_envs = [
+                env
+                for (_cmd, cwd), env in zip(fake_runner.start_background_calls, fake_runner.start_background_envs)
+                if Path(cwd).resolve() == backend_dir.resolve() and isinstance(env, dict)
+            ]
+            self.assertTrue(backend_start_envs)
+            self.assertTrue(
+                any(
+                    env.get("DATABASE_URL")
+                    == "postgresql+psycopg2://override_user:override_pass@db.internal/override_db"
+                    for env in backend_start_envs
+                )
+            )
+            self.assertTrue(any(env.get("CUSTOM_BACKEND_FLAG") == "override-enabled" for env in backend_start_envs))
 
     def test_main_env_file_path_applies_backend_env_override_in_main_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1022,8 +1264,91 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                     for env in bootstrap_envs
                 )
             )
+            backend_start_envs = [
+                env
+                for (_cmd, cwd), env in zip(fake_runner.start_background_calls, fake_runner.start_background_envs)
+                if Path(cwd).resolve() == backend_dir.resolve() and isinstance(env, dict)
+            ]
+            self.assertTrue(backend_start_envs)
+            self.assertTrue(
+                any(
+                    env.get("DATABASE_URL") == "postgresql+psycopg2://main_user:main_pass@main.db.internal/main_db"
+                    for env in backend_start_envs
+                )
+            )
 
-    def test_backend_env_file_upserts_database_url_and_syncs_projected_redis_url(self) -> None:
+    def test_main_backend_launch_env_templates_enable_dynamic_supabase_and_redis_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "# >>> envctl managed startup config >>>",
+                        "ENVCTL_DEFAULT_MODE=main",
+                        "MAIN_FRONTEND_ENABLE=false",
+                        "DB_PORT=5544",
+                        "REDIS_PORT=6399",
+                        "ENVCTL_BACKEND_START_CMD=python -c 'import time; time.sleep(1)'",
+                        "# <<< envctl managed startup config <<<",
+                        "",
+                        "# >>> envctl backend launch env >>>",
+                        "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}",
+                        "REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}",
+                        "N8N_URL=${ENVCTL_SOURCE_N8N_URL}",
+                        "SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}",
+                        "# <<< envctl backend launch env <<<",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            python_bin = sys.executable
+            engine = PythonEngineRuntime(
+                load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "ENVCTL_REQUIREMENT_POSTGRES_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
+                        "ENVCTL_REQUIREMENT_REDIS_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
+                        "ENVCTL_REQUIREMENT_N8N_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
+                        "ENVCTL_REQUIREMENT_SUPABASE_CMD": f'{python_bin} -c "import sys; sys.exit(0)"',
+                    }
+                ),
+                env={},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--main", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            requirement_events = [
+                event
+                for event in engine.events
+                if event.get("event") == "requirements.start" and event.get("project") == "Main"
+            ]
+            self.assertCountEqual([event.get("service") for event in requirement_events], ["redis", "supabase"])
+            backend_start_env = fake_runner.start_background_envs[-1]
+            self.assertIsNotNone(backend_start_env)
+            assert backend_start_env is not None
+            self.assertEqual(
+                backend_start_env.get("DATABASE_URL"),
+                "postgresql+asyncpg://postgres:supabase-db-password@localhost:5544/postgres",
+            )
+            self.assertEqual(backend_start_env.get("REDIS_URL"), "redis://localhost:6399/0")
+            self.assertNotIn("N8N_URL", backend_start_env)
+            self.assertEqual(backend_start_env.get("SUPABASE_URL"), "http://localhost:54321")
+
+    def test_backend_env_file_does_not_persist_projected_managed_dependency_urls(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -1050,7 +1375,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
             planned_db_port = self._planned_ports(engine, "feature-a-1")["db"].final
 
             code = engine.dispatch(route)
@@ -1058,13 +1383,32 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             content = env_file.read_text(encoding="utf-8")
             self.assertIn("KEEP_ME=1", content)
-            self.assertIn(
-                f"DATABASE_URL=postgresql+asyncpg://svc_user:svc_pass@localhost:{planned_db_port}/svc_db",
-                content,
-            )
-            self.assertIn(
+            self.assertIn("DATABASE_URL=postgresql://legacy", content)
+            self.assertIn("REDIS_URL=redis://legacy", content)
+            self.assertNotIn(f"@localhost:{planned_db_port}/svc_db", content)
+            self.assertNotIn(
                 f"REDIS_URL=redis://localhost:{self._planned_ports(engine, 'feature-a-1')['redis'].final}/0",
                 content,
+            )
+            backend_start_envs = [
+                env
+                for (_cmd, cwd), env in zip(fake_runner.start_background_calls, fake_runner.start_background_envs)
+                if Path(cwd).resolve() == backend_dir.resolve() and isinstance(env, dict)
+            ]
+            self.assertTrue(backend_start_envs)
+            self.assertTrue(
+                any(
+                    env.get("DATABASE_URL")
+                    == f"postgresql+asyncpg://svc_user:svc_pass@localhost:{planned_db_port}/svc_db"
+                    for env in backend_start_envs
+                )
+            )
+            self.assertTrue(
+                any(
+                    env.get("REDIS_URL")
+                    == f"redis://localhost:{self._planned_ports(engine, 'feature-a-1')['redis'].final}/0"
+                    for env in backend_start_envs
+                )
             )
 
     def test_backend_env_file_writeback_removes_stale_db_alias_urls(self) -> None:
@@ -1096,9 +1440,64 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             content = env_file.read_text(encoding="utf-8")
-            self.assertIn("DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:", content)
+            self.assertIn("DATABASE_URL=postgresql://legacy", content)
             self.assertNotIn("SQLALCHEMY_DATABASE_URL=postgresql://legacy", content)
             self.assertNotIn("ASYNC_DATABASE_URL=postgresql://legacy", content)
+
+    def test_main_stale_backend_redis_env_does_not_override_managed_runtime_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "backend"
+            env_file = backend_dir / ".env"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            (backend_dir / "requirements.txt").write_text("fastapi==0.115.0\n", encoding="utf-8")
+            env_file.write_text("REDIS_URL=redis://localhost:6518/0\nCUSTOM_BACKEND_FLAG=enabled\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "MAIN_FRONTEND_ENABLE": "false",
+                        "MAIN_POSTGRES_ENABLE": "false",
+                        "MAIN_REDIS_ENABLE": "true",
+                        "REDIS_PORT": "6603",
+                    },
+                ),
+                env={},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--main", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            state = engine._try_load_existing_state(mode="main")
+            self.assertIsNotNone(state)
+            assert state is not None
+            requirements = state.requirements.get("Main")
+            self.assertIsNotNone(requirements)
+            assert requirements is not None
+            redis_component = requirements.component("redis")
+            self.assertFalse(bool(redis_component.get("external")))
+            self.assertEqual(redis_component.get("final"), 6603)
+            self.assertNotEqual(redis_component.get("external_url"), "redis://localhost:6518/0")
+            backend_start_envs = [
+                env
+                for (_cmd, cwd), env in zip(fake_runner.start_background_calls, fake_runner.start_background_envs)
+                if Path(cwd).resolve() == backend_dir.resolve() and isinstance(env, dict)
+            ]
+            self.assertTrue(backend_start_envs)
+            self.assertTrue(any(env.get("REDIS_URL") == "redis://localhost:6603/0" for env in backend_start_envs))
+            content = env_file.read_text(encoding="utf-8")
+            self.assertIn("REDIS_URL=redis://localhost:6518/0", content)
+            self.assertNotIn("REDIS_URL=redis://localhost:6603/0", content)
 
     def test_backend_service_start_env_includes_backend_env_file_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1314,7 +1713,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
             planned_db_port = self._planned_ports(engine, "feature-a-1")["db"].final
 
             with patch.dict(
@@ -1383,6 +1782,55 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             env_local_contents = env_local.read_text(encoding="utf-8")
             self.assertEqual(
                 env_local_contents,
+                "VITE_BACKEND_URL=http://localhost:9999\nVITE_API_URL=http://localhost:9999/api/v1\n",
+            )
+
+            frontend_envs = [
+                env
+                for (_cmd, cwd), env in zip(fake_runner.start_background_calls, fake_runner.start_background_envs)
+                if str(cwd).endswith("/frontend") and isinstance(env, dict)
+            ]
+            self.assertTrue(frontend_envs)
+            self.assertEqual(frontend_envs[0].get("VITE_BACKEND_URL"), expected_backend_url)
+            self.assertEqual(frontend_envs[0].get("VITE_API_URL"), expected_api_url)
+
+    def test_frontend_api_env_uses_public_host_with_per_project_backend_port(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend_dir = repo / "trees" / "feature-a" / "1" / "backend"
+            frontend_dir = repo / "trees" / "feature-a" / "1" / "frontend"
+            env_local = frontend_dir / ".env.local"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            frontend_dir.mkdir(parents=True, exist_ok=True)
+            (frontend_dir / "package.json").write_text(
+                json.dumps({"name": "frontend", "scripts": {"dev": "vite"}}),
+                encoding="utf-8",
+            )
+            (frontend_dir / "node_modules" / ".bin").mkdir(parents=True, exist_ok=True)
+            (frontend_dir / "node_modules" / ".bin" / "vite").write_text("#!/bin/sh\n", encoding="utf-8")
+            env_local.write_text(
+                "VITE_BACKEND_URL=http://localhost:9999\nVITE_API_URL=http://localhost:9999/api/v1\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={"ENVCTL_PUBLIC_HOST": "203.0.113.10"})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            plans = self._planned_ports(engine, "feature-a-1")
+            expected_backend_url = f"http://203.0.113.10:{plans['backend'].final}"
+            expected_api_url = f"http://203.0.113.10:{plans['backend'].final}/api/v1"
+            self.assertEqual(
+                env_local.read_text(encoding="utf-8"),
                 "VITE_BACKEND_URL=http://localhost:9999\nVITE_API_URL=http://localhost:9999/api/v1\n",
             )
 
@@ -1645,7 +2093,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             route = parse_route(
-                ["--trees", "--project", "feature-a-1", "--project", "feature-b-1", "--batch"],
+                ["--trees", "--project", "feature-a-1", "--project", "feature-b-1", "--isolated-deps", "--batch"],
                 env={},
             )
 
@@ -1690,7 +2138,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             out = StringIO()
             with redirect_stdout(out):
@@ -1720,7 +2168,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -1745,7 +2193,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = False
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             out = StringIO()
             with redirect_stdout(out):
@@ -1774,7 +2222,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = False
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             out = StringIO()
             with redirect_stdout(out):
@@ -1814,7 +2262,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             out = StringIO()
             with redirect_stdout(out):
@@ -1825,9 +2273,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertIsNotNone(state)
             assert state is not None
             requirements = state.requirements["feature-a-1"]
-            self.assertGreaterEqual(int(requirements.db.get("retries", 0)), 4)
-            self.assertGreaterEqual(int(requirements.redis.get("retries", 0)), 4)
-            self.assertGreaterEqual(int(requirements.n8n.get("retries", 0)), 4)
+            self.assertGreaterEqual(int(requirements.component("postgres").get("retries", 0)), 4)
+            self.assertGreaterEqual(int(requirements.component("redis").get("retries", 0)), 4)
+            self.assertGreaterEqual(int(requirements.component("n8n").get("retries", 0)), 4)
             self.assertNotIn("Requirements unavailable", out.getvalue())
 
     def test_startup_allows_at_least_one_bind_retry_when_bind_retry_budget_is_zero(self) -> None:
@@ -1865,7 +2313,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertIsNotNone(state)
             assert state is not None
             requirements = state.requirements["feature-a-1"]
-            self.assertGreaterEqual(int(requirements.db.get("retries", 0)), 1)
+            self.assertGreaterEqual(int(requirements.component("postgres").get("retries", 0)), 1)
             retry_events = [
                 event
                 for event in engine.events
@@ -1898,7 +2346,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             code = engine.dispatch(route)
 
@@ -2088,10 +2536,10 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             requirements = engine._start_requirements_for_project(main_context, mode="main")
 
-            self.assertFalse(requirements.db["enabled"])
-            self.assertFalse(requirements.redis["enabled"])
-            self.assertFalse(requirements.n8n["enabled"])
-            self.assertFalse(requirements.supabase["enabled"])
+            self.assertFalse(requirements.component("postgres")["enabled"])
+            self.assertFalse(requirements.component("redis")["enabled"])
+            self.assertFalse(requirements.component("n8n")["enabled"])
+            self.assertFalse(requirements.component("supabase")["enabled"])
 
     def test_main_services_local_flag_overrides_main_requirements_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2128,6 +2576,374 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertFalse(engine._requirement_enabled("supabase", mode="main", route=route))
             self.assertFalse(engine._requirement_enabled("n8n", mode="main", route=route))
             self.assertTrue(engine._requirement_enabled("postgres", mode="main", route=route))
+
+    def test_external_supabase_requirement_skips_managed_start_and_records_external_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, _healthy_http_server() as supabase_url:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                    "ENVCTL_REQUIREMENTS_STRICT": "true",
+                },
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_DEPENDENCY_SUPABASE_MODE": "external",
+                    "SUPABASE_URL": supabase_url,
+                    "SUPABASE_ANON_KEY": "external-anon",
+                },
+            )
+            context = engine._discover_projects(mode="main")[0]
+
+            def fail_if_managed_start(*_args, **_kwargs):  # noqa: ANN001
+                self.fail("external supabase must not invoke the managed requirement starter")
+
+            engine._start_requirement_component = fail_if_managed_start  # type: ignore[method-assign]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            supabase = requirements.component("supabase")
+            self.assertTrue(supabase["enabled"])
+            self.assertTrue(supabase["success"])
+            self.assertTrue(supabase["external"])
+            self.assertEqual(supabase["runtime_status"], "healthy")
+            self.assertEqual(supabase["external_url"], supabase_url)
+            self.assertEqual(requirements.health, "healthy")
+
+    def test_main_supabase_env_auto_uses_external_requirement_without_global_toggle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, _healthy_http_server() as supabase_url:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "SUPABASE_URL": supabase_url,
+                    "SUPABASE_ANON_KEY": "external-anon",
+                },
+            )
+            context = engine._discover_projects(mode="main")[0]
+
+            def fail_if_managed_start(*_args, **_kwargs):  # noqa: ANN001
+                self.fail("main mode with complete external supabase env must not invoke managed startup")
+
+            engine._start_requirement_component = fail_if_managed_start  # type: ignore[method-assign]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            supabase = requirements.component("supabase")
+            self.assertTrue(supabase["enabled"])
+            self.assertTrue(supabase["success"])
+            self.assertTrue(supabase["external"])
+            self.assertEqual(supabase["runtime_status"], "healthy")
+
+    def test_main_supabase_backend_dotenv_auto_uses_external_requirement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, _healthy_http_server() as supabase_url:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            backend = repo / "backend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            backend.mkdir(parents=True, exist_ok=True)
+            backend.joinpath(".env").write_text(
+                f"SUPABASE_URL={supabase_url}\nSUPABASE_ANON_KEY=external-anon\n",
+                encoding="utf-8",
+            )
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(config, env={})
+            context = engine._discover_projects(mode="main")[0]
+
+            def fail_if_managed_start(*_args, **_kwargs):  # noqa: ANN001
+                self.fail("main mode with complete backend .env Supabase values must not invoke managed startup")
+
+            engine._start_requirement_component = fail_if_managed_start  # type: ignore[method-assign]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            supabase = requirements.component("supabase")
+            self.assertTrue(supabase["enabled"])
+            self.assertTrue(supabase["success"])
+            self.assertTrue(supabase["external"])
+            self.assertEqual(supabase["runtime_status"], "healthy")
+
+    def test_main_root_dotenv_auto_uses_external_requirements_with_vite_supabase_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, _healthy_http_server() as supabase_url, _tcp_listener() as db_port:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            repo.joinpath(".env").write_text(
+                f"SUPABASE_URL={supabase_url}\n"
+                "VITE_SUPABASE_ANON_KEY=external-anon\n"
+                f"DATABASE_URL=postgresql+asyncpg://app:secret@127.0.0.1:{db_port}/app\n",
+                encoding="utf-8",
+            )
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(config, env={})
+            context = engine._discover_projects(mode="main")[0]
+
+            def fail_if_managed_start(*_args, **_kwargs):  # noqa: ANN001
+                self.fail("main mode with complete root .env values must not invoke managed startup")
+
+            engine._start_requirement_component = fail_if_managed_start  # type: ignore[method-assign]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            supabase = requirements.component("supabase")
+            postgres = requirements.component("postgres")
+            self.assertTrue(supabase["enabled"])
+            self.assertTrue(supabase["success"])
+            self.assertTrue(supabase["external"])
+            self.assertEqual(supabase["runtime_status"], "healthy")
+            self.assertTrue(postgres["enabled"])
+            self.assertTrue(postgres["success"])
+            self.assertTrue(postgres["external"])
+            self.assertEqual(postgres["runtime_status"], "healthy")
+
+    def test_trees_supabase_env_defaults_to_managed_requirement_without_external_toggle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "TREES_POSTGRES_ENABLE": "false",
+                    "TREES_REDIS_ENABLE": "false",
+                    "TREES_N8N_ENABLE": "false",
+                    "TREES_SUPABASE_ENABLE": "true",
+                },
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "SUPABASE_URL": "https://supabase.example.test",
+                    "SUPABASE_ANON_KEY": "external-anon",
+                },
+            )
+            context = SimpleNamespace(
+                name="feature-a-1",
+                root=repo / "trees" / "feature-a" / "1",
+                ports=engine.port_planner.plan_project_stack("feature-a-1", index=0),
+            )
+            context.root.mkdir(parents=True, exist_ok=True)
+            managed_starts: list[str] = []
+
+            def fake_managed_start(context, component, plan, reserve_next, **_kwargs):  # noqa: ANN001
+                managed_starts.append(component)
+                return RequirementOutcome(
+                    service_name=component,
+                    success=True,
+                    requested_port=plan.requested,
+                    final_port=reserve_next(plan.final),
+                    retries=0,
+                )
+
+            engine._start_requirement_component = fake_managed_start  # type: ignore[method-assign]
+
+            route = parse_route(["--tree", "--isolated-deps"], env={})
+            requirements = engine._start_requirements_for_project(context, mode="trees", route=route)
+
+            supabase = requirements.component("supabase")
+            self.assertEqual(managed_starts, ["supabase"])
+            self.assertTrue(supabase["enabled"])
+            self.assertTrue(supabase["success"])
+            self.assertFalse(bool(supabase.get("external")))
+            self.assertNotEqual(supabase.get("runtime_status"), "external")
+
+    def test_external_redis_requirement_skips_managed_start_and_records_external_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, _tcp_listener() as redis_port:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_EXTERNAL_DEPENDENCIES": "redis",
+                    "REDIS_URL": f"redis://127.0.0.1:{redis_port}/0",
+                },
+            )
+            context = engine._discover_projects(mode="main")[0]
+
+            def fail_if_managed_start(*_args, **_kwargs):  # noqa: ANN001
+                self.fail("external redis must not invoke the managed requirement starter")
+
+            engine._start_requirement_component = fail_if_managed_start  # type: ignore[method-assign]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            redis = requirements.component("redis")
+            self.assertTrue(redis["enabled"])
+            self.assertTrue(redis["success"])
+            self.assertTrue(redis["external"])
+            self.assertEqual(redis["runtime_status"], "healthy")
+            self.assertEqual(redis["resources"]["primary"], redis_port)
+            self.assertEqual(redis["external_url"], f"redis://127.0.0.1:{redis_port}/0")
+
+    def test_external_redis_requirement_fails_when_probe_cannot_connect(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", 0))
+            closed_port = int(sock.getsockname()[1])
+            sock.close()
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_EXTERNAL_DEPENDENCIES": "redis",
+                    "ENVCTL_EXTERNAL_DEPENDENCY_PROBE_TIMEOUT": "0.1",
+                    "REDIS_URL": f"redis://127.0.0.1:{closed_port}/0",
+                },
+            )
+            context = engine._discover_projects(mode="main")[0]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            redis = requirements.component("redis")
+            self.assertTrue(redis["enabled"])
+            self.assertFalse(redis["success"])
+            self.assertTrue(redis["external"])
+            self.assertEqual(redis["runtime_status"], "unreachable")
+            self.assertIn("external probe failed", str(redis["error"]))
+            self.assertEqual(requirements.health, "degraded")
+
+    def test_main_auto_external_redis_probe_failure_records_unreachable_external_without_managed_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", 0))
+            closed_port = int(sock.getsockname()[1])
+            sock.close()
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_EXTERNAL_DEPENDENCY_PROBE_TIMEOUT": "0.1",
+                    "REDIS_URL": f"redis://127.0.0.1:{closed_port}/0",
+                },
+            )
+            context = engine._discover_projects(mode="main")[0]
+
+            def fail_if_managed_start(*_args, **_kwargs):  # noqa: ANN001
+                self.fail("auto external redis must not invoke the managed requirement starter")
+
+            engine._start_requirement_component = fail_if_managed_start  # type: ignore[method-assign]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            redis = requirements.component("redis")
+            self.assertTrue(redis["enabled"])
+            self.assertFalse(redis["success"])
+            self.assertTrue(redis["external"])
+            self.assertEqual(redis["runtime_status"], "unreachable")
+            self.assertIn("external probe failed", str(redis["error"]))
+            self.assertEqual(requirements.health, "degraded")
+
+    def test_external_supabase_requirement_reports_missing_required_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                {
+                    "MAIN_POSTGRES_ENABLE": "false",
+                    "MAIN_REDIS_ENABLE": "false",
+                    "MAIN_N8N_ENABLE": "false",
+                    "MAIN_SUPABASE_ENABLE": "false",
+                },
+            )
+            engine = PythonEngineRuntime(config, env={"ENVCTL_DEPENDENCY_SUPABASE_MODE": "external"})
+            context = engine._discover_projects(mode="main")[0]
+
+            requirements = engine._start_requirements_for_project(context, mode="main")
+
+            supabase = requirements.component("supabase")
+            self.assertTrue(supabase["enabled"])
+            self.assertFalse(supabase["success"])
+            self.assertTrue(supabase["external"])
+            self.assertEqual(supabase["runtime_status"], "unreachable")
+            self.assertIn("SUPABASE_URL", str(supabase["error"]))
+            self.assertIn("SUPABASE_ANON_KEY", str(supabase["error"]))
+            self.assertEqual(requirements.health, "degraded")
 
     def test_conflicting_main_requirements_flags_fail_start(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2181,7 +2997,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             )
             engine = PythonEngineRuntime(config, env={})
             engine.port_planner.availability_checker = lambda _port: True
-            engine._command_exists = lambda _name: False
+            engine._command_exists = lambda executable: False
 
             plan = PortPlan(project="proj", requested=5432, assigned=5432, final=5432, source="test")
             context = ProjectContext(
@@ -2190,7 +3006,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                 ports={"db": plan, "redis": plan, "n8n": plan, "supabase": plan, "backend": plan, "frontend": plan},
             )
 
-            outcome = engine._start_requirement_component(
+            outcome = cast(Any, engine)._start_requirement_component(
                 context,
                 "postgres",
                 plan,
@@ -2234,6 +3050,45 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("missing_service_start_command", out.getvalue())
 
+    def test_startup_rejects_incomplete_worktree_before_launching_configured_uvicorn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (tree_root / ".omx").mkdir(parents=True, exist_ok=True)
+
+            config = self._config(
+                repo,
+                runtime,
+                extra={
+                    "ENVCTL_BACKEND_START_CMD": "python -m uvicorn app.main:app --host 0.0.0.0 --port {port}",
+                    "ENVCTL_FRONTEND_START_CMD": "sh -lc true",
+                    "ENVCTL_REQUIREMENT_POSTGRES_CMD": "sh -lc true",
+                    "ENVCTL_REQUIREMENT_REDIS_CMD": "sh -lc true",
+                    "ENVCTL_REQUIREMENT_N8N_CMD": "sh -lc true",
+                },
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 1)
+            self.assertIn("No tree paths found for requested project filter(s): feature-a.", rendered)
+            self.assertIn("No projects discovered for selected mode.", rendered)
+            self.assertNotIn("missing_service_directory", rendered)
+            self.assertNotIn("No module named uvicorn", rendered)
+            self.assertEqual(fake_runner.start_background_calls, [])
+
     def test_requirements_use_native_adapters_before_command_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -2255,7 +3110,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
             engine._command_exists = lambda command: command == "docker"  # type: ignore[method-assign]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--isolated-deps", "--batch"], env={})
 
             out = StringIO()
             with redirect_stdout(out):
@@ -2341,9 +3196,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             frontend = state.services["feature-a-1 Frontend"]
             self.assertNotEqual(backend.status, "simulated")
             self.assertNotEqual(frontend.status, "simulated")
-            self.assertFalse(state.requirements["feature-a-1"].db.get("simulated"))
-            self.assertFalse(state.requirements["feature-a-1"].redis.get("simulated"))
-            self.assertFalse(state.requirements["feature-a-1"].n8n.get("simulated"))
+            self.assertFalse(state.requirements["feature-a-1"].component("postgres").get("simulated"))
+            self.assertFalse(state.requirements["feature-a-1"].component("redis").get("simulated"))
+            self.assertFalse(state.requirements["feature-a-1"].component("n8n").get("simulated"))
             self.assertNotIn("synthetic placeholder defaults", out.getvalue())
 
     def test_plan_planning_prs_runs_pr_action_and_skips_startup(self) -> None:
@@ -2437,6 +3292,129 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(second_code, 0)
             self.assertEqual(launches, [["feature_task-1"], []])
 
+    def test_plan_feature_superset_transport_reaches_startup_handoff_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "TREES_STARTUP_ENABLE": "false",
+                        "SUPERSET": "true",
+                        "SUPERSET_PROJECT": "proj-1",
+                        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                    },
+                ),
+                env={},
+            )
+            seen: list[tuple[str, ...]] = []
+
+            def _fake_launch(_runtime, *, route, created_worktrees):  # noqa: ANN001, ANN202
+                _ = route
+                seen.append(tuple(item.name for item in created_worktrees))
+                return PlanAgentLaunchResult(
+                    status="launched",
+                    reason="launched",
+                    outcomes=(
+                        PlanAgentLaunchOutcome(
+                            worktree_name=created_worktrees[0].name,
+                            worktree_root=created_worktrees[0].root,
+                            surface_id="ws-123",
+                            status="launched",
+                        ),
+                    ),
+                )
+
+            with patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", side_effect=_fake_launch):
+                code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(seen, [("feature_task-1",)])
+            launch_events = [
+                event for event in engine.events if event.get("event") == "startup.plan_agent_launch_state"
+            ]
+            self.assertEqual(len(launch_events), 1)
+            self.assertEqual(launch_events[0]["status"], "launched")
+            self.assertEqual(launch_events[0]["launched_worktrees"], ["feature_task-1"])
+
+    def test_plan_feature_omx_launch_uses_managed_bootstrap_without_custom_passthrough(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "TREES_STARTUP_ENABLE": "false",
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_PLAN_AGENT_CLI_CMD": "codex --model gpt-5.4 --dangerously-bypass-approvals-and-sandbox",
+                        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                    },
+                ),
+                env={},
+            )
+            fake_runner = _FakeProcessRunner()
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            popen_calls: list[dict[str, object]] = []
+
+            class _DummyPopen:
+                def __init__(self, cmd, **kwargs):  # noqa: ANN001
+                    popen_calls.append({"cmd": list(cmd), **kwargs})
+                    omx_root = Path(str(kwargs["env"]["OMX_ROOT"]))
+                    session_path = omx_root / ".omx" / "state" / "session.json"
+                    session_path.parent.mkdir(parents=True, exist_ok=True)
+                    worktree_root = Path(str(kwargs["cwd"]))
+                    session_path.write_text(
+                        json.dumps(
+                            {
+                                "session_id": "omx-session-123",
+                                "native_session_id": "omx-feature-session",
+                                "cwd": str(worktree_root.resolve()),
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+
+                def poll(self):
+                    return 0
+
+                def wait(self, timeout=None):  # noqa: ANN001
+                    return 0
+
+            with (
+                patch.object(engine, "_command_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport.subprocess.Popen", _DummyPopen),
+                patch("envctl_engine.planning.plan_agent.omx_transport._git_branch_name", return_value="feature/task"),
+                patch("envctl_engine.planning.plan_agent.launch._run_tmux_existing_session_workflow", return_value=None),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(parse_route(["--plan", "feature/task", "--omx", "--codex", "--headless"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(popen_calls), 1)
+            cmd = cast(list[str], popen_calls[0]["cmd"])
+            self.assertEqual(cmd, ["script", "-qfc", "omx --tmux --madmax", "/dev/null"])
+            self.assertNotIn("--model", " ".join(str(part) for part in cmd))
+            child_env = cast(dict[str, str], popen_calls[0]["env"])
+            expected_omx_root = repo / "trees" / "feature_task" / "1" / ".envctl-state" / "omx" / "feature-task-1"
+            self.assertEqual(Path(child_env["OMX_ROOT"]).resolve(), expected_omx_root.resolve())
+            self.assertTrue((expected_omx_root / ".omx" / "state" / "session.json").is_file())
+            rendered = out.getvalue()
+            self.assertIn("attach: tmux attach -t omx-feature-session", rendered)
+            self.assertIn("kill: tmux kill-session -t omx-feature-session", rendered)
+
     def test_plan_planning_prs_does_not_invoke_plan_agent_launch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -2466,7 +3444,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(code, 0)
             launch_mock.assert_not_called()
 
-    def test_plan_feature_with_opencode_and_codex_cycles_still_launches_only_new_worktrees(self) -> None:
+    def test_plan_feature_with_both_cli_creates_two_worktrees_then_reuses_existing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -2481,7 +3459,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                     extra={
                         "TREES_STARTUP_ENABLE": "false",
                         "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
-                        "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                        "ENVCTL_PLAN_AGENT_CLI": "both",
                         "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
                         "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
                     },
@@ -2502,7 +3480,9 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(first_code, 0)
             self.assertEqual(second_code, 0)
-            self.assertEqual(launches, [["feature_task-1"], []])
+            self.assertEqual(launches, [["feature_task-1", "feature_task-2"], []])
+            self.assertTrue((repo / "trees" / "feature_task" / "1").is_dir())
+            self.assertTrue((repo / "trees" / "feature_task" / "2").is_dir())
 
     def test_plan_launch_failure_preserves_created_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2531,8 +3511,143 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             ):
                 code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
 
-            self.assertEqual(code, 0)
+            self.assertEqual(code, 1)
             self.assertTrue((repo / "trees" / "feature_task" / "1").is_dir())
+
+    def test_ai_plan_run_warns_and_continues_when_project_start_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                    },
+                ),
+                env={"ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "repo implementation"},
+            )
+            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            launch_result = PlanAgentLaunchResult(
+                status="launched",
+                reason="launched",
+                outcomes=(
+                    PlanAgentLaunchOutcome(
+                        worktree_name="feature-a-1",
+                        worktree_root=repo / "trees" / "feature-a" / "1",
+                        surface_id="surface-1",
+                        status="launched",
+                    ),
+                ),
+            )
+
+            out = StringIO()
+            with (
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    return_value=launch_result,
+                ),
+                patch.object(engine, "_start_project_context", side_effect=RuntimeError("missing_service_start_command: autodetect_failed_backend")),
+                redirect_stdout(out),
+            ):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("Implementation session is running, but local app startup failed.", rendered)
+            self.assertIn("missing_service_start_command", rendered)
+            state = engine._try_load_existing_state(mode="trees")
+            self.assertIsNotNone(state)
+            assert state is not None
+            self.assertTrue(state.metadata["plan_agent_handoff_degraded"])
+            self.assertTrue(state.metadata["implementation_session_running"])
+            self.assertTrue(state.metadata["local_startup_failed"])
+            self.assertEqual(
+                state.metadata["local_startup_failures"],
+                [
+                    {
+                        "project": "feature-a-1",
+                        "error": "missing_service_start_command: autodetect_failed_backend",
+                        "reason": "missing_service_start_command",
+                    }
+                ],
+            )
+
+    def test_omx_headless_plan_agent_handoff_persists_degraded_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature_task" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                    },
+                ),
+                env={},
+            )
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="omx-feature-session",
+                window_name="",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "omx-feature-session"),
+            )
+            launch_result = PlanAgentLaunchResult(
+                status="launched",
+                reason="launched",
+                outcomes=(
+                    PlanAgentLaunchOutcome(
+                        worktree_name="feature_task-1",
+                        worktree_root=repo / "trees" / "feature_task" / "1",
+                        surface_id=None,
+                        status="launched",
+                    ),
+                ),
+                attach_target=attach_target,
+            )
+
+            out = StringIO()
+            with (
+                patch(
+                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    return_value=launch_result,
+                ),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
+                patch.object(
+                    engine,
+                    "_start_project_context",
+                    side_effect=RuntimeError("missing_service_start_command: autodetect_failed_backend"),
+                ),
+                redirect_stdout(out),
+            ):
+                code = engine.dispatch(parse_route(["--plan", "feature/task", "--omx", "--codex", "--headless"], env={}))
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("Implementation session is running, but local app startup failed.", rendered)
+            self.assertIn("attach: tmux attach -t omx-feature-session", rendered)
+            self.assertNotIn("Startup failed:", rendered)
+            state = engine._try_load_existing_state(mode="trees")
+            self.assertIsNotNone(state)
+            assert state is not None
+            self.assertTrue(state.metadata["plan_agent_handoff_degraded"])
+            self.assertTrue(state.metadata["implementation_session_running"])
+            self.assertTrue(state.metadata["local_startup_failed"])
+            self.assertEqual(state.metadata["plan_agent_session_name"], "omx-feature-session")
+            self.assertEqual(state.metadata["plan_agent_attach_command"], "tmux attach -t omx-feature-session")
 
     def test_service_log_and_runner_flags_are_forwarded_to_service_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3114,6 +4229,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                     "--setup-worktrees",
                     "feature-a",
                     "1",
+                    "--isolated-deps",
                     "--main-services-remote",
                     "--batch",
                 ],
@@ -3129,7 +4245,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             requirements = state.requirements.get("feature-a-1")
             self.assertIsNotNone(requirements)
             assert requirements is not None
-            self.assertTrue(requirements.n8n.get("enabled"))
+            self.assertTrue(requirements.component("n8n").get("enabled"))
 
     def test_setup_worktrees_fails_when_git_worktree_add_fails_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3569,6 +4685,74 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             self.assertEqual(resume_mock.call_count, 0)
+
+    def test_explicit_main_start_auto_resumes_matching_main_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend").mkdir(parents=True, exist_ok=True)
+
+            def fake_result(context: ProjectContext) -> ProjectStartupResult:
+                return ProjectStartupResult(
+                    requirements=RequirementsResult(project=context.name, health="healthy"),
+                    services={
+                        "Main Backend": ServiceRecord(
+                            name="Main Backend",
+                            type="backend",
+                            cwd=str(context.root / "backend"),
+                            pid=1234,
+                            requested_port=context.ports["backend"].requested,
+                            actual_port=context.ports["backend"].final,
+                            status="running",
+                        ),
+                        "Main Frontend": ServiceRecord(
+                            name="Main Frontend",
+                            type="frontend",
+                            cwd=str(context.root / "frontend"),
+                            pid=1235,
+                            requested_port=context.ports["frontend"].requested,
+                            actual_port=context.ports["frontend"].final,
+                            status="running",
+                        ),
+                    },
+                    warnings=[],
+                )
+
+            first_engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            first_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            with patch.object(
+                first_engine,
+                "_start_project_context",
+                side_effect=lambda **kwargs: fake_result(kwargs["context"]),
+            ) as first_start_mock:
+                first_code = first_engine.dispatch(parse_route(["--main", "--batch"], env={}))
+            self.assertEqual(first_code, 0)
+            self.assertEqual(first_start_mock.call_count, 1)
+            first_state = first_engine.state_repository.load_latest(mode="main", strict_mode_match=True)
+            self.assertIsNotNone(first_state)
+            assert first_state is not None
+
+            second_engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            second_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
+            with (
+                patch.object(second_engine, "_resume", return_value=0) as resume_mock,
+                patch.object(
+                    second_engine,
+                    "_start_project_context",
+                    side_effect=AssertionError("fresh start not expected"),
+                ),
+                redirect_stdout(StringIO()),
+            ):
+                second_code = second_engine.dispatch(parse_route(["--main", "--batch"], env={}))
+
+            self.assertEqual(second_code, 0)
+            self.assertEqual(resume_mock.call_count, 1)
+            second_state = second_engine.state_repository.load_latest(mode="main", strict_mode_match=True)
+            self.assertIsNotNone(second_state)
+            assert second_state is not None
+            self.assertEqual(second_state.run_id, first_state.run_id)
 
     def test_plan_snapshot_emits_real_path_checkpoints(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

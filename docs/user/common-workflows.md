@@ -49,6 +49,30 @@ envctl stop-all
 envctl --main --no-resume
 ```
 
+If you only need part of the runtime while testing:
+
+```bash
+envctl --backend --headless          # backend service plus dependencies
+envctl --frontend --headless         # frontend service plus dependencies
+envctl --fullstack --headless        # backend + frontend plus dependencies
+envctl --dependencies --headless     # DB/Redis/etc. only
+envctl --entire-system --headless    # all dependencies and configured app services
+envctl --trees --only-backend         # worktree backend only; skip frontend and dependencies
+envctl --trees --no-deps             # worktree app services only; skip managed dependencies/prep
+envctl --trees --no-infra            # worktree state/AI only; skip backend, frontend, and dependencies
+
+envctl stop --backend --headless
+envctl stop --frontend --headless
+envctl stop --dependencies --headless
+envctl stop --entire-system --headless
+envctl kill-all --headless
+```
+
+When you invoke a specific action command directly, envctl stays non-interactive by default.
+For example, `envctl kill-all`, `envctl pr`, `envctl test`, `envctl logs`, and `envctl migrate`
+behave like their `--headless` forms. Add `--interactive` only when you want envctl to prompt
+for targets or dashboard-style choices.
+
 ## Worktree Planning Loop
 
 Use this when you want multiple implementations running side by side.
@@ -71,6 +95,37 @@ Good follow-up commands:
 - `envctl --list-trees --json`
 - `envctl errors --all`
 - `envctl restart --project <tree-name>`
+
+## Supabase Auth E2E Users
+
+Use this when browser/API tests need to sign in through real Supabase Auth instead of creating rows directly in Postgres.
+
+```dotenv
+MAIN_SUPABASE_ENABLE=true
+ENVCTL_SUPABASE_AUTH_USERS=e2e
+ENVCTL_SUPABASE_USER_E2E_EMAIL=e2e@example.test
+ENVCTL_SUPABASE_USER_E2E_PASSWORD=change-me-local-only
+
+# >>> envctl backend launch env >>>
+SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}
+SUPABASE_JWKS_URL=${ENVCTL_SOURCE_SUPABASE_JWKS_URL}
+SUPABASE_SERVICE_ROLE_KEY=${ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY}
+# <<< envctl backend launch env <<<
+
+# >>> envctl frontend launch env >>>
+VITE_SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}
+VITE_SUPABASE_ANON_KEY=${ENVCTL_SOURCE_SUPABASE_ANON_KEY}
+# <<< envctl frontend launch env <<<
+```
+
+Then start and test:
+
+```bash
+envctl --entire-system --headless
+envctl supabase-user list --json
+```
+
+After startup sync, launch-env templates can use `ENVCTL_SOURCE_SUPABASE_TEST_USER_EMAIL`, `ENVCTL_SOURCE_SUPABASE_TEST_USER_PASSWORD`, and `ENVCTL_SOURCE_SUPABASE_TEST_USER_ID` for E2E runner commands or backend-only test services. Do not map the service-role key into frontend launch env.
 
 ## Headless / Automation Flow
 

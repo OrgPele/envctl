@@ -10,6 +10,7 @@ from unittest.mock import patch
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import (
+    AppServiceConfig,
     CONFIG_BACKEND_DEPENDENCY_ENV_END,
     CONFIG_BACKEND_DEPENDENCY_ENV_START,
     CONFIG_DEPENDENCY_ENV_END,
@@ -21,6 +22,7 @@ from envctl_engine.config import (
     PortDefaults,
     StartupProfile,
     _parse_envctl_text,
+    discover_local_config_state,
     ensure_dependency_env_section,
     parse_dependency_env_section,
 )
@@ -28,6 +30,8 @@ from envctl_engine.config.persistence import (
     ManagedConfigValues,
     ensure_global_ignore_status,
     ensure_local_config_ignored,
+    managed_values_from_local_state,
+    managed_values_from_payload,
     managed_values_from_mapping,
     managed_values_to_mapping,
     merge_managed_block,
@@ -352,6 +356,50 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertFalse(values.trees_profile.supabase_enable)
         self.assertFalse(values.trees_profile.n8n_enable)
 
+    def test_managed_values_round_trip_dashboard_visual_host(self) -> None:
+        values = managed_values_from_mapping({"ENVCTL_UI_VISUAL_HOST": "192.0.2.42"})
+        rendered = managed_values_to_mapping(values)
+        block = render_managed_block(values)
+
+        self.assertEqual(values.ui_visual_host, "192.0.2.42")
+        self.assertEqual(rendered["ENVCTL_UI_VISUAL_HOST"], "192.0.2.42")
+        self.assertIn("ENVCTL_UI_VISUAL_HOST=192.0.2.42", block)
+
+    def test_managed_values_default_dashboard_visual_host_is_localhost(self) -> None:
+        values = managed_values_from_mapping({})
+        rendered = managed_values_to_mapping(values)
+
+        self.assertEqual(values.ui_visual_host, "localhost")
+        self.assertEqual(rendered["ENVCTL_UI_VISUAL_HOST"], "localhost")
+
+    def test_dashboard_visual_host_defaults_to_public_host(self) -> None:
+        values = managed_values_from_mapping({"ENVCTL_PUBLIC_HOST": "203.0.113.10"})
+        rendered = managed_values_to_mapping(values)
+
+        self.assertEqual(values.public_host, "203.0.113.10")
+        self.assertEqual(values.ui_visual_host, "203.0.113.10")
+        self.assertEqual(rendered["ENVCTL_PUBLIC_HOST"], "203.0.113.10")
+        self.assertEqual(rendered["ENVCTL_UI_VISUAL_HOST"], "203.0.113.10")
+
+    def test_dashboard_visual_host_can_override_public_host(self) -> None:
+        values = managed_values_from_mapping(
+            {"ENVCTL_UI_VISUAL_HOST": "192.0.2.42", "ENVCTL_PUBLIC_HOST": "203.0.113.10"}
+        )
+        rendered = managed_values_to_mapping(values)
+        block = render_managed_block(values)
+
+        self.assertEqual(values.public_host, "203.0.113.10")
+        self.assertEqual(values.ui_visual_host, "192.0.2.42")
+        self.assertEqual(rendered["ENVCTL_PUBLIC_HOST"], "203.0.113.10")
+        self.assertEqual(rendered["ENVCTL_UI_VISUAL_HOST"], "192.0.2.42")
+        self.assertIn("ENVCTL_PUBLIC_HOST=203.0.113.10", block)
+
+    def test_public_host_defaults_to_localhost_when_network_hosts_are_blank(self) -> None:
+        values = managed_values_from_mapping({"ENVCTL_UI_VISUAL_HOST": " ", "ENVCTL_PUBLIC_HOST": " "})
+
+        self.assertEqual(values.public_host, "localhost")
+        self.assertEqual(values.ui_visual_host, "localhost")
+
     def test_reference_envctl_example_matches_current_defaults(self) -> None:
         example_path = REPO_ROOT / "docs" / "reference" / ".envctl.example"
         example_values = _parse_envctl_text(example_path.read_text(encoding="utf-8"))
@@ -396,6 +444,59 @@ class ConfigPersistenceTests(unittest.TestCase):
             )
 
             self.assertEqual(values.frontend_test_path, "frontend/src")
+
+    def test_payload_shared_test_command_expands_without_managed_action_key(self) -> None:
+        values = managed_values_from_payload(
+            {
+                "directories": {
+                    "test_command": "python -m pytest",
+                },
+            }
+        )
+
+        rendered = managed_values_to_mapping(values)
+
+        self.assertEqual(values.backend_test_cmd, "python -m pytest")
+        self.assertEqual(values.frontend_test_cmd, "python -m pytest")
+        self.assertEqual(values.action_test_cmd, "python -m pytest")
+        self.assertEqual(rendered["ENVCTL_BACKEND_TEST_CMD"], "python -m pytest")
+        self.assertEqual(rendered["ENVCTL_FRONTEND_TEST_CMD"], "python -m pytest")
+        self.assertNotIn("ENVCTL_ACTION_TEST_CMD", rendered)
+
+    def test_accepted_test_suggestions_render_backend_frontend_and_path_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / "frontend" / "src").mkdir(parents=True, exist_ok=True)
+            values = ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+                backend_start_cmd="python backend/main.py",
+                frontend_start_cmd="npm run dev -- --port 0 --host",
+                backend_test_cmd="python -m pytest backend/tests",
+                frontend_test_cmd="pnpm run test",
+                frontend_test_path="src",
+            )
+            local_state = LocalConfigState(
+                base_dir=repo,
+                config_file_path=repo / ".envctl",
+                config_file_exists=False,
+                config_source="defaults",
+                active_source_path=None,
+                legacy_source_path=None,
+                explicit_path=None,
+                parsed_values={},
+                file_text="",
+            )
+
+            result = save_local_config(local_state=local_state, values=values)
+            written = result.path.read_text(encoding="utf-8")
+
+            self.assertIn("ENVCTL_BACKEND_TEST_CMD=python -m pytest backend/tests", written)
+            self.assertIn("ENVCTL_FRONTEND_TEST_CMD=pnpm run test", written)
+            self.assertIn("ENVCTL_FRONTEND_TEST_PATH=frontend/src", written)
+            self.assertNotIn("ENVCTL_ACTION_TEST_CMD", written)
 
     def test_parse_dependency_env_section_reads_entries_and_line_numbers(self) -> None:
         text = (
@@ -559,7 +660,7 @@ class ConfigPersistenceTests(unittest.TestCase):
             self.assertFalse((repo / ".gitignore").exists())
             self.assertEqual(repo_exclude_path.read_text(encoding="utf-8"), repo_exclude_before)
 
-    def test_save_local_config_is_warning_only_when_global_excludes_are_not_configured(self) -> None:
+    def test_save_local_config_bootstraps_missing_global_excludes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             self._init_git_repo(repo)
@@ -584,14 +685,26 @@ class ConfigPersistenceTests(unittest.TestCase):
 
             with patch.dict(os.environ, env, clear=True):
                 save_result = save_local_config(local_state=local_state, values=values)
+                global_excludes = subprocess.run(
+                    ["git", "config", "--global", "--path", "--get", "core.excludesFile"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
 
             self.assertTrue((repo / ".envctl").is_file())
-            self.assertFalse(save_result.ignore_updated)
-            self.assertIsNotNone(save_result.ignore_warning)
+            self.assertEqual(global_excludes.returncode, 0)
+            excludes_path = Path(global_excludes.stdout.strip()).expanduser()
+            self.assertEqual(excludes_path, Path(tmpdir) / "home" / ".gitignore_global")
+            self.assertTrue(save_result.ignore_updated)
+            self.assertIsNone(save_result.ignore_warning)
             assert save_result.ignore_status is not None
-            self.assertEqual(save_result.ignore_status.code, "missing_global_excludes_configuration")
+            self.assertEqual(save_result.ignore_status.code, "configured_global_excludes")
+            self.assertEqual(save_result.ignore_status.target_path, excludes_path)
+            self.assertIn(".envctl*", excludes_path.read_text(encoding="utf-8"))
 
-    def test_save_local_config_with_ignore_policy_does_not_bootstrap_missing_global_excludes(self) -> None:
+    def test_save_local_config_with_ignore_policy_bootstraps_missing_global_excludes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             self._init_git_repo(repo)
@@ -628,6 +741,53 @@ class ConfigPersistenceTests(unittest.TestCase):
                     env=env,
                 )
 
+            self.assertEqual(global_excludes.returncode, 0)
+            excludes_path = Path(global_excludes.stdout.strip()).expanduser()
+            self.assertEqual(excludes_path, Path(tmpdir) / "home" / ".gitignore_global")
+            self.assertTrue(save_result.ignore_updated)
+            self.assertIsNone(save_result.ignore_warning)
+            assert save_result.ignore_status is not None
+            self.assertEqual(save_result.ignore_status.code, "configured_global_excludes")
+            self.assertEqual(save_result.ignore_status.target_path, excludes_path)
+            self.assertIn("OLD_TASK_*.md", excludes_path.read_text(encoding="utf-8"))
+
+    def test_save_local_config_with_ignore_policy_can_remain_warning_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            self._init_git_repo(repo)
+            env = self._isolated_git_env(tmpdir)
+            local_state = LocalConfigState(
+                base_dir=repo,
+                config_file_path=repo / ".envctl",
+                config_file_exists=False,
+                config_source="defaults",
+                active_source_path=None,
+                legacy_source_path=None,
+                explicit_path=None,
+                parsed_values={},
+                file_text="",
+            )
+            values = ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            )
+
+            with patch.dict(os.environ, env, clear=True):
+                save_result = save_local_config_with_ignore_policy(
+                    local_state=local_state,
+                    values=values,
+                    update_global_ignores=False,
+                )
+                global_excludes = subprocess.run(
+                    ["git", "config", "--global", "--path", "--get", "core.excludesFile"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+
             self.assertEqual(global_excludes.returncode, 1)
             self.assertEqual(global_excludes.stdout.strip(), "")
             self.assertFalse(save_result.ignore_updated)
@@ -652,6 +812,82 @@ class ConfigPersistenceTests(unittest.TestCase):
             self.assertFalse(status.updated)
             self.assertIsNone(status.target_path)
             self.assertIsNotNone(status.warning)
+
+    def test_managed_values_render_and_reload_additional_app_services(self) -> None:
+        from envctl_engine.config.persistence import managed_values_from_mapping, managed_values_to_mapping
+
+        values = managed_values_from_mapping({})
+        values.additional_services = (
+            AppServiceConfig(
+                name="voice-runtime",
+                env_suffix="VOICE_RUNTIME",
+                enabled_main=True,
+                enabled_trees=False,
+                dir_name="voice-runtime",
+                start_cmd="python -m voice_runtime --port {port}",
+                test_cmd="python -m pytest voice-runtime/tests",
+                port_base=8010,
+                expect_listener=True,
+                health_url_template="http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz",
+                public_url_template="http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}",
+                depends_on=("backend",),
+                critical=False,
+                enable_if_path="voice-runtime/app/main.py",
+            ),
+        )
+
+        rendered = managed_values_to_mapping(values)
+        reloaded = managed_values_from_mapping(rendered)
+
+        self.assertEqual(rendered["ENVCTL_ADDITIONAL_SERVICES"], "voice-runtime")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_DIR"], "voice-runtime")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD"], "python -m voice_runtime --port {port}")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_MAIN_ENABLE"], "true")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_TREES_ENABLE"], "false")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_EXPECT_LISTENER"], "true")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE"], "8010")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_DEPENDS_ON"], "backend")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_CRITICAL"], "false")
+        self.assertEqual(rendered["ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE_IF_PATH"], "voice-runtime/app/main.py")
+        self.assertEqual(len(reloaded.additional_services), 1)
+        service = reloaded.additional_services[0]
+        self.assertEqual(service.name, "voice-runtime")
+        self.assertEqual(service.enabled_main, True)
+        self.assertEqual(service.enabled_trees, False)
+        self.assertEqual(service.depends_on, ("backend",))
+        self.assertFalse(service.critical)
+        self.assertEqual(service.enable_if_path, "voice-runtime/app/main.py")
+
+    def test_save_local_config_preserves_additional_service_keys_and_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            config_path = repo / ".envctl"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_ADDITIONAL_SERVICES=voice-runtime",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010",
+                        "ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=python voice.py {port}",
+                        "",
+                        "# >>> envctl service voice-runtime launch env >>>",
+                        "VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}",
+                        "# <<< envctl service voice-runtime launch env <<<",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            local_state = discover_local_config_state(repo)
+            values = managed_values_from_local_state(local_state)
+
+            save_local_config(local_state=local_state, values=values)
+
+            saved = config_path.read_text(encoding="utf-8")
+            self.assertIn("ENVCTL_ADDITIONAL_SERVICES=voice-runtime", saved)
+            self.assertIn("ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=python voice.py {port}", saved)
+            self.assertIn("# >>> envctl service voice-runtime launch env >>>", saved)
+            self.assertIn("VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}", saved)
 
 
 if __name__ == "__main__":

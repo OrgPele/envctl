@@ -8,16 +8,19 @@ import tempfile
 from envctl_engine.config import (
     CONFIG_MANAGED_BLOCK_END,
     CONFIG_MANAGED_BLOCK_START,
+    AppServiceConfig,
     LocalConfigState,
     PortDefaults,
     StartupProfile,
     _default_port_value,
+    _parse_additional_services,
     _parse_envctl_text,
     ensure_dependency_env_section,
 )
 from envctl_engine.config.git_global_ignore import (
     GlobalIgnoreStatus,
     _configured_global_excludes_path,
+    configure_envctl_global_ignores,
     ensure_envctl_global_ignores,
 )
 from envctl_engine.config.local_artifacts import envctl_local_artifact_patterns
@@ -50,6 +53,9 @@ class ManagedConfigValues:
     frontend_test_cmd: str = ""
     action_test_cmd: str = ""
     frontend_test_path: str = ""
+    public_host: str = "localhost"
+    ui_visual_host: str = "localhost"
+    additional_services: tuple[AppServiceConfig, ...] = ()
 
 
 @dataclass(slots=True)
@@ -119,6 +125,7 @@ def managed_values_from_mapping(values: dict[str, str], *, base_dir: Path | None
             for definition in dependency_definitions()
         },
     )
+    additional_services, _additional_service_errors = _parse_additional_services(values)
     return ManagedConfigValues(
         default_mode=default_mode,
         main_backend_expect_listener=_parse_bool_value(values.get("MAIN_BACKEND_EXPECT_LISTENER"), True),
@@ -131,9 +138,12 @@ def managed_values_from_mapping(values: dict[str, str], *, base_dir: Path | None
         frontend_test_cmd=_resolved_frontend_test_cmd(values=values, base_dir=base_dir),
         action_test_cmd=_resolved_action_test_cmd(values=values, base_dir=base_dir),
         frontend_test_path=_resolved_frontend_test_path(values=values, base_dir=base_dir),
+        public_host=_resolved_public_host(values),
+        ui_visual_host=_resolved_ui_visual_host(values),
         main_profile=main_profile,
         trees_profile=trees_profile,
         port_defaults=port_defaults,
+        additional_services=additional_services,
     )
 
 
@@ -147,6 +157,8 @@ def managed_values_to_mapping(values: ManagedConfigValues) -> dict[str, str]:
         "ENVCTL_BACKEND_TEST_CMD": values.backend_test_cmd,
         "ENVCTL_FRONTEND_TEST_CMD": values.frontend_test_cmd,
         "ENVCTL_FRONTEND_TEST_PATH": values.frontend_test_path,
+        "ENVCTL_PUBLIC_HOST": values.public_host,
+        "ENVCTL_UI_VISUAL_HOST": values.ui_visual_host,
         "BACKEND_PORT_BASE": str(values.port_defaults.backend_port_base),
         "FRONTEND_PORT_BASE": str(values.port_defaults.frontend_port_base),
         "PORT_SPACING": str(values.port_defaults.port_spacing),
@@ -170,6 +182,31 @@ def managed_values_to_mapping(values: ManagedConfigValues) -> dict[str, str]:
         rendered[definition.enable_keys_for_mode("trees")[0]] = _bool_text(
             values.trees_profile.dependency_enabled(definition.id)
         )
+    if values.additional_services:
+        rendered["ENVCTL_ADDITIONAL_SERVICES"] = ",".join(service.name for service in values.additional_services)
+    for service in values.additional_services:
+        prefix = f"ENVCTL_SERVICE_{service.env_suffix}_"
+        rendered[f"{prefix}DIR"] = service.dir_name
+        rendered[f"{prefix}START_CMD"] = service.start_cmd
+        rendered[f"{prefix}MAIN_ENABLE"] = _bool_text(service.enabled_main)
+        rendered[f"{prefix}TREES_ENABLE"] = _bool_text(service.enabled_trees)
+        rendered[f"{prefix}EXPECT_LISTENER"] = _bool_text(service.expect_listener)
+        if service.test_cmd:
+            rendered[f"{prefix}TEST_CMD"] = service.test_cmd
+        if service.port_base is not None:
+            rendered[f"{prefix}PORT_BASE"] = str(service.port_base)
+        if service.health_url_template:
+            rendered[f"{prefix}HEALTH_URL"] = service.health_url_template
+        if service.public_url_template:
+            rendered[f"{prefix}PUBLIC_URL"] = service.public_url_template
+        if service.depends_on:
+            rendered[f"{prefix}DEPENDS_ON"] = ",".join(service.depends_on)
+        if service.start_order != 100:
+            rendered[f"{prefix}START_ORDER"] = str(service.start_order)
+        if not service.critical:
+            rendered[f"{prefix}CRITICAL"] = "false"
+        if service.enable_if_path:
+            rendered[f"{prefix}ENABLE_IF_PATH"] = service.enable_if_path
     return rendered
 
 
@@ -198,6 +235,12 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
                 for definition in dependency_definitions()
             },
         },
+        "ui": {
+            "visual_host": values.ui_visual_host,
+        },
+        "network": {
+            "public_host": values.public_host,
+        },
         "profiles": {
             "main": {
                 "startup_enabled": values.main_profile.startup_enable,
@@ -220,6 +263,26 @@ def managed_values_to_payload(values: ManagedConfigValues) -> dict[str, object]:
                 },
             },
         },
+        "additional_services": [
+            {
+                "name": service.name,
+                "env_suffix": service.env_suffix,
+                "enabled_main": service.enabled_main,
+                "enabled_trees": service.enabled_trees,
+                "dir": service.dir_name,
+                "start_cmd": service.start_cmd,
+                "test_cmd": service.test_cmd,
+                "port_base": service.port_base,
+                "expect_listener": service.expect_listener,
+                "health_url": service.health_url_template,
+                "public_url": service.public_url_template,
+                "depends_on": list(service.depends_on),
+                "start_order": service.start_order,
+                "critical": service.critical,
+                "enable_if_path": service.enable_if_path,
+            }
+            for service in values.additional_services
+        ],
         "managed_keys": managed_values_to_mapping(values),
     }
 
@@ -283,6 +346,55 @@ def managed_values_from_payload(
                     if resource.name in resource_values:
                         mapping[resource.config_port_keys[0]] = str(resource_values[resource.name])
 
+    ui = payload.get("ui")
+    if isinstance(ui, dict) and ui.get("visual_host") is not None:
+        mapping["ENVCTL_UI_VISUAL_HOST"] = str(ui["visual_host"])
+
+    network = payload.get("network")
+    if isinstance(network, dict) and network.get("public_host") is not None:
+        mapping["ENVCTL_PUBLIC_HOST"] = str(network["public_host"])
+
+    additional_services = payload.get("additional_services")
+    if isinstance(additional_services, list):
+        names: list[str] = []
+        for item in additional_services:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip().lower()
+            if not name:
+                continue
+            suffix = str(item.get("env_suffix") or name.upper().replace("-", "_")).strip().upper()
+            names.append(name)
+            prefix = f"ENVCTL_SERVICE_{suffix}_"
+            mapping[f"{prefix}DIR"] = str(item.get("dir") or ".")
+            mapping[f"{prefix}START_CMD"] = str(item.get("start_cmd") or "")
+            mapping[f"{prefix}MAIN_ENABLE"] = _bool_text(bool(item.get("enabled_main", True)))
+            mapping[f"{prefix}TREES_ENABLE"] = _bool_text(bool(item.get("enabled_trees", True)))
+            mapping[f"{prefix}EXPECT_LISTENER"] = _bool_text(bool(item.get("expect_listener", True)))
+            if item.get("test_cmd") is not None:
+                mapping[f"{prefix}TEST_CMD"] = str(item.get("test_cmd") or "")
+            if item.get("port_base") is not None:
+                mapping[f"{prefix}PORT_BASE"] = str(item["port_base"])
+            if item.get("health_url") is not None:
+                mapping[f"{prefix}HEALTH_URL"] = str(item.get("health_url") or "")
+            if item.get("public_url") is not None:
+                mapping[f"{prefix}PUBLIC_URL"] = str(item.get("public_url") or "")
+            depends_on = item.get("depends_on")
+            if isinstance(depends_on, list):
+                mapping[f"{prefix}DEPENDS_ON"] = ",".join(
+                    str(value).strip() for value in depends_on if str(value).strip()
+                )
+            elif depends_on is not None:
+                mapping[f"{prefix}DEPENDS_ON"] = str(depends_on)
+            if item.get("start_order") is not None:
+                mapping[f"{prefix}START_ORDER"] = str(item["start_order"])
+            if item.get("enable_if_path") is not None:
+                mapping[f"{prefix}ENABLE_IF_PATH"] = str(item.get("enable_if_path") or "")
+            if item.get("critical") is not None:
+                mapping[f"{prefix}CRITICAL"] = _bool_text(bool(item["critical"]))
+        if names:
+            mapping["ENVCTL_ADDITIONAL_SERVICES"] = ",".join(names)
+
     profiles = payload.get("profiles")
     if isinstance(profiles, dict):
         for mode in ("main", "trees"):
@@ -330,6 +442,13 @@ def validate_managed_values(
         errors.append("Frontend entrypoint must not be empty.")
     _validate_profile(values.main_profile, mode="main", errors=errors)
     _validate_profile(values.trees_profile, mode="trees", errors=errors)
+    _services_from_rendered, additional_service_errors = _parse_additional_services(managed_values_to_mapping(values))
+    errors.extend(additional_service_errors)
+    for service in values.additional_services:
+        if (service.enabled_main or service.enabled_trees) and not str(service.start_cmd).strip():
+            errors.append(f"Additional service {service.name} entrypoint must not be empty.")
+        if service.expect_listener and service.port_base is None:
+            errors.append(f"Additional service {service.name} port base must not be empty when listener expected.")
     ports = values.port_defaults
     for label, raw in (
         ("Backend port base", ports.backend_port_base),
@@ -374,6 +493,7 @@ def _managed_block_sections(
 
     sections: list[list[str]] = []
     sections.append(["ENVCTL_DEFAULT_MODE"])
+    sections.append(["ENVCTL_PUBLIC_HOST", "ENVCTL_UI_VISUAL_HOST"])
 
     directory_keys: list[str] = []
     if _component_enabled_any(values, "backend") and rendered["BACKEND_DIR"] != defaults["BACKEND_DIR"]:
@@ -427,6 +547,29 @@ def _managed_block_sections(
     trees_keys = _profile_keys_for_mode(mode="trees", values=values, rendered=rendered, defaults=defaults)
     sections.append(main_keys)
     sections.append(trees_keys)
+    service_keys: list[str] = []
+    if values.additional_services:
+        service_keys.append("ENVCTL_ADDITIONAL_SERVICES")
+    for service in values.additional_services:
+        prefix = f"ENVCTL_SERVICE_{service.env_suffix}_"
+        for key in (
+            f"{prefix}DIR",
+            f"{prefix}START_CMD",
+            f"{prefix}MAIN_ENABLE",
+            f"{prefix}TREES_ENABLE",
+            f"{prefix}EXPECT_LISTENER",
+            f"{prefix}PORT_BASE",
+            f"{prefix}TEST_CMD",
+            f"{prefix}HEALTH_URL",
+            f"{prefix}PUBLIC_URL",
+            f"{prefix}DEPENDS_ON",
+            f"{prefix}START_ORDER",
+            f"{prefix}CRITICAL",
+            f"{prefix}ENABLE_IF_PATH",
+        ):
+            if key in rendered:
+                append_once(service_keys, key)
+    sections.append(service_keys)
     return sections
 
 
@@ -527,7 +670,7 @@ def merge_managed_block(existing_text: str, block_text: str) -> str:
 
 
 def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigValues) -> ConfigSaveResult:
-    return save_local_config_with_ignore_policy(local_state=local_state, values=values, update_global_ignores=False)
+    return save_local_config_with_ignore_policy(local_state=local_state, values=values, update_global_ignores=True)
 
 
 def save_local_config_with_ignore_policy(
@@ -550,6 +693,9 @@ def save_local_config_with_ignore_policy(
         backend_test_cmd=values.backend_test_cmd,
         frontend_test_cmd=values.frontend_test_cmd,
         action_test_cmd=values.action_test_cmd,
+        public_host=values.public_host,
+        ui_visual_host=values.ui_visual_host,
+        additional_services=values.additional_services,
         frontend_test_path=(
             canonicalize_frontend_test_path(
                 values.frontend_test_path,
@@ -595,7 +741,7 @@ def ensure_global_ignore_status(base_dir: Path, *, update_config: bool = False) 
                 warning=lookup_warning,
             )
         if current_path is None:
-            return ensure_envctl_global_ignores(base_dir)
+            return configure_envctl_global_ignores(base_dir)
     return ensure_envctl_global_ignores(base_dir)
 
 
@@ -683,6 +829,18 @@ def _parse_bool_value(raw: str | None, default: bool) -> bool:
 
 def _bool_text(value: bool) -> str:
     return "true" if value else "false"
+
+
+def _resolved_ui_visual_host(values: dict[str, str]) -> str:
+    host = str(values.get("ENVCTL_UI_VISUAL_HOST") or "").strip()
+    if host:
+        return host
+    return _resolved_public_host(values)
+
+
+def _resolved_public_host(values: dict[str, str]) -> str:
+    host = str(values.get("ENVCTL_PUBLIC_HOST") or "").strip()
+    return host or "localhost"
 
 
 def _resolved_backend_start_cmd(*, values: dict[str, str], base_dir: Path | None) -> str:

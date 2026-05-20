@@ -5,12 +5,15 @@ from collections.abc import Sequence
 import concurrent.futures
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
-from envctl_engine.runtime.command_router import Route
-from envctl_engine.state.models import RunState, ServiceRecord
+from envctl_engine.requirements.component_ports import component_resource_ports, dependency_display_port
 from envctl_engine.requirements.core import dependency_definitions
+from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.browser_diagnostics import build_runtime_diagnostics
+from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.shared.parsing import parse_bool, parse_float_or_none, parse_int
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
@@ -22,6 +25,42 @@ from envctl_engine.ui.selection_support import (
     services_from_selection,
 )
 from envctl_engine.ui.selection_types import TargetSelection
+from envctl_engine.shared.services import service_matches_selector
+from envctl_engine.state.project_runtime import (
+    cwd_runtime_warnings,
+    dependency_mode_summary,
+    project_resolution_event_payload,
+    resolve_requested_project_state,
+)
+from envctl_engine.ui.status_symbols import health_status_badge, health_status_severity
+
+
+_LOG_ISSUE_RE = re.compile(
+    r"\b("
+    r"no module named|"
+    r"error(?:s|_[a-z_]+)?|"
+    r"failed|failure|"
+    r"exception|traceback|"
+    r"validationerror|attributeerror|modulenotfounderror|importerror|runtimeerror|"
+    r"critical|fatal|"
+    r"warn(?:ing)?|deprecated"
+    r")\b",
+    re.IGNORECASE,
+)
+_LOG_ISSUE_SCAN_MAX_BYTES = 512 * 1024
+_DEFAULT_LOG_ISSUE_LIMIT = 20
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        normalized = str(value).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
 
 
 class StateActionRuntimeFacade:
@@ -131,6 +170,33 @@ class StateActionOrchestrator:
             print(f"No previous state found for '{command}'.")
             return 1
         current_state = state
+        if route.projects:
+            resolution = resolve_requested_project_state(
+                current_state,
+                route.projects,
+                command=command,
+                runtime=rt.raw_runtime,
+            )
+            if not resolution.ok:
+                self._emit(
+                    "state.project_resolution.failed",
+                    **project_resolution_event_payload(resolution, current_state, runtime=rt.raw_runtime),
+                )
+                if bool(route.flags.get("json")):
+                    print(json.dumps(resolution.payload(), indent=2, sort_keys=True))
+                else:
+                    print(self._project_mismatch_message(resolution.payload()))
+                return 1
+            self._emit(
+                "state.project_resolution.ok",
+                **project_resolution_event_payload(resolution, current_state, runtime=rt.raw_runtime),
+            )
+            if not bool(route.flags.get("all")) and resolution.state is not None:
+                current_state = resolution.state
+
+        def finish_action(code: int, action_state: RunState = current_state) -> int:
+            self._emit_state_action_finish(command=command, state=action_state, code=code)
+            return code
 
         failing_services: list[str] = []
         requirement_issues: list[dict[str, object]] = []
@@ -184,13 +250,14 @@ class StateActionOrchestrator:
                     command=command,
                     filtered_service_count=len(current_state.services),
                 )
+            self._emit_state_action_start(command=command, state=current_state)
             tail = parse_int(str(route.flags.get("logs_tail", "20")), 20)
             follow = bool(route.flags.get("logs_follow"))
             raw_duration = route.flags.get("logs_duration")
             duration_seconds = parse_float_or_none(raw_duration)
             if duration_seconds is not None and duration_seconds < 0:
                 duration_seconds = 0.0
-            no_color = bool(route.flags.get("logs_no_color")) or self._runtime_is_truthy(rt.env.get("NO_COLOR"))
+            no_color = bool(route.flags.get("logs_no_color")) or self._human_output_no_color(route)
             if bool(route.flags.get("json")):
                 print(
                     json.dumps(
@@ -199,13 +266,13 @@ class StateActionOrchestrator:
                             tail=max(tail, 0),
                             follow=follow,
                             duration_seconds=duration_seconds,
-                            no_color=no_color,
+                            no_color=True,
                         ),
                         indent=2,
                         sort_keys=True,
                     )
                 )
-                return 0
+                return finish_action(0, current_state)
             rt.print_logs(
                 current_state,
                 tail=max(tail, 0),
@@ -213,7 +280,7 @@ class StateActionOrchestrator:
                 duration_seconds=duration_seconds,
                 no_color=no_color,
             )
-            return 0
+            return finish_action(0, current_state)
         if command == "clear-logs":
             selected_services = self._resolve_selected_services(route, current_state)
             self._emit(
@@ -240,6 +307,7 @@ class StateActionOrchestrator:
                 command=command,
                 filtered_service_count=len(current_state.services),
             )
+            self._emit_state_action_start(command=command, state=current_state)
             cleared, missing, unavailable, failed = self._clear_service_logs(
                 current_state,
                 quiet=bool(route.flags.get("json")),
@@ -260,10 +328,11 @@ class StateActionOrchestrator:
                         sort_keys=True,
                     )
                 )
-                return 1 if failed > 0 else 0
+                return finish_action(1 if failed > 0 else 0, current_state)
             print(f"Log clear summary: cleared={cleared} missing={missing} unavailable={unavailable} failed={failed}")
-            return 1 if failed > 0 else 0
+            return finish_action(1 if failed > 0 else 0, current_state)
         if command == "health":
+            self._emit_state_action_start(command=command, state=current_state)
             ensure_reconciled()
             service_rows = self._health_service_rows(current_state)
             requirement_rows = self._requirement_health_rows(current_state)
@@ -282,6 +351,19 @@ class StateActionOrchestrator:
             total_projects = len(self._health_project_order(service_rows=service_rows, dependency_rows=dependency_rows))
             status_counts = self._health_status_counts(service_rows=service_rows, dependency_rows=dependency_rows)
             if bool(route.flags.get("json")):
+                cwd_project, warnings = cwd_runtime_warnings(
+                    current_state,
+                    runtime=rt.raw_runtime,
+                    requested_projects=route.projects,
+                )
+                self._emit_cwd_runtime_mismatch_warnings(command=command, state=current_state, warnings=warnings)
+                diagnostics = build_runtime_diagnostics(
+                    current_state,
+                    env=rt.env,
+                    config=rt.config,
+                    runtime=rt.raw_runtime,
+                )
+                combined_warnings = [*warnings, *list(diagnostics.get("warnings", []))]
                 print(
                     json.dumps(
                         self._health_payload(
@@ -293,12 +375,24 @@ class StateActionOrchestrator:
                             failing_services=failing_services,
                             requirement_issues=requirement_issues,
                             total_projects=total_projects,
+                            strict=bool(route.flags.get("strict")),
+                            cwd_project=cwd_project,
+                            warnings=combined_warnings,
+                            runtime_diagnostics=diagnostics,
                         ),
                         indent=2,
                         sort_keys=True,
                     )
                 )
-                return 0 if not failing_services and not requirement_issues and not recent_failures else 1
+                health_status = self._health_status_summary(
+                    service_rows=service_rows,
+                    dependency_rows=dependency_rows,
+                    failing_services=failing_services,
+                    requirement_issues=requirement_issues,
+                    recent_failures=recent_failures,
+                )
+                strict_blocking = bool(route.flags.get("strict")) and bool(health_status["optional_failures"])
+                return finish_action(0 if bool(health_status["ok"]) and not strict_blocking else 1, current_state)
             palette = self._health_palette()
             reset = palette["reset"]
             bold = palette["bold"]
@@ -312,11 +406,31 @@ class StateActionOrchestrator:
                 f"{dim}run_id: {current_state.run_id} mode: {current_state.mode} | "
                 f"projects={total_projects} services={len(service_rows)} dependencies={len(dependency_rows)}{reset}"
             )
+            _cwd_project, warnings = cwd_runtime_warnings(
+                current_state,
+                runtime=rt.raw_runtime,
+                requested_projects=route.projects,
+            )
+            for warning in warnings:
+                print(f"{yellow}Warning: {warning['message']}{reset}")
+            self._emit_cwd_runtime_mismatch_warnings(command=command, state=current_state, warnings=warnings)
+            health_status = self._health_status_summary(
+                service_rows=service_rows,
+                dependency_rows=dependency_rows,
+                failing_services=failing_services,
+                requirement_issues=requirement_issues,
+                recent_failures=recent_failures,
+            )
             print(
                 "status: "
                 f"{green}healthy/running={status_counts['ok']}{reset} "
                 f"{yellow}starting/simulated={status_counts['warn']}{reset} "
                 f"{red}issues={status_counts['bad']}{reset}"
+            )
+            print(
+                "summary: "
+                f"critical_issues={len(health_status['critical_failures'])} "
+                f"optional_degraded={len(health_status['optional_failures'])}"
             )
             self._print_health_rows(service_rows=service_rows, dependency_rows=dependency_rows, palette=palette)
 
@@ -326,9 +440,9 @@ class StateActionOrchestrator:
             if not failing_services and not requirement_issues and recent_failures:
                 for failure in recent_failures:
                     print(failure)
-            return 0 if not failing_services and not requirement_issues and not recent_failures else 1
+            strict_blocking = bool(route.flags.get("strict")) and bool(health_status["optional_failures"])
+            return finish_action(0 if bool(health_status["ok"]) and not strict_blocking else 1, current_state)
         if command == "errors":
-            ensure_reconciled()
             selected_services = self._resolve_selected_services(route, current_state)
             self._emit(
                 "state.selection.filters",
@@ -353,11 +467,18 @@ class StateActionOrchestrator:
                     command=command,
                     filtered_service_count=len(current_state.services),
                 )
+            self._emit_state_action_start(command=command, state=current_state)
+            ensure_reconciled()
             failed = [
                 svc
                 for svc in current_state.services.values()
                 if (svc.status or "").lower() not in {"running", "healthy"}
             ]
+            log_issue_limit = max(
+                parse_int(str(route.flags.get("logs_tail", _DEFAULT_LOG_ISSUE_LIMIT)), _DEFAULT_LOG_ISSUE_LIMIT),
+                0,
+            )
+            log_issues = self._service_log_issues(current_state, max_matches=log_issue_limit)
             if bool(route.flags.get("json")):
                 print(
                     json.dumps(
@@ -366,28 +487,65 @@ class StateActionOrchestrator:
                             failed_services=failed,
                             requirement_issues=requirement_issues,
                             recent_failures=recent_failures,
+                            log_issues=log_issues,
                             selected_services=selected_services,
                         ),
                         indent=2,
                         sort_keys=True,
                     )
                 )
-                return 0 if not failed and not requirement_issues and not recent_failures else 1
-            if not failed and not requirement_issues and not recent_failures:
+                return finish_action(
+                    0 if not failed and not requirement_issues and not recent_failures and not log_issues else 1,
+                    current_state,
+                )
+            if not failed and not requirement_issues and not recent_failures and not log_issues:
                 print("No known service errors.")
-                return 0
+                return finish_action(0, current_state)
+            no_color = self._human_output_no_color(route)
             for service in failed:
-                print(f"{service.name}: status={service.status}")
+                self._print_highlighted_line(f"{service.name}: status={service.status}", no_color=no_color)
             for issue in requirement_issues:
                 if issue["port"] is not None:
-                    print(f"{issue['project']} {issue['component']}: status={issue['status']} port={issue['port']}")
+                    self._print_highlighted_line(
+                        f"{issue['project']} {issue['component']}: status={issue['status']} port={issue['port']}",
+                        no_color=no_color,
+                    )
                 else:
-                    print(f"{issue['project']} {issue['component']}: status={issue['status']}")
+                    self._print_highlighted_line(
+                        f"{issue['project']} {issue['component']}: status={issue['status']}",
+                        no_color=no_color,
+                    )
+            for log_issue in log_issues:
+                log_path = str(log_issue.get("log_path") or "")
+                suffix = f" ({log_path})" if log_path else ""
+                self._print_highlighted_line(f"{log_issue['service']}: log issues{suffix}", no_color=no_color)
+                for line in log_issue.get("lines", []):
+                    self._print_highlighted_line(f"  {line}", no_color=no_color)
             for failure in recent_failures:
-                print(failure)
-            return 1
+                self._print_highlighted_line(failure, no_color=no_color)
+            return finish_action(1, current_state)
 
         return rt.unsupported_command(command)
+
+
+    def _emit_cwd_runtime_mismatch_warnings(
+        self,
+        *,
+        command: str,
+        state: RunState,
+        warnings: list[dict[str, object]],
+    ) -> None:
+        for warning in warnings:
+            if str(warning.get("code") or "") != "cwd_runtime_mismatch":
+                continue
+            self._emit(
+                "state.cwd_runtime_mismatch",
+                run_id=state.run_id,
+                mode=state.mode,
+                command=command,
+                cwd_project=warning.get("cwd_project"),
+                active_projects=warning.get("active_projects"),
+            )
 
     def _health_payload(
         self,
@@ -400,7 +558,19 @@ class StateActionOrchestrator:
         failing_services: list[str],
         requirement_issues: list[dict[str, object]],
         total_projects: int,
+        strict: bool = False,
+        cwd_project: str | None = None,
+        warnings: list[dict[str, object]] | None = None,
+        runtime_diagnostics: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        health_status = self._health_status_summary(
+            service_rows=service_rows,
+            dependency_rows=dependency_rows,
+            failing_services=failing_services,
+            requirement_issues=requirement_issues,
+            recent_failures=recent_failures,
+        )
+        dependency_summary = dependency_mode_summary(state)
         return {
             "run_id": state.run_id,
             "mode": state.mode,
@@ -408,13 +578,101 @@ class StateActionOrchestrator:
             "services": service_rows,
             "dependencies": dependency_rows,
             "status_counts": status_counts,
-            "healthy": not failing_services and not requirement_issues and not recent_failures,
+            "healthy": bool(health_status["ok"]),
+            "ok": bool(health_status["ok"]),
+            "overall": health_status["overall"],
+            "blocking": bool(health_status["blocking"]),
+            "strict_blocking": bool(strict and health_status["optional_failures"]),
+            "critical_services_healthy": bool(health_status["critical_services_healthy"]),
+            "optional_failures": health_status["optional_failures"],
+            "critical_failures": health_status["critical_failures"],
+            "dependency_mode": dependency_summary["dependency_mode"],
+            "shared_dependencies": dependency_summary["shared_dependencies"],
+            "cwd_project": cwd_project,
+            "warnings": list(warnings or []),
+            "runtime_diagnostics": runtime_diagnostics or {"projects": {}, "warnings": []},
             "issues": {
                 "failing_services": list(failing_services),
                 "requirement_issues": requirement_issues,
                 "recent_failures": list(recent_failures),
             },
         }
+
+    def _health_status_summary(
+        self,
+        *,
+        service_rows: list[dict[str, object]],
+        dependency_rows: list[dict[str, object]],
+        failing_services: list[str],
+        requirement_issues: list[dict[str, object]],
+        recent_failures: list[str],
+    ) -> dict[str, object]:
+        optional_failures: list[str] = []
+        critical_failures: list[str] = []
+        for row in service_rows:
+            status = str(row.get("status", "unknown"))
+            bad_or_degraded = health_status_severity(status) == "bad" or bool(row.get("degraded"))
+            if not bad_or_degraded:
+                continue
+            identifier = str(row.get("service_slug") or row.get("name") or "service")
+            if bool(row.get("critical", True)):
+                critical_failures.append(str(row.get("name") or identifier))
+            else:
+                optional_failures.append(identifier)
+        for row in dependency_rows:
+            if health_status_severity(str(row.get("status", "unknown"))) == "bad":
+                critical_failures.append(str(row.get("component") or "dependency"))
+        critical_failures.extend(
+            str(issue.get("component") or issue.get("service") or issue) for issue in requirement_issues
+        )
+        for service_name in failing_services:
+            if service_name not in critical_failures and service_name not in optional_failures:
+                critical_failures.append(service_name)
+        for failure in recent_failures:
+            optional_identifier = self._optional_recent_failure_identifier(failure, service_rows)
+            if optional_identifier is None:
+                critical_failures.append(failure)
+            else:
+                optional_failures.append(optional_identifier)
+        deduped_critical = _dedupe_strings(critical_failures)
+        deduped_optional = _dedupe_strings(optional_failures)
+        blocking = bool(deduped_critical)
+        if blocking:
+            overall = "unhealthy"
+        elif deduped_optional:
+            overall = "degraded"
+        else:
+            overall = "healthy"
+        return {
+            "ok": not blocking,
+            "overall": overall,
+            "blocking": blocking,
+            "critical_services_healthy": not any(
+                bool(row.get("critical", True)) and health_status_severity(str(row.get("status", "unknown"))) == "bad"
+                for row in service_rows
+            ),
+            "optional_failures": deduped_optional,
+            "critical_failures": deduped_critical,
+        }
+
+
+    @staticmethod
+    def _optional_recent_failure_identifier(failure: str, service_rows: list[dict[str, object]]) -> str | None:
+        failure_text = str(failure).casefold()
+        matched_optional: str | None = None
+        for row in service_rows:
+            tokens = {
+                str(row.get("name") or "").strip(),
+                str(row.get("service_slug") or "").strip(),
+                str(row.get("type") or "").strip(),
+            }
+            tokens = {token for token in tokens if token}
+            if not tokens or not any(token.casefold() in failure_text for token in tokens):
+                continue
+            if bool(row.get("critical", True)):
+                return None
+            matched_optional = str(row.get("service_slug") or row.get("name") or "service").strip()
+        return matched_optional
 
     def _errors_payload(
         self,
@@ -423,6 +681,7 @@ class StateActionOrchestrator:
         failed_services: Sequence[ServiceRecord],
         requirement_issues: list[dict[str, object]],
         recent_failures: list[str],
+        log_issues: list[dict[str, object]],
         selected_services: set[str] | None,
     ) -> dict[str, object]:
         return {
@@ -432,7 +691,8 @@ class StateActionOrchestrator:
             "failed_services": self._parallel_service_map(list(failed_services), self._failed_service_payload),
             "requirement_issues": requirement_issues,
             "recent_failures": list(recent_failures),
-            "ok": not failed_services and not requirement_issues and not recent_failures,
+            "log_issues": log_issues,
+            "ok": not failed_services and not requirement_issues and not recent_failures and not log_issues,
         }
 
     def _logs_payload(
@@ -484,6 +744,51 @@ class StateActionOrchestrator:
             "ok": failed == 0,
         }
 
+    def _service_log_issues(self, state: RunState, *, max_matches: int) -> list[dict[str, object]]:
+        if max_matches <= 0:
+            return []
+        snapshots = self._parallel_service_map(
+            list(state.services.values()),
+            lambda service: self._service_log_issue_snapshot(service, max_matches=max_matches),
+        )
+        return [snapshot for snapshot in snapshots if snapshot.get("lines")]
+
+    def _service_log_issue_snapshot(self, service: ServiceRecord, *, max_matches: int) -> dict[str, object]:
+        log_path_raw = str(service.log_path or "").strip()
+        payload: dict[str, object] = {
+            "service": service.name,
+            "status": service.status or "unknown",
+            "log_path": log_path_raw or None,
+            "lines": [],
+        }
+        if not log_path_raw:
+            return payload
+        log_path = Path(log_path_raw)
+        if not log_path.is_file():
+            return payload
+        lines = self._read_recent_log_lines(log_path, max_bytes=_LOG_ISSUE_SCAN_MAX_BYTES)
+        matches = [line for line in lines if self._log_line_has_issue(line)]
+        payload["lines"] = matches[-max_matches:]
+        return payload
+
+    @staticmethod
+    def _read_recent_log_lines(log_path: Path, *, max_bytes: int) -> list[str]:
+        try:
+            size = log_path.stat().st_size
+            with log_path.open("rb") as handle:
+                if size > max_bytes:
+                    handle.seek(size - max_bytes)
+                    handle.readline()
+                data = handle.read(max_bytes)
+        except OSError:
+            return []
+        return data.decode("utf-8", errors="replace").splitlines()
+
+    @staticmethod
+    def _log_line_has_issue(line: str) -> bool:
+        plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line)
+        return _LOG_ISSUE_RE.search(plain) is not None
+
     def _log_snapshot(self, service: object, *, tail: int, no_color: bool) -> dict[str, object]:
         log_path_raw = str(getattr(service, "log_path", "") or "").strip()
         payload: dict[str, object] = {
@@ -534,8 +839,39 @@ class StateActionOrchestrator:
     def _emit(self, event: str, **payload: object) -> None:
         self.runtime.emit(event, **payload)
 
+    def _emit_state_action_start(self, *, command: str, state: RunState) -> None:
+        self._emit(
+            "state.action.start",
+            command=command,
+            run_id=state.run_id,
+            mode=state.mode,
+            service_count=len(state.services),
+            dependency_count=len(state.requirements),
+        )
+
+    def _emit_state_action_finish(self, *, command: str, state: RunState, code: int) -> None:
+        self._emit(
+            "state.action.finish",
+            command=command,
+            run_id=state.run_id,
+            mode=state.mode,
+            code=code,
+        )
+
     def _runtime_is_truthy(self, value: object) -> bool:
         return self.runtime.is_truthy(value)
+
+    def _human_output_no_color(self, route: Route) -> bool:
+        if self._runtime_is_truthy(self.runtime.env.get("NO_COLOR")):
+            return True
+        return not colors_enabled(
+            self.runtime.env,
+            stream=sys.stdout,
+            interactive_tty=bool(route.flags.get("interactive_command")),
+        )
+
+    def _print_highlighted_line(self, line: str, *, no_color: bool) -> None:
+        print(self.runtime.normalize_log_line(line, no_color=no_color))
 
     def _interactive_log_selection(
         self,
@@ -569,11 +905,11 @@ class StateActionOrchestrator:
 
         if isinstance(services_flag, list):
             for raw in services_flag:
-                target = str(raw).strip().lower()
+                target = str(raw).strip()
                 if not target:
                     continue
-                for name in state.services:
-                    if name.lower() == target:
+                for name, service in state.services.items():
+                    if service_matches_selector(service, target):
                         selected.add(name)
         if project_filters:
             for name in state.services:
@@ -627,14 +963,13 @@ class StateActionOrchestrator:
                         status = "healthy"
                     else:
                         status = "unknown"
-                raw_port = data.get("final") or data.get("requested")
-                port = raw_port if isinstance(raw_port, int) and raw_port > 0 else None
                 rows.append(
                     {
                         "project": project,
                         "component": component,
                         "status": status,
-                        "port": port,
+                        "port": dependency_display_port(component, data),
+                        "resources": component_resource_ports(data),
                     }
                 )
         rows.sort(key=lambda row: (str(row["project"]).lower(), component_order.get(str(row["component"]), 99)))
@@ -642,11 +977,28 @@ class StateActionOrchestrator:
 
     def _health_service_rows(self, state: RunState) -> list[dict[str, object]]:
         def _service_row(service: ServiceRecord) -> dict[str, object]:
+            project = str(getattr(service, "project", "") or "").strip()
+            if not project:
+                project = self.runtime.project_name_from_service(service.name) or "unknown"
+            port = service.actual_port if service.actual_port is not None else service.requested_port
             return {
-                "project": self.runtime.project_name_from_service(service.name) or "unknown",
+                "project": project,
                 "name": service.name,
+                "type": service.type,
+                "service_slug": str(getattr(service, "service_slug", "") or "").strip() or service.type,
                 "status": str(service.status or "unknown").strip().lower() or "unknown",
-                "port": service.actual_port if service.actual_port is not None else service.requested_port,
+                "port": port,
+                "requested_port": service.requested_port,
+                "actual_port": service.actual_port,
+                "pid": service.pid,
+                "listener_expected": service.listener_expected,
+                "cwd": service.cwd,
+                "log_path": service.log_path,
+                "public_url": getattr(service, "public_url", None),
+                "health_url": getattr(service, "health_url", None),
+                "failure_detail": getattr(service, "failure_detail", None),
+                "critical": getattr(service, "critical", True),
+                "degraded": getattr(service, "degraded", False),
             }
 
         rows = self._parallel_service_map(
@@ -740,31 +1092,23 @@ class StateActionOrchestrator:
         counters = {"ok": 0, "warn": 0, "bad": 0}
         for row in [*service_rows, *dependency_rows]:
             status = str(row.get("status", "unknown"))
-            icon = cls._health_status_icon(status)
-            if icon == "✓":
-                counters["ok"] += 1
-            elif icon == "~":
-                counters["warn"] += 1
-            else:
-                counters["bad"] += 1
+            severity = health_status_severity(status)
+            counters[severity] += 1
         return counters
 
     @staticmethod
     def _health_status_icon(status: str) -> str:
-        lowered = str(status).strip().lower()
-        if lowered in {"running", "healthy"}:
-            return "✓"
-        if lowered in {"simulated", "starting", "unknown"}:
-            return "~"
-        return "!"
+        return health_status_badge(status).symbol
 
     @staticmethod
     def _health_status_color(status: str, palette: dict[str, str]) -> str:
-        lowered = str(status).strip().lower()
-        if lowered in {"running", "healthy"}:
+        severity = health_status_badge(status).severity
+        if severity == "success":
             return palette["green"]
-        if lowered in {"simulated", "starting", "unknown"}:
+        if severity == "warning":
             return palette["yellow"]
+        if severity == "neutral":
+            return palette["dim"]
         return palette["red"]
 
     def _health_palette(self) -> dict[str, str]:
@@ -798,6 +1142,15 @@ class StateActionOrchestrator:
     def _no_target_selected_message(self, route: Route) -> str:
         interactive_allowed = self._interactive_selection_allowed(route)
         return no_target_selected_message(route.command, route=route, interactive_allowed=interactive_allowed)
+
+    @staticmethod
+    def _project_mismatch_message(payload: dict[str, object]) -> str:
+        requested = payload.get("requested_project") or payload.get("requested_projects") or "unknown"
+        active = payload.get("active_projects") or []
+        return (
+            f"Requested project is not running: {requested}\n"
+            f"Active runtime projects: {', '.join(str(item) for item in active) or 'none'}"
+        )
 
     @staticmethod
     def _clear_service_logs(

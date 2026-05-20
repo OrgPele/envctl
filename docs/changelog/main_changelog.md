@@ -1,3 +1,82 @@
+## 2026-04-28 - envctl 1.7.11 hotfix release
+
+### Scope
+Cut the `1.7.11` hotfix release on top of `1.7.10`, bundling shared/main dependency defaults for worktrees, entire-system default startup, dependency-aware action validation, latest n8n startup hardening, restart port preservation, and implement-task runtime address reporting.
+
+### Key behavior changes
+- tree starts now default to shared/main managed dependencies, with `--isolated-deps` available for per-tree stacks
+- bare start routes default to the entire system instead of requiring `--entire-system`
+- backend test/migrate actions receive the selected project's dependency env and prefer Poetry-backed backend commands when appropriate
+- n8n native startup pulls the configured/latest image before `docker create`, avoiding cold image-pull timeouts
+- selected-service restarts preserve backend/frontend ports and clear stale same-directory listeners before relaunch
+- direct `implement_task` prompts include current localhost addresses for known dependencies, backend, and frontend
+
+### Verification
+- `./.venv/bin/python -m pytest tests/python/runtime/test_prompt_install_support.py tests/python/planning/test_plan_agent_launch_support.py -q` → 150 passed, 20 subtests passed
+- `./.venv/bin/python -m pytest tests/python/runtime/test_cli_router_parity.py tests/python/startup/test_startup_orchestrator_profiles.py tests/python/runtime/test_prereq_policy.py -q` → 48 passed, 37 subtests passed
+- `./.venv/bin/python -m pytest tests/python/requirements/test_requirements_adapters_real_contracts.py -k "n8n_pulls_image_before_create_by_default or n8n_can_skip_image_pull or n8n_uses_configured_image_override"` → 3 passed, 65 deselected
+- Manual E2E default main/tree startup and direct `implement_task` prompt address injection checks passed before release prep
+- `./.venv/bin/python -m pytest tests/python/runtime/test_launcher_version.py tests/python/runtime/test_cli_packaging.py::CliPackagingTests::test_release_version_metadata_is_consistent tests/python/runtime/test_cli_packaging.py::CliPackagingTests::test_release_notes_exist_for_current_version tests/python/runtime/test_cli_packaging.py::CliPackagingTests::test_build_smoke_is_warning_free tests/python/runtime/test_release_shipability_gate.py tests/python/runtime/test_release_shipability_gate_cli.py -q` → 33 passed
+- `PYTHONPATH=python ./.venv/bin/python -m compileall -q python tests` → passed
+- `git diff --check` → passed
+- `./.venv/bin/python scripts/release_shipability_gate.py --repo . --skip-tests` → `shipability.passed: true`
+- `./.venv/bin/python -m build` → built `dist/envctl-1.7.11-py3-none-any.whl` and `dist/envctl-1.7.11.tar.gz`
+
+## 2026-04-28 - envctl 1.7.10 hotfix release
+
+### Scope
+Cut the `1.7.10` hotfix release on top of `1.7.9`, bundling the dashboard Run AI command fixes, OpenCode `/ulw-loop` launch defaults, plan-agent attach/progress corrections, and dependency-free single-side launch controls.
+
+### Key behavior changes
+- worktree dashboard Run AI guidance now uses repo-scoped `envctl --plan ... --opencode` launch commands instead of stale `codex-tmux --omx` guidance
+- OpenCode plan launches default to `/ulw-loop` and use the correct hyphenated command spelling
+- plan-agent tmux launches attach to or reuse the intended session and show launch progress during cold startup
+- `--only-backend` and `--only-frontend` launch exactly one app side and skip managed dependencies plus dependency prep
+- `--no-deps` and `--no-infra` provide explicit dependency-free and infrastructure-free launch controls
+- create-plan prompts infer the smallest safe envctl launch scope for follow-up commands
+
+### Verification
+- `./.venv/bin/python -m pytest tests/python/runtime/test_cli_router_parity.py tests/python/runtime/test_prereq_policy.py tests/python/runtime/test_prompt_install_support.py tests/python/runtime/test_engine_runtime_command_parity.py tests/python/runtime/test_engine_runtime_real_startup.py tests/python/runtime/test_codex_tmux_support.py tests/python/startup/test_hooks_bridge.py tests/python/startup/test_startup_orchestrator_profiles.py tests/python/startup/test_startup_orchestrator_flow.py tests/python/ui/test_dashboard_rendering_parity.py tests/python/runtime/test_cli_packaging.py -q` → 396 passed, 12 skipped, 82 subtests passed
+- `PYTHONPATH=python ./.venv/bin/python -m compileall -q python tests` → passed
+- `git diff --check` → passed
+- `./.venv/bin/python scripts/release_shipability_gate.py --repo . --skip-tests` → `shipability.passed: true`
+- `./.venv/bin/python -m build` → built `dist/envctl-1.7.10-py3-none-any.whl` and `dist/envctl-1.7.10.tar.gz`
+
+## 2026-04-28 - envctl 1.7.9 hotfix release
+
+### Scope
+Cut the `1.7.9` hotfix release on top of `1.7.8`, bundling the follow-up CLI usability fixes for explicit headless actions, comprehensive help, and dashboard AI-session launch guidance.
+
+### Key behavior changes
+- explicit action commands such as `kill-all`, `stop`, and `pr` default to non-interactive/headless behavior when the requested action is already specific
+- `envctl --help` and `envctl help <command>` now provide detailed workflow-oriented guidance across commands, scopes, runtime controls, configuration, PR/release support, and examples
+- launcher help includes a runtime command map for clearer wrapper/entry-point discovery
+- worktree dashboard AI rows show an attach command for active sessions, or a `Run AI:` create-session command when no AI session exists
+
+### Verification
+- `./.venv/bin/python -m pytest tests/python/runtime/test_launcher_version.py tests/python/runtime/test_cli_packaging.py tests/python/runtime/test_release_shipability_gate.py tests/python/runtime/test_release_shipability_gate_cli.py tests/python/runtime/test_engine_runtime_command_parity.py tests/python/runtime/test_command_policy_contract.py tests/python/ui/test_dashboard_rendering_parity.py -q` → 167 passed, 12 skipped, 43 subtests passed
+- `PYTHONPATH=python python3 -m compileall -q python tests` → passed
+- `git diff --check` → passed
+- `./.venv/bin/python scripts/release_shipability_gate.py --repo . --skip-tests` → `shipability.passed: true`
+- `./.venv/bin/python -m build` → built `dist/envctl-1.7.9-py3-none-any.whl` and `dist/envctl-1.7.9.tar.gz`
+
+## 2026-04-14 - envctl 1.6.0 release
+
+### Scope
+Cut the `1.6.0` release with a focus on making tmux/OpenCode planning flows, dashboard AI visibility, prompt contracts, and commit safety more coherent for real worktree-heavy development.
+
+### Key behavior changes
+- planning/runtime defaults now prefer tmux + Opencode and align better with direct-prompt session workflows
+- dashboard AI rows now show either a live attach surface or a Run AI command, but never both for the same project
+- headless plan follow-up and manual run guidance now distinguish attach/session summaries from interactive launch commands more truthfully
+- shipped prompts now encode stronger workflow contracts for CLI choice, Codex cycles, attach guidance, and PR creation only at the end of implementation
+- envctl-managed local artifacts are now protected at commit time, so envctl will not stage them even when Git excludes are missing or incomplete
+
+### Verification
+- `PYTHONPATH=python python3 -m unittest tests.python.config.test_config_persistence tests.python.runtime.test_release_shipability_gate tests.python.actions.test_actions_cli`
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_prompt_install_support`
+- `PYTHONPATH=python python3 -m unittest tests.python.runtime.test_cli_packaging`
+
 ## 2026-03-16 - Review base provenance and branch-relative single-mode review
 
 ### Scope

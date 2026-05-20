@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import subprocess
 import socket
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -58,6 +59,38 @@ class PortsAvailabilityStrategiesTests(unittest.TestCase):
                 port = listener.getsockname()[1]
                 self.assertGreater(port, 0)
                 self.assertFalse(planner._is_port_available(port))
+
+    def test_auto_mode_treats_docker_hostconfig_publish_as_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            planner = PortPlanner(lock_dir=tmpdir, availability_mode="auto")
+            completed = subprocess.CompletedProcess(
+                ["docker", "ps"],
+                0,
+                "container-id\n",
+                "",
+            )
+
+            with patch.object(planner, "_is_port_available_via_socket_bind", return_value=True):
+                with patch("envctl_engine.shared.ports.shutil.which", return_value="/usr/bin/docker"):
+                    with patch("envctl_engine.shared.ports.subprocess.run", return_value=completed) as run:
+                        self.assertFalse(planner._is_port_available(5636))
+
+            run.assert_called_once()
+
+    def test_docker_publish_filter_failure_does_not_block_port_reservation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            planner = PortPlanner(lock_dir=tmpdir, availability_mode="auto")
+            completed = subprocess.CompletedProcess(
+                ["docker", "ps"],
+                1,
+                "",
+                "docker unavailable",
+            )
+
+            with patch.object(planner, "_is_port_available_via_socket_bind", return_value=True):
+                with patch("envctl_engine.shared.ports.shutil.which", return_value="/usr/bin/docker"):
+                    with patch("envctl_engine.shared.ports.subprocess.run", return_value=completed):
+                        self.assertTrue(planner._is_port_available(5637))
 
 
 if __name__ == "__main__":

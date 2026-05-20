@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from envctl_engine.requirements.core import dependency_ids
+from envctl_engine.requirements.external import dependency_external_mode
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
 
@@ -35,7 +36,7 @@ class RunReuseDecision:
 
     @property
     def will_resume_services(self) -> bool:
-        return self.decision_kind in {"resume_exact", "resume_subset"}
+        return self.decision_kind in {"resume_exact", "resume_subset", "reuse_expand"}
 
 
 def build_startup_identity_metadata(
@@ -44,6 +45,7 @@ def build_startup_identity_metadata(
     runtime_mode: str,
     project_contexts: list[object],
     base_metadata: Mapping[str, object] | None = None,
+    route: Route | None = None,
 ) -> dict[str, object]:
     metadata = dict(base_metadata or {})
     project_roots = {
@@ -54,7 +56,12 @@ def build_startup_identity_metadata(
         )
         if str(getattr(context, "name", "")).strip() and root
     }
-    identity_payload = _startup_identity_payload(runtime, runtime_mode=runtime_mode, project_contexts=project_contexts)
+    identity_payload = _startup_identity_payload(
+        runtime,
+        runtime_mode=runtime_mode,
+        project_contexts=project_contexts,
+        route=route,
+    )
     metadata["project_roots"] = project_roots
     metadata["startup_identity"] = identity_payload
     return metadata
@@ -156,25 +163,48 @@ def evaluate_run_reuse(
             startup_enabled=startup_enabled,
         )
 
-    current_identity = _startup_identity_payload(runtime, runtime_mode=runtime_mode, project_contexts=contexts)
+    weak_identity = any(identity.root is None for identity in state_identities)
+    selected_keys = _identity_keys(selected_identities, weak=weak_identity)
+    state_keys = _identity_keys(state_identities, weak=weak_identity)
+    exact_match = selected_keys == state_keys
+    subset_match = runtime_mode == "trees" and selected_keys.issubset(state_keys)
+    expand_match = (
+        runtime_mode == "trees" and route.command in {"start", "plan"} and state_keys.issubset(selected_keys)
+    )
+    if not (exact_match or subset_match or expand_match):
+        return RunReuseDecision(
+            candidate_state=candidate,
+            decision_kind="fresh_run",
+            reason="project_selection_mismatch",
+            selected_projects=selected_payload,
+            state_projects=state_payload,
+            weak_identity=weak_identity,
+            startup_enabled=startup_enabled,
+        )
+
     previous_identity = candidate.metadata.get("startup_identity")
     if isinstance(previous_identity, dict):
-        if str(previous_identity.get("fingerprint", "")).strip() != str(current_identity.get("fingerprint", "")).strip():
+        state_identity_under_current_runtime = _startup_identity_payload(
+            runtime,
+            runtime_mode=runtime_mode,
+            project_contexts=list(state_identities),
+            route=route,
+        )
+        identity_mismatch = _startup_identity_mismatch(
+            previous_identity,
+            state_identity_under_current_runtime,
+        )
+        if identity_mismatch:
             return RunReuseDecision(
                 candidate_state=candidate,
                 decision_kind="fresh_run",
                 reason="startup_fingerprint_mismatch",
                 selected_projects=selected_payload,
                 state_projects=state_payload,
+                mismatch_details=identity_mismatch,
+                weak_identity=weak_identity,
                 startup_enabled=startup_enabled,
             )
-
-    weak_identity = any(identity.root is None for identity in state_identities)
-    selected_keys = _identity_keys(selected_identities, weak=weak_identity)
-    state_keys = _identity_keys(state_identities, weak=weak_identity)
-    exact_match = selected_keys == state_keys
-    subset_match = runtime_mode == "trees" and selected_keys.issubset(state_keys)
-    expand_match = runtime_mode == "trees" and route.command == "plan" and state_keys.issubset(selected_keys)
 
     if exact_match:
         if state_has_resumable_services(runtime, candidate):
@@ -218,12 +248,35 @@ def evaluate_run_reuse(
     return RunReuseDecision(
         candidate_state=candidate,
         decision_kind="fresh_run",
-        reason="project_selection_mismatch",
+        reason="no_reusable_runtime",
         selected_projects=selected_payload,
         state_projects=state_payload,
         weak_identity=weak_identity,
         startup_enabled=startup_enabled,
     )
+
+
+def _startup_identity_mismatch(previous: Mapping[str, object], current: Mapping[str, object]) -> dict[str, object]:
+    previous_fingerprint = str(previous.get("fingerprint", "")).strip()
+    current_fingerprint = str(current.get("fingerprint", "")).strip()
+    if previous_fingerprint and current_fingerprint and previous_fingerprint == current_fingerprint:
+        return {}
+
+    previous_payload = _startup_identity_comparison_payload(previous)
+    current_payload = _startup_identity_comparison_payload(current)
+    if previous_payload == current_payload:
+        return {}
+
+    changed_fields = [
+        key
+        for key in sorted(set(previous_payload) | set(current_payload))
+        if previous_payload.get(key) != current_payload.get(key)
+    ]
+    return {"fields": changed_fields}
+
+
+def _startup_identity_comparison_payload(identity: Mapping[str, object]) -> dict[str, object]:
+    return {str(key): value for key, value in identity.items() if str(key) != "fingerprint"}
 
 
 def project_identities_from_contexts(contexts: list[object]) -> list[ProjectIdentity]:
@@ -283,12 +336,42 @@ def normalize_project_root(root: object) -> str | None:
     return str(Path(raw).expanduser().resolve(strict=False))
 
 
-def _startup_identity_payload(runtime: Any, *, runtime_mode: str, project_contexts: list[object]) -> dict[str, object]:
-    startup_enabled = _startup_enabled(runtime, runtime_mode)
+
+def _service_enabled_for_context(runtime: Any, runtime_mode: str, service: object, context: object) -> bool:
+    enabled_for_project = getattr(service, "enabled_for_project_root", None)
+    if callable(enabled_for_project):
+        return bool(enabled_for_project(runtime_mode, getattr(context, "root", None)))
+    enabled_for_mode = getattr(service, "enabled_for_mode", None)
+    if callable(enabled_for_mode):
+        return bool(enabled_for_mode(runtime_mode))
+    return False
+
+
+def _startup_service_payload(runtime: Any, runtime_mode: str, project_contexts: list[object]) -> dict[str, bool]:
     services = {
         "backend": _service_enabled(runtime, runtime_mode, "backend"),
         "frontend": _service_enabled(runtime, runtime_mode, "frontend"),
     }
+    config = getattr(runtime, "config", None)
+    for service in getattr(config, "additional_services", ()):
+        name = str(getattr(service, "name", "") or "").strip()
+        if not name:
+            continue
+        services[name] = any(
+            _service_enabled_for_context(runtime, runtime_mode, service, context) for context in project_contexts
+        )
+    return services
+
+
+def _startup_identity_payload(
+    runtime: Any,
+    *,
+    runtime_mode: str,
+    project_contexts: list[object],
+    route: Route | None = None,
+) -> dict[str, object]:
+    startup_enabled = _startup_enabled(runtime, runtime_mode)
+    services = _startup_service_payload(runtime, runtime_mode, project_contexts)
     dependencies = [
         dependency_id
         for dependency_id in sorted(dependency_ids())
@@ -296,12 +379,21 @@ def _startup_identity_payload(runtime: Any, *, runtime_mode: str, project_contex
     ]
     if not startup_enabled:
         dependencies = []
+    dependency_modes = {
+        dependency_id: (
+            "external"
+            if dependency_external_mode(runtime, dependency_id, mode=runtime_mode, route=route)
+            else "managed"
+        )
+        for dependency_id in dependencies
+    }
     payload = {
         "mode": runtime_mode,
         "projects": identities_to_payload(project_identities_from_contexts(project_contexts)),
         "startup_enabled": startup_enabled,
         "services": services,
         "dependencies": dependencies,
+        "dependency_modes": dependency_modes,
         "directories": {
             "backend": str(getattr(runtime.config, "backend_dir_name", "backend")),
             "frontend": str(getattr(runtime.config, "frontend_dir_name", "frontend")),

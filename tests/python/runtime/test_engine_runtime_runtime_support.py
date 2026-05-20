@@ -45,6 +45,17 @@ class EngineRuntimeRuntimeSupportTests(unittest.TestCase):
         self.assertEqual(normalize_log_line(line, no_color=True), "error")
         self.assertEqual(normalize_log_line(line, no_color=False), line)
 
+    def test_normalize_log_line_highlights_error_and_warning_keywords(self) -> None:
+        line = "level=WARNING error_type=ModuleNotFoundError error_message=No module named 'frontmatter'"
+
+        rendered = normalize_log_line(line, no_color=False)
+
+        self.assertIn("\x1b[", rendered)
+        self.assertIn("WARNING", rendered)
+        self.assertIn("ModuleNotFoundError", rendered)
+        self.assertIn("No module named", rendered)
+        self.assertEqual(normalize_log_line(line, no_color=True), line)
+
 
 if __name__ == "__main__":
     unittest.main()

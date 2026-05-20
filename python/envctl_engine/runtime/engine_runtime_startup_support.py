@@ -38,12 +38,14 @@ def build_startup_identity_metadata(
     runtime_mode: str,
     project_contexts: list[object],
     base_metadata: Mapping[str, object] | None = None,
+    route: object | None = None,
 ) -> dict[str, object]:
     return build_startup_identity_metadata_impl(
         runtime,
         runtime_mode=runtime_mode,
         project_contexts=project_contexts,
         base_metadata=base_metadata,
+        route=route,
     )
 
 
@@ -164,7 +166,8 @@ def set_plan_port_from_component(plan: PortPlan, component: Mapping[str, object]
 def discover_projects(runtime: Any, *, mode: str, context_factory: Callable[..., object]) -> list[object]:
     if mode == "main":
         ports = runtime.port_planner.plan_project_stack("Main", index=0)
-        return [context_factory(name="Main", root=runtime.config.base_dir, ports=ports)]
+        root = getattr(runtime.config, "execution_root", runtime.config.base_dir)
+        return [context_factory(name="Main", root=root, ports=ports)]
 
     contexts: list[object] = []
     projects = discover_tree_projects(runtime.config.base_dir, runtime.config.trees_dir_name)
@@ -180,9 +183,14 @@ def discover_projects(runtime: Any, *, mode: str, context_factory: Callable[...,
     return contexts
 
 
-def reserve_project_ports(runtime: Any, context: object) -> None:
+def reserve_project_ports(runtime: Any, context: object, route: object | None = None) -> None:
     for service_name, plan in context.ports.items():
         owner = f"{context.name}:{service_name}"
+        restart_preferred_port = plan.assigned if getattr(plan, "source", "") == "restart" else None
+        restart_conflict_detail = None
+        if isinstance(restart_preferred_port, int) and restart_preferred_port > 0:
+            _release_restart_preferred_lock(runtime.port_planner, restart_preferred_port, owner=owner)
+            restart_conflict_detail = _restart_preferred_conflict_detail(runtime.port_planner, restart_preferred_port)
         try:
             reserved = runtime.port_planner.reserve_next(plan.assigned, owner=owner)
         except RuntimeError as exc:
@@ -199,8 +207,71 @@ def reserve_project_ports(runtime: Any, context: object) -> None:
             raise
         if reserved != plan.final:
             runtime.port_planner.update_final_port(plan, reserved, source="retry")
-            runtime._emit("port.rebound", project=context.name, service=service_name, port=reserved)
+            payload: dict[str, object] = {
+                "project": context.name,
+                "service": service_name,
+                "port": reserved,
+            }
+            if isinstance(restart_preferred_port, int) and restart_preferred_port > 0:
+                payload.update(
+                    {
+                        "restart_preferred_port": restart_preferred_port,
+                        "rebound_reason": "restart_preferred_port_unavailable",
+                        "availability_mode": runtime.port_planner.availability_mode,
+                        "interactive_command": bool(
+                            getattr(route, "flags", {}).get("interactive_command", False)
+                            if route is not None
+                            else False
+                        ),
+                    }
+                )
+                if restart_conflict_detail:
+                    payload["restart_conflict_detail"] = restart_conflict_detail
+            runtime._emit("port.rebound", **payload)
         else:
             plan.assigned = reserved
             plan.final = reserved
         runtime._emit("port.reserved", project=context.name, service=service_name, port=reserved)
+
+
+def _release_restart_preferred_lock(port_planner: Any, port: int, *, owner: str) -> None:
+    release = getattr(port_planner, "release", None)
+    if not callable(release):
+        return
+    try:
+        release(port, owner=owner)
+    except TypeError:
+        return
+
+
+def _restart_preferred_conflict_detail(port_planner: Any, port: int) -> str | None:
+    lock_path_for_port = getattr(port_planner, "_lock_path", None)
+    if callable(lock_path_for_port):
+        try:
+            lock_path = lock_path_for_port(port)
+        except Exception:
+            lock_path = None
+        if lock_path is not None:
+            try:
+                lock_exists = bool(lock_path.exists())
+            except OSError:
+                lock_exists = False
+            if lock_exists:
+                lock_is_stale = getattr(port_planner, "_lock_is_stale", None)
+                if callable(lock_is_stale):
+                    try:
+                        if bool(lock_is_stale(lock_path)):
+                            lock_exists = False
+                    except Exception:
+                        pass
+                if lock_exists:
+                    return "lock"
+
+    is_port_available = getattr(port_planner, "_is_port_available", None)
+    if callable(is_port_available):
+        try:
+            if not bool(is_port_available(port)):
+                return "listener"
+        except Exception:
+            return None
+    return None

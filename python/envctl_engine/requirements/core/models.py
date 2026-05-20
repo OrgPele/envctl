@@ -55,6 +55,7 @@ class RequirementComponentResult:
     error: str | None = None
     runtime_status: str | None = None
     container_name: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -81,12 +82,14 @@ class RequirementComponentResult:
                 payload["final"] = value
             elif key == "requested" and "requested" not in payload:
                 payload["requested"] = value
+        payload.update(dict(self.extra))
         return payload
 
     @classmethod
     def from_payload(cls, component_id: str, payload: dict[str, Any] | None) -> "RequirementComponentResult":
         data = payload or {}
-        resources = data.get("resources") if isinstance(data.get("resources"), dict) else {}
+        raw_resources = data.get("resources")
+        resources: dict[object, object] = raw_resources if isinstance(raw_resources, dict) else {}
         normalized_resources = {
             str(key): int(value) for key, value in resources.items() if isinstance(value, int) and value > 0
         }
@@ -96,6 +99,22 @@ class RequirementComponentResult:
             normalized_resources.setdefault("requested", requested)
         if isinstance(final, int) and final > 0:
             normalized_resources.setdefault("primary", final)
+        known_keys = {
+            "id",
+            "enabled",
+            "success",
+            "simulated",
+            "health",
+            "resources",
+            "retries",
+            "reason_code",
+            "failure_class",
+            "error",
+            "runtime_status",
+            "container_name",
+            "requested",
+            "final",
+        }
         return cls(
             id=component_id,
             enabled=bool(data.get("enabled", False)),
@@ -109,4 +128,5 @@ class RequirementComponentResult:
             error=str(data.get("error")) if data.get("error") is not None else None,
             runtime_status=str(data.get("runtime_status")) if data.get("runtime_status") is not None else None,
             container_name=str(data.get("container_name")) if data.get("container_name") is not None else None,
+            extra={str(key): value for key, value in data.items() if key not in known_keys},
         )

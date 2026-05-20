@@ -77,6 +77,29 @@ class ValidationWorkflowContractTests(unittest.TestCase):
             self.assertIn("`install`, and `uninstall`", text, msg=relative)
             self.assertIn("`show-config`, `show-state`, `explain-startup`, and `list-commands`", text, msg=relative)
 
+    def test_reference_commands_page_summarizes_command_boundaries(self) -> None:
+        text = (REPO_ROOT / "docs" / "reference" / "commands.md").read_text(encoding="utf-8")
+        self.assertIn("launcher-owned commands", text)
+        self.assertIn("bootstrap-safe inspection or utility commands", text)
+        self.assertIn("operational runtime commands", text)
+        for token in (
+            "`--version`",
+            "`--help`",
+            "`doctor`",
+            "`show-config`",
+            "`show-state`",
+            "`explain-startup`",
+            "`list-commands`",
+            "`install-prompts`",
+            "`codex-tmux`",
+            "`start`",
+            "`plan`",
+            "`restart`",
+        ):
+            self.assertIn(token, text)
+        self.assertIn("repo-scoped tmux session", text)
+        self.assertIn("distinct from the optional post-`--plan` cmux-based plan-agent launch flow", text)
+
     def test_active_developer_docs_do_not_reference_deleted_shell_domain(self) -> None:
         for relative in (
             "docs/developer/debug-and-diagnostics.md",

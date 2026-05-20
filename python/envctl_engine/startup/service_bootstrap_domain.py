@@ -8,11 +8,12 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from envctl_engine.shared.node_tooling import detect_package_manager, load_package_json
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.startup.public_urls import browser_backend_url, resolve_public_host
 from envctl_engine.ui.path_links import render_path_for_terminal
 
 _STATE_DIRNAME = ".envctl-state"
@@ -97,6 +98,19 @@ def _prepare_backend_runtime(
         started=env_merge_started,
     )
 
+    uses_poetry = pyproject_file.is_file() and _pyproject_uses_poetry(pyproject_file) and self._command_exists("poetry")
+    probe_modules = _backend_runtime_probe_modules(backend_cwd) if uses_poetry else ()
+
+    def _poetry_environment_ready() -> bool:
+        return _poetry_backend_environment_ready(
+            self,
+            backend_cwd=backend_cwd,
+            env=env,
+            modules=probe_modules,
+        )
+
+    poetry_install_decision: tuple[bool, str, dict[str, object]] | None = None
+    poetry_install_check_emitted = False
     migrations_enabled = _backend_migrations_enabled(self, route)
     runtime_required, runtime_reason, runtime_state = _backend_runtime_prep_required(
         backend_cwd=backend_cwd,
@@ -108,39 +122,82 @@ def _prepare_backend_runtime(
         migrations_enabled=migrations_enabled,
     )
     if not runtime_required:
-        self._emit(
-            "service.bootstrap.skip",
-            project=context.name,
-            service="backend",
-            manager=manager,
-            step="prepare",
-            reason=runtime_reason,
-        )
-        _emit_bootstrap_phase(
-            self,
-            project=context.name,
-            service="backend",
-            phase="prepare",
-            started=prepare_started,
-            status="reused",
-            reason=runtime_reason,
-        )
-        return
+        if uses_poetry:
+            install_check_started = time.monotonic()
+            poetry_install_decision = _backend_dependency_install_required(
+                backend_cwd=backend_cwd,
+                manager="poetry",
+                environment_ready=_poetry_environment_ready if probe_modules else None,
+            )
+            install_required, install_reason, _install_state = poetry_install_decision
+            _emit_bootstrap_phase(
+                self,
+                project=context.name,
+                service="backend",
+                phase="dependency_install_check",
+                started=install_check_started,
+                reason=install_reason,
+            )
+            poetry_install_check_emitted = True
+            if not install_required:
+                self._emit(
+                    "service.bootstrap.skip",
+                    project=context.name,
+                    service="backend",
+                    manager=manager,
+                    step="install",
+                    reason=install_reason,
+                )
+                _emit_bootstrap_phase(
+                    self,
+                    project=context.name,
+                    service="backend",
+                    phase="dependency_install",
+                    started=time.monotonic(),
+                    status="reused",
+                    reason=install_reason,
+                )
+            else:
+                runtime_required = True
 
-    if pyproject_file.is_file() and self._command_exists("poetry"):
+        if not runtime_required:
+            self._emit(
+                "service.bootstrap.skip",
+                project=context.name,
+                service="backend",
+                manager=manager,
+                step="prepare",
+                reason=runtime_reason,
+            )
+            _emit_bootstrap_phase(
+                self,
+                project=context.name,
+                service="backend",
+                phase="prepare",
+                started=prepare_started,
+                status="reused",
+                reason=runtime_reason,
+            )
+            return
+
+    if uses_poetry:
         install_check_started = time.monotonic()
-        install_required, install_reason, install_state = _backend_dependency_install_required(
-            backend_cwd=backend_cwd,
-            manager="poetry",
-        )
-        _emit_bootstrap_phase(
-            self,
-            project=context.name,
-            service="backend",
-            phase="dependency_install_check",
-            started=install_check_started,
-            reason=install_reason,
-        )
+        if poetry_install_decision is None:
+            poetry_install_decision = _backend_dependency_install_required(
+                backend_cwd=backend_cwd,
+                manager="poetry",
+                environment_ready=_poetry_environment_ready if probe_modules else None,
+            )
+        install_required, install_reason, install_state = poetry_install_decision
+        if not poetry_install_check_emitted:
+            _emit_bootstrap_phase(
+                self,
+                project=context.name,
+                service="backend",
+                phase="dependency_install_check",
+                started=install_check_started,
+                reason=install_reason,
+            )
         if install_required:
             install_started = time.monotonic()
             self._emit(
@@ -352,13 +409,15 @@ def _backend_migrations_enabled(self: Any, route: Route | None) -> bool:
         raw = self.env.get("ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP") or self.config.raw.get(
             "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP"
         )
-        return parse_bool(raw, False)
+        return parse_bool(raw, True)
+    if bool(route.flags.get("_dependency_bootstrap_no_migrations")):
+        return False
     if bool(route.flags.get("_resume_restore")):
         return False
     raw = self.env.get("ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP") or self.config.raw.get(
         "ENVCTL_BACKEND_MIGRATIONS_ON_STARTUP"
     )
-    return parse_bool(raw, False)
+    return parse_bool(raw, True)
 
 
 def _prepare_frontend_runtime(
@@ -377,7 +436,7 @@ def _prepare_frontend_runtime(
     api_url = ""
     manager = ""
     if backend_port > 0:
-        backend_url = f"http://localhost:{backend_port}"
+        backend_url = browser_backend_url(host=resolve_public_host(env=self.env, config=self.config), port=backend_port)
         api_url = f"{backend_url}/api/v1"
 
     package_json = frontend_cwd / "package.json"
@@ -397,6 +456,26 @@ def _prepare_frontend_runtime(
     manager = detect_package_manager(frontend_cwd, command_exists=self._command_exists)
     if manager is None:
         return
+    missing_dependency = _frontend_missing_direct_dependency(frontend_cwd=frontend_cwd, payload=payload)
+    if missing_dependency is not None and not parse_bool(
+        self.env.get("ENVCTL_SKIP_FRONTEND_DEPENDENCY_CHECK"),
+        False,
+    ):
+        install_command, _fallback_command = _frontend_install_commands(frontend_cwd=frontend_cwd, manager=manager)
+        command_text = " ".join(install_command)
+        self._emit(
+            "service.bootstrap.dependency_check",
+            project=context.name,
+            service="frontend",
+            status="failed",
+            package=missing_dependency,
+            install_command=command_text,
+        )
+        raise RuntimeError(
+            "frontend dependency check failed for "
+            f"{context.name}: missing direct dependency {missing_dependency!r} in {frontend_cwd}. "
+            f"Run `{command_text}` in {frontend_cwd}."
+        )
     env = self._command_env(port=0, extra=project_env_base)
     if frontend_env_file is not None and frontend_env_file.is_file():
         loaded_env = self._read_env_file_safe(frontend_env_file)
@@ -549,7 +628,8 @@ def _run_frontend_bootstrap_command(
                 handle.write(f"[envctl] frontend bootstrap step failed ({step}): {error}\n")
         except OSError:
             pass
-    raise RuntimeError(f"frontend bootstrap failed for {context.name} during {step}: {error}")
+    log_hint = f" Log: {frontend_log_path}" if frontend_log_path else ""
+    raise RuntimeError(f"frontend bootstrap failed for {context.name} during {step}: {error}{log_hint}")
 
 
 def _frontend_dependency_install_required(*, frontend_cwd: Path, dev_script: str) -> tuple[bool, str]:
@@ -562,6 +642,34 @@ def _frontend_dependency_install_required(*, frontend_cwd: Path, dev_script: str
         if not vite_bin.is_file():
             return True, "vite_binary_missing"
     return False, "up_to_date"
+
+
+def _frontend_missing_direct_dependency(*, frontend_cwd: Path, payload: Mapping[str, object]) -> str | None:
+    node_modules_dir = frontend_cwd / "node_modules"
+    if not node_modules_dir.is_dir():
+        return None
+    declared: list[str] = []
+    for section_name in ("dependencies", "devDependencies"):
+        section = payload.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        for package_name in section:
+            name = str(package_name).strip()
+            if name and not name.startswith("@types/"):
+                declared.append(name)
+    for package_name in sorted(set(declared)):
+        if not _frontend_dependency_installed(node_modules_dir=node_modules_dir, package_name=package_name):
+            return package_name
+    return None
+
+
+def _frontend_dependency_installed(*, node_modules_dir: Path, package_name: str) -> bool:
+    package_path = node_modules_dir
+    for part in package_name.split("/"):
+        if not part:
+            return False
+        package_path = package_path / part
+    return package_path.exists()
 
 
 def _frontend_install_commands(*, frontend_cwd: Path, manager: str) -> tuple[list[str], list[str] | None]:
@@ -586,17 +694,88 @@ def _frontend_install_commands(*, frontend_cwd: Path, manager: str) -> tuple[lis
     return ["npm", "install", "--include=dev"], None
 
 
-def _backend_dependency_install_required(*, backend_cwd: Path, manager: str) -> tuple[bool, str, dict[str, object]]:
+def _pyproject_uses_poetry(pyproject_file: Path) -> bool:
+    if not pyproject_file.is_file():
+        return False
+    try:
+        text = pyproject_file.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "[tool.poetry]" in text or "[tool.pdm]" in text
+
+
+def _backend_dependency_install_required(
+    *,
+    backend_cwd: Path,
+    manager: str,
+    environment_ready: Callable[[], bool] | None = None,
+) -> tuple[bool, str, dict[str, object]]:
     fingerprint = _backend_dependency_fingerprint(backend_cwd=backend_cwd, manager=manager)
-    state = {"manager": manager, "fingerprint": fingerprint}
+    state: dict[str, object] = {"manager": manager, "fingerprint": fingerprint}
+    existing = _read_backend_bootstrap_state(backend_cwd)
+    if manager == "poetry":
+        if existing != state:
+            return True, "dependency_files_changed", state
+        if environment_ready is not None and not environment_ready():
+            return True, "poetry_environment_missing_dependencies", state
+        return False, "up_to_date", state
+
     env_artifact = backend_cwd / "venv"
     alt_env_artifact = backend_cwd / ".venv"
     if not env_artifact.exists() and not alt_env_artifact.exists():
         return True, "environment_missing", state
-    existing = _read_backend_bootstrap_state(backend_cwd)
     if existing != state:
         return True, "dependency_files_changed", state
     return False, "up_to_date", state
+
+
+def _backend_runtime_probe_modules(backend_cwd: Path) -> tuple[str, ...]:
+    modules: list[str] = []
+    for module in ("uvicorn",):
+        if _backend_dependency_file_mentions(backend_cwd, module):
+            modules.append(module)
+    return tuple(modules)
+
+
+def _backend_dependency_file_mentions(backend_cwd: Path, dependency_name: str) -> bool:
+    normalized = dependency_name.replace("_", "[-_]")
+    pattern = re.compile(rf"(^|[^A-Za-z0-9_.-]){normalized}([^A-Za-z0-9_.-]|$)", re.IGNORECASE)
+    for candidate in (
+        backend_cwd / "pyproject.toml",
+        backend_cwd / "poetry.lock",
+        backend_cwd / "requirements.txt",
+    ):
+        if not candidate.is_file():
+            continue
+        try:
+            text = candidate.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if pattern.search(text):
+            return True
+    return False
+
+
+def _poetry_backend_environment_ready(
+    self: Any,
+    *,
+    backend_cwd: Path,
+    env: Mapping[str, str],
+    modules: tuple[str, ...],
+) -> bool:
+    if not modules:
+        return True
+    imports = "; ".join(f"import {module}" for module in modules)
+    try:
+        result = self.process_runner.run(
+            ["poetry", "run", "python", "-c", imports],
+            cwd=backend_cwd,
+            env=env,
+            timeout=30.0,
+        )
+    except Exception:  # noqa: BLE001 - failed readiness probes should trigger a safe reinstall path.
+        return False
+    return int(getattr(result, "returncode", 1)) == 0
 
 
 def _backend_runtime_prep_required(
@@ -609,7 +788,7 @@ def _backend_runtime_prep_required(
     skip_local_db_env: bool,
     migrations_enabled: bool,
 ) -> tuple[bool, str, dict[str, object]]:
-    state = {
+    state: dict[str, object] = {
         "manager": manager,
         "dependency_fingerprint": _backend_dependency_fingerprint(backend_cwd=backend_cwd, manager=manager),
         "runtime_fingerprint": _backend_runtime_fingerprint(
@@ -743,7 +922,7 @@ def _frontend_runtime_prep_required(
     env: Mapping[str, str],
     dev_script: str,
 ) -> tuple[bool, str, dict[str, object]]:
-    state = {
+    state: dict[str, object] = {
         "manager": manager,
         "runtime_fingerprint": _frontend_runtime_fingerprint(
             frontend_cwd=frontend_cwd,
@@ -864,15 +1043,22 @@ def _service_env_from_file(
     base_env: Mapping[str, str],
     env_file: Path | None,
     include_app_env_file: bool,
+    env_file_authoritative: bool = False,
 ) -> dict[str, str]:
     merged = dict(base_env)
     if env_file is None or not env_file.is_file():
+        if include_app_env_file:
+            merged["RUN_DB_MIGRATIONS_ON_STARTUP"] = "false"
         return merged
     loaded_env = self._read_env_file_safe(env_file)
-    for key, value in loaded_env.items():
-        merged.setdefault(key, value)
+    if env_file_authoritative:
+        merged.update(loaded_env)
+    else:
+        for key, value in loaded_env.items():
+            merged.setdefault(key, value)
     if include_app_env_file:
         merged["APP_ENV_FILE"] = str(env_file)
+        merged["RUN_DB_MIGRATIONS_ON_STARTUP"] = "false"
     return merged
 
 
@@ -1031,6 +1217,7 @@ def _resolve_backend_env_contract(
         for key, value in normalized_projected_env.items():
             if value.strip():
                 env[key] = value
+    env["RUN_DB_MIGRATIONS_ON_STARTUP"] = "false"
     contract = _BackendEnvContract(
         env=env,
         env_file_path=env_resolution.path,
@@ -1120,6 +1307,32 @@ def _skip_local_db_env(self: Any, *, backend_env_file: Path | None, backend_env_
     return skip
 
 
+def _bootstrap_failure_suggestion(step: str, error: str, cwd: Path) -> str:
+    lower_error = error.lower()
+    if "poetry install" in step.lower() or "poetry" in lower_error:
+        if "set `packages`" in error or "no packages found" in lower_error:
+            return (
+                f"\nTip: this project has pyproject.toml but does not use Poetry.\n"
+                f"Fix: create a venv manually in {cwd}:\n"
+                f"  python -m venv venv && source venv/bin/activate && pip install -e .\n"
+                f"Or add TREES_BACKEND_ENABLE=false to your .envctl to skip backend bootstrap."
+            )
+        if "lock file" in lower_error or "poetry.lock" in lower_error:
+            return (
+                f"\nTip: Poetry lock file is missing. Run `poetry lock` in {cwd},\n"
+                f"or set TREES_BACKEND_ENABLE=false in .envctl to skip bootstrap."
+            )
+        return (
+            "\nTip: Poetry install failed. Check that the project is configured for Poetry.\n"
+            "If this project uses pip/setuptools instead, add TREES_BACKEND_ENABLE=false to .envctl."
+        )
+    if "pip install" in lower_error or "pip" in lower_error:
+        return (
+            f"\nTip: pip install failed. Check that requirements.txt or pyproject.toml is valid in {cwd}."
+        )
+    return ""
+
+
 def _run_backend_bootstrap_command(
     self: Any,
     *,
@@ -1146,7 +1359,9 @@ def _run_backend_bootstrap_command(
                 handle.write(f"[envctl] backend bootstrap step failed ({step}): {error}\n")
         except OSError:
             pass
-    raise RuntimeError(f"backend bootstrap failed for {context.name} during {step}: {error}")
+    suggestion = _bootstrap_failure_suggestion(step, error, cwd)
+    log_hint = f"\nLog: {backend_log_path}" if backend_log_path else ""
+    raise RuntimeError(f"backend bootstrap failed for {context.name} during {step}: {error}{log_hint}\n{suggestion}")
 
 
 def _run_backend_migration_step(
@@ -1339,14 +1554,8 @@ def _read_env_file_safe(path: Path) -> dict[str, str]:
 
 
 def _sync_backend_env_file(self: Any, path: Path, *, env: Mapping[str, str]) -> None:
-    updates: dict[str, str] = {}
+    _ = env
     removals = {"SQLALCHEMY_DATABASE_URL", "ASYNC_DATABASE_URL"}
-    for key in ("DATABASE_URL", "SQLALCHEMY_DATABASE_URL", "ASYNC_DATABASE_URL", "REDIS_URL"):
-        value = env.get(key)
-        if isinstance(value, str) and value.strip():
-            updates[key] = value
-    if not updates and not removals:
-        return
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -1360,24 +1569,11 @@ def _sync_backend_env_file(self: Any, path: Path, *, env: Mapping[str, str]) -> 
         if key is None or key in replaced:
             rendered.append(line)
             continue
-        if key in removals and key not in updates:
+        if key in removals:
             changed = True
             replaced.add(key)
             continue
-        if key not in updates:
-            rendered.append(line)
-            continue
-        new_line = f"{key}={updates[key]}"
-        if line != new_line:
-            changed = True
-        rendered.append(new_line)
-        replaced.add(key)
-
-    for key, value in updates.items():
-        if key in replaced:
-            continue
-        rendered.append(f"{key}={value}")
-        changed = True
+        rendered.append(line)
 
     if not changed:
         return

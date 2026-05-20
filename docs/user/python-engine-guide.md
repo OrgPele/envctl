@@ -31,7 +31,7 @@ Behavior:
 - if `.envctl` is missing and you run a normal operational command interactively, runtime opens the setup wizard and writes `.envctl`
 - if `.envctl` is missing and there is no interactive TTY, runtime exits with a clear error instead of guessing
 
-The `.envctl` file remains repo-local. Envctl-owned local workflow artifacts such as `.envctl`, `MAIN_TASK.md`, archived `OLD_TASK_*.md`, and envctl worktree roots are expected to be ignored through Git global excludes, not by auto-editing the repository `.gitignore`.
+The `.envctl` file remains repo-local. Envctl-owned local workflow artifacts such as `.envctl`, `MAIN_TASK.md`, archived `OLD_TASK_*.md`, and envctl worktree roots are ignored through Git global excludes, not by auto-editing the repository `.gitignore`. Config saves automatically configure or update those global excludes, defaulting `core.excludesFile` to `~/.gitignore_global` when it is missing.
 
 Useful commands:
 
@@ -48,8 +48,11 @@ The current wizard flow is:
 3. `Components`
 4. optional `Long-Running Service`
 5. `Directories`
-6. `Ports`
-7. `Review / Save`
+6. `Entrypoints / Commands`
+7. `Ports`
+8. `Review / Save`
+
+The `Entrypoints / Commands` step covers backend/frontend start commands plus optional backend/frontend test commands. The wizard detects common test commands and frontend test paths from local files, labels the source of each suggestion, and lets you leave test command fields blank deliberately when no safe default is known. It does not execute test commands during setup.
 
 For the full setup story, see [First-Run Wizard](first-run-wizard.md).
 
@@ -89,6 +92,7 @@ envctl show-config --json
 envctl show-state --json
 envctl explain-startup --json
 envctl install-prompts --cli codex --dry-run
+envctl install-prompts --cli codex --dry-run
 ```
 
 What they are for:
@@ -103,6 +107,7 @@ What they are for:
   - omitting `--preset` installs all built-in presets for the selected CLI targets
   - overwrites prompt files in place after one confirmation prompt
   - use `--yes` or `--force` for non-interactive approval when existing files must be replaced
+  - Codex installs explicit-only skills under `~/.codex/skills/envctl-*` by default; `--with-codex-skills` remains accepted as a compatibility no-op for older scripts
 
 Compatibility note:
 

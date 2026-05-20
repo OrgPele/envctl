@@ -146,6 +146,72 @@ OWNERSHIP_RULES = {
         ENGINE_ROOT / "startup" / "startup_orchestrator.py",
         ENGINE_ROOT / "startup" / "protocols.py",
     },
+    "_screen_looks_ready": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "terminal_screen.py",
+    },
+    "_build_plan_agent_workflow": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+    },
+    "_spawn_omx_session_for_worktree": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "omx_transport.py",
+    },
+    "_ensure_tmux_window": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "tmux_transport.py",
+    },
+    "_prepare_surface": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "cmux_transport.py",
+    },
+    "resolve_plan_agent_launch_config": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "config.py",
+    },
+    "plan_agent_launch_prereq_commands": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "config.py",
+    },
+    "_workflow_step_prompt_text": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+    },
+    "_resolve_preset_submission_text": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+    },
+    "_codex_queue_screen_looks_ready": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "terminal_screen.py",
+    },
+    "_tmux_session_name_for_worktree": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "tmux_transport.py",
+    },
+    "_run_tmux_worktree_bootstrap": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "tmux_transport.py",
+    },
+    "_ensure_workspace_id": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "cmux_transport.py",
+    },
+    "launch_review_agent_terminal": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "cmux_transport.py",
+    },
+    "_find_existing_omx_attach_target": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "omx_transport.py",
+    },
+    "validate_plan_agent_attach_target": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "omx_transport.py",
+    },
+    "plan_agent_native_recovery_command": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "recovery.py",
+    },
+    "_new_session_command_for_route": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "recovery.py",
+    },
+    "_codex_goal_text_for_worktree": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+    },
+    "_emit_codex_goal_event": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+    },
+    "_wrap_omx_initial_prompt_for_workflow": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+    },
+    "_queue_failure_event_context": {
+        ENGINE_ROOT / "planning" / "plan_agent" / "recovery.py",
+    },
 }
 
 

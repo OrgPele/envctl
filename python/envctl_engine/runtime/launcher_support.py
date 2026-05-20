@@ -2,17 +2,34 @@ from __future__ import annotations
 
 from importlib import metadata as importlib_metadata
 import os
+from textwrap import indent
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 import tomllib
+
+from envctl_engine.runtime.help_text import render_help_text as render_runtime_help_text
+from envctl_engine.shared.repo_roots import (
+    canonical_envctl_project_root,
+    find_repo_root,
+    is_repo_root as shared_is_repo_root,
+    main_repo_root_for_linked_worktree as shared_main_repo_root_for_linked_worktree,
+    repo_root_with_readable_main_config_from_worktree as shared_repo_root_with_readable_main_config_from_worktree,
+)
 
 
 class LauncherError(RuntimeError):
     pass
 
 
-USAGE_TEXT = """Usage:
+USAGE_TEXT = """envctl launcher help
+
+This help is printed by the lightweight repo wrapper/package launcher before it
+hands off to the full Python runtime. Use this wrapper section when PATH/repo
+selection is the question; the complete runtime command map is included below.
+Use `envctl <command> --help` for focused command-specific usage.
+
+Usage:
   envctl [--repo <path>] [engine args...]
   envctl doctor [--repo <path>] [--json]
   envctl install [--shell-file <path>] [--dry-run]
@@ -20,12 +37,27 @@ USAGE_TEXT = """Usage:
   envctl [--repo <path>] --version
   envctl --help
 
+Repo wrapper / package launcher responsibilities:
+  - resolve which repository envctl should operate on (`--repo <path>` or cwd)
+  - print the package/repo version without bootstrapping a project
+  - install or remove the shell PATH shim for the envctl executable
+  - run launcher-level doctor checks for binary/repo resolution
+  - forward normal engine args to the Python runtime after repo resolution
+
+Runtime CLI capabilities:
+  - start/resume/restart services and show the dashboard
+  - run specific headless actions such as test, logs, health, errors, pr, commit, review, and migrate
+  - manage envctl implementation worktrees through plan/ensure/delete/blast commands
+  - install AI workflow presets and launch Codex tmux/OMX implementation sessions
+  - collect diagnostics with doctor, preflight, debug-pack, debug-report, and debug-last
+
 Examples:
   envctl
-  envctl --main
+  envctl --main --headless
   envctl --repo /path/to/your/repo --resume
+  envctl --repo /path/to/your/repo pr --project feature-a-1
+  envctl <command> --help
   envctl --version
-  envctl doctor --repo /path/to/your/repo
   envctl doctor --repo /path/to/your/repo --json
 """
 
@@ -41,18 +73,28 @@ class InstallOptions:
 
 
 def launcher_usage_text() -> str:
-    return USAGE_TEXT
+    return "\n".join(
+        (
+            USAGE_TEXT.rstrip(),
+            "",
+            "Runtime command map (after the launcher resolves the repo, these are the forwarded engine commands):",
+            indent(render_runtime_help_text(None), "  "),
+            "",
+        )
+    )
 
 
 def resolve_envctl_version(*, project_root: Path | None = None) -> str:
-    try:
-        return str(importlib_metadata.version("envctl"))
-    except importlib_metadata.PackageNotFoundError:
-        pass
-    except Exception as exc:
-        raise LauncherError(f"Could not determine envctl version from installed package metadata: {exc}") from exc
+    if project_root is None:
+        try:
+            return str(importlib_metadata.version("envctl"))
+        except importlib_metadata.PackageNotFoundError:
+            pass
+        except Exception as exc:
+            raise LauncherError(f"Could not determine envctl version from installed package metadata: {exc}") from exc
 
-    for pyproject_path in _candidate_version_files(project_root):
+    preferred_paths = _candidate_version_files(project_root)
+    for pyproject_path in preferred_paths:
         if not pyproject_path.is_file():
             continue
         try:
@@ -66,6 +108,13 @@ def resolve_envctl_version(*, project_root: Path | None = None) -> str:
         if not isinstance(version, str) or not version.strip():
             raise LauncherError(f"Could not determine envctl version from {pyproject_path}: missing project.version")
         return version.strip()
+
+    try:
+        return str(importlib_metadata.version("envctl"))
+    except importlib_metadata.PackageNotFoundError:
+        pass
+    except Exception as exc:
+        raise LauncherError(f"Could not determine envctl version from installed package metadata: {exc}") from exc
 
     raise LauncherError("Could not determine envctl version from installed package metadata or pyproject.toml.")
 
@@ -89,7 +138,7 @@ def _candidate_version_files(project_root: Path | None) -> list[Path]:
 
 
 def find_shadowed_installed_envctl(current_binary: Path, env: Mapping[str, str] | None = None) -> Path | None:
-    env_map = os.environ if env is None else env
+    env_map = {} if env is None else env
     current_resolved = _resolved_path(current_binary)
     seen: set[Path] = {current_resolved}
     for candidate in _path_envctl_candidates(env_map):
@@ -148,7 +197,7 @@ def is_explicit_wrapper_path(
     env: Mapping[str, str] | None = None,
     cwd: Path | None = None,
 ) -> bool:
-    env_map = os.environ if env is None else env
+    env_map = {} if env is None else env
     invocation = _effective_invocation_argv0(current_binary, argv0, env=env)
     if not invocation:
         return False
@@ -181,9 +230,17 @@ def select_envctl_reexec_target(
     cwd: Path | None = None,
     alternate: Path | None = None,
 ) -> Path | None:
-    env_map = os.environ if env is None else env
+    env_map = {} if env is None else env
     if env_map.get("ENVCTL_USE_REPO_WRAPPER") == "1":
         return None
+    separators = [os.path.sep]
+    if os.path.altsep:
+        separators.append(os.path.altsep)
+    invocation = _effective_invocation_argv0(current_binary, argv0, env=env_map)
+    if invocation and not any(separator in invocation for separator in separators):
+        if alternate is not None:
+            return alternate
+        return find_shadowed_installed_envctl(current_binary, env=env_map)
     if is_explicit_wrapper_path(current_binary, argv0, env=env_map, cwd=cwd):
         return None
     if alternate is not None:
@@ -192,17 +249,19 @@ def select_envctl_reexec_target(
 
 
 def is_repo_root(path: Path) -> bool:
-    return (path / ".git").is_dir() or (path / ".git").is_file()
+    return shared_is_repo_root(path)
 
 
 def find_repo_root_from_cwd(cwd: Path) -> Path | None:
-    current = cwd.resolve()
-    while True:
-        if is_repo_root(current):
-            return current
-        if current.parent == current:
-            return None
-        current = current.parent
+    return find_repo_root(cwd)
+
+
+def main_repo_root_for_linked_worktree(worktree_root: Path) -> Path | None:
+    return shared_main_repo_root_for_linked_worktree(worktree_root)
+
+
+def repo_root_with_readable_main_config_from_worktree(worktree_root: Path) -> Path | None:
+    return shared_repo_root_with_readable_main_config_from_worktree(worktree_root)
 
 
 def resolve_repo_root(*, repo_arg: str | None, cwd: Path) -> Path:
@@ -211,16 +270,23 @@ def resolve_repo_root(*, repo_arg: str | None, cwd: Path) -> Path:
         if not candidate.is_absolute():
             candidate = cwd / candidate
         candidate = candidate.resolve()
-        if not is_repo_root(candidate):
+        detected = find_repo_root(candidate)
+        if detected is None:
             raise LauncherError(f"Invalid --repo path: {repo_arg}")
-        return candidate
+        return canonical_envctl_project_root(detected)
     detected = find_repo_root_from_cwd(cwd)
     if detected is None:
         raise LauncherError("Could not resolve repository root. Use --repo <path>.")
-    return detected
+    return canonical_envctl_project_root(detected)
 
 
-def launcher_doctor_payload(*, binary_path: str, repo_root: Path, runtime_entrypoint: str, launcher_root: Path) -> dict[str, str]:
+def launcher_doctor_payload(
+    *,
+    binary_path: str,
+    repo_root: Path,
+    runtime_entrypoint: str,
+    launcher_root: Path,
+) -> dict[str, str]:
     return {
         "launcher": "envctl",
         "binary_path": str(binary_path),

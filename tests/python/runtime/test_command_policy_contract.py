@@ -63,14 +63,14 @@ class CommandPolicyContractTests(unittest.TestCase):
         self.assertEqual(forced_mode, "trees")
         self.assertTrue(flags.get("planning_prs"))
 
-    def test_mode_tokens_apply_no_resume_for_forced_main_modes(self) -> None:
+    def test_mode_tokens_force_mode_without_disabling_auto_resume(self) -> None:
         flags: dict[str, object] = {}
         self.assertEqual(apply_mode_token("--main", flags=flags, current_mode="trees"), "main")
-        self.assertTrue(flags.get("no_resume"))
+        self.assertNotIn("no_resume", flags)
 
         flags = {}
         self.assertEqual(apply_mode_token("--trees=false", flags=flags, current_mode="trees"), "main")
-        self.assertTrue(flags.get("no_resume"))
+        self.assertNotIn("no_resume", flags)
 
         flags = {}
         _ = apply_mode_token("main=false", flags=flags, current_mode="main")
@@ -83,6 +83,7 @@ class CommandPolicyContractTests(unittest.TestCase):
             "preflight": "direct_inspection",
             "install-prompts": "utility",
             "codex-tmux": "utility",
+            "supabase-user": "utility",
             "debug-pack": "debug",
             "stop": "lifecycle_cleanup",
             "resume": "resume",

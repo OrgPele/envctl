@@ -17,6 +17,7 @@ from envctl_engine.runtime.launcher_support import (
     ORIGINAL_WRAPPER_ARGV0_ENVVAR,
     find_shadowed_installed_envctl,
     is_explicit_wrapper_path,
+    resolve_repo_root,
     select_envctl_reexec_target,
 )
 from envctl_engine.runtime.runtime_dependency_contract import runtime_dependency_manifest_parity
@@ -394,7 +395,7 @@ class CliPackagingTests(unittest.TestCase):
         payload = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         project = payload["project"]
         self.assertEqual(project["name"], "envctl")
-        self.assertEqual(project["scripts"]["envctl"], "envctl_engine.runtime.cli:main")
+        self.assertEqual(project["scripts"]["envctl"], "envctl_engine.runtime.launcher_cli:main")
         self.assertEqual(project["requires-python"], ">=3.12,<3.15")
         self.assertIn("rich>=13.7", project["dependencies"])
 
@@ -457,6 +458,7 @@ class CliPackagingTests(unittest.TestCase):
         version = str(project["version"])
 
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(f"https://github.com/OrgPele/envctl/releases/tag/{version}", readme)
         self.assertIn(f"releases/tag/{version}", readme)
         self.assertIn(f"release-{version}", readme)
         self.assertIn(f"Release {version}", readme)
@@ -503,8 +505,8 @@ class CliPackagingTests(unittest.TestCase):
                 check=False,
             )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("envctl Python runtime", result.stdout)
-        self.assertIn("Commands:", result.stdout)
+        self.assertIn("envctl - run, inspect, test, and ship repo services/worktrees", result.stdout)
+        self.assertIn("Command families:", result.stdout)
 
     def test_editable_install_exposes_envctl_version(self) -> None:
         expected_version = self._package_version()
@@ -605,6 +607,120 @@ class CliPackagingTests(unittest.TestCase):
         self.assertIn("Missing required envctl runtime Python packages", result.stderr)
         self.assertIn("pipx reinstall envctl", result.stderr)
         self.assertNotIn("python/requirements.txt", result.stderr)
+
+
+    def test_resolve_repo_root_from_linked_worktree_uses_readable_main_envctl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            resolved = resolve_repo_root(repo_arg=None, cwd=worktree)
+
+        self.assertEqual(resolved, repo.resolve())
+
+    def test_resolve_repo_root_explicit_linked_worktree_uses_readable_main_envctl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            resolved = resolve_repo_root(repo_arg=str(worktree), cwd=repo)
+
+        self.assertEqual(resolved, repo.resolve())
+
+    def test_resolve_repo_root_explicit_standalone_repo_stays_standalone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+
+            resolved = resolve_repo_root(repo_arg=str(repo), cwd=Path(tmpdir))
+
+        self.assertEqual(resolved, repo.resolve())
+
+    def test_resolve_repo_root_explicit_unmanaged_linked_worktree_stays_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+            resolved = resolve_repo_root(repo_arg=str(worktree), cwd=repo)
+
+        self.assertEqual(resolved, worktree.resolve())
+
+    def test_regular_install_launcher_doctor_repo_arg_linked_worktree_reports_main_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+            with self._installed_env(editable=False, install_deps=True) as env:
+                self._assert_runtime_dependencies_available(env)
+                result = subprocess.run(
+                    [str(env["script"]), "doctor", "--repo", str(worktree), "--json"],
+                    capture_output=True,
+                    text=True,
+                    env=env["env"],
+                    check=False,
+                )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(Path(payload["repo_root"]), repo.resolve())
+
+    def test_regular_install_from_worktree_uses_main_envctl_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "ENVCTL_DEFAULT_MODE=main",
+                        "MAIN_STARTUP_ENABLE=false",
+                        "MAIN_BACKEND_ENABLE=false",
+                        "MAIN_FRONTEND_ENABLE=false",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+            with self._installed_env(editable=False) as env:
+                result = subprocess.run(
+                    [str(env["script"]), "start"],
+                    cwd=worktree,
+                    capture_output=True,
+                    text=True,
+                    env=env["env"],
+                    check=False,
+                )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Missing required envctl runtime Python packages", result.stderr)
+        self.assertNotIn("Missing repo-local .envctl", result.stderr)
 
     def test_regular_install_repo_arg_overrides_inherited_run_repo_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -888,10 +1004,10 @@ class CliPackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             packaging_python = self._packaging_python()
             venv_dir = Path(tmpdir) / "venv"
-            subprocess.run([packaging_python, "-m", "venv", "--system-site-packages", str(venv_dir)], check=True)
+            subprocess.run([packaging_python, "-m", "venv", str(venv_dir)], check=True)
             python_bin = venv_dir / "bin" / "python"
             subprocess.run(
-                [str(python_bin), "-m", "pip", "install", "setuptools"],
+                [str(python_bin), "-m", "pip", "install", "--upgrade", "setuptools>=77", "packaging>=24.2"],
                 check=True,
                 capture_output=True,
                 text=True,

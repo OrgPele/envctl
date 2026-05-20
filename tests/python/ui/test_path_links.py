@@ -4,7 +4,14 @@ import io
 import unittest
 
 from envctl_engine.test_output.parser_base import strip_ansi
-from envctl_engine.ui.path_links import local_paths_in_text, render_path_for_terminal, render_paths_in_terminal_text, resolve_path_link, rich_path_text
+from envctl_engine.ui.path_links import (
+    local_paths_in_text,
+    normalize_macos_private_var_path_text,
+    render_path_for_terminal,
+    render_paths_in_terminal_text,
+    resolve_path_link,
+    rich_path_text,
+)
 
 
 class _TtyStringIO(io.StringIO):
@@ -65,6 +72,22 @@ class PathLinksTests(unittest.TestCase):
         self.assertEqual(link.display_text, "/tmp/example.txt")
         self.assertEqual(link.uri, "file:///tmp/example.txt")
 
+    def test_private_var_paths_are_preserved_by_default_path_links(self) -> None:
+        link = resolve_path_link(
+            "/private/var/folders/example/backend.log",
+            env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+            stream=_TtyStringIO(),
+        )
+
+        self.assertEqual(link.display_text, "/private/var/folders/example/backend.log")
+        self.assertEqual(link.uri, "file:///private/var/folders/example/backend.log")
+
+    def test_private_var_paths_can_normalize_for_dashboard_commands(self) -> None:
+        self.assertEqual(
+            normalize_macos_private_var_path_text("/private/var/folders/example/backend.log"),
+            "/var/folders/example/backend.log",
+        )
+
     def test_strip_ansi_preserves_visible_path_text(self) -> None:
         rendered = render_path_for_terminal(
             "/tmp/example.txt",
@@ -96,6 +119,16 @@ class PathLinksTests(unittest.TestCase):
 
         self.assertIn("\x1b]8;;file:///tmp/example.txt", rendered)
         self.assertEqual(strip_ansi(rendered), "failure summary: /tmp/example.txt")
+
+    def test_render_paths_in_terminal_text_does_not_replace_var_inside_private_var(self) -> None:
+        rendered = render_paths_in_terminal_text(
+            "failure summary: /private/var/folders/example/backend.log",
+            paths=["/private/var/folders/example/backend.log"],
+            env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+            stream=_TtyStringIO(),
+        )
+
+        self.assertEqual(strip_ansi(rendered), "failure summary: /private/var/folders/example/backend.log")
 
     def test_local_paths_in_text_extracts_absolute_paths(self) -> None:
         paths = local_paths_in_text(
