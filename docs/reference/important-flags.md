@@ -69,7 +69,8 @@ pass `--interactive` only when you want prompts.
 | `--cmux` | For `--plan`, enable the default cmux plan-agent workflow for this command without setting `CMUX=true`. |
 | `--tmux` | For `--plan`, have envctl create or reuse an envctl-owned tmux session/window for the implementation prompt workflow. |
 | `--opencode` | With `--plan --tmux`, launch OpenCode instead of Codex. |
-| `--ulw` | With `--plan --tmux --opencode`, explicitly force the OpenCode `/ulw-loop` prompt prefix; this is already the default for OpenCode launches. |
+| `--ulw` | With `--plan --opencode`, explicitly force the OpenCode `/ulw-loop` prompt prefix; this is already the default for OpenCode launches. |
+| `--no-ulw-loop` | With `--plan --opencode`, disable the default OpenCode `/ulw-loop` prompt prefix for that launch. |
 | `--new-session` | For AI-driven `--plan` launches, create a fresh cmux/tmux/OMX launch target instead of attaching to an existing one. |
 | `--omx` | For `--plan`, launch the Codex implementation session through OMX-managed detached tmux instead of envctl creating the tmux window directly; envctl selects a deterministic OMX state root under the worktree so prompt handoff remains discoverable when OMX boxes unsafe runtime state. |
 | `--ultragoal` | OMX workflow modifier for `--plan --omx`; starts the default/recommended Ultragoal workflow inside the OMX-managed Codex session after optional Codex `/goal` framing. |

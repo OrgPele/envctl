@@ -579,6 +579,40 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertTrue(launch_config.direct_prompt_enabled)
         self.assertTrue(launch_config.ulw_loop_prefix)
 
+    def test_resolve_plan_agent_launch_config_no_ulw_loop_route_disables_default_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            prompt_path = Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md"
+            repo.mkdir(parents=True, exist_ok=True)
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("Implement this directly.\n", encoding="utf-8")
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {"HOME": tmpdir},
+                route=parse_route(["--plan", "feature-a", "--cmux", "--opencode", "--no-ulw-loop"], env={}),
+            )
+            rt = self._runtime(repo, runtime, env={"HOME": tmpdir})
+
+            prompt_text, error = workflow._resolve_preset_submission_text(
+                rt,
+                launch_config=launch_config,
+                cli="opencode",
+                preset="implement_task",
+            )
+
+        self.assertEqual(launch_config.transport, "cmux")
+        self.assertTrue(launch_config.direct_prompt_enabled)
+        self.assertFalse(launch_config.ulw_loop_prefix)
+        self.assertIsNone(error)
+        self.assertEqual(prompt_text, "Implement this directly.\n")
+
     def test_create_plan_auto_launch_default_routes_remain_supported(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -1146,7 +1180,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertNotIn(_browser_e2e_instruction_text(), [step.text for step in workflow.steps])
         self.assertIn(_pr_review_comments_instruction_text(), [step.text for step in workflow.steps])
 
-    def test_launch_plan_agent_terminals_rejects_ulw_without_tmux_opencode(self) -> None:
+    def test_launch_plan_agent_terminals_rejects_ulw_without_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -3285,6 +3319,39 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 "--headless",
             ),
         )
+
+    def test_new_session_command_preserves_no_ulw_loop_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="feature-a.md")
+            command = recovery._new_session_command_for_route(
+                rt,
+                route=parse_route(["--plan", "feature-a", "--cmux", "--opencode", "--no-ulw-loop", "--headless"], env={}),
+                launch_config=launch_support.PlanAgentLaunchConfig(
+                    enabled=True,
+                    transport="cmux",
+                    cli="opencode",
+                    cli_command="opencode",
+                    preset="implement_task",
+                    codex_cycles=0,
+                    codex_cycles_warning=None,
+                    shell="zsh",
+                    require_cmux_context=True,
+                    cmux_workspace="",
+                    direct_prompt_enabled=True,
+                    ulw_loop_prefix=False,
+                    ulw_suffix=False,
+                ),
+                created_worktrees=(worktree,),
+        )
+
+        self.assertIn("--cmux", command)
+        self.assertNotIn("--tmux", command)
+        self.assertIn("--no-ulw-loop", command)
+        self.assertLess(command.index("--no-ulw-loop"), command.index("--new-session"))
 
     def test_new_session_command_preserves_omx_workflow_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

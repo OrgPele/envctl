@@ -188,6 +188,8 @@ def resolve_plan_agent_launch_config(
         ulw_loop_prefix = True
         if cli == "opencode":
             direct_prompt_enabled = True
+    if bool(route_flags.get("no_ulw_loop")):
+        ulw_loop_prefix = False
     omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
     if bool(route_flags.get("ultragoal")):
         omx_workflow = "ultragoal"
@@ -267,7 +269,7 @@ def _route_requests_ulw(route: object | None) -> bool:
 
 
 def _ulw_route_supported(*, launch_config: PlanAgentLaunchConfig) -> bool:
-    return launch_config.transport == "tmux" and launch_config.cli == "opencode"
+    return launch_config.cli == "opencode"
 
 
 def _guidance_attach_command(session_name: str) -> tuple[str, ...]:

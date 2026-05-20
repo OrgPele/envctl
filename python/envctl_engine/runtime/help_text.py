@@ -365,7 +365,8 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         command="plan",
         summary="create/reuse implementation worktrees from todo/plans selectors and optionally launch AI sessions",
         usage=(
-            "envctl --plan <selector> [--headless] [--dry-run] [--cmux|--tmux|--omx] [--codex|--opencode] [--ulw]",
+            "envctl --plan <selector> [--headless] [--dry-run] "
+            "[--cmux|--tmux|--omx] [--codex|--opencode] [--ulw|--no-ulw-loop]",
             "envctl --plan <selector> [--omx --ultragoal | --omx --ralph | --omx --team]",
         ),
         what_it_does=(
@@ -389,6 +390,7 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--codex             force Codex for cmux/tmux launches",
             "--opencode          force OpenCode for cmux/tmux launches",
             "--ulw               OpenCode only: force /ulw-loop prefix (default for OpenCode)",
+            "--no-ulw-loop       OpenCode only: disable the default /ulw-loop prefix",
             "--new-session  create a fresh cmux/tmux/OMX launch target instead of reusing an existing one",
             "SUPERSET_PROJECT=<id> or SUPERSET_WORKSPACE=<id> selects the Superset high-level transport",
         ),

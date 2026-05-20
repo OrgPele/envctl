@@ -89,6 +89,13 @@ class CliRouterTests(unittest.TestCase):
         self.assertTrue(route.flags.get("new_session"))
         self.assertTrue(route.flags.get("batch"))
 
+    def test_opencode_no_ulw_loop_flag_is_parsed(self) -> None:
+        route = parse_route(["--plan", "feature-a", "--cmux", "--opencode", "--no-ulw-loop"], env={})
+        self.assertEqual(route.command, "plan")
+        self.assertTrue(route.flags.get("cmux"))
+        self.assertTrue(route.flags.get("opencode"))
+        self.assertTrue(route.flags.get("no_ulw_loop"))
+
     def test_cmux_flag_is_parsed(self) -> None:
         route = parse_route(["--plan", "feature-a", "--cmux"], env={})
         self.assertEqual(route.command, "plan")
@@ -162,6 +169,7 @@ class CliRouterTests(unittest.TestCase):
             ["--plan", "feature-a", "--codex", "--opencode"],
             ["--plan", "feature-a", "--tmux", "--codex", "--opencode"],
             ["--plan", "feature-a", "--omx", "--opencode"],
+            ["--plan", "feature-a", "--opencode", "--ulw", "--no-ulw-loop"],
         ):
             with self.subTest(args=args):
                 with self.assertRaises(RouteError):

@@ -144,6 +144,7 @@ _BOOLEAN_FLAG_TOKENS = (
     "--codex",
     "--opencode",
     "--ulw",
+    "--no-ulw-loop",
     "--new-session",
     "--with-codex-skills",
     "--confirm",
@@ -1127,6 +1128,8 @@ def _validate_plan_agent_cli_flags(state: _ParserState) -> None:
             "Codex /goal framing is only supported with Codex plan-agent launches; "
             "use --codex or omit --opencode."
         )
+    if bool(state.flags.get("ulw")) and bool(state.flags.get("no_ulw_loop")):
+        raise RouteError("Use only one of --ulw or --no-ulw-loop.")
 
 
 def _validate_plan_agent_workflow_flags(state: _ParserState) -> None:
@@ -1233,6 +1236,7 @@ def _boolean_flag_name(token: str) -> str:
         "--codex": "codex",
         "--opencode": "opencode",
         "--ulw": "ulw",
+        "--no-ulw-loop": "no_ulw_loop",
         "--new-session": "new_session",
         "--with-codex-skills": "with_codex_skills",
         "--confirm": "confirm",
