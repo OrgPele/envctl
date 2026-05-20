@@ -408,6 +408,7 @@ Alias env vars:
 - `SUPERSET_WORKSPACE=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE=<value>` and selects Superset transport unless the canonical transport key is set
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - canonical `ENVCTL_PLAN_AGENT_*` keys win when both canonical and alias forms are set
+- `--cmux` is the command-scoped equivalent of enabling the default cmux plan-agent launch path
 - `CYCLES` only changes the effective Codex cycle count; it does not enable plan-agent launch by itself
 
 Cycle mode notes:

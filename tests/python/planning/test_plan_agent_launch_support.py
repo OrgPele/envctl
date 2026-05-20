@@ -619,6 +619,26 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertTrue(omx_config.pr_review_comments_followup_enable)
         self.assertEqual(omx_workflow.mode, "codex_cycles")
 
+    def test_cmux_flag_enables_default_plan_agent_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime)})
+
+            default_config = launch_support.resolve_plan_agent_launch_config(
+                config, {}, route=parse_route(["--plan", "feature-a"], env={})
+            )
+            cmux_config = launch_support.resolve_plan_agent_launch_config(
+                config, {}, route=parse_route(["--plan", "feature-a", "--cmux"], env={})
+            )
+
+        self.assertFalse(default_config.enabled)
+        self.assertEqual(default_config.transport, "cmux")
+        self.assertTrue(cmux_config.enabled)
+        self.assertEqual(cmux_config.transport, "cmux")
+        self.assertEqual(cmux_config.cli, "codex")
+
     def test_resolve_plan_agent_launch_config_goal_defaults_and_route_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

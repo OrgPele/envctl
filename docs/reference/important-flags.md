@@ -66,6 +66,7 @@ pass `--interactive` only when you want prompts.
 | `--setup-worktree <FEATURE> <ITER>` | Create one worktree iteration directly. |
 | `--include-existing-worktrees <a,b>` | Include specific existing iterations. |
 | `--keep-plan` | Keep planning files in place after execution. |
+| `--cmux` | For `--plan`, enable the default cmux plan-agent workflow for this command without setting `CMUX=true`. |
 | `--tmux` | For `--plan`, have envctl create or reuse an envctl-owned tmux session/window for the implementation prompt workflow. |
 | `--opencode` | With `--plan --tmux`, launch OpenCode instead of Codex. |
 | `--ulw` | With `--plan --tmux --opencode`, explicitly force the OpenCode `/ulw-loop` prompt prefix; this is already the default for OpenCode launches. |
