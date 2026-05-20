@@ -561,11 +561,7 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
             cgc_calls: list[tuple[list[str], Path | None]] = []
 
-            engine = self._runtime(
-                repo,
-                runtime,
-                env={"ENVCTL_WORKTREE_CGC_INDEX": "true", "ENVCTL_WORKTREE_CGC_DATABASE": "kuzudb"},
-            )
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true"})
 
             def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
                 _ = env, timeout
@@ -709,6 +705,7 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
                 env={
                     "ENVCTL_WORKTREE_CGC_CONTEXT_TEMPLATE": "ctx_{project}_{feature}_{iteration}",
                     "ENVCTL_WORKTREE_SERENA_PROJECT_TEMPLATE": "serena_{worktree}",
+                    "ENVCTL_WORKTREE_CGC_DATABASE": "custom db",
                     "ENVCTL_WORKTREE_CGC_INDEX": "true",
                 },
             )
@@ -742,7 +739,7 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
                 (target_root / ".serena" / "project.yml").read_text(encoding="utf-8"),
                 "project_name: serena_feature-a-1\n",
             )
-            self.assertEqual(cgc_calls[0], ["cgc", "context", "create", "ctx_Repo_feature-a_1"])
+            self.assertEqual(cgc_calls[0], ["cgc", "context", "create", "ctx_Repo_feature-a_1", "--database", "custom_db"])
             self.assertEqual(
                 cgc_calls[1],
                 ["cgc", "index", str(target_root.resolve()), "--context", "ctx_Repo_feature-a_1"],
@@ -790,6 +787,7 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             metadata = json.loads((target_root / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
             self.assertTrue(metadata.get("cgc_index_requested"))
             self.assertFalse(metadata.get("cgc_available"))
+            self.assertEqual(metadata.get("cgc_database"), "kuzudb")
 
     def test_setup_worktree_cgc_launch_failure_does_not_fail_worktree_creation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -925,7 +923,7 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
                 error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
 
             self.assertIsNone(error)
-            self.assertEqual(cgc_calls, [["cgc", "context", "create", "Repo-feature-a-1"]])
+            self.assertEqual(cgc_calls, [["cgc", "context", "create", "Repo-feature-a-1", "--database", "kuzudb"]])
             self.assertTrue(
                 any(
                     item.get("event") == "setup.worktree.code_intelligence.cgc_context"
@@ -938,6 +936,7 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             metadata = json.loads((target_root / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
             self.assertFalse(metadata.get("cgc_index_succeeded"))
             self.assertEqual(metadata.get("cgc_context_returncode"), 2)
+            self.assertEqual(metadata.get("cgc_database"), "kuzudb")
 
     def test_setup_worktree_without_serena_or_cgc_config_does_not_fail_or_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1117,11 +1116,12 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             metadata = json.loads((target / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata.get("serena_project_name"), "repo-feature-a-1")
             self.assertEqual(metadata.get("cgc_context"), "Repo-feature-a-1")
+            self.assertEqual(metadata.get("cgc_database"), "kuzudb")
             self.assertTrue(metadata.get("cgc_index_succeeded"))
             self.assertEqual(
                 cgc_log.read_text(encoding="utf-8").splitlines(),
                 [
-                    "context create Repo-feature-a-1",
+                    "context create Repo-feature-a-1 --database kuzudb",
                     f"index {target.resolve()} --context Repo-feature-a-1",
                 ],
             )

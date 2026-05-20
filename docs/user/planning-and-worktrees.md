@@ -251,16 +251,18 @@ Supported placeholders are `{project}`, `{worktree}`, `{feature}`, and `{iterati
 ASCII letters, digits, `-`, and `_`. For CGC, `{project}` is title-cased by default so a source project named `envctl`
 renders as `Envctl`.
 
-If your CGC installation needs a specific backend for new contexts, set:
+Generated worktree CGC contexts default to the `kuzudb` backend so envctl does not rely on CGC's global/default backend
+selection for new worktree contexts. If your CGC installation needs a different backend for new contexts, override it:
 
 ```dotenv
 ENVCTL_WORKTREE_CGC_DATABASE=kuzudb
 ```
 
-That adds `--database kuzudb` to `cgc context create`. Existing-context messages are treated as success and envctl
-continues to indexing. Missing `cgc`, context creation failures, and index failures remain non-fatal for worktree
-creation; inspect `.envctl-state/code-intelligence.json` in the generated worktree for the chosen Serena project, CGC
-context, commands attempted, return codes, and copied-file status.
+The selected backend adds `--database <backend>` to `cgc context create`; with the default this is
+`--database kuzudb`. Existing-context messages are treated as success and envctl continues to indexing. Missing `cgc`,
+context creation failures, and index failures remain non-fatal for worktree creation; inspect
+`.envctl-state/code-intelligence.json` in the generated worktree for the chosen Serena project, CGC context, selected
+database, commands attempted, return codes, and copied-file status.
 
 Example CGC follow-up commands:
 

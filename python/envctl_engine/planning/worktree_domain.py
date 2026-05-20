@@ -48,6 +48,7 @@ WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
 WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
 WORKTREE_CODE_INTELLIGENCE_SCHEMA_VERSION = 1
 WORKTREE_CODE_INTELLIGENCE_PATH = Path(".envctl-state") / "code-intelligence.json"
+WORKTREE_CGC_DATABASE_DEFAULT = "kuzudb"
 FRESH_AI_LAUNCH_IN_PROGRESS_TTL_SECONDS = 24 * 60 * 60
 _WORKTREE_GIT_HOOKS_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "false", "0", "no"))
 _WORKTREE_GIT_HOOKS_INHERITED_VALUES = frozenset(
@@ -1814,8 +1815,14 @@ def _sanitize_worktree_identity(raw: str, *, lowercase: bool = False, titlecase:
 
 
 def _worktree_cgc_database(self: Any) -> str:
-    raw = self.env.get("ENVCTL_WORKTREE_CGC_DATABASE") or self.config.raw.get("ENVCTL_WORKTREE_CGC_DATABASE") or ""
-    return _sanitize_worktree_identity(str(raw).strip()) if str(raw).strip() else ""
+    for raw in (
+        self.env.get("ENVCTL_WORKTREE_CGC_DATABASE"),
+        self.config.raw.get("ENVCTL_WORKTREE_CGC_DATABASE"),
+    ):
+        value = str(raw or "").strip()
+        if value:
+            return _sanitize_worktree_identity(value)
+    return WORKTREE_CGC_DATABASE_DEFAULT
 
 
 def _short_command_output(value: object, *, limit: int = 500) -> str:
