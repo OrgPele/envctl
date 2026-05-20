@@ -26,7 +26,9 @@ from envctl_engine.actions.action_target_support import (
     ActionCommandResolution,
     ActionTargetContext,
     execute_targeted_action,
+    main_repo_root_for_worktree as main_repo_root_for_worktree_impl,
     projects_for_services as projects_for_services_impl,
+    repo_root_from_worktree_layout,
     resolve_action_targets,
 )
 from envctl_engine.actions.action_test_support import (
@@ -447,66 +449,19 @@ class ActionCommandOrchestrator:
     def _main_repo_root_for_worktree(self, worktree_root: Path, *, trees_dir_name: str | None = None) -> Path | None:
         configured_trees_dir = trees_dir_name or getattr(self.runtime.raw_runtime.config, "trees_dir_name", "trees")
         normalized_trees_dir = str(configured_trees_dir).strip().rstrip("/")
-        repo_root_from_layout = self._repo_root_from_worktree_layout(worktree_root, normalized_trees_dir)
-        if repo_root_from_layout is not None:
-            return repo_root_from_layout
-
-        completed = self.runtime.raw_runtime.process_runner.run(  # type: ignore[attr-defined]
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=worktree_root,
-            timeout=10.0,
+        return main_repo_root_for_worktree_impl(
+            worktree_root,
+            trees_dir_name=normalized_trees_dir,
+            process_run=lambda command, cwd: self.runtime.raw_runtime.process_runner.run(  # type: ignore[attr-defined]
+                command,
+                cwd=cwd,
+                timeout=10.0,
+            ),
         )
-        if getattr(completed, "returncode", 1) != 0:
-            return None
-        top_level = Path(str(getattr(completed, "stdout", "") or "").strip()).resolve()
-
-        common = self.runtime.raw_runtime.process_runner.run(  # type: ignore[attr-defined]
-            ["git", "rev-parse", "--git-common-dir"],
-            cwd=worktree_root,
-            timeout=10.0,
-        )
-        if getattr(common, "returncode", 1) != 0:
-            return top_level
-        common_dir_raw = str(getattr(common, "stdout", "") or "").strip()
-        if not common_dir_raw:
-            return top_level
-        common_dir_path = Path(common_dir_raw)
-        common_dir = (
-            (worktree_root / common_dir_path).resolve()
-            if not common_dir_path.is_absolute()
-            else common_dir_path.resolve()
-        )
-        if common_dir.name == ".git":
-            return common_dir.parent
-        if common_dir.name == "worktrees" and common_dir.parent.name == ".git":
-            return common_dir.parent.parent
-        return top_level
 
     @staticmethod
     def _repo_root_from_worktree_layout(worktree_root: Path, trees_dir_name: str) -> Path | None:
-        normalized = str(trees_dir_name).strip().rstrip("/")
-        if not normalized:
-            return None
-
-        resolved_target = worktree_root.resolve()
-        nested_suffix = Path(normalized)
-        flat_prefix = f"{nested_suffix.name}-"
-
-        ancestors = [resolved_target, *resolved_target.parents]
-        for candidate_repo_root in ancestors:
-            nested_root = candidate_repo_root / nested_suffix
-            if nested_root == resolved_target or nested_root in resolved_target.parents:
-                return candidate_repo_root
-
-            flat_parent = nested_root.parent
-            if flat_parent == resolved_target or flat_parent not in ancestors:
-                continue
-            current = resolved_target
-            while current != flat_parent and flat_parent in current.parents:
-                if current.parent == flat_parent and current.name.startswith(flat_prefix):
-                    return candidate_repo_root
-                current = current.parent
-        return None
+        return repo_root_from_worktree_layout(worktree_root, trees_dir_name)
 
     def _spawn_self_destruct_helper(self, *, repo_root: Path, trees_root: Path, worktree_root: Path) -> bool:
         rt = self.runtime.raw_runtime

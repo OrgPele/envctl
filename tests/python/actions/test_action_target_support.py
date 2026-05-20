@@ -10,8 +10,10 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.actions.action_target_support import (  # noqa: E402
     ActionCommandResolution,
+    main_repo_root_for_worktree,
     execute_targeted_action,
     emit_action_output,
+    repo_root_from_worktree_layout,
     resolve_action_targets,
 )
 from envctl_engine.runtime.command_router import Route
@@ -32,6 +34,40 @@ class _Target:
 
 
 class ActionTargetSupportTests(unittest.TestCase):
+    def test_repo_root_from_worktree_layout_handles_nested_and_flat_trees(self) -> None:
+        nested = Path("/tmp/repo/trees/feature-a/1")
+        flat = Path("/tmp/repo/trees-feature-a-1")
+
+        self.assertEqual(repo_root_from_worktree_layout(nested, "trees"), Path("/tmp/repo").resolve())
+        self.assertEqual(repo_root_from_worktree_layout(flat, "trees"), Path("/tmp/repo").resolve())
+        self.assertIsNone(repo_root_from_worktree_layout(Path("/tmp/elsewhere/feature-a/1"), "trees"))
+
+    def test_main_repo_root_for_worktree_prefers_git_common_dir_owner(self) -> None:
+        calls: list[list[str]] = []
+
+        def run(command: list[str], _cwd: Path):
+            calls.append(command)
+            if command == ["git", "rev-parse", "--show-toplevel"]:
+                return _Completed(returncode=0, stdout="/tmp/repo/trees/feature-a/1\n")
+            if command == ["git", "rev-parse", "--git-common-dir"]:
+                return _Completed(returncode=0, stdout="/tmp/repo/.git/worktrees/feature-a-1\n")
+            return _Completed(returncode=1)
+
+        root = main_repo_root_for_worktree(
+            Path("/tmp/repo/external/feature-a/1"),
+            trees_dir_name="trees",
+            process_run=run,
+        )
+
+        self.assertEqual(root, Path("/tmp/repo").resolve())
+        self.assertEqual(
+            calls,
+            [
+                ["git", "rev-parse", "--show-toplevel"],
+                ["git", "rev-parse", "--git-common-dir"],
+            ],
+        )
+
     def test_resolve_action_targets_applies_service_selectors_from_state(self) -> None:
         candidates = [_Target(name="Main", root="/tmp/main")]
         state = type(

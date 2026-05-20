@@ -24,6 +24,68 @@ class ActionTargetContext:
     target_obj: object
 
 
+def repo_root_from_worktree_layout(worktree_root: Path, trees_dir_name: str) -> Path | None:
+    normalized = str(trees_dir_name).strip().rstrip("/")
+    if not normalized:
+        return None
+
+    resolved_target = worktree_root.resolve()
+    nested_suffix = Path(normalized)
+    flat_prefix = f"{nested_suffix.name}-"
+
+    ancestors = [resolved_target, *resolved_target.parents]
+    for candidate_repo_root in ancestors:
+        nested_root = candidate_repo_root / nested_suffix
+        if nested_root == resolved_target or nested_root in resolved_target.parents:
+            return candidate_repo_root
+
+        flat_parent = nested_root.parent
+        if flat_parent == resolved_target or flat_parent not in ancestors:
+            continue
+        current = resolved_target
+        while current != flat_parent and flat_parent in current.parents:
+            if current.parent == flat_parent and current.name.startswith(flat_prefix):
+                return candidate_repo_root
+            current = current.parent
+    return None
+
+
+def main_repo_root_for_worktree(
+    worktree_root: Path,
+    *,
+    trees_dir_name: str,
+    process_run: Callable[[list[str], Path], object],
+) -> Path | None:
+    repo_root_from_layout = repo_root_from_worktree_layout(worktree_root, trees_dir_name)
+    if repo_root_from_layout is not None:
+        return repo_root_from_layout
+
+    completed = process_run(["git", "rev-parse", "--show-toplevel"], worktree_root)
+    if getattr(completed, "returncode", 1) != 0:
+        return None
+    top_level = Path(str(getattr(completed, "stdout", "") or "").strip()).resolve()
+
+    common = process_run(["git", "rev-parse", "--git-common-dir"], worktree_root)
+    if getattr(common, "returncode", 1) != 0:
+        return top_level
+    common_dir_raw = str(getattr(common, "stdout", "") or "").strip()
+    if not common_dir_raw:
+        return top_level
+    common_dir_path = Path(common_dir_raw)
+    common_dir = (
+        (worktree_root / common_dir_path).resolve()
+        if not common_dir_path.is_absolute()
+        else common_dir_path.resolve()
+    )
+    if common_dir.name == ".git":
+        return common_dir.parent
+    if common_dir.name == "worktrees" and common_dir.parent.name == ".git":
+        return common_dir.parent.parent
+    if common_dir.parent.name == "worktrees" and common_dir.parent.parent.name == ".git":
+        return common_dir.parent.parent.parent
+    return top_level
+
+
 def projects_for_services(
     service_targets: Sequence[object],
     *,
