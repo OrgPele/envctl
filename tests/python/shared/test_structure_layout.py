@@ -47,6 +47,33 @@ class StructureLayoutTests(unittest.TestCase):
     def test_bats_harness_is_absent(self) -> None:
         self.assertFalse((REPO_ROOT / "tests" / "bats").exists())
 
+    def test_removed_dead_leaf_modules_are_absent(self) -> None:
+        stale_modules = [
+            "python/envctl_engine/test_output/coverage.py",
+            "python/envctl_engine/test_output/error_extractor.py",
+            "python/envctl_engine/test_output/mode_handler.py",
+            "python/envctl_engine/test_output/multi_project_runner.py",
+            "python/envctl_engine/ui/input_adapter.py",
+            "python/envctl_engine/ui/textual/screens/dashboard.py",
+            "python/envctl_engine/ui/textual/widgets/service_table.py",
+        ]
+
+        for rel in stale_modules:
+            with self.subTest(path=rel):
+                self.assertFalse((REPO_ROOT / rel).exists())
+
+        # These low-inbound modules are intentional string entry points or
+        # compatibility facades and must not be swept up by this guard.
+        retained_entrypoints = [
+            "python/envctl_engine/test_output/pytest_progress_plugin.py",
+            "python/envctl_engine/test_output/unittest_runner.py",
+            "python/envctl_engine/ui/textual/selector_subprocess_entry.py",
+            "python/envctl_engine/ui/textual/screens/selector/implementation.py",
+        ]
+        for rel in retained_entrypoints:
+            with self.subTest(path=rel):
+                self.assertTrue((REPO_ROOT / rel).is_file())
+
     def test_repo_local_launcher_is_python_script(self) -> None:
         launcher = REPO_ROOT / "bin" / "envctl"
         self.assertTrue(launcher.is_file())
