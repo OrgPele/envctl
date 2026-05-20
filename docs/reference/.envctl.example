@@ -125,6 +125,16 @@ ENVCTL_PLAN_AGENT_CODEX_CYCLES=2
 # Applies to Codex cmux, tmux, and OMX-managed tmux launches; OpenCode ignores it.
 ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true
 
+# Workspace-backed plan-agent transport. "cmux" opens interactive terminal surfaces.
+# "superset" uses Superset's public high-level workspace/agent CLI and sends only
+# the initial rendered Codex implementation prompt.
+ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=cmux
+ENVCTL_PLAN_AGENT_SUPERSET_PROJECT=
+ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE=
+ENVCTL_PLAN_AGENT_SUPERSET_HOST=
+ENVCTL_PLAN_AGENT_SUPERSET_LOCAL=true
+ENVCTL_PLAN_AGENT_SUPERSET_OPEN=true
+
 # Queue an extra Codex/OMX prompt after implementation/finalization to run
 # browser-based E2E validation with $browser-use against the full envctl stack.
 # Set to false to skip this follow-up for repos where browser E2E is not applicable.

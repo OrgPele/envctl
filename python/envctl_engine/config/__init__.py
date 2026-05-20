@@ -117,6 +117,12 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "true",
         "ENVCTL_PLAN_AGENT_CLI_CMD": "",
         "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "",
+        "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "cmux",
+        "ENVCTL_PLAN_AGENT_SUPERSET_PROJECT": "",
+        "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE": "",
+        "ENVCTL_PLAN_AGENT_SUPERSET_HOST": "",
+        "ENVCTL_PLAN_AGENT_SUPERSET_LOCAL": "true",
+        "ENVCTL_PLAN_AGENT_SUPERSET_OPEN": "true",
         "ENVCTL_RUNTIME_TRUTH_MODE": "auto",
         "ENVCTL_REQUIREMENTS_STRICT": "true",
         "ENVCTL_BACKEND_BOOTSTRAP_STRICT": "false",
@@ -449,6 +455,12 @@ class EngineConfig:
     plan_agent_require_cmux_context: bool
     plan_agent_cli_cmd: str
     plan_agent_cmux_workspace: str
+    plan_agent_surface_transport: str
+    plan_agent_superset_project: str
+    plan_agent_superset_workspace: str
+    plan_agent_superset_host: str
+    plan_agent_superset_local: bool
+    plan_agent_superset_open: bool
     runtime_truth_mode: str
     requirements_strict: bool
     main_profile: StartupProfile
@@ -670,9 +682,11 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
     main_backend_expect_listener = parse_bool(resolved.get("MAIN_BACKEND_EXPECT_LISTENER"), True)
     trees_backend_expect_listener = parse_bool(resolved.get("TREES_BACKEND_EXPECT_LISTENER"), True)
     plan_agent_cmux_workspace = str(resolved.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE", "") or "").strip()
+    plan_agent_superset_project = str(resolved.get("ENVCTL_PLAN_AGENT_SUPERSET_PROJECT", "") or "").strip()
+    plan_agent_superset_workspace = str(resolved.get("ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE", "") or "").strip()
     plan_agent_terminals_enable = parse_bool(resolved.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"), False) or bool(
         plan_agent_cmux_workspace
-    )
+    ) or bool(plan_agent_superset_project or plan_agent_superset_workspace)
     additional_services, additional_service_errors = _parse_additional_services(resolved)
     supabase_auth_users, supabase_auth_user_errors = _parse_supabase_auth_users(resolved)
 
@@ -740,6 +754,15 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         plan_agent_require_cmux_context=parse_bool(resolved.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT"), True),
         plan_agent_cli_cmd=str(resolved.get("ENVCTL_PLAN_AGENT_CLI_CMD", "") or "").strip(),
         plan_agent_cmux_workspace=plan_agent_cmux_workspace,
+        plan_agent_surface_transport=(
+            str(resolved.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT", "cmux") or "cmux").strip().lower()
+            or "cmux"
+        ),
+        plan_agent_superset_project=plan_agent_superset_project,
+        plan_agent_superset_workspace=plan_agent_superset_workspace,
+        plan_agent_superset_host=str(resolved.get("ENVCTL_PLAN_AGENT_SUPERSET_HOST", "") or "").strip(),
+        plan_agent_superset_local=parse_bool(resolved.get("ENVCTL_PLAN_AGENT_SUPERSET_LOCAL"), True),
+        plan_agent_superset_open=parse_bool(resolved.get("ENVCTL_PLAN_AGENT_SUPERSET_OPEN"), True),
         runtime_truth_mode=_parse_runtime_truth_mode(
             resolved.get("ENVCTL_RUNTIME_TRUTH_MODE"),
             DEFAULTS["ENVCTL_RUNTIME_TRUTH_MODE"],
@@ -1102,6 +1125,23 @@ def _apply_plan_agent_aliases(resolved: dict[str, str], *, explicit_values: Mapp
         resolved["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] = str(explicit_values.get("CMUX", ""))
     if "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE" not in explicit_values and "CMUX_WORKSPACE" in explicit_values:
         resolved["ENVCTL_PLAN_AGENT_CMUX_WORKSPACE"] = str(explicit_values.get("CMUX_WORKSPACE", ""))
+    if "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE" not in explicit_values and "SUPERSET" in explicit_values:
+        resolved["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] = str(explicit_values.get("SUPERSET", ""))
+    if "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT" not in explicit_values and "SUPERSET" in explicit_values:
+        if parse_bool(explicit_values.get("SUPERSET"), False):
+            resolved["ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT"] = "superset"
+    if "ENVCTL_PLAN_AGENT_SUPERSET_PROJECT" not in explicit_values and "SUPERSET_PROJECT" in explicit_values:
+        resolved["ENVCTL_PLAN_AGENT_SUPERSET_PROJECT"] = str(explicit_values.get("SUPERSET_PROJECT", ""))
+    if "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT" not in explicit_values and (
+        "SUPERSET_PROJECT" in explicit_values or "ENVCTL_PLAN_AGENT_SUPERSET_PROJECT" in explicit_values
+    ):
+        resolved["ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT"] = "superset"
+    if "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE" not in explicit_values and "SUPERSET_WORKSPACE" in explicit_values:
+        resolved["ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE"] = str(explicit_values.get("SUPERSET_WORKSPACE", ""))
+    if "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT" not in explicit_values and (
+        "SUPERSET_WORKSPACE" in explicit_values or "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE" in explicit_values
+    ):
+        resolved["ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT"] = "superset"
     if "ENVCTL_PLAN_AGENT_CODEX_CYCLES" not in explicit_values and "CYCLES" in explicit_values:
         resolved["ENVCTL_PLAN_AGENT_CODEX_CYCLES"] = str(explicit_values.get("CYCLES", ""))
 

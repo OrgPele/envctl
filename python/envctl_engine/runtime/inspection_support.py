@@ -281,6 +281,12 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
             "require_cmux_context": runtime.config.plan_agent_require_cmux_context,
             "cli_command": runtime.config.plan_agent_cli_cmd or runtime.config.plan_agent_cli,
             "cmux_workspace": runtime.config.plan_agent_cmux_workspace or None,
+            "surface_transport": runtime.config.plan_agent_surface_transport,
+            "superset_project": runtime.config.plan_agent_superset_project or None,
+            "superset_workspace": runtime.config.plan_agent_superset_workspace or None,
+            "superset_host": runtime.config.plan_agent_superset_host or None,
+            "superset_local": runtime.config.plan_agent_superset_local,
+            "superset_open": runtime.config.plan_agent_superset_open,
         },
     }
     if json_output:

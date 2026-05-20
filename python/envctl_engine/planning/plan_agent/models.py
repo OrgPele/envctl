@@ -37,7 +37,7 @@ class PlanSelectionResult:
 @dataclass(slots=True, frozen=True)
 class PlanAgentLaunchConfig:
     enabled: bool
-    transport: Literal["cmux", "tmux", "omx"]
+    transport: Literal["cmux", "tmux", "omx", "superset"]
     cli: str
     cli_command: str
     preset: str
@@ -53,6 +53,12 @@ class PlanAgentLaunchConfig:
     pr_review_comments_followup_enable: bool = True
     omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
     codex_goal_enable: bool = True
+    superset_project: str = ""
+    superset_workspace: str = ""
+    superset_host: str = ""
+    superset_local: bool = True
+    superset_open: bool = True
+    surface_transport_warning: str | None = None
 
 
 @dataclass(slots=True, frozen=True)

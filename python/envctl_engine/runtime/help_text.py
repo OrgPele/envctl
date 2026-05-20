@@ -372,6 +372,7 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "resolves the requested plan selector against todo/plans",
             "creates or reuses the matching implementation worktree(s) unless --dry-run is used",
             "optionally launches the implementation workflow in tmux or OMX-managed Codex sessions",
+            "can also use Superset's public workspace/agent CLI when configured with Superset project/workspace env",
         ),
         flags=(
             "--headless          stay non-interactive and print follow-up/attach guidance",
@@ -388,6 +389,7 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--opencode          force OpenCode for tmux launches",
             "--ulw               tmux + OpenCode only: force /ulw-loop prefix (default for OpenCode)",
             "--tmux-new-session  create another tmux/OMX session instead of reusing an attachable existing one",
+            "SUPERSET_PROJECT=<id> or SUPERSET_WORKSPACE=<id> selects the Superset high-level transport",
         ),
         examples=(
             "envctl --plan feature/task --headless",

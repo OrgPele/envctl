@@ -39,6 +39,12 @@ from envctl_engine.planning.plan_agent.recovery import *
 
 def review_agent_launch_readiness(runtime: Any) -> ReviewAgentLaunchReadiness:
     launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
+    if launch_config.transport == "superset":
+        return ReviewAgentLaunchReadiness(
+            ready=False,
+            reason="unsupported_superset_review_tab",
+            cli=launch_config.cli,
+        )
     missing_commands = tuple(_missing_launch_commands(runtime, launch_config))
     if missing_commands:
         return ReviewAgentLaunchReadiness(
@@ -68,6 +74,14 @@ def launch_review_agent_terminal(
     review_bundle_path: Path | None = None,
 ) -> AgentTerminalLaunchResult:
     launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
+    if launch_config.transport == "superset":
+        runtime._emit(
+            "dashboard.review_tab.failed",
+            reason="unsupported_superset_review_tab",
+            project=project_name,
+            cli=launch_config.cli,
+        )
+        return AgentTerminalLaunchResult(status="failed", reason="unsupported_superset_review_tab")
     missing_commands = _missing_launch_commands(runtime, launch_config)
     if missing_commands:
         runtime._emit(
@@ -393,7 +407,7 @@ def _run_surface_bootstrap(
         workflow=workflow,
         worktree=worktree,
     )
-    if goal_error is not None and goal_error != "codex_goal_ready_timeout":
+    if goal_error is not None:
         return goal_error
     if goal_error is None and launch_config.codex_goal_enable and launch_config.cli == "codex":
         _wait_for_cli_ready(
@@ -608,9 +622,21 @@ def _submit_surface_codex_goal(
     )
     if submit_error is not None:
         return submit_error
+    if not _wait_for_surface_codex_goal_active(runtime, workspace_id=workspace_id, surface_id=surface_id):
+        return "codex_goal_active_timeout"
     if not _wait_for_codex_queue_ready(runtime, workspace_id=workspace_id, surface_id=surface_id):
         return "codex_goal_ready_timeout"
     return None
+
+
+def _wait_for_surface_codex_goal_active(runtime: Any, *, workspace_id: str, surface_id: str) -> bool:
+    deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
+        if _codex_goal_screen_looks_active(screen):
+            return True
+        time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
+    return False
 
 
 def _submit_prompt_workflow_step(

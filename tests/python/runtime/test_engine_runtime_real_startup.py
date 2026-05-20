@@ -3292,6 +3292,57 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             self.assertEqual(second_code, 0)
             self.assertEqual(launches, [["feature_task-1"], []])
 
+    def test_plan_feature_superset_transport_reaches_startup_handoff_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "TREES_STARTUP_ENABLE": "false",
+                        "SUPERSET": "true",
+                        "SUPERSET_PROJECT": "proj-1",
+                        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                    },
+                ),
+                env={},
+            )
+            seen: list[tuple[str, ...]] = []
+
+            def _fake_launch(_runtime, *, route, created_worktrees):  # noqa: ANN001, ANN202
+                _ = route
+                seen.append(tuple(item.name for item in created_worktrees))
+                return PlanAgentLaunchResult(
+                    status="launched",
+                    reason="launched",
+                    outcomes=(
+                        PlanAgentLaunchOutcome(
+                            worktree_name=created_worktrees[0].name,
+                            worktree_root=created_worktrees[0].root,
+                            surface_id="ws-123",
+                            status="launched",
+                        ),
+                    ),
+                )
+
+            with patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", side_effect=_fake_launch):
+                code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(seen, [("feature_task-1",)])
+            launch_events = [
+                event for event in engine.events if event.get("event") == "startup.plan_agent_launch_state"
+            ]
+            self.assertEqual(len(launch_events), 1)
+            self.assertEqual(launch_events[0]["status"], "launched")
+            self.assertEqual(launch_events[0]["launched_worktrees"], ["feature_task-1"])
+
     def test_plan_feature_omx_launch_uses_managed_bootstrap_without_custom_passthrough(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

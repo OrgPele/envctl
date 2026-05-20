@@ -123,6 +123,15 @@ The optional dashboard review-tab flow reuses the same AI CLI and cmux transport
 
 If `CMUX_WORKSPACE` or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` names a workspace that does not exist yet, envctl creates that workspace before opening the new implementation surfaces.
 
+To launch through Superset instead of cmux surfaces:
+
+```sh
+SUPERSET_PROJECT=<project-id> envctl --plan <selector>
+SUPERSET_WORKSPACE=<workspace-id> envctl --plan <selector>
+```
+
+Superset project or workspace config selects the Superset transport unless `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` is explicitly set. Superset launches use Superset's public high-level CLI. Envctl sends the rendered Codex `implement_task` prompt to `superset workspaces create` or `superset agents run`, then optionally opens the workspace. Superset does not support envctl's cmux screen polling, tab renames, key sending, review tabs, or Codex cycle queue injection in this slice.
+
 Codex TUI cycle mode:
 
 - default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, which queues a commit/push/PR/status-check follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
@@ -132,6 +141,7 @@ Codex TUI cycle mode:
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues a commit/push/PR/status-check follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` or more keep that first commit/push/PR/status-check follow-up, use commit/push-only follow-ups in the middle, and reserve `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
 - OpenCode keeps the existing one-shot flow even when the cycle count is set
+- Superset keeps a one-shot Codex prompt even when the cycle count is set
 - create-plan prompts use a stricter recommendation policy of `0` through `8`; lower-level runtime parsing still applies the runtime implementation cap to direct env/config values
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` disables the `$browser` E2E follow-up when browser validation is not applicable
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false` disables the final PR review-comments follow-up when comment handling is manual

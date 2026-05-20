@@ -361,14 +361,15 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 ## Plan Agent Launch
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` cmux terminal launch for newly created worktrees. When enabled without an explicit workspace override, envctl targets a sibling workspace named `"<current workspace> implementation"`. |
+| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` agent launch for newly created worktrees. The default workspace-backed transport is cmux. |
+| `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` | `cmux` | Workspace-backed launch transport for default `--plan` launches. Accepted values are `cmux` and `superset`; `--tmux`, `--omx`, and `--opencode` route flags override this setting. |
 | `ENVCTL_PLAN_AGENT_CLI` | `codex` | AI CLI selection for launched surfaces (`codex` or `opencode`). |
 | `ENVCTL_PLAN_AGENT_PRESET` | `implement_task` | Prompt preset name submitted after the AI CLI starts. OpenCode cmux launches send `/<preset>`; `--tmux --opencode` submits the rendered prompt body directly. Codex resolves the preset from the envctl-managed Codex prompt file and submits that prompt body directly. `implement_plan` remains available as a backward-compatible preset. |
 | `ENVCTL_PLAN_AGENT_DIRECT_PROMPT` | transport/CLI dependent | Use direct prompt-body submission instead of slash-command submission when supported. Defaults to true for `--tmux --opencode`. |
 | `ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX` | transport/CLI dependent | Prefix OpenCode direct prompts with `/ulw-loop` when supported. Defaults to true for `--tmux --opencode`. |
 | `ENVCTL_PLAN_AGENT_APPEND_ULW` | `false` | Append ULW guidance for slash-command mode. |
 | `ENVCTL_PLAN_AGENT_CODEX_CYCLES` | `2` | Codex TUI queued workflow count for the post-`--plan` launcher, including envctl-owned cmux/tmux Codex and OMX-managed Codex sessions. The default `2` queues a first follow-up telling Codex to commit, push, open or update the PR, and wait for GitHub status checks before the final `continue_task` -> `implement_task` -> `finalize_task` round, then queues the enabled browser-E2E and PR-review-comment follow-ups after finalization. `0` submits the single implementation prompt and queues enabled follow-ups for Codex/OMX surfaces. `1` queues `implement_task`, `finalize_task`, and enabled follow-ups. Higher values keep that first follow-up, use commit/push-only follow-ups for intermediate rounds, and reserve `finalize_task` plus enabled follow-ups for the final round. OpenCode ignores this setting. Envctl only appends prompt commands/messages in this mode; it does not execute those shell commands itself. |
-| `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE` | `true` | Toggle Codex `/goal` session framing before the initial implementation prompt. Applies to Codex cmux, tmux, and OMX-managed tmux launches, including `--omx --ultragoal`, `--omx --ralph`, and `--omx --team`; OpenCode ignores it. Route flags `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch. |
+| `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE` | `true` | Toggle Codex `/goal` session framing before the initial implementation prompt. Applies to Codex cmux, tmux, OMX-managed tmux, and local Superset launches, including `--omx --ultragoal`, `--omx --ralph`, and `--omx --team`; OpenCode ignores it. Route flags `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch. |
 | `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE` | `true` | Toggle the Codex/OMX `$browser` E2E follow-up. When true, envctl queues a browser validation prompt after implementation/finalization to re-read `MAIN_TASK.md`, validate the feature end-to-end against the full `envctl --entire-system --headless` stack, capture browser evidence where possible, and fix implementation-introduced issues. Set this to `false` in `.envctl` or the environment to skip that follow-up. |
 | `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE` | `true` | Toggle the final Codex/OMX PR review-comments follow-up. When true, envctl queues a `$gh-address-comments` prompt after the current implementation/E2E prompts to inspect unresolved PR comments, address all actionable feedback, commit/push fixes, and wait for final PR confirmation. Set this to `false` in `.envctl` or the environment to skip that follow-up. |
 | `ENVCTL_PLAN_AGENT_SHELL` | `zsh` | Shell command used when respawning the new cmux surface. |
@@ -376,6 +377,15 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_PLAN_AGENT_CODEX_YOLO` | `true` | When envctl owns a Codex cmux/tmux launch and `ENVCTL_PLAN_AGENT_CLI_CMD` is unset, append `--dangerously-bypass-approvals-and-sandbox`. Set to `false` in `.envctl` when your Codex wrapper or config already supplies that flag. |
 | `ENVCTL_PLAN_AGENT_CLI_CMD` | unset | Optional raw AI CLI command override typed into the launched shell. When set, this raw command wins over the default Codex YOLO command builder. |
 | `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` | unset | Explicit cmux workspace target for new surfaces. Accepts a workspace ref/UUID/index or a workspace title such as `envctl`. When set, it also enables plan-agent terminal launch even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset. If a named workspace does not already exist, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT` | unset | Superset project id/name used when `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=superset` creates or reuses a Superset-managed workspace for the worktree branch. Required unless `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE` is set. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE` | unset | Existing Superset workspace id for `superset agents run --workspace ...`. When set, it also enables plan-agent launch and selects the Superset transport unless the canonical transport key is set. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_HOST` | unset | Superset host target. When set, envctl passes `--host <host>` instead of `--local` to `superset workspaces create`. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_LOCAL` | `true` | Pass `--local` to Superset workspace creation when no host is configured. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_OPEN` | `true` | Run `superset workspaces open <workspace-id>` after a successful Superset launch when a workspace id is available. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_DESKTOP_BRIDGE` | `true` | When Superset CLI creates a workspace that has not reached Superset desktop's local caches, mirror the host workspace into the desktop `local.db` and TanStack workspace cache so the desktop can resolve the id. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_DESKTOP_VERIFY` | `true` | After opening a Superset workspace, verify that the local Superset desktop cache can resolve the returned workspace id when `~/.superset/local.db` exists. Disable only for headless/cloud-only Superset flows. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_DESKTOP_RESTART` | `true` | Restart Superset desktop after applying the local desktop bridge if the already-running app still cannot resolve the returned workspace id. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_DESKTOP_VERIFY_TIMEOUT` | `5` | Seconds to wait for the Superset desktop cache to receive the returned workspace id before treating the Superset handoff as failed. |
 
 Enabled plan-agent launches prepare backend/frontend dependencies in the selected worktree before prompt submission.
 This reuses the normal backend/frontend bootstrap logic, skips migrations, and does not start services. Configured backend
@@ -393,6 +403,9 @@ Alias env vars:
 
 - `CMUX=true` is a shorthand alias for enabling plan-agent launch with the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=<value>`
+- `SUPERSET=true` enables plan-agent launch and selects `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=superset` unless the canonical transport key is set
+- `SUPERSET_PROJECT=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT=<value>` and selects Superset transport unless the canonical transport key is set
+- `SUPERSET_WORKSPACE=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE=<value>` and selects Superset transport unless the canonical transport key is set
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - canonical `ENVCTL_PLAN_AGENT_*` keys win when both canonical and alias forms are set
 - `CYCLES` only changes the effective Codex cycle count; it does not enable plan-agent launch by itself
@@ -406,6 +419,15 @@ Cycle mode notes:
 - the global default remains `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`; `$envctl-create-plan-auto-codex` computes a `0` through `8` recommendation and uses that command-scoped value for the envctl command it launches
 - `$envctl-create-plan-auto-opencode` ignores Codex cycles and uses `--tmux --opencode` with the default `/ulw-loop` prefix
 - `$envctl-create-plan-auto-omx` uses `--omx --ultragoal`; Codex `/goal` framing is submitted first when enabled, Ultragoal wraps the initial prompt, and envctl can queue the same Codex follow-up cycle workflow used by plain Codex TUI launches. Use `--omx --ralph` explicitly when you need the Ralph compatibility workflow.
+
+Superset transport notes:
+
+- Superset launches use public CLI commands for workspace creation/opening: `superset workspaces create`, `superset agents run`, and optionally `superset workspaces open`.
+- `SUPERSET_PROJECT`, `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT`, `SUPERSET_WORKSPACE`, and `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE` select the Superset transport by default unless `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` is explicitly set.
+- Superset public CLI accepts project and branch, not an explicit worktree path; exact envctl worktree adoption is a future extension point.
+- For local Superset Codex launches with goal framing enabled, envctl registers a per-worktree Superset host agent wrapper. That wrapper starts a real Codex TUI, types `/goal ...`, submits it with an explicit Enter keypress, waits until Codex reports `Goal active`, then pastes and submits the implementation prompt. If no local Superset host DB is available, envctl falls back to the public prompt-only path. Codex cycle queueing, screen polling, tab renaming, cmux surfaces, and dashboard review tabs are not supported through Superset public CLI.
+- Superset auth and host errors are surfaced from the Superset command output; configure OAuth login or `SUPERSET_API_KEY` as Superset requires.
+- When `ENVCTL_PLAN_AGENT_SUPERSET_OPEN=true`, envctl treats a returned workspace id as usable only after Superset desktop can resolve it locally. If the Superset CLI created the host workspace but the desktop cache has not received it, envctl mirrors the workspace into Superset desktop's local cache and restarts the desktop once when needed. This prevents false-success handoffs where the CLI lists a workspace but the desktop opens to "Workspace not found."
 
 ## Debug and Diagnostics
 | Variable | Default | Purpose |
