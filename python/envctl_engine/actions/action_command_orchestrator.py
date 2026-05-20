@@ -22,6 +22,7 @@ from envctl_engine.actions.action_command_support import (
     build_action_replacements,
     service_types_from_route_services,
 )
+from envctl_engine.actions import action_migrate_support
 from envctl_engine.actions import action_project_result_support
 from envctl_engine.actions import action_summary_support
 from envctl_engine.actions.action_target_support import (
@@ -64,7 +65,7 @@ from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
-from envctl_engine.ui.path_links import render_path_for_terminal, render_path_fragment_for_terminal
+from envctl_engine.ui.path_links import render_path_for_terminal
 from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
@@ -90,13 +91,7 @@ class _MigrateProjectContext:
     ports: dict[str, PortPlan]
 
 
-@dataclass(frozen=True)
-class _MigrateResultRecord:
-    project_name: str
-    status: str
-    headline: str = ""
-    hint_lines: tuple[str, ...] = ()
-    report_path: str = ""
+_MigrateResultRecord = action_migrate_support.MigrateResultRecord
 
 
 class ActionRuntimeFacade:
@@ -1345,22 +1340,13 @@ if result.returncode != 0:
         project_names: list[str],
         fallback_entries: Mapping[str, Mapping[str, object]] | None = None,
     ) -> list[_MigrateResultRecord]:
-        state = self.runtime.load_existing_state(mode=mode)
-        metadata = state.metadata.get("project_action_reports") if state is not None else None
-        fallback_map = dict(fallback_entries) if isinstance(fallback_entries, Mapping) else {}
-        records: list[_MigrateResultRecord] = []
-        for project_name_raw in project_names:
-            project_name = str(project_name_raw).strip()
-            if not project_name:
-                continue
-            project_entry = metadata.get(project_name) if isinstance(metadata, Mapping) else None
-            action_entry = project_entry.get("migrate") if isinstance(project_entry, Mapping) else None
-            if not isinstance(action_entry, Mapping):
-                action_entry = fallback_map.get(project_name)
-            record = self._migrate_result_record(project_name=project_name, action_entry=action_entry)
-            if record is not None:
-                records.append(record)
-        return records
+        return action_migrate_support.migrate_result_records(
+            load_existing_state=lambda selected_mode: self.runtime.load_existing_state(mode=selected_mode),
+            mode=mode,
+            project_names=project_names,
+            fallback_entries=fallback_entries,
+            migrate_failure_headline=self._migrate_failure_headline,
+        )
 
     @staticmethod
     def _migrate_result_record(
@@ -1368,33 +1354,10 @@ if result.returncode != 0:
         project_name: str,
         action_entry: Mapping[str, object] | None,
     ) -> _MigrateResultRecord | None:
-        if not isinstance(action_entry, Mapping):
-            return None
-        status = str(action_entry.get("status", "")).strip().lower()
-        if status == "success":
-            return _MigrateResultRecord(project_name=project_name, status="success")
-        if status != "failed":
-            return None
-        summary = str(action_entry.get("summary", "")).strip()
-        headline = str(action_entry.get("headline", "")).strip()
-        if not headline and summary:
-            headline = ActionCommandOrchestrator._migrate_failure_headline(summary)
-        hint_lines: list[str] = []
-        seen_hints: set[str] = set()
-        for line in [item.strip() for item in summary.splitlines() if item.strip()]:
-            if not line.lower().startswith("hint:"):
-                continue
-            if line in seen_hints:
-                continue
-            seen_hints.add(line)
-            hint_lines.append(line)
-        report_path = str(action_entry.get("report_path", "")).strip()
-        return _MigrateResultRecord(
+        return action_migrate_support.migrate_result_record(
             project_name=project_name,
-            status="failed",
-            headline=headline,
-            hint_lines=tuple(hint_lines),
-            report_path=report_path,
+            action_entry=action_entry,
+            migrate_failure_headline=ActionCommandOrchestrator._migrate_failure_headline,
         )
 
     @staticmethod
@@ -1404,81 +1367,23 @@ if result.returncode != 0:
         env: Mapping[str, str],
         interactive_tty: bool | None = None,
     ) -> None:
-        failed_records = [record for record in records if record.status == "failed"]
-        compact_failures = len(failed_records) > 1
-        shared_hints = ActionCommandOrchestrator._shared_migrate_hint_lines(failed_records) if compact_failures else ()
-        use_color = colors_enabled(
-            env,
-            stream=sys.stdout,
-            interactive_tty=bool(interactive_tty) if interactive_tty is not None else False,
-        )
-        for index, record in enumerate(records):
-            project_name = ActionCommandOrchestrator._render_migrate_project_name(
-                record.project_name,
-                index=index,
-                use_color=use_color,
-            )
-            if record.status == "success":
-                success_symbol = ActionCommandOrchestrator._render_migrate_symbol(
-                    "✓",
-                    status="success",
-                    use_color=use_color,
-                )
-                print(f"{success_symbol} migrate succeeded for {project_name}")
-                continue
-            if record.status != "failed":
-                continue
-            if record.headline:
-                print(
-                    f"{ActionCommandOrchestrator._render_migrate_symbol('✗', status='failed', use_color=use_color)} "
-                    f"migrate failed for {project_name}: {record.headline}"
-                )
-            else:
-                print(
-                    f"{ActionCommandOrchestrator._render_migrate_symbol('✗', status='failed', use_color=use_color)} "
-                    f"migrate failed for {project_name}"
-                )
-            if compact_failures:
-                continue
-            for hint in ActionCommandOrchestrator._visible_migrate_hint_lines(record.hint_lines):
-                print(hint)
-        for hint in shared_hints:
-            print(hint)
-        ActionCommandOrchestrator._print_migrate_failure_logs(
-            failed_records,
+        action_migrate_support.print_migrate_result_records(
+            records=records,
             env=env,
             interactive_tty=interactive_tty,
-            compact=compact_failures,
-            use_color=use_color,
-            ordered_records=records,
         )
 
     @staticmethod
     def _shared_migrate_hint_lines(records: list[_MigrateResultRecord]) -> tuple[str, ...]:
-        if len(records) <= 1:
-            return ()
-        visible_hint_lists = [
-            ActionCommandOrchestrator._visible_migrate_hint_lines(record.hint_lines) for record in records
-        ]
-        if not visible_hint_lists:
-            return ()
-        shared = set(visible_hint_lists[0])
-        for hint_lines in visible_hint_lists[1:]:
-            shared.intersection_update(hint_lines)
-        if not shared:
-            return ()
-        ordered_shared = [hint for hint in visible_hint_lists[0] if hint in shared]
-        return tuple(ordered_shared[:1])
+        return action_migrate_support.shared_migrate_hint_lines(records)
 
     @staticmethod
     def _visible_migrate_hint_lines(hint_lines: tuple[str, ...]) -> tuple[str, ...]:
-        return tuple(
-            hint for hint in hint_lines if not ActionCommandOrchestrator._is_migrate_env_source_hint(hint)
-        )
+        return action_migrate_support.visible_migrate_hint_lines(hint_lines)
 
     @staticmethod
     def _is_migrate_env_source_hint(hint_line: str) -> bool:
-        return hint_line.lower().startswith("hint: backend env source:")
+        return action_migrate_support.is_migrate_env_source_hint(hint_line)
 
     @staticmethod
     def _print_migrate_failure_logs(
@@ -1490,33 +1395,14 @@ if result.returncode != 0:
         use_color: bool,
         ordered_records: list[_MigrateResultRecord],
     ) -> None:
-        report_records = [record for record in records if record.report_path]
-        if not report_records:
-            return
-        if compact:
-            ActionCommandOrchestrator._print_compact_migrate_failure_logs(
-                report_records,
-                env=env,
-                interactive_tty=interactive_tty,
-                use_color=use_color,
-                ordered_records=ordered_records,
-            )
-            return
-        for record in report_records:
-            project_name = ActionCommandOrchestrator._render_migrate_project_name(
-                record.project_name,
-                index=ActionCommandOrchestrator._record_index(ordered_records, record.project_name),
-                use_color=use_color,
-            )
-            print(f"migrate failure log for {project_name}:")
-            print(
-                render_path_for_terminal(
-                    record.report_path,
-                    env=env,
-                    stream=sys.stdout,
-                    interactive_tty=interactive_tty,
-                )
-            )
+        action_migrate_support.print_migrate_failure_logs(
+            records,
+            env=env,
+            interactive_tty=interactive_tty,
+            compact=compact,
+            use_color=use_color,
+            ordered_records=ordered_records,
+        )
 
     @staticmethod
     def _print_compact_migrate_failure_logs(
@@ -1527,84 +1413,29 @@ if result.returncode != 0:
         use_color: bool,
         ordered_records: list[_MigrateResultRecord],
     ) -> None:
-        print("migrate failure logs:")
-        shared_parent = ActionCommandOrchestrator._shared_report_parent(records)
-        if shared_parent:
-            print(
-                render_path_for_terminal(
-                    shared_parent,
-                    env=env,
-                    stream=sys.stdout,
-                    interactive_tty=interactive_tty,
-                )
-            )
-            for record in records:
-                display_name = Path(record.report_path).name
-                rendered_path = render_path_fragment_for_terminal(
-                    record.report_path,
-                    display_text=display_name,
-                    env=env,
-                    stream=sys.stdout,
-                    interactive_tty=interactive_tty,
-                )
-                project_name = ActionCommandOrchestrator._render_migrate_project_name(
-                    record.project_name,
-                    index=ActionCommandOrchestrator._record_index(ordered_records, record.project_name),
-                    use_color=use_color,
-                )
-                print(f"- {project_name}: {rendered_path}")
-            return
-        for record in records:
-            rendered_path = render_path_for_terminal(
-                record.report_path,
-                env=env,
-                stream=sys.stdout,
-                interactive_tty=interactive_tty,
-            )
-            project_name = ActionCommandOrchestrator._render_migrate_project_name(
-                record.project_name,
-                index=ActionCommandOrchestrator._record_index(ordered_records, record.project_name),
-                use_color=use_color,
-            )
-            print(f"- {project_name}: {rendered_path}")
+        action_migrate_support.print_compact_migrate_failure_logs(
+            records,
+            env=env,
+            interactive_tty=interactive_tty,
+            use_color=use_color,
+            ordered_records=ordered_records,
+        )
 
     @staticmethod
     def _shared_report_parent(records: list[_MigrateResultRecord]) -> str:
-        parents: list[str] = []
-        for record in records:
-            try:
-                parent = str(Path(record.report_path).parent)
-            except (OSError, RuntimeError, ValueError):
-                return ""
-            if not parent:
-                return ""
-            if parent not in parents:
-                parents.append(parent)
-        if len(parents) != 1:
-            return ""
-        return parents[0]
+        return action_migrate_support.shared_report_parent(records)
 
     @staticmethod
     def _record_index(records: list[_MigrateResultRecord], project_name: str) -> int:
-        for index, record in enumerate(records):
-            if record.project_name == project_name:
-                return index
-        return 0
+        return action_migrate_support.record_index(records, project_name)
 
     @staticmethod
     def _render_migrate_symbol(symbol: str, *, status: str, use_color: bool) -> str:
-        if not use_color:
-            return symbol
-        color = "32" if status == "success" else "31"
-        return f"\033[1;{color}m{symbol}\033[0m"
+        return action_migrate_support.render_migrate_symbol(symbol, status=status, use_color=use_color)
 
     @staticmethod
     def _render_migrate_project_name(project_name: str, *, index: int, use_color: bool) -> str:
-        if not use_color:
-            return project_name
-        palette = ("34", "35", "36", "32", "33")
-        color = palette[index % len(palette)]
-        return f"\033[1;{color}m{project_name}\033[0m"
+        return action_migrate_support.render_migrate_project_name(project_name, index=index, use_color=use_color)
 
     @staticmethod
     def _review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str, object]:
