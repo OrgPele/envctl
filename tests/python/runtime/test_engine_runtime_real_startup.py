@@ -322,6 +322,31 @@ class _FakeSetupWorktreeRunner(_FakeProcessRunner):
         return super().run(cmd, cwd=cwd, env=env, timeout=timeout)
 
 
+class _SupersetSmokeRunner(_FakeSetupWorktreeRunner):
+    def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+        command = tuple(str(part) for part in cmd)
+        if len(command) == 5 and command[0] == "git" and command[1] == "-C" and command[3:] == (
+            "branch",
+            "--show-current",
+        ):
+            self.run_calls.append((tuple(cmd), str(cwd)))
+            self.run_envs.append(dict(env) if env is not None else None)
+            return SimpleNamespace(returncode=0, stdout="features/envctl-superset-smoke\n", stderr="")
+        if command[:3] == ("superset", "workspaces", "create"):
+            self.run_calls.append((tuple(cmd), str(cwd)))
+            self.run_envs.append(dict(env) if env is not None else None)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"workspace": {"id": "ws-smoke-123"}}),
+                stderr="",
+            )
+        if command == ("superset", "workspaces", "open", "ws-smoke-123"):
+            self.run_calls.append((tuple(cmd), str(cwd)))
+            self.run_envs.append(dict(env) if env is not None else None)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return super().run(cmd, cwd=cwd, env=env, timeout=timeout)
+
+
 class EngineRuntimeRealStartupTests(unittest.TestCase):
     def _config(
         self,
@@ -3336,6 +3361,58 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertEqual(seen, [("feature_task-1",)])
+            launch_events = [
+                event for event in engine.events if event.get("event") == "startup.plan_agent_launch_state"
+            ]
+            self.assertEqual(len(launch_events), 1)
+            self.assertEqual(launch_events[0]["status"], "launched")
+            self.assertEqual(launch_events[0]["launched_worktrees"], ["feature_task-1"])
+
+    def test_plan_feature_superset_smoke_creates_disposable_worktree_and_opens_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "TREES_STARTUP_ENABLE": "false",
+                        "SUPERSET_PROJECT": "envctl-project",
+                        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                    },
+                ),
+                env={},
+            )
+            fake_runner = _SupersetSmokeRunner()
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+
+            out = StringIO()
+            with patch.object(engine, "_command_exists", return_value=True), redirect_stdout(out):
+                code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            worktree_root = repo / "trees" / "feature_task" / "1"
+            self.assertTrue(worktree_root.is_dir())
+            self.assertTrue((worktree_root / ".envctl-state" / "worktree-provenance.json").is_file())
+            self.assertIn("Superset plan agent launch started 1 workspace/agent run(s).", out.getvalue())
+
+            create_calls = [
+                call for call, _cwd in fake_runner.run_calls if call[:3] == ("superset", "workspaces", "create")
+            ]
+            self.assertEqual(len(create_calls), 1)
+            create_call = create_calls[0]
+            self.assertIn("--local", create_call)
+            self.assertEqual(create_call[create_call.index("--project") + 1], "envctl-project")
+            self.assertEqual(create_call[create_call.index("--branch") + 1], "features/envctl-superset-smoke")
+            self.assertEqual(create_call[create_call.index("--agent") + 1], "codex")
+            self.assertIn("Authoritative source of truth", create_call[create_call.index("--prompt") + 1])
+            self.assertIn(("superset", "workspaces", "open", "ws-smoke-123"), [call for call, _cwd in fake_runner.run_calls])
+
             launch_events = [
                 event for event in engine.events if event.get("event") == "startup.plan_agent_launch_state"
             ]
