@@ -1103,7 +1103,8 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             }
             engine = self._runtime(repo, runtime, env=env)
 
-            error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=True):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
 
             target = repo / "trees" / "feature-a" / "1"
             self.assertIsNone(error)
