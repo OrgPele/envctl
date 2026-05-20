@@ -88,15 +88,17 @@ def resolve_plan_agent_launch_config(
     if configured_surface_transport not in {"cmux", "superset"}:
         surface_transport_warning = "invalid_surface_transport"
         configured_surface_transport = "cmux"
-    transport: Literal["cmux", "tmux", "omx", "superset"] = (
-        "omx"
-        if bool(route_flags.get("omx"))
-        else (
-            "tmux"
-            if bool(route_flags.get("tmux")) or opencode_launch_requested
-            else ("superset" if configured_surface_transport == "superset" else "cmux")
-        )
-    )
+    transport: Literal["cmux", "tmux", "omx", "superset"]
+    if bool(route_flags.get("omx")):
+        transport = "omx"
+    elif bool(route_flags.get("tmux")):
+        transport = "tmux"
+    elif cmux_launch_requested:
+        transport = "cmux"
+    elif opencode_launch_requested:
+        transport = "tmux"
+    else:
+        transport = "superset" if configured_surface_transport == "superset" else "cmux"
     cli = str(
         "opencode"
         if bool(route_flags.get("opencode"))
@@ -170,12 +172,12 @@ def resolve_plan_agent_launch_config(
     direct_prompt_enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT")
         or config.raw.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT"),
-        True if (transport == "tmux" and cli == "opencode") else False,
+        True if cli == "opencode" else False,
     )
     ulw_loop_prefix = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX")
         or config.raw.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX"),
-        True if (transport == "tmux" and cli == "opencode" and direct_prompt_enabled) else False,
+        True if (cli == "opencode" and direct_prompt_enabled) else False,
     )
     ulw_suffix = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_APPEND_ULW")
@@ -184,8 +186,10 @@ def resolve_plan_agent_launch_config(
     )
     if bool(route_flags.get("ulw")):
         ulw_loop_prefix = True
-        if transport == "tmux" and cli == "opencode":
+        if cli == "opencode":
             direct_prompt_enabled = True
+    if bool(route_flags.get("no_ulw_loop")):
+        ulw_loop_prefix = False
     omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
     if bool(route_flags.get("ultragoal")):
         omx_workflow = "ultragoal"
@@ -265,7 +269,7 @@ def _route_requests_ulw(route: object | None) -> bool:
 
 
 def _ulw_route_supported(*, launch_config: PlanAgentLaunchConfig) -> bool:
-    return launch_config.transport == "tmux" and launch_config.cli == "opencode"
+    return launch_config.cli == "opencode"
 
 
 def _guidance_attach_command(session_name: str) -> tuple[str, ...]:

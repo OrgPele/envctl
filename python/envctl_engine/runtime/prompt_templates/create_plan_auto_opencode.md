@@ -118,7 +118,7 @@ cd <repo-root> && envctl --plan <category>/<slug> --tmux --opencode --entire-sys
 
 For example, a backend-only plan still keeps `--entire-system` by default; use `--only-backend` or `--no-infra` only when the plan records why full-stack E2E does not apply.
 
-OpenCode plan-agent launches use the `/ulw-loop` prefix by default, so this auto skill does not need `--ulw`. Codex cycle settings are intentionally ignored for this surface. If the launch fails because OpenCode or ULW support is unavailable in the user environment, report the exact error and leave the plan file in place; do not silently fall back to Codex.
+OpenCode plan-agent launches use the `/ulw-loop` prefix by default, so this auto skill does not need `--ulw`. Use `--no-ulw-loop` only when the user explicitly asks for a plain OpenCode prompt without that prefix. Codex cycle settings are intentionally ignored for this surface. If the launch fails because OpenCode or ULW support is unavailable in the user environment, report the exact error and leave the plan file in place; do not silently fall back to Codex.
 
 ## Final response format
 1. Path of the plan file created.

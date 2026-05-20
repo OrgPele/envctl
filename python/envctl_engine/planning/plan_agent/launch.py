@@ -127,7 +127,7 @@ def launch_plan_agent_terminals(
         runtime._emit("planning.agent_launch.failed", reason=launch_config.surface_transport_warning, **base_payload)
         return PlanAgentLaunchResult(status="failed", reason=launch_config.surface_transport_warning)
     if _route_requests_ulw(route) and not _ulw_route_supported(launch_config=launch_config):
-        _print_launch_summary("Plan agent launch skipped: --ulw requires --tmux --opencode.")
+        _print_launch_summary("Plan agent launch skipped: --ulw requires --opencode.")
         runtime._emit("planning.agent_launch.failed", reason="unsupported_ulw_flag", **base_payload)
         return PlanAgentLaunchResult(status="failed", reason="unsupported_ulw_flag")
     if not created_worktrees:

@@ -144,14 +144,25 @@ def _new_session_command_for_route(
         str(Path(runtime.config.base_dir).resolve() / "bin" / "envctl"),
         "--plan",
         selector,
-        "--omx" if launch_config.transport == "omx" else "--tmux",
     ]
+    if launch_config.transport == "omx":
+        command.append("--omx")
+    elif launch_config.transport == "cmux":
+        command.append("--cmux")
+    else:
+        command.append("--tmux")
     if launch_config.cli == "opencode":
         command.append("--opencode")
     elif launch_config.cli == "codex":
         command.append("--codex")
     route_flags = getattr(route, "flags", {}) or {}
-    workflow_tokens = (("ultragoal", "--ultragoal"), ("ralph", "--ralph"), ("team", "--team"), ("ulw", "--ulw"))
+    workflow_tokens = (
+        ("ultragoal", "--ultragoal"),
+        ("ralph", "--ralph"),
+        ("team", "--team"),
+        ("ulw", "--ulw"),
+        ("no_ulw_loop", "--no-ulw-loop"),
+    )
     for flag_name, token in workflow_tokens:
         if bool(route_flags.get(flag_name)):
             command.append(token)

@@ -496,6 +496,36 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertTrue(launch_config.ulw_loop_prefix)
         self.assertEqual(prereqs, ("tmux", "opencode"))
 
+    def test_resolve_plan_agent_launch_config_honors_cmux_opencode_route_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--cmux", "--opencode"], env={}),
+            )
+            prereqs = launch_support.plan_agent_launch_prereq_commands(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--cmux", "--opencode"], env={}),
+            )
+
+        self.assertEqual(launch_config.transport, "cmux")
+        self.assertEqual(launch_config.cli, "opencode")
+        self.assertTrue(launch_config.enabled)
+        self.assertTrue(launch_config.direct_prompt_enabled)
+        self.assertTrue(launch_config.ulw_loop_prefix)
+        self.assertEqual(prereqs, ("cmux", "opencode"))
+
     def test_resolve_preset_submission_text_defaults_ulw_loop_for_explicit_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -548,6 +578,40 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
         self.assertTrue(launch_config.direct_prompt_enabled)
         self.assertTrue(launch_config.ulw_loop_prefix)
+
+    def test_resolve_plan_agent_launch_config_no_ulw_loop_route_disables_default_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            prompt_path = Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md"
+            repo.mkdir(parents=True, exist_ok=True)
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("Implement this directly.\n", encoding="utf-8")
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {"HOME": tmpdir},
+                route=parse_route(["--plan", "feature-a", "--cmux", "--opencode", "--no-ulw-loop"], env={}),
+            )
+            rt = self._runtime(repo, runtime, env={"HOME": tmpdir})
+
+            prompt_text, error = workflow._resolve_preset_submission_text(
+                rt,
+                launch_config=launch_config,
+                cli="opencode",
+                preset="implement_task",
+            )
+
+        self.assertEqual(launch_config.transport, "cmux")
+        self.assertTrue(launch_config.direct_prompt_enabled)
+        self.assertFalse(launch_config.ulw_loop_prefix)
+        self.assertIsNone(error)
+        self.assertEqual(prompt_text, "Implement this directly.\n")
 
     def test_create_plan_auto_launch_default_routes_remain_supported(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1116,7 +1180,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertNotIn(_browser_e2e_instruction_text(), [step.text for step in workflow.steps])
         self.assertIn(_pr_review_comments_instruction_text(), [step.text for step in workflow.steps])
 
-    def test_launch_plan_agent_terminals_rejects_ulw_without_tmux_opencode(self) -> None:
+    def test_launch_plan_agent_terminals_rejects_ulw_without_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -3256,6 +3320,39 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             ),
         )
 
+    def test_new_session_command_preserves_no_ulw_loop_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="feature-a.md")
+            command = recovery._new_session_command_for_route(
+                rt,
+                route=parse_route(["--plan", "feature-a", "--cmux", "--opencode", "--no-ulw-loop", "--headless"], env={}),
+                launch_config=launch_support.PlanAgentLaunchConfig(
+                    enabled=True,
+                    transport="cmux",
+                    cli="opencode",
+                    cli_command="opencode",
+                    preset="implement_task",
+                    codex_cycles=0,
+                    codex_cycles_warning=None,
+                    shell="zsh",
+                    require_cmux_context=True,
+                    cmux_workspace="",
+                    direct_prompt_enabled=True,
+                    ulw_loop_prefix=False,
+                    ulw_suffix=False,
+                ),
+                created_worktrees=(worktree,),
+        )
+
+        self.assertIn("--cmux", command)
+        self.assertNotIn("--tmux", command)
+        self.assertIn("--no-ulw-loop", command)
+        self.assertLess(command.index("--no-ulw-loop"), command.index("--new-session"))
+
     def test_new_session_command_preserves_omx_workflow_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -5213,12 +5310,21 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertIn(["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", f"cd {repo}"], rt.process_runner.calls)
             self.assertIn(["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "enter"], rt.process_runner.calls)
             self.assertIn(["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", "opencode"], rt.process_runner.calls)
-            self.assertIn(["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", "/implement_task"], rt.process_runner.calls)
+            direct_prompt_calls = [
+                call
+                for call in rt.process_runner.calls
+                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-12"]
+            ]
+            self.assertEqual(len(direct_prompt_calls), 1)
+            self.assertTrue(str(direct_prompt_calls[0][-1]).startswith("/ulw-loop You are implementing real code"))
+            self.assertIn(
+                ["cmux", "paste-buffer", "--name", "envctl-surface-12", "--workspace", "workspace:8", "--surface", "surface:12"],
+                rt.process_runner.calls,
+            )
             self.assertEqual(len(_ImmediateThread.created), 1)
             self.assertTrue(_ImmediateThread.created[0].started)
             self.assertEqual(_ImmediateThread.created[0].daemon, False)
-            self.assertIn(["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "ctrl+e"], rt.process_runner.calls)
-            self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:8", "--surface", "surface:12", "--lines", "80"]), 3)
+            self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:8", "--surface", "surface:12", "--lines", "80"]), 2)
             self.assertGreaterEqual(
                 rt.process_runner.calls.count(
                     ["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "enter"]
@@ -6283,19 +6389,18 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "new-surface", "--workspace", "workspace:9"])
             self.assertNotIn(["cmux", "list-workspaces"], rt.process_runner.calls)
+            direct_prompt_calls = [
+                call
+                for call in rt.process_runner.calls
+                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-15"]
+            ]
+            self.assertEqual(len(direct_prompt_calls), 1)
+            self.assertTrue(str(direct_prompt_calls[0][-1]).startswith("/ulw-loop You are reviewing"))
+            self.assertIn(f'Review bundle: "{review_bundle}"', str(direct_prompt_calls[0][-1]))
+            self.assertIn(f'Worktree directory: "{project_root}"', str(direct_prompt_calls[0][-1]))
+            self.assertIn(f'Original plan file: "{original_plan.resolve()}"', str(direct_prompt_calls[0][-1]))
             self.assertIn(
-                [
-                    "cmux",
-                    "send",
-                    "--workspace",
-                    "workspace:9",
-                    "--surface",
-                    "surface:15",
-                    "/review_worktree_imp Project: feature-a-1\n"
-                    f'Review bundle: "{review_bundle}"\n'
-                    f'Worktree directory: "{project_root}"\n'
-                    f'Original plan file: "{original_plan.resolve()}"',
-                ],
+                ["cmux", "paste-buffer", "--name", "envctl-surface-15", "--workspace", "workspace:9", "--surface", "surface:15"],
                 rt.process_runner.calls,
             )
 
