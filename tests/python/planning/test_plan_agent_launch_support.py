@@ -618,6 +618,122 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertFalse(disabled.codex_goal_enable)
         self.assertTrue(enabled_by_route.codex_goal_enable)
 
+    def test_codex_goal_screen_detects_observed_active_goal_frame(self) -> None:
+        goal_text = "Implement the envctl plan-agent task for features/a.md in this worktree."
+
+        self.assertTrue(
+            terminal_screen._codex_goal_screen_looks_active(
+                "╭────────────────────────╮\n"
+                "│ >_ OpenAI Codex        │\n"
+                "• Goal active Objective: Implement the envctl plan-agent task for features/a.md in this worktree.\n"
+                "› Explain this codebase\n",
+                goal_text,
+            )
+        )
+        self.assertFalse(
+            terminal_screen._codex_goal_screen_looks_active(
+                "╭────────────────────────╮\n"
+                "│ >_ OpenAI Codex        │\n"
+                "│ model: gpt-5.5         │\n"
+                "│ directory: ~/repo      │\n"
+                "› Explain this codebase\n",
+                goal_text,
+            )
+        )
+        self.assertFalse(
+            terminal_screen._codex_goal_screen_looks_active(
+                "• Goal active Objective: Review a different project before editing.\n"
+                "› Explain this codebase\n",
+                goal_text,
+            )
+        )
+
+    def test_cmux_codex_launch_waits_for_active_goal_before_implementation_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
+                    "ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE": "false",
+                    "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE": "false",
+                },
+            )
+            ready_screen = (
+                "╭───────────────────────────────────────────────────╮\n"
+                "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                "│ directory: ~/repo                                 │\n"
+                "› Explain this codebase\n"
+            )
+            active_goal_screen = (
+                "╭───────────────────────────────────────────────────╮\n"
+                "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                "│ directory: ~/repo                                 │\n"
+                "│ Goal active Objective: Implement the envctl plan-agent task for a.md in this worktree. │\n"
+                "› Explain this codebase\n"
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:9\n", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout=ready_screen, stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout=ready_screen, stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout=active_goal_screen, stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout=active_goal_screen, stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                ]
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+            ):
+                _ImmediateThread.created = []
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+            self.assertEqual(result.status, "launched")
+            goal_buffer_index = next(
+                index
+                for index, call in enumerate(rt.process_runner.calls)
+                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
+                and str(call[-1]).startswith("/goal ")
+            )
+            implementation_buffer_index = next(
+                index
+                for index, call in enumerate(rt.process_runner.calls)
+                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
+                and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+            )
+            intervening_reads = [
+                call
+                for call in rt.process_runner.calls[goal_buffer_index + 1 : implementation_buffer_index]
+                if call
+                == ["cmux", "read-screen", "--workspace", "workspace:7", "--surface", "surface:9", "--lines", "80"]
+            ]
+            self.assertGreaterEqual(len(intervening_reads), 2)
+            self.assertEqual(len(self._events(rt, "planning.agent_launch.codex_goal_submitted")), 1)
+
     def test_omx_goal_then_workflow_then_cycle_queue_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -4022,6 +4138,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
                     "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
                 },
             )
             rt.process_runner = _RecordingRunner(
@@ -4920,6 +5037,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "CMUX_WORKSPACE_ID": "workspace:4",
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
                 },
             )
             rt.process_runner = _RecordingRunner(

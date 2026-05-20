@@ -622,9 +622,32 @@ def _submit_surface_codex_goal(
     )
     if submit_error is not None:
         return submit_error
+    if not _wait_for_surface_codex_goal_active(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        goal_text=goal_text,
+    ):
+        return "codex_goal_active_timeout"
     if not _wait_for_codex_queue_ready(runtime, workspace_id=workspace_id, surface_id=surface_id):
         return "codex_goal_ready_timeout"
     return None
+
+
+def _wait_for_surface_codex_goal_active(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    goal_text: str,
+) -> bool:
+    deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
+        if _codex_goal_screen_looks_active(screen, goal_text):
+            return True
+        time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
+    return False
 
 
 def _submit_prompt_workflow_step(

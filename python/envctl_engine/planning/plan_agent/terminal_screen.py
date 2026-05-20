@@ -167,6 +167,34 @@ def _codex_queue_screen_looks_ready(screen: str) -> bool:
     return _screen_looks_ready("codex", cleaned)
 
 
+def _codex_goal_screen_looks_active(screen: str, goal_text: str) -> bool:
+    cleaned = _strip_ansi_sequences(screen)
+    normalized_screen = _normalized_screen_text(cleaned)
+    if not normalized_screen:
+        return False
+    marker_found = any(
+        marker in normalized_screen
+        for marker in (
+            "active goal",
+            "goal active",
+            "current goal",
+            "goal context",
+            "goal_context",
+            "active thread goal",
+        )
+    )
+    if not marker_found:
+        return False
+    normalized_goal = _normalized_screen_text(goal_text)
+    if not normalized_goal:
+        return True
+    goal_tokens = [token for token in normalized_goal.split() if len(token) > 4]
+    if not goal_tokens:
+        return True
+    matched_tokens = sum(1 for token in goal_tokens[:12] if token in normalized_screen)
+    return matched_tokens >= min(4, len(goal_tokens[:12]))
+
+
 def _codex_queue_message_needs_tab(screen: str, text: str, *, require_text_match: bool = True) -> bool:
     normalized_screen = _normalized_screen_text(screen)
     if not normalized_screen:
@@ -217,4 +245,3 @@ def _codex_queue_text_is_visible(screen: str, text: str, *, require_text_match: 
 
 
 __all__ = tuple(name for name in globals() if not name.startswith("__"))
-
