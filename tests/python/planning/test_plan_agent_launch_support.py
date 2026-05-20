@@ -42,6 +42,7 @@ _intermediate_cycle_completion_instruction_text = cast(Any, workflow._intermedia
 _browser_e2e_instruction_text = cast(Any, workflow._browser_e2e_instruction_text)
 _pr_review_comments_instruction_text = cast(Any, workflow._pr_review_comments_instruction_text)
 _wait_for_codex_queue_ready = cast(Any, cmux_transport._wait_for_codex_queue_ready)
+_codex_goal_screen_looks_active = cast(Any, terminal_screen._codex_goal_screen_looks_active)
 _workflow_step_prompt_text = cast(Any, workflow._workflow_step_prompt_text)
 _ensure_tmux_window = cast(Any, tmux_transport._ensure_tmux_window)
 _tmux_session_name_for_worktree = cast(Any, tmux_transport._tmux_session_name_for_worktree)
@@ -617,6 +618,158 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertFalse(opencode_default.codex_goal_enable)
         self.assertFalse(disabled.codex_goal_enable)
         self.assertTrue(enabled_by_route.codex_goal_enable)
+
+    def test_codex_goal_screen_detects_active_goal_frame(self) -> None:
+        self.assertTrue(
+            _codex_goal_screen_looks_active(
+                "╭────────────────────────╮\n"
+                "│ >_ OpenAI Codex        │\n"
+                "│ Active goal            │\n"
+                "│ Implement the plan     │\n"
+                "› Explain this codebase\n"
+            )
+        )
+        self.assertTrue(_codex_goal_screen_looks_active("<goal_context>\n<objective>Implement the plan</objective>"))
+        self.assertFalse(
+            _codex_goal_screen_looks_active(
+                "╭────────────────────────╮\n"
+                "│ >_ OpenAI Codex        │\n"
+                "│ model: gpt-5.4         │\n"
+                "│ directory: ~/repo      │\n"
+                "› Explain this codebase\n"
+            )
+        )
+
+    def test_cmux_codex_goal_must_be_active_before_implementation_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_dir = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime_dir)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="features/a.md")
+            launch_config = launch_support.PlanAgentLaunchConfig(
+                enabled=True,
+                transport="cmux",
+                cli="codex",
+                cli_command="codex",
+                preset="implement_task",
+                codex_cycles=0,
+                codex_cycles_warning=None,
+                shell="zsh",
+                require_cmux_context=True,
+                cmux_workspace="workspace:7",
+                direct_prompt_enabled=False,
+                ulw_loop_prefix=False,
+                ulw_suffix=False,
+                browser_e2e_followup_enable=False,
+                pr_review_comments_followup_enable=False,
+                codex_goal_enable=True,
+            )
+            pasted_texts: list[str] = []
+            screens = iter(
+                [
+                    "╭────────────────────────╮\n│ >_ OpenAI Codex        │\n│ model: gpt-5.4         │\n› Explain this codebase\n",
+                    "╭────────────────────────╮\n│ >_ OpenAI Codex        │\n│ Active goal            │\n│ Implement the envctl plan-agent task\n› Explain this codebase\n",
+                    "╭────────────────────────╮\n│ >_ OpenAI Codex        │\n│ model: gpt-5.4         │\n│ directory: ~/repo      │\n› Explain this codebase\n",
+                ]
+            )
+
+            def fake_paste(*_args, text, **_kwargs):  # noqa: ANN202, ANN001
+                pasted_texts.append(text)
+                return None
+
+            with (
+                patch("envctl_engine.planning.plan_agent.cmux_transport._prepare_surface", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._launch_cli_bootstrap_commands", return_value=[None]),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text", side_effect=fake_paste),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", return_value=None),
+                patch(
+                    "envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen",
+                    side_effect=lambda *_args, **_kwargs: next(screens),
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent.cmux_transport._workflow_step_prompt_text",
+                    return_value=("IMPLEMENT PROMPT", None),
+                ),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
+            ):
+                error = cmux_transport._run_surface_bootstrap(
+                    rt,
+                    workspace_id="workspace:7",
+                    surface_id="surface:9",
+                    launch_config=launch_config,
+                    worktree=worktree,
+                )
+
+        self.assertIsNone(error)
+        self.assertEqual(len(pasted_texts), 2)
+        self.assertTrue(pasted_texts[0].startswith("/goal "))
+        self.assertEqual(pasted_texts[1], "IMPLEMENT PROMPT")
+
+    def test_cmux_codex_goal_inactive_screen_blocks_implementation_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_dir = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime_dir)
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="features/a.md")
+            launch_config = launch_support.PlanAgentLaunchConfig(
+                enabled=True,
+                transport="cmux",
+                cli="codex",
+                cli_command="codex",
+                preset="implement_task",
+                codex_cycles=0,
+                codex_cycles_warning=None,
+                shell="zsh",
+                require_cmux_context=True,
+                cmux_workspace="workspace:7",
+                direct_prompt_enabled=False,
+                ulw_loop_prefix=False,
+                ulw_suffix=False,
+                browser_e2e_followup_enable=False,
+                pr_review_comments_followup_enable=False,
+                codex_goal_enable=True,
+            )
+            pasted_texts: list[str] = []
+            ready_screen = (
+                "╭────────────────────────╮\n"
+                "│ >_ OpenAI Codex        │\n"
+                "│ model: gpt-5.4         │\n"
+                "│ directory: ~/repo      │\n"
+                "› Explain this codebase\n"
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent.cmux_transport._prepare_surface", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._launch_cli_bootstrap_commands", return_value=[None]),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
+                patch(
+                    "envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text",
+                    side_effect=lambda *_args, text, **_kwargs: pasted_texts.append(text) or None,
+                ),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen", return_value=ready_screen),
+                patch(
+                    "envctl_engine.planning.plan_agent.cmux_transport._workflow_step_prompt_text",
+                    return_value=("IMPLEMENT PROMPT", None),
+                ),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=1.0)),
+            ):
+                error = cmux_transport._run_surface_bootstrap(
+                    rt,
+                    workspace_id="workspace:7",
+                    surface_id="surface:9",
+                    launch_config=launch_config,
+                    worktree=worktree,
+                )
+
+        self.assertEqual(error, "codex_goal_active_timeout")
+        self.assertEqual(len(pasted_texts), 1)
+        self.assertTrue(pasted_texts[0].startswith("/goal "))
 
     def test_omx_goal_then_workflow_then_cycle_queue_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4022,6 +4175,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
                     "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
                 },
             )
             rt.process_runner = _RecordingRunner(
@@ -4920,6 +5074,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "CMUX_WORKSPACE_ID": "workspace:4",
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
                 },
             )
             rt.process_runner = _RecordingRunner(
