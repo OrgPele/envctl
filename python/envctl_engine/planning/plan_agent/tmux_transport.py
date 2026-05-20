@@ -51,7 +51,7 @@ def _launch_plan_agent_tmux_terminals(
     repo_root = Path(runtime.config.base_dir).resolve()
     attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
     route_flags = getattr(route, "flags", {}) or {}
-    create_new_session = bool(route_flags.get("tmux_new_session"))
+    create_new_session = bool(route_flags.get("new_session"))
     prompt_existing_possible = not create_new_session and _should_prompt_existing_tmux_session(
         runtime,
         prompt_on_existing=prompt_on_existing,

@@ -8,7 +8,7 @@
 
 - rerunning the same plan/workspace/CLI needed a clearer split between "attach to what already exists" and "create another tmux session on purpose"
 - headless output showed the right commands, but it did not explicitly explain that envctl skipped creating a new session because one already existed
-- `/create_plan` still documented stale launch examples and did not mention the supported `--tmux`, `--opencode`, or `--tmux-new-session` flow
+- `/create_plan` still documented stale launch examples and did not mention the supported `--tmux`, `--opencode`, or `--new-session` flow
 
 This patch release keeps the worktree-scoped tmux model from `1.6.2`, adds a real force-new-session path, and aligns the prompt/install guidance with the commands users can actually run.
 
@@ -19,22 +19,22 @@ This patch release keeps the worktree-scoped tmux model from `1.6.2`, adds a rea
 - tmux plan-agent sessions are scoped by worktree path and CLI, so Codex and OpenCode for the same worktree no longer collide
 - rerunning the same plan/workspace/CLI in interactive mode prompts the operator to attach to the existing session or create a new suffixed session
 - answering `Enter`, `y`, or `yes` now reliably attaches to the existing tmux session instead of accidentally launching another one
-- `--tmux-new-session` forces creation of a new suffixed tmux session even in interactive mode and skips the attach prompt entirely
+- `--new-session` forces creation of a new suffixed tmux session even in interactive mode and skips the attach prompt entirely
 
 ### Headless mode gives clearer reuse instructions
 
 - when a matching tmux session already exists, headless output now states that envctl reused the existing plan/workspace/CLI session instead of silently implying a fresh launch
-- the printed `new session:` command now includes `--tmux-new-session --headless`, so copying that command really creates another tmux session instead of redisplaying the existing attach guidance
+- the printed `new session:` command now includes `--new-session --headless`, so copying that command really creates another tmux session instead of redisplaying the existing attach guidance
 
 ### `/create_plan` follow-up commands now match the supported launcher surface
 
 - the built-in `create_plan` template now shows repo-scoped tmux launch commands such as `envctl --plan <selector> --tmux` and `envctl --plan <selector> --tmux --opencode`
-- the template now documents `--tmux-new-session` for users who want another tmux session without being prompted
+- the template now documents `--new-session` for users who want another tmux session without being prompted
 - the `both` option is still supported, but it is now documented as two separate envctl invocations run one after the other rather than one imaginary combined CLI mode
 
 ## Included Changes
 
-- parser support for `--tmux-new-session`
+- parser support for `--new-session`
 - worktree-and-CLI-scoped tmux session naming plus suffixed `-2`, `-3`, ... creation for explicit new-session launches
 - interactive attach/create prompting that defaults to attach and honors `y/yes/Enter`
 - clearer headless reuse output with real force-new follow-up commands
@@ -45,7 +45,7 @@ This patch release keeps the worktree-scoped tmux model from `1.6.2`, adds a rea
 
 - use `envctl --plan <selector> --tmux` for Codex-backed tmux launches
 - use `envctl --plan <selector> --tmux --opencode` for OpenCode-backed tmux launches
-- use `--tmux-new-session` when you explicitly want another tmux session for the same plan/workspace/CLI without being prompted
+- use `--new-session` when you explicitly want another tmux session for the same plan/workspace/CLI without being prompted
 - when selecting `both` from a prompt-driven follow-up, envctl should be run twice behind the scenes: once for Codex and once for OpenCode
 
 ## Artifacts

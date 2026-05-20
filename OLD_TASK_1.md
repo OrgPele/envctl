@@ -116,10 +116,10 @@ Contributors should see a smaller, clearer Python engine tree: the active test-o
 ## Rollout / verification
 - Recommended Codex cycles: 2.
 - Rationale: this is a small multi-file static cleanup with low runtime risk, but it needs one verification/follow-up pass for tests and codegraph refresh.
-- Intended launch-scope flags: `--no-infra --headless --tmux-new-session`.
+- Intended launch-scope flags: `--no-infra --headless --new-session`.
 - Full-stack E2E is not useful for this plan because there are no backend/frontend services, dependencies, browser-visible behavior, runtime state changes, or external integration changes; the signal is static/module tests plus codegraph refresh.
 - Exact auto-launch command:
-  - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2 envctl --plan refactoring/envctl-dead-code-cleanup --tmux --no-infra --headless --tmux-new-session`
+  - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2 envctl --plan refactoring/envctl-dead-code-cleanup --tmux --no-infra --headless --new-session`
 
 ## Definition of done
 - The seven confirmed stale files are deleted.

@@ -231,7 +231,7 @@ Manual QA:
 Implementation launch scope: use `--entire-system` because this bug crosses interactive dashboard behavior, runtime truth reconciliation, Docker-backed dependency ownership, and terminal output. The auto-launch command is:
 
 ```bash
-envctl --plan broken/envctl-interactive-restart-shared-dependency-truth --tmux --opencode --entire-system --headless --tmux-new-session
+envctl --plan broken/envctl-interactive-restart-shared-dependency-truth --tmux --opencode --entire-system --headless --new-session
 ```
 
 Verification sequence for the implementer:

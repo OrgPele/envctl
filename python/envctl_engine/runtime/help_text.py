@@ -389,7 +389,7 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--codex             force Codex for cmux/tmux launches",
             "--opencode          force OpenCode for cmux/tmux launches",
             "--ulw               tmux + OpenCode only: force /ulw-loop prefix (default for OpenCode)",
-            "--tmux-new-session  create another tmux/OMX session instead of reusing an attachable existing one",
+            "--new-session  create a fresh cmux/tmux/OMX launch target instead of reusing an existing one",
             "SUPERSET_PROJECT=<id> or SUPERSET_WORKSPACE=<id> selects the Superset high-level transport",
         ),
         examples=(

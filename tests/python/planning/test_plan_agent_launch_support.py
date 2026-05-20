@@ -1723,7 +1723,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertIn("--codex", rendered)
             self.assertIn("--entire-system", rendered)
             self.assertIn("--headless", rendered)
-            self.assertIn("--tmux-new-session", rendered)
+            self.assertIn("--new-session", rendered)
             self.assertNotIn("--omx", rendered)
             self.assertNotIn("--ralph", rendered)
             self.assertNotIn("--ultragoal", rendered)
@@ -2084,7 +2084,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             ):
                 result = launch_plan_agent_terminals(
                     rt,
-                    route=parse_route(["--plan", "feature-a", "--omx", "--tmux-new-session"], env={}),
+                    route=parse_route(["--plan", "feature-a", "--omx", "--new-session"], env={}),
                     created_worktrees=(worktree,),
                 )
 
@@ -3165,7 +3165,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(len(captured), 1)
         self.assertIn("Y=attach / n=create new session", captured[0])
 
-    def test_tmux_new_session_flag_creates_suffixed_session_for_existing_worktree(self) -> None:
+    def test_new_session_flag_creates_suffixed_session_for_existing_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -3201,7 +3201,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             ):
                 result = launch_plan_agent_terminals(
                     rt,
-                    route=parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--tmux-new-session", "--headless"], env={}),
+                    route=parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--new-session", "--headless"], env={}),
                     created_worktrees=(worktree,),
                 )
 
@@ -3251,7 +3251,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 "--tmux",
                 "--opencode",
                 "--ulw",
-                "--tmux-new-session",
+                "--new-session",
                 "--headless",
             ),
         )
@@ -3288,7 +3288,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     )
 
                     self.assertIn(token, command)
-                    self.assertLess(command.index(token), command.index("--tmux-new-session"))
+                    self.assertLess(command.index(token), command.index("--new-session"))
 
     def test_find_existing_tmux_attach_target_parses_custom_separator_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
