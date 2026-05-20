@@ -258,26 +258,31 @@ Generated names are deterministic from the worktree path under the configured tr
 ```text
 Serena project: envctl-feature-a-1
 CGC context:    Envctl-feature-a-1
+Active CGC:     Envctl
 Metadata:       trees/feature-a/1/.envctl-state/code-intelligence.json
 ```
 
-CodeGraphContext indexing is intentionally per worktree, not symlinked or shared from the main checkout. Set
-`ENVCTL_WORKTREE_CGC_INDEX=true` to run `cgc context create <context>` and then
-`cgc index <worktree> --context <context>` after envctl creates each worktree. The default
-`ENVCTL_WORKTREE_CGC_INDEX=auto` indexes only when the source repo already has CGC local markers such as `.cgcignore` or
-`.codegraphcontext`; set it to `false` to disable indexing completely. Set
-`ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` to disable all of this code-intelligence bootstrap behavior.
+CodeGraphContext indexing defaults to reusing the source checkout context instead of re-indexing every generated
+worktree. With the default `ENVCTL_WORKTREE_CGC_INDEX=auto`, envctl copies `.cgcignore`, verifies the source context with
+`cgc list --context <source-context>`, records the generated worktree context for optional future use, and records the
+verified source context as `cgc_active_context` in `.envctl-state/code-intelligence.json`. If that verification fails,
+auto mode falls back to creating and indexing the generated worktree context. This keeps plan-agent launches fast when
+the source checkout is already indexed without silently losing CGC setup when it is not. Set
+`ENVCTL_WORKTREE_CGC_INDEX=true` to force an isolated worktree CGC context with `cgc context create <context>` followed
+by `cgc index <worktree> --context <context>`. Set it to `false` to disable CGC indexing and inheritance metadata
+completely. Set `ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` to disable all of this code-intelligence bootstrap behavior.
 
 You can customize generated names with templates:
 
 ```dotenv
 ENVCTL_WORKTREE_SERENA_PROJECT_TEMPLATE={project}-{worktree}
 ENVCTL_WORKTREE_CGC_CONTEXT_TEMPLATE={project}-{worktree}
+ENVCTL_WORKTREE_CGC_SOURCE_CONTEXT=Envctl
 ```
 
 Supported placeholders are `{project}`, `{worktree}`, `{feature}`, and `{iteration}`. Envctl sanitizes rendered values to
 ASCII letters, digits, `-`, and `_`. For CGC, `{project}` is title-cased by default so a source project named `envctl`
-renders as `Envctl`.
+renders as `Envctl`. `ENVCTL_WORKTREE_CGC_SOURCE_CONTEXT` overrides the inherited source context used by auto mode.
 
 Generated worktree CGC contexts default to the `kuzudb` backend so envctl does not rely on CGC's global/default backend
 selection for new worktree contexts. If your CGC installation needs a different backend for new contexts, override it:
@@ -287,19 +292,21 @@ ENVCTL_WORKTREE_CGC_DATABASE=kuzudb
 ```
 
 The selected backend adds `--database <backend>` to `cgc context create`; with the default this is
-`--database kuzudb`. Existing-context messages are treated as success and envctl continues to indexing. Missing `cgc`,
-context creation failures, and index failures remain non-fatal for worktree creation; inspect
-`.envctl-state/code-intelligence.json` in the generated worktree for the chosen Serena project, CGC context, selected
-database, commands attempted, return codes, and copied-file status.
+`--database kuzudb`. Existing-context messages are treated as success and envctl continues to indexing when indexing is
+forced. Missing `cgc`, context creation failures, and index failures remain non-fatal for worktree creation; inspect
+`.envctl-state/code-intelligence.json` in the generated worktree for the chosen Serena project, CGC context, active CGC
+context, selected database, commands attempted, return codes, and copied-file status.
 
 When envctl later deletes a generated worktree through `delete-worktree`, `blast-worktree`, or plan count scale-down, it
-reads that metadata file before removing the worktree and best-effort deletes the recorded CGC context. Missing metadata,
-missing `cgc`, or CGC cleanup failures do not block worktree deletion; they are reported in the delete result message.
+reads that metadata file before removing the worktree and best-effort deletes only CGC contexts that envctl created or
+reused as managed worktree contexts. Inherited source contexts are not deleted. Missing metadata, missing `cgc`, or CGC
+cleanup failures do not block worktree deletion; they are reported in the delete result message.
 
 Example CGC follow-up commands:
 
 ```bash
-cgc stats trees/feature-a/1 --context Envctl-feature-a-1
+cgc stats --context Envctl
+cgc report --context Envctl
 cgc index trees/feature-a/1 --context Envctl-feature-a-1
 cgc context delete Envctl-feature-a-1
 ```

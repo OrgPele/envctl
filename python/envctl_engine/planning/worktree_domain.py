@@ -59,6 +59,9 @@ _WORKTREE_CODE_INTELLIGENCE_ENABLED_VALUES = frozenset(("auto", "enabled", "enab
 _WORKTREE_CGC_INDEX_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "false", "0", "no"))
 _WORKTREE_CGC_INDEX_ENABLED_VALUES = frozenset(("enabled", "enable", "on", "true", "1", "yes"))
 _WORKTREE_CGC_INDEX_AUTO_VALUES = frozenset(("auto",))
+_WORKTREE_CGC_INDEX_MODE_AUTO = "auto"
+_WORKTREE_CGC_INDEX_MODE_DISABLED = "disabled"
+_WORKTREE_CGC_INDEX_MODE_ENABLED = "enabled"
 
 
 @dataclass(frozen=True)
@@ -1572,8 +1575,10 @@ def _prepare_worktree_code_intelligence(self: Any, *, target: Path) -> None:
     identity = _worktree_code_intelligence_identity(self, target=target)
     copied_files: dict[str, bool] = {}
     cgc_result: dict[str, object] = {
+        "cgc_index_mode": _WORKTREE_CGC_INDEX_MODE_DISABLED,
         "cgc_index_requested": False,
         "cgc_available": None,
+        "cgc_context_managed": False,
         "cgc_context_created": False,
         "cgc_context_already_exists": False,
         "cgc_context_returncode": None,
@@ -1595,8 +1600,11 @@ def _prepare_worktree_code_intelligence(self: Any, *, target: Path) -> None:
         source=self.config.base_dir / ".cgcignore",
         target=target / ".cgcignore",
     )
-    if _worktree_cgc_index_enabled(self):
+    cgc_mode = _worktree_cgc_index_mode(self)
+    if cgc_mode == _WORKTREE_CGC_INDEX_MODE_ENABLED:
         cgc_result = _index_worktree_with_cgc(self, target=target, context=identity.cgc_context)
+    elif cgc_mode == _WORKTREE_CGC_INDEX_MODE_AUTO:
+        cgc_result = _reuse_or_index_worktree_with_cgc(self, target=target, context=identity.cgc_context)
     _write_worktree_code_intelligence_metadata(
         target=target,
         identity=identity,
@@ -1695,19 +1703,21 @@ def _worktree_code_intelligence_enabled(self: Any) -> bool:
     )
 
 
-def _worktree_cgc_index_enabled(self: Any) -> bool:
+def _worktree_cgc_index_mode(self: Any) -> str:
     raw = str(
         self.env.get("ENVCTL_WORKTREE_CGC_INDEX")
         or self.config.raw.get("ENVCTL_WORKTREE_CGC_INDEX")
         or "auto"
     ).strip().lower()
     if raw in _WORKTREE_CGC_INDEX_ENABLED_VALUES:
-        return True
+        return _WORKTREE_CGC_INDEX_MODE_ENABLED
     if raw in _WORKTREE_CGC_INDEX_DISABLED_VALUES:
-        return False
+        return _WORKTREE_CGC_INDEX_MODE_DISABLED
     if raw in _WORKTREE_CGC_INDEX_AUTO_VALUES:
         repo_root = self.config.base_dir
-        return (repo_root / ".cgcignore").is_file() or (repo_root / ".codegraphcontext").exists()
+        if (repo_root / ".cgcignore").is_file() or (repo_root / ".codegraphcontext").exists():
+            return _WORKTREE_CGC_INDEX_MODE_AUTO
+        return _WORKTREE_CGC_INDEX_MODE_DISABLED
     raise RuntimeError("Invalid ENVCTL_WORKTREE_CGC_INDEX value. Use auto/on/true or off/false.")
 
 
@@ -1827,6 +1837,18 @@ def _worktree_cgc_database(self: Any) -> str:
     return WORKTREE_CGC_DATABASE_DEFAULT
 
 
+def _source_cgc_context(self: Any) -> str:
+    for raw in (
+        self.env.get("ENVCTL_WORKTREE_CGC_SOURCE_CONTEXT"),
+        self.config.raw.get("ENVCTL_WORKTREE_CGC_SOURCE_CONTEXT"),
+    ):
+        value = str(raw or "").strip()
+        if value:
+            return _sanitize_worktree_identity(value)
+    source_project = _read_source_serena_project_name(self.config.base_dir) or self.config.base_dir.name or "project"
+    return _sanitize_worktree_identity(source_project, titlecase=True)
+
+
 def _short_command_output(value: object, *, limit: int = 500) -> str:
     text = str(value or "").strip()
     if len(text) <= limit:
@@ -1839,11 +1861,98 @@ def _cgc_context_already_exists(result: object) -> bool:
     return "already exists" in combined or "already exist" in combined
 
 
+def _reuse_or_index_worktree_with_cgc(self: Any, *, target: Path, context: str) -> dict[str, object]:
+    source_context = _source_cgc_context(self)
+    metadata: dict[str, object] = {
+        "cgc_index_mode": _WORKTREE_CGC_INDEX_MODE_AUTO,
+        "cgc_index_requested": False,
+        "cgc_available": False,
+        "cgc_context_managed": False,
+        "cgc_context_created": False,
+        "cgc_context_already_exists": False,
+        "cgc_context_returncode": None,
+        "cgc_index_succeeded": False,
+        "cgc_index_returncode": None,
+        "cgc_commands": [],
+        "cgc_source_context": source_context,
+        "cgc_active_context": source_context,
+    }
+    if not getattr(self, "_command_exists", lambda _name: False)("cgc"):
+        metadata["cgc_active_context"] = context
+        metadata["cgc_index_skipped_reason"] = "cgc_not_available"
+        return metadata
+    metadata["cgc_available"] = True
+    commands = metadata["cgc_commands"]
+    assert isinstance(commands, list)
+    list_command = ["cgc", "list", "--context", source_context]
+    try:
+        result = self.process_runner.run(
+            list_command,
+            cwd=self.config.base_dir,
+            env=self._command_env(port=0),
+            timeout=30.0,
+        )
+    except OSError as exc:
+        commands.append({"command": list_command, "error": str(exc)})
+        self._emit(
+            "setup.worktree.code_intelligence.cgc_reuse",
+            target=str(target.resolve()),
+            source_context=source_context,
+            success=False,
+            error=str(exc),
+        )
+        indexed = _index_worktree_with_cgc(self, target=target, context=context)
+        indexed["cgc_index_mode"] = _WORKTREE_CGC_INDEX_MODE_AUTO
+        indexed["cgc_source_context"] = source_context
+        indexed_commands = indexed.get("cgc_commands")
+        if isinstance(indexed_commands, list):
+            indexed_commands.insert(0, commands[0])
+        return indexed
+    returncode = getattr(result, "returncode", 1)
+    raw_stdout = str(getattr(result, "stdout", "") or "")
+    raw_stderr = str(getattr(result, "stderr", "") or "")
+    stdout = _short_command_output(raw_stdout)
+    stderr = _short_command_output(raw_stderr)
+    source_root = str(self.config.base_dir.resolve())
+    source_matches = returncode == 0 and source_root in f"{raw_stdout}\n{raw_stderr}"
+    commands.append(
+        {
+            "command": list_command,
+            "returncode": returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+    )
+    self._emit(
+        "setup.worktree.code_intelligence.cgc_reuse",
+        target=str(target.resolve()),
+        source_context=source_context,
+        source_root=source_root,
+        success=source_matches,
+        returncode=returncode,
+    )
+    if source_matches:
+        metadata["cgc_index_skipped_reason"] = "source_context_reused"
+        return metadata
+    indexed = _index_worktree_with_cgc(self, target=target, context=context)
+    indexed["cgc_index_mode"] = _WORKTREE_CGC_INDEX_MODE_AUTO
+    indexed["cgc_source_context"] = source_context
+    indexed["cgc_reuse_returncode"] = returncode
+    indexed["cgc_reuse_stdout"] = stdout
+    indexed["cgc_reuse_stderr"] = stderr
+    indexed_commands = indexed.get("cgc_commands")
+    if isinstance(indexed_commands, list):
+        indexed_commands.insert(0, commands[0])
+    return indexed
+
+
 def _index_worktree_with_cgc(self: Any, *, target: Path, context: str) -> dict[str, object]:
     database = _worktree_cgc_database(self)
     metadata: dict[str, object] = {
+        "cgc_index_mode": _WORKTREE_CGC_INDEX_MODE_ENABLED,
         "cgc_index_requested": True,
         "cgc_available": False,
+        "cgc_context_managed": False,
         "cgc_context_created": False,
         "cgc_context_already_exists": False,
         "cgc_context_returncode": None,
@@ -1883,6 +1992,7 @@ def _index_worktree_with_cgc(self: Any, *, target: Path, context: str) -> dict[s
     metadata["cgc_context_returncode"] = context_returncode
     metadata["cgc_context_created"] = context_returncode == 0
     metadata["cgc_context_already_exists"] = already_exists
+    metadata["cgc_context_managed"] = context_success
     commands.append(
         {
             "command": context_command,
@@ -1968,6 +2078,7 @@ def _write_worktree_code_intelligence_metadata(
         "schema_version": WORKTREE_CODE_INTELLIGENCE_SCHEMA_VERSION,
         "serena_project_name": identity.serena_project_name,
         "cgc_context": identity.cgc_context,
+        "cgc_active_context": identity.cgc_context,
         "worktree_name": identity.worktree_name,
         "feature": identity.feature,
         "iteration": identity.iteration,

@@ -789,6 +789,126 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             self.assertFalse(metadata.get("cgc_available"))
             self.assertEqual(metadata.get("cgc_database"), "kuzudb")
 
+    def test_setup_worktree_auto_cgc_reuses_verified_source_context_without_reindexing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena" / "project.yml").write_text("project_name: envctl\n", encoding="utf-8")
+            (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
+            emitted: list[dict[str, object]] = []
+            cgc_calls: list[list[str]] = []
+
+            engine = self._runtime(repo, runtime)
+            engine._emit = lambda event, **payload: emitted.append({"event": event, **payload})  # type: ignore[method-assign]
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command == ["cgc", "list", "--context", "Envctl"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(
+                        args=command,
+                        returncode=0,
+                        stdout=f"envctl {repo.resolve()} Project\n",
+                        stderr="",
+                    )
+                if command[:3] == ["cgc", "context", "create"] or command[:2] == ["cgc", "index"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=True):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertEqual(cgc_calls, [["cgc", "list", "--context", "Envctl"]])
+            self.assertTrue(
+                any(
+                    event.get("event") == "setup.worktree.code_intelligence.cgc_reuse"
+                    and event.get("source_context") == "Envctl"
+                    and event.get("success") is True
+                    for event in emitted
+                )
+            )
+            metadata = json.loads((target_root / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata.get("cgc_context"), "Envctl-feature-a-1")
+            self.assertEqual(metadata.get("cgc_active_context"), "Envctl")
+            self.assertEqual(metadata.get("cgc_source_context"), "Envctl")
+            self.assertEqual(metadata.get("cgc_index_mode"), "auto")
+            self.assertFalse(metadata.get("cgc_index_requested"))
+            self.assertFalse(metadata.get("cgc_context_managed"))
+            self.assertEqual(metadata.get("cgc_index_skipped_reason"), "source_context_reused")
+
+    def test_setup_worktree_auto_cgc_indexes_when_source_context_cannot_be_reused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena" / "project.yml").write_text("project_name: envctl\n", encoding="utf-8")
+            (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
+            cgc_calls: list[list[str]] = []
+
+            engine = self._runtime(repo, runtime)
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command == ["cgc", "list", "--context", "Envctl"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="/other/repo\n", stderr="")
+                if command[:3] == ["cgc", "context", "create"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="created\n", stderr="")
+                if command[:2] == ["cgc", "index"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=True):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertEqual(
+                cgc_calls,
+                [
+                    ["cgc", "list", "--context", "Envctl"],
+                    ["cgc", "context", "create", "Envctl-feature-a-1", "--database", "kuzudb"],
+                    ["cgc", "index", str(target_root.resolve()), "--context", "Envctl-feature-a-1"],
+                ],
+            )
+            metadata = json.loads((target_root / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata.get("cgc_index_mode"), "auto")
+            self.assertTrue(metadata.get("cgc_index_requested"))
+            self.assertTrue(metadata.get("cgc_context_managed"))
+            self.assertTrue(metadata.get("cgc_index_succeeded"))
+            self.assertEqual(metadata.get("cgc_source_context"), "Envctl")
+            self.assertEqual(metadata.get("cgc_active_context"), "Envctl-feature-a-1")
+
     def test_setup_worktree_cgc_launch_failure_does_not_fail_worktree_creation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

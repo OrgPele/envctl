@@ -6771,6 +6771,40 @@ class ActionsParityTests(unittest.TestCase):
             self.assertIn("cgc context delete", fake_runner.run_calls[0][0][2])
             self.assertEqual(fake_runner.run_calls[1][0][:5], ("git", "-C", str(repo.resolve()), "worktree", "remove"))
 
+    def test_delete_worktree_does_not_remove_unmanaged_inherited_cgc_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_a = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (tree_a / ".envctl-state").mkdir(parents=True, exist_ok=True)
+            (tree_a / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+            (tree_a / ".envctl-state" / "code-intelligence.json").write_text(
+                json.dumps(
+                    {
+                        "cgc_context": "Repo-feature-a-1",
+                        "cgc_active_context": "Repo",
+                        "cgc_context_managed": False,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            fake_runner = _FakeRunner(returncode=1)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+            engine._blast_worktree_before_delete = lambda **_kwargs: []  # type: ignore[assignment]
+            route = parse_route(
+                ["delete-worktree", "--project", "feature-a-1"],
+                env={"ENVCTL_DEFAULT_MODE": "trees"},
+            )
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertFalse(tree_a.exists())
+            self.assertEqual(fake_runner.run_calls[0][0][:5], ("git", "-C", str(repo.resolve()), "worktree", "remove"))
+
     def test_blast_worktree_alias_routes_to_delete_flow_with_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

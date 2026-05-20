@@ -114,5 +114,7 @@ def _worktree_cgc_context_from_metadata(worktree_root: Path) -> str:
         payload = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return ""
+    if payload.get("cgc_context_managed") is False:
+        return ""
     context = str(payload.get("cgc_context") or "").strip()
     return context
