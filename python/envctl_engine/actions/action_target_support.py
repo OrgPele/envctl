@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Sequence
 
 
@@ -33,6 +34,100 @@ def build_action_target_contexts(targets: Sequence[object]) -> list[ActionTarget
         )
         for index, target in enumerate(targets, start=1)
     ]
+
+
+def resolve_action_targets(
+    *,
+    command: str,
+    mode: str,
+    trees_only: bool,
+    projects: Sequence[str],
+    passthrough_args: Sequence[str],
+    flags: Mapping[str, object],
+    discover_projects: Callable[[str], list[object]],
+    selectors_from_passthrough: Callable[[Sequence[str]], set[str]],
+    projects_for_services: Callable[[list[str]], list[str]],
+    current_worktree_target: Callable[..., object | None],
+    interactive_selection_allowed: Callable[[], bool],
+    select_project_targets: Callable[..., object],
+    no_target_selected_message: Callable[[], str],
+) -> tuple[list[object], str | None]:
+    if trees_only and command == "self-destruct-worktree":
+        current = current_worktree_target(require_configured_main_root=False)
+        if current is not None:
+            return [current], None
+        return [], "self-destruct-worktree must be run from inside a discovered worktree."
+    if not trees_only and mode == "main" and command in {"commit", "pr", "test"}:
+        current = current_worktree_target(require_configured_main_root=True)
+        if current is not None:
+            return [current], None
+    if trees_only:
+        candidates = discover_projects("trees")
+    else:
+        candidates = discover_projects(mode)
+        if not candidates and mode == "main":
+            candidates = discover_projects("trees")
+
+    run_all = bool(flags.get("all"))
+    untested_selected = bool(flags.get("untested"))
+    project_selectors = {name.lower() for name in projects}
+    project_selectors.update(selectors_from_passthrough(passthrough_args))
+
+    services = flags.get("services")
+    if isinstance(services, list):
+        for project in projects_for_services(services):
+            project_selectors.add(project.lower())
+
+    if run_all:
+        if not candidates:
+            return [], "No projects discovered for selected mode."
+        return candidates, None
+
+    if not project_selectors and not run_all:
+        if len(candidates) == 1:
+            return candidates, None
+        if interactive_selection_allowed():
+            selection = select_project_targets(
+                prompt=f"Select {command} target",
+                projects=candidates,
+                allow_all=True,
+                allow_untested=command == "test",
+                multi=True,
+            )
+            if bool(getattr(selection, "cancelled", False)):
+                return [], no_target_selected_message()
+            route_view = SimpleNamespace(command=command, projects=list(projects), flags=dict(flags))
+            apply_to_route = getattr(selection, "apply_to_route", None)
+            if callable(apply_to_route):
+                apply_to_route(route_view)
+                if isinstance(projects, list):
+                    projects[:] = list(route_view.projects)
+                if isinstance(flags, dict):
+                    flags.clear()
+                    flags.update(route_view.flags)
+            run_all = bool(route_view.flags.get("all"))
+            project_selectors = {name.lower() for name in route_view.projects}
+            untested_selected = bool(route_view.flags.get("untested"))
+        else:
+            return [], no_target_selected_message()
+
+    if not project_selectors and not run_all and not untested_selected:
+        return [], no_target_selected_message()
+    if run_all:
+        if not candidates:
+            return [], "No projects discovered for selected mode."
+        return candidates, None
+    selected = [
+        candidate
+        for candidate in candidates
+        if str(getattr(candidate, "name", "")).lower() in project_selectors
+    ]
+    if not selected:
+        if command == "test" and untested_selected:
+            return [], None
+        requested = ", ".join(sorted(project_selectors))
+        return [], f"No matching targets found for: {requested}"
+    return selected, None
 
 
 def emit_action_output(

@@ -23,6 +23,7 @@
 - Capability probes belong in `python/envctl_engine/ui/capabilities.py`.
 - Interactive command parsing belongs in `python/envctl_engine/ui/command_parsing.py`.
 - Reusable selector target resolution belongs in `python/envctl_engine/ui/selection_support.py`.
+- Action command target resolution belongs in `python/envctl_engine/actions/action_target_support.py`; orchestrators should pass runtime-specific callbacks rather than own selector logic directly.
 - Shared Textual list navigation belongs in `python/envctl_engine/ui/textual/list_controller.py`.
 - Shared prompt-toolkit list execution belongs in `python/envctl_engine/ui/prompt_toolkit_list.py`.
 - Worktree action deletion and self-destruct helpers belong in `python/envctl_engine/actions/action_worktree_runner.py`; `action_command_orchestrator.py` should delegate those flows.

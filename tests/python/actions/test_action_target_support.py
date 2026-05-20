@@ -12,6 +12,7 @@ from envctl_engine.actions.action_target_support import (  # noqa: E402
     ActionCommandResolution,
     execute_targeted_action,
     emit_action_output,
+    resolve_action_targets,
 )
 
 
@@ -29,6 +30,87 @@ class _Target:
 
 
 class ActionTargetSupportTests(unittest.TestCase):
+    def test_resolve_action_targets_selects_current_worktree_for_main_actions(self) -> None:
+        current = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
+        main = _Target(name="Main", root="/tmp/repo")
+
+        targets, error = resolve_action_targets(
+            command="test",
+            mode="main",
+            trees_only=False,
+            projects=(),
+            passthrough_args=(),
+            flags={},
+            discover_projects=lambda mode: [main] if mode == "main" else [],
+            selectors_from_passthrough=lambda _args: set(),
+            projects_for_services=lambda _services: [],
+            current_worktree_target=lambda *, require_configured_main_root: current
+            if require_configured_main_root
+            else None,
+            interactive_selection_allowed=lambda: False,
+            select_project_targets=lambda **_kwargs: None,
+            no_target_selected_message=lambda: "No target selected.",
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(targets, [current])
+
+    def test_resolve_action_targets_applies_interactive_selection(self) -> None:
+        alpha = _Target(name="alpha", root="/tmp/alpha")
+        beta = _Target(name="beta", root="/tmp/beta")
+        route_projects: list[str] = []
+        flags: dict[str, object] = {"interactive_command": True}
+
+        class _Selection:
+            cancelled = False
+
+            def apply_to_route(self, route: object) -> None:
+                route.projects.append("beta")
+                route.flags["untested"] = True
+
+        targets, error = resolve_action_targets(
+            command="test",
+            mode="trees",
+            trees_only=False,
+            projects=route_projects,
+            passthrough_args=(),
+            flags=flags,
+            discover_projects=lambda _mode: [alpha, beta],
+            selectors_from_passthrough=lambda _args: set(),
+            projects_for_services=lambda _services: [],
+            current_worktree_target=lambda *, require_configured_main_root: None,
+            interactive_selection_allowed=lambda: True,
+            select_project_targets=lambda **kwargs: _Selection(),
+            no_target_selected_message=lambda: "No target selected.",
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(targets, [beta])
+        self.assertEqual(route_projects, ["beta"])
+        self.assertTrue(flags["untested"])
+
+    def test_resolve_action_targets_maps_service_selectors_to_projects(self) -> None:
+        main = _Target(name="Main", root="/tmp/repo")
+
+        targets, error = resolve_action_targets(
+            command="test",
+            mode="main",
+            trees_only=False,
+            projects=(),
+            passthrough_args=(),
+            flags={"services": ["voice-runtime"]},
+            discover_projects=lambda _mode: [main],
+            selectors_from_passthrough=lambda _args: set(),
+            projects_for_services=lambda services: ["Main"] if services == ["voice-runtime"] else [],
+            current_worktree_target=lambda *, require_configured_main_root: None,
+            interactive_selection_allowed=lambda: False,
+            select_project_targets=lambda **_kwargs: None,
+            no_target_selected_message=lambda: "No target selected.",
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(targets, [main])
+
     def test_emit_action_output_trims_and_emits_status(self) -> None:
         printed: list[str] = []
         emitted: list[str] = []
