@@ -1140,8 +1140,8 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             rendered = out.getvalue()
-            self.assertIn("Startup failed: OpenCode AI session failed to start", rendered)
-            self.assertIn(f"{STATUS_FAILURE} Startup failed: OpenCode AI session failed to start", rendered)
+            self.assertIn("Startup failed: Plan agent session failed to start", rendered)
+            self.assertIn(f"{STATUS_FAILURE} Startup failed: Plan agent session failed to start", rendered)
             self.assertNotIn("Implementation session is running, but local app startup failed.", rendered)
 
     def test_headless_opencode_launch_failure_does_not_print_ready_attach_handoff(self) -> None:
@@ -1195,7 +1195,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             rendered = out.getvalue()
-            self.assertIn("OpenCode AI session failed to start", rendered)
+            self.assertIn("Plan agent session failed to start", rendered)
             self.assertIn("opencode_ready_timeout", rendered)
             self.assertNotIn("OpenCode AI session ready", rendered)
             self.assertNotIn("attach: tmux attach", rendered)
