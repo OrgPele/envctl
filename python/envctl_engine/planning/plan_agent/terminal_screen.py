@@ -19,6 +19,12 @@ _CODEX_READY_MARKERS = (
     "model:",
     "directory:",
 )
+_CODEX_GOAL_ACTIVE_MARKERS = (
+    "active goal",
+    "goal context",
+    "goal_context",
+    "current goal",
+)
 _OPENCODE_LOADING_MARKERS = (
     "loading",
     "starting",
@@ -167,6 +173,13 @@ def _codex_queue_screen_looks_ready(screen: str) -> bool:
     return _screen_looks_ready("codex", cleaned)
 
 
+def _codex_goal_screen_looks_active(screen: str) -> bool:
+    normalized_screen = _normalized_screen_text(screen)
+    if not normalized_screen:
+        return False
+    return any(marker in normalized_screen for marker in _CODEX_GOAL_ACTIVE_MARKERS)
+
+
 def _codex_queue_message_needs_tab(screen: str, text: str, *, require_text_match: bool = True) -> bool:
     normalized_screen = _normalized_screen_text(screen)
     if not normalized_screen:
@@ -217,4 +230,3 @@ def _codex_queue_text_is_visible(screen: str, text: str, *, require_text_match: 
 
 
 __all__ = tuple(name for name in globals() if not name.startswith("__"))
-
