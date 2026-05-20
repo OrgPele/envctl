@@ -388,7 +388,7 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--no-goal           disable Codex /goal framing for this launch",
             "--codex             force Codex for cmux/tmux launches",
             "--opencode          force OpenCode for cmux/tmux launches",
-            "--ulw               tmux + OpenCode only: force /ulw-loop prefix (default for OpenCode)",
+            "--ulw               OpenCode only: force /ulw-loop prefix (default for OpenCode)",
             "--new-session  create a fresh cmux/tmux/OMX launch target instead of reusing an existing one",
             "SUPERSET_PROJECT=<id> or SUPERSET_WORKSPACE=<id> selects the Superset high-level transport",
         ),

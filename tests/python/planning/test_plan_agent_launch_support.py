@@ -522,8 +522,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(launch_config.transport, "cmux")
         self.assertEqual(launch_config.cli, "opencode")
         self.assertTrue(launch_config.enabled)
-        self.assertFalse(launch_config.direct_prompt_enabled)
-        self.assertFalse(launch_config.ulw_loop_prefix)
+        self.assertTrue(launch_config.direct_prompt_enabled)
+        self.assertTrue(launch_config.ulw_loop_prefix)
         self.assertEqual(prereqs, ("cmux", "opencode"))
 
     def test_resolve_preset_submission_text_defaults_ulw_loop_for_explicit_opencode(self) -> None:
@@ -5243,12 +5243,21 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertIn(["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", f"cd {repo}"], rt.process_runner.calls)
             self.assertIn(["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "enter"], rt.process_runner.calls)
             self.assertIn(["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", "opencode"], rt.process_runner.calls)
-            self.assertIn(["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", "/implement_task"], rt.process_runner.calls)
+            direct_prompt_calls = [
+                call
+                for call in rt.process_runner.calls
+                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-12"]
+            ]
+            self.assertEqual(len(direct_prompt_calls), 1)
+            self.assertTrue(str(direct_prompt_calls[0][-1]).startswith("/ulw-loop You are implementing real code"))
+            self.assertIn(
+                ["cmux", "paste-buffer", "--name", "envctl-surface-12", "--workspace", "workspace:8", "--surface", "surface:12"],
+                rt.process_runner.calls,
+            )
             self.assertEqual(len(_ImmediateThread.created), 1)
             self.assertTrue(_ImmediateThread.created[0].started)
             self.assertEqual(_ImmediateThread.created[0].daemon, False)
-            self.assertIn(["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "ctrl+e"], rt.process_runner.calls)
-            self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:8", "--surface", "surface:12", "--lines", "80"]), 3)
+            self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:8", "--surface", "surface:12", "--lines", "80"]), 2)
             self.assertGreaterEqual(
                 rt.process_runner.calls.count(
                     ["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "enter"]
@@ -6313,19 +6322,18 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(result.status, "launched")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "new-surface", "--workspace", "workspace:9"])
             self.assertNotIn(["cmux", "list-workspaces"], rt.process_runner.calls)
+            direct_prompt_calls = [
+                call
+                for call in rt.process_runner.calls
+                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-15"]
+            ]
+            self.assertEqual(len(direct_prompt_calls), 1)
+            self.assertTrue(str(direct_prompt_calls[0][-1]).startswith("/ulw-loop You are reviewing"))
+            self.assertIn(f'Review bundle: "{review_bundle}"', str(direct_prompt_calls[0][-1]))
+            self.assertIn(f'Worktree directory: "{project_root}"', str(direct_prompt_calls[0][-1]))
+            self.assertIn(f'Original plan file: "{original_plan.resolve()}"', str(direct_prompt_calls[0][-1]))
             self.assertIn(
-                [
-                    "cmux",
-                    "send",
-                    "--workspace",
-                    "workspace:9",
-                    "--surface",
-                    "surface:15",
-                    "/review_worktree_imp Project: feature-a-1\n"
-                    f'Review bundle: "{review_bundle}"\n'
-                    f'Worktree directory: "{project_root}"\n'
-                    f'Original plan file: "{original_plan.resolve()}"',
-                ],
+                ["cmux", "paste-buffer", "--name", "envctl-surface-15", "--workspace", "workspace:9", "--surface", "surface:15"],
                 rt.process_runner.calls,
             )
 

@@ -172,12 +172,12 @@ def resolve_plan_agent_launch_config(
     direct_prompt_enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT")
         or config.raw.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT"),
-        True if (transport == "tmux" and cli == "opencode") else False,
+        True if cli == "opencode" else False,
     )
     ulw_loop_prefix = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX")
         or config.raw.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX"),
-        True if (transport == "tmux" and cli == "opencode" and direct_prompt_enabled) else False,
+        True if (cli == "opencode" and direct_prompt_enabled) else False,
     )
     ulw_suffix = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_APPEND_ULW")
@@ -186,7 +186,7 @@ def resolve_plan_agent_launch_config(
     )
     if bool(route_flags.get("ulw")):
         ulw_loop_prefix = True
-        if transport == "tmux" and cli == "opencode":
+        if cli == "opencode":
             direct_prompt_enabled = True
     omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
     if bool(route_flags.get("ultragoal")):
