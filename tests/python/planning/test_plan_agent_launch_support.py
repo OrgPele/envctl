@@ -108,7 +108,7 @@ class _RuntimeHarness:
         self._persist_events_snapshot_calls = 0
 
     def _command_exists(self, command: str) -> bool:
-        return command in {"cmux", "codex", "omx", "opencode", "script", "tmux", "zsh"}
+        return command in {"cmux", "codex", "omx", "opencode", "script", "superset", "tmux", "zsh"}
 
     def _emit(self, event: str, **payload: object) -> None:
         self._plan_agent_events.append({"event": event, **payload})
@@ -462,6 +462,130 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertTrue(launch_config.direct_prompt_enabled)
         self.assertTrue(launch_config.ulw_loop_prefix)
         self.assertEqual(prereqs, ("tmux", "opencode"))
+
+    def test_superset_alias_selects_workspace_surface_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "SUPERSET": "true",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a"], env={}),
+            )
+            prereqs = launch_support.plan_agent_launch_prereq_commands(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a"], env={}),
+            )
+
+        self.assertEqual(launch_config.transport, "superset")
+        self.assertTrue(launch_config.enabled)
+        self.assertEqual(prereqs, ("superset", "codex"))
+
+    def test_superset_workspace_alias_resolves_named_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "SUPERSET_WORKSPACE": "envctl",
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(
+                        args=["superset"],
+                        returncode=0,
+                        stdout="workspace:9 envctl\n",
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="surface:3\n", stderr=""),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["superset"],
+                        returncode=0,
+                        stdout="› Explain this codebase\n",
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(
+                        args=["superset"],
+                        returncode=0,
+                        stdout="› Explain this codebase\n",
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="", stderr=""),
+                ]
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+            ):
+                _ImmediateThread.created = []
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+        self.assertEqual(result.status, "launched")
+        self.assertEqual(rt.process_runner.calls[0], ["superset", "list-workspaces"])
+        self.assertIn(["superset", "new-surface", "--workspace", "workspace:9"], rt.process_runner.calls)
+        self.assertIn(
+            ["superset", "rename-tab", "--workspace", "workspace:9", "--surface", "surface:3", "feature-a-1"],
+            rt.process_runner.calls,
+        )
+        self.assertTrue(
+            any(
+                call[:4] == ["superset", "set-buffer", "--name", "envctl-surface-3"]
+                and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+                for call in rt.process_runner.calls
+            )
+        )
+
+    def test_superset_configured_workspace_handle_skips_workspace_listing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "superset",
+                    "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE": "workspace:9",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a"], env={}),
+            )
+
+        self.assertEqual(launch_config.transport, "superset")
+        self.assertEqual(launch_config.superset_workspace, "workspace:9")
+        self.assertTrue(launch_config.enabled)
 
     def test_resolve_preset_submission_text_defaults_ulw_loop_for_explicit_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5971,6 +6095,68 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     f'Original plan file: "{original_plan.resolve()}"',
                 ],
                 rt.process_runner.calls,
+            )
+
+    def test_superset_review_launch_honors_explicit_workspace_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            project_root = repo / "trees" / "feature-a" / "1"
+            review_bundle = repo / "runtime" / "review" / "all.md"
+            original_plan = repo / "todo" / "plans" / "implementations" / "feature-a.md"
+            project_root.mkdir(parents=True, exist_ok=True)
+            review_bundle.parent.mkdir(parents=True, exist_ok=True)
+            original_plan.parent.mkdir(parents=True, exist_ok=True)
+            review_bundle.write_text("# review\n", encoding="utf-8")
+            original_plan.write_text("# Current plan\n", encoding="utf-8")
+            (project_root / ".envctl-state").mkdir(parents=True, exist_ok=True)
+            (project_root / ".envctl-state" / "worktree-provenance.json").write_text(
+                json.dumps({"schema_version": 1, "plan_file": "implementations/feature-a.md"}) + "\n",
+                encoding="utf-8",
+            )
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "superset",
+                    "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE": "workspace:9",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="surface:15\n", stderr=""),
+                ]
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_picker_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_submit_ready", return_value=None),
+            ):
+                _ImmediateThread.created = []
+                result = launch_support.launch_review_agent_terminal(
+                    rt,
+                    repo_root=repo,
+                    project_name="feature-a-1",
+                    project_root=project_root,
+                    review_bundle_path=review_bundle,
+                )
+
+            self.assertEqual(result.status, "launched")
+            self.assertEqual(rt.process_runner.calls[0], ["superset", "new-surface", "--workspace", "workspace:9"])
+            self.assertNotIn(["superset", "list-workspaces"], rt.process_runner.calls)
+            self.assertIn(
+                ["superset", "send", "--workspace", "workspace:9", "--surface", "surface:15", f"cd {repo}"],
+                rt.process_runner.calls,
+            )
+            self.assertTrue(
+                any(
+                    call[:4] == ["superset", "set-buffer", "--name", "envctl-surface-15"]
+                    and f'Review bundle: "{review_bundle}"' in str(call[-1])
+                    for call in rt.process_runner.calls
+                )
             )
 
     def test_review_launch_uses_direct_prompt_submission_for_opencode_when_enabled(self) -> None:

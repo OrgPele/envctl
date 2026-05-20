@@ -22,11 +22,11 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         browser_e2e_followup_enable=launch_config.browser_e2e_followup_enable,
         pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
     )
-    workspace_id = None if launch_config.transport == "tmux" else _resolve_workspace_id(runtime, launch_config)
+    workspace_id = None if launch_config.transport in {"tmux", "omx"} else _resolve_workspace_id(runtime, launch_config)
     target_workspace = (
         None
-        if launch_config.transport == "tmux"
-        else (launch_config.cmux_workspace or _default_target_workspace_title(runtime, launch_config))
+        if launch_config.transport in {"tmux", "omx"}
+        else (_configured_workspace(launch_config) or _default_target_workspace_title(runtime, launch_config))
     )
     payload: dict[str, object] = {
         "enabled": launch_config.enabled,
@@ -63,8 +63,8 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
     if _route_requests_ulw(route) and not _ulw_route_supported(launch_config=launch_config):
         payload["reason"] = "unsupported_ulw_flag"
         return payload
-    if launch_config.transport == "cmux" and _missing_required_cmux_context(runtime, launch_config):
-        payload["reason"] = "missing_cmux_context"
+    if launch_config.transport in {"cmux", "superset"} and _missing_required_cmux_context(runtime, launch_config):
+        payload["reason"] = f"missing_{launch_config.transport}_context"
         return payload
     payload["reason"] = "awaiting_new_worktrees"
     return payload
@@ -109,15 +109,22 @@ def launch_plan_agent_terminals(
         _print_launch_summary("Plan agent launch skipped: no new worktrees were created.")
         runtime._emit("planning.agent_launch.skipped", reason="no_new_worktrees", **base_payload)
         return PlanAgentLaunchResult(status="skipped", reason="no_new_worktrees")
-    if launch_config.transport == "cmux" and _missing_required_cmux_context(runtime, launch_config):
-        _print_launch_summary(
-            "Plan agent launch skipped: no active cmux workspace context found. "
-            "Fix by setting ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=<workspace-id>, "
-            "setting ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=false, "
-            "or running envctl from within an active cmux session."
+    if launch_config.transport in {"cmux", "superset"} and _missing_required_cmux_context(runtime, launch_config):
+        context_label = "Superset" if launch_config.transport == "superset" else "cmux"
+        workspace_key = (
+            "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE"
+            if launch_config.transport == "superset"
+            else "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE"
         )
-        runtime._emit("planning.agent_launch.skipped", reason="missing_cmux_context", **base_payload)
-        return PlanAgentLaunchResult(status="skipped", reason="missing_cmux_context")
+        _print_launch_summary(
+            f"Plan agent launch skipped: no active {context_label} workspace context found. "
+            f"Fix by setting {workspace_key}=<workspace-id>, "
+            "setting ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=false, "
+            f"or running envctl from within an active {context_label} session."
+        )
+        reason = f"missing_{launch_config.transport}_context"
+        runtime._emit("planning.agent_launch.skipped", reason=reason, **base_payload)
+        return PlanAgentLaunchResult(status="skipped", reason=reason)
     missing_commands = _missing_launch_commands(runtime, launch_config)
     if missing_commands:
         message = f"Plan agent launch skipped: missing required executables: {', '.join(missing_commands)}."
@@ -152,16 +159,21 @@ def launch_plan_agent_terminals(
         )
 
     workspace_target = _ensure_workspace_id(runtime, launch_config)
-    target_workspace = launch_config.cmux_workspace
+    target_workspace = _configured_workspace(launch_config)
     if workspace_target is None and not target_workspace:
         target_workspace = _default_target_workspace_title(runtime, launch_config)
     if workspace_target is None and target_workspace:
-        _print_launch_summary("Plan agent launch failed: unable to resolve or create the configured cmux workspace.")
+        _print_launch_summary(
+            f"Plan agent launch failed: unable to resolve or create the configured {launch_config.transport} workspace."
+        )
         return PlanAgentLaunchResult(status="failed", reason="workspace_unavailable")
     if workspace_target is None:
-        _print_launch_summary("Plan agent launch skipped: current cmux workspace context is unavailable.")
-        runtime._emit("planning.agent_launch.skipped", reason="missing_cmux_context", **base_payload)
-        return PlanAgentLaunchResult(status="skipped", reason="missing_cmux_context")
+        _print_launch_summary(
+            f"Plan agent launch skipped: current {launch_config.transport} workspace context is unavailable."
+        )
+        reason = f"missing_{launch_config.transport}_context"
+        runtime._emit("planning.agent_launch.skipped", reason=reason, **base_payload)
+        return PlanAgentLaunchResult(status="skipped", reason=reason)
 
     workspace_id = workspace_target.workspace_id
     runtime._emit(
@@ -215,5 +227,6 @@ def launch_plan_agent_terminals(
     if failed:
         _print_launch_summary(f"Plan agent launch failed for {len(failed)} worktree(s).")
         return PlanAgentLaunchResult(status="failed", reason="launch_failed", outcomes=tuple(outcomes))
-    _print_launch_summary(f"Plan agent launch opened {len(launched)} cmux surface(s).")
+    surface_label = "Superset" if launch_config.transport == "superset" else "cmux"
+    _print_launch_summary(f"Plan agent launch opened {len(launched)} {surface_label} surface(s).")
     return PlanAgentLaunchResult(status="launched", reason="launched", outcomes=tuple(outcomes))

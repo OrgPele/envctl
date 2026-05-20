@@ -46,7 +46,7 @@ The Python package lives under `python/envctl_engine/`:
 - Textual selector list navigation is shared through `ui/textual/list_controller.py`.
 - Prompt-toolkit selector execution is shared through `ui/prompt_toolkit_list.py`.
 - Startup and resume support modules own reusable behavior; orchestrators compose them instead of duplicating it.
-- Plan-agent launch implementation is grouped under `planning/plan_agent/`: `launch.py` owns top-level dispatch, `models.py` owns launch contracts, `workflow.py` owns prompt workflow construction, `terminal_screen.py` owns AI CLI readiness predicates, and transport-specific seams live in `tmux_transport.py`, `cmux_transport.py`, and `omx_transport.py`. The old `planning/plan_agent_launch_support.py` path remains a public compatibility facade; private helpers should be imported and patched through their owner modules.
+- Plan-agent launch implementation is grouped under `planning/plan_agent/`: `launch.py` owns top-level dispatch, `models.py` owns launch contracts, `workflow.py` owns prompt workflow construction, `terminal_screen.py` owns AI CLI readiness predicates, and transport-specific code lives in `tmux_transport.py`, `cmux_transport.py`, and `omx_transport.py`. `cmux_transport.py` owns cmux-compatible workspace-surface launchers, including cmux and Superset. The old `planning/plan_agent_launch_support.py` path remains a public compatibility facade; private helpers should be imported and patched through their owner modules.
 
 ## Runtime Artifacts
 Python runtime writes deterministic artifacts under `${RUN_SH_RUNTIME_DIR}/python-engine/`:

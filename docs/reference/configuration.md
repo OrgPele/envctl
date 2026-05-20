@@ -361,7 +361,8 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 ## Plan Agent Launch
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` cmux terminal launch for newly created worktrees. When enabled without an explicit workspace override, envctl targets a sibling workspace named `"<current workspace> implementation"`. |
+| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` workspace-surface terminal launch for newly created worktrees. The workspace surface defaults to cmux and can be switched to Superset with `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=superset`. When enabled without an explicit workspace override, envctl targets a sibling workspace named `"<current workspace> implementation"`. |
+| `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` | `cmux` | Workspace-surface transport for the default non-tmux/non-OMX launcher. Accepted values are `cmux` and `superset`. Route flags `--tmux` and `--omx` still take precedence. |
 | `ENVCTL_PLAN_AGENT_CLI` | `codex` | AI CLI selection for launched surfaces (`codex` or `opencode`). |
 | `ENVCTL_PLAN_AGENT_PRESET` | `implement_task` | Prompt preset name submitted after the AI CLI starts. OpenCode cmux launches send `/<preset>`; `--tmux --opencode` submits the rendered prompt body directly. Codex resolves the preset from the envctl-managed Codex prompt file and submits that prompt body directly. `implement_plan` remains available as a backward-compatible preset. |
 | `ENVCTL_PLAN_AGENT_DIRECT_PROMPT` | transport/CLI dependent | Use direct prompt-body submission instead of slash-command submission when supported. Defaults to true for `--tmux --opencode`. |
@@ -371,11 +372,12 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE` | `true` | Toggle Codex `/goal` session framing before the initial implementation prompt. Applies to Codex cmux, tmux, and OMX-managed tmux launches, including `--omx --ultragoal`, `--omx --ralph`, and `--omx --team`; OpenCode ignores it. Route flags `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch. |
 | `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE` | `true` | Toggle the Codex/OMX `$browser` E2E follow-up. When true, envctl queues a browser validation prompt after implementation/finalization to re-read `MAIN_TASK.md`, validate the feature end-to-end against the full `envctl --entire-system --headless` stack, capture browser evidence where possible, and fix implementation-introduced issues. Set this to `false` in `.envctl` or the environment to skip that follow-up. |
 | `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE` | `true` | Toggle the final Codex/OMX PR review-comments follow-up. When true, envctl queues a `$gh-address-comments` prompt after the current implementation/E2E prompts to inspect unresolved PR comments, address all actionable feedback, commit/push fixes, and wait for final PR confirmation. Set this to `false` in `.envctl` or the environment to skip that follow-up. |
-| `ENVCTL_PLAN_AGENT_SHELL` | `zsh` | Shell command used when respawning the new cmux surface. |
-| `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT` | `true` | Require caller `CMUX_WORKSPACE_ID` so envctl can derive the default `"<current workspace> implementation"` target. If false, envctl falls back to the selected cmux workspace title when available. |
-| `ENVCTL_PLAN_AGENT_CODEX_YOLO` | `true` | When envctl owns a Codex cmux/tmux launch and `ENVCTL_PLAN_AGENT_CLI_CMD` is unset, append `--dangerously-bypass-approvals-and-sandbox`. Set to `false` in `.envctl` when your Codex wrapper or config already supplies that flag. |
+| `ENVCTL_PLAN_AGENT_SHELL` | `zsh` | Shell command used when respawning the new cmux or Superset surface. |
+| `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT` | `true` | Require caller workspace context so envctl can derive the default `"<current workspace> implementation"` target. cmux uses `CMUX_WORKSPACE_ID`; Superset uses `SUPERSET_WORKSPACE_ID`. If false, envctl falls back to the selected workspace title when available. |
+| `ENVCTL_PLAN_AGENT_CODEX_YOLO` | `true` | When envctl owns a Codex cmux/Superset/tmux launch and `ENVCTL_PLAN_AGENT_CLI_CMD` is unset, append `--dangerously-bypass-approvals-and-sandbox`. Set to `false` in `.envctl` when your Codex wrapper or config already supplies that flag. |
 | `ENVCTL_PLAN_AGENT_CLI_CMD` | unset | Optional raw AI CLI command override typed into the launched shell. When set, this raw command wins over the default Codex YOLO command builder. |
 | `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` | unset | Explicit cmux workspace target for new surfaces. Accepts a workspace ref/UUID/index or a workspace title such as `envctl`. When set, it also enables plan-agent terminal launch even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset. If a named workspace does not already exist, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE` | unset | Explicit Superset workspace target for new surfaces. Accepts the same handle/title forms as the cmux setting, also enables plan-agent terminal launch, and uses the same create/rename/starter-surface choreography through the `superset` CLI. |
 
 Enabled plan-agent launches prepare backend/frontend dependencies in the selected worktree before prompt submission.
 This reuses the normal backend/frontend bootstrap logic, skips migrations, and does not start services. Configured backend
@@ -384,15 +386,17 @@ runner or backend virtualenv when available.
 
 Dashboard review-tab note:
 
-- the optional post-review origin tab in `envctl dashboard` reuses `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
+- the optional post-review origin tab in `envctl dashboard` reuses `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT`, `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`, and `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE`
 - it does not read `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE`; the dashboard selector menu is the opt-in
-- when no explicit cmux workspace override is set, the review-tab flow targets a sibling workspace named `"<current workspace> reviews"`
+- when no explicit workspace override is set, the review-tab flow targets a sibling workspace named `"<current workspace> reviews"`
 - the launched review prompt includes reviewer notes pointing at the generated review bundle, target worktree directory, and the original plan file that created the worktree when provenance can resolve it
 
 Alias env vars:
 
 - `CMUX=true` is a shorthand alias for enabling plan-agent launch with the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=<value>`
+- `SUPERSET=true` is a shorthand alias for enabling plan-agent launch with `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=superset`
+- `SUPERSET_WORKSPACE=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE=<value>` and selects Superset
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - canonical `ENVCTL_PLAN_AGENT_*` keys win when both canonical and alias forms are set
 - `CYCLES` only changes the effective Codex cycle count; it does not enable plan-agent launch by itself

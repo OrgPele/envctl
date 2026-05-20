@@ -1120,7 +1120,9 @@ def _validate_plan_agent_cli_flags(state: _ParserState) -> None:
     if bool(state.flags.get("codex")) and bool(state.flags.get("opencode")):
         raise RouteError("Use only one of --codex or --opencode.")
     if bool(state.flags.get("omx")) and bool(state.flags.get("opencode")):
-        raise RouteError("--opencode is only supported with cmux or --tmux plan-agent launches; --omx uses Codex.")
+        raise RouteError(
+            "--opencode is only supported with cmux, Superset, or --tmux plan-agent launches; --omx uses Codex."
+        )
     if bool(state.flags.get("opencode")) and (bool(state.flags.get("goal")) or bool(state.flags.get("codex_goal"))):
         raise RouteError(
             "Codex /goal framing is only supported with Codex plan-agent launches; "

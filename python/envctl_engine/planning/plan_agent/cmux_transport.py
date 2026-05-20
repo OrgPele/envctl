@@ -37,6 +37,24 @@ from envctl_engine.planning.plan_agent.workflow import *
 from envctl_engine.planning.plan_agent.terminal_screen import *
 from envctl_engine.planning.plan_agent.recovery import *
 
+
+def _workspace_surface_command(target: Any) -> str:
+    transport = str(getattr(target, "transport", "") or "").strip().lower()
+    if not transport and hasattr(target, "config"):
+        transport = str(getattr(getattr(target, "config"), "plan_agent_surface_transport", "") or "").strip().lower()
+    return "superset" if transport == "superset" else "cmux"
+
+
+def _workspace_context_env_var(launch_config: PlanAgentLaunchConfig) -> str:
+    return "SUPERSET_WORKSPACE_ID" if launch_config.transport == "superset" else "CMUX_WORKSPACE_ID"
+
+
+def _configured_workspace(launch_config: PlanAgentLaunchConfig) -> str:
+    if launch_config.transport == "superset":
+        return str(launch_config.superset_workspace or "").strip()
+    return str(launch_config.cmux_workspace or "").strip()
+
+
 def review_agent_launch_readiness(runtime: Any) -> ReviewAgentLaunchReadiness:
     launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
     missing_commands = tuple(_missing_launch_commands(runtime, launch_config))
@@ -47,12 +65,12 @@ def review_agent_launch_readiness(runtime: Any) -> ReviewAgentLaunchReadiness:
             cli=launch_config.cli,
             missing=missing_commands,
         )
-    if launch_config.cmux_workspace:
+    if _configured_workspace(launch_config):
         return ReviewAgentLaunchReadiness(ready=True, reason="ready", cli=launch_config.cli)
     if _default_target_workspace_title(runtime, launch_config, workspace_mode="reviews"):
         return ReviewAgentLaunchReadiness(ready=True, reason="ready", cli=launch_config.cli)
     reason = (
-        "missing_cmux_context"
+        f"missing_{launch_config.transport}_context"
         if _missing_required_cmux_context(runtime, launch_config)
         else "workspace_unavailable"
     )
@@ -86,7 +104,7 @@ def launch_review_agent_terminal(
     )
     if workspace_target is None:
         reason = (
-            "missing_cmux_context"
+            f"missing_{launch_config.transport}_context"
             if _missing_required_cmux_context(runtime, launch_config)
             else "workspace_unavailable"
         )
@@ -98,7 +116,7 @@ def launch_review_agent_terminal(
         )
         return AgentTerminalLaunchResult(status="failed", reason=reason)
     workspace_id = workspace_target.workspace_id
-    surface_id, create_error = _create_surface(runtime, workspace_id=workspace_id)
+    surface_id, create_error = _create_surface(runtime, workspace_id=workspace_id, launch_config=launch_config)
     if create_error or surface_id is None:
         runtime._emit(
             "dashboard.review_tab.failed",
@@ -150,7 +168,7 @@ def _launch_single_worktree(
         surface_id = starter_surface_id
         create_error = None
     else:
-        surface_id, create_error = _create_surface(runtime, workspace_id=workspace_id)
+        surface_id, create_error = _create_surface(runtime, workspace_id=workspace_id, launch_config=launch_config)
     if create_error or surface_id is None:
         runtime._emit(
             "planning.agent_launch.failed",
@@ -188,9 +206,14 @@ def _launch_single_worktree(
     )
 
 
-def _create_surface(runtime: Any, *, workspace_id: str) -> tuple[str | None, str | None]:
+def _create_surface(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    launch_config: PlanAgentLaunchConfig,
+) -> tuple[str | None, str | None]:
     result = runtime.process_runner.run(
-        ["cmux", "new-surface", "--workspace", workspace_id],
+        [_workspace_surface_command(launch_config), "new-surface", "--workspace", workspace_id],
         cwd=runtime.config.base_dir,
         env=getattr(runtime, "env", {}),
         timeout=10.0,
@@ -452,7 +475,7 @@ def _run_surface_bootstrap(
                 workflow_mode=workflow.mode,
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
-                transport="cmux",
+                transport=launch_config.transport,
                 **failure_context,
             )
             runtime._emit(
@@ -464,7 +487,7 @@ def _run_surface_bootstrap(
                 workflow_mode=workflow.mode,
                 codex_cycles=workflow.codex_cycles,
                 reason=queue_error_reason,
-                transport="cmux",
+                transport=launch_config.transport,
                 **failure_context,
             )
             return None
@@ -573,7 +596,7 @@ def _maybe_submit_surface_codex_goal(
             surface_id=surface_id,
             cli=launch_config.cli,
             workflow=workflow,
-            transport="cmux",
+            transport=launch_config.transport,
             worktree=worktree,
         )
         return None
@@ -585,7 +608,7 @@ def _maybe_submit_surface_codex_goal(
             surface_id=surface_id,
             cli=launch_config.cli,
             workflow=workflow,
-            transport="cmux",
+            transport=launch_config.transport,
             worktree=worktree,
             reason=error,
         )
@@ -749,7 +772,7 @@ def _queue_codex_workflow_steps(
         codex_cycles=workflow.codex_cycles,
         queued_steps=len(queued_steps),
         queued_steps_confirmed=len(queued_steps),
-        transport="cmux",
+        transport=launch_config.transport,
     )
     return None
 
@@ -876,8 +899,9 @@ def _resolve_workspace_id(
     *,
     workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
 ) -> str | None:
-    if launch_config.cmux_workspace:
-        return _resolve_configured_workspace_id(runtime, launch_config.cmux_workspace)
+    configured_workspace = _configured_workspace(launch_config)
+    if configured_workspace:
+        return _resolve_configured_workspace_id(runtime, configured_workspace)
     _, target_ref = _default_workspace_target(runtime, launch_config, workspace_mode=workspace_mode)
     return target_ref
 
@@ -889,8 +913,9 @@ def _ensure_workspace_id(
     workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
     event_prefix: str = "planning.agent_launch",
 ) -> _WorkspaceLaunchTarget | None:
-    if launch_config.cmux_workspace:
-        return _ensure_configured_workspace_id(runtime, launch_config.cmux_workspace, event_prefix=event_prefix)
+    configured_workspace = _configured_workspace(launch_config)
+    if configured_workspace:
+        return _ensure_configured_workspace_id(runtime, configured_workspace, event_prefix=event_prefix)
     target_title, resolved = _default_workspace_target(runtime, launch_config, workspace_mode=workspace_mode)
     if not target_title:
         return None
@@ -924,6 +949,7 @@ def _default_workspace_target(
     entries = _list_workspaces(runtime)
     current_title = _current_workspace_title(
         runtime,
+        launch_config=launch_config,
         require_cmux_context=launch_config.require_cmux_context,
         workspace_entries=entries,
     )
@@ -941,21 +967,22 @@ def _default_workspace_target(
 
 
 def _missing_required_cmux_context(runtime: Any, launch_config: PlanAgentLaunchConfig) -> bool:
-    if launch_config.cmux_workspace:
+    if _configured_workspace(launch_config):
         return False
     if not launch_config.require_cmux_context:
         return False
-    return not str(getattr(runtime, "env", {}).get("CMUX_WORKSPACE_ID", "")).strip()
+    return not str(getattr(runtime, "env", {}).get(_workspace_context_env_var(launch_config), "")).strip()
 
 
 def _current_workspace_title(
     runtime: Any,
     *,
+    launch_config: PlanAgentLaunchConfig,
     require_cmux_context: bool,
     workspace_entries: tuple[tuple[str, str], ...] | None = None,
 ) -> str | None:
     entries = workspace_entries if workspace_entries is not None else _list_workspaces(runtime)
-    env_workspace = str(getattr(runtime, "env", {}).get("CMUX_WORKSPACE_ID", "")).strip()
+    env_workspace = str(getattr(runtime, "env", {}).get(_workspace_context_env_var(launch_config), "")).strip()
     if env_workspace:
         for workspace_ref, workspace_title in entries:
             if workspace_ref == env_workspace:
@@ -969,7 +996,7 @@ def _current_workspace_title(
     if not require_cmux_context:
         if entries:
             return entries[0][1]
-        current_ref = _current_workspace_ref(runtime, require_cmux_context=False)
+        current_ref = _current_workspace_ref(runtime, launch_config=launch_config, require_cmux_context=False)
         if not current_ref:
             return None
         for workspace_ref, workspace_title in entries:
@@ -978,15 +1005,20 @@ def _current_workspace_title(
     return None
 
 
-def _current_workspace_ref(runtime: Any, *, require_cmux_context: bool) -> str | None:
-    env_workspace = str(getattr(runtime, "env", {}).get("CMUX_WORKSPACE_ID", "")).strip()
+def _current_workspace_ref(
+    runtime: Any,
+    *,
+    launch_config: PlanAgentLaunchConfig,
+    require_cmux_context: bool,
+) -> str | None:
+    env_workspace = str(getattr(runtime, "env", {}).get(_workspace_context_env_var(launch_config), "")).strip()
     if env_workspace:
         return env_workspace
     if require_cmux_context:
         return None
     try:
         result = runtime.process_runner.run(
-            ["cmux", "current-workspace"],
+            [_workspace_surface_command(runtime), "current-workspace"],
             cwd=runtime.config.base_dir,
             env=getattr(runtime, "env", {}),
             timeout=10.0,
@@ -1001,7 +1033,7 @@ def _current_workspace_ref(runtime: Any, *, require_cmux_context: bool) -> str |
 def _identify_workspace_ref(runtime: Any) -> str | None:
     try:
         result = runtime.process_runner.run(
-            ["cmux", "identify"],
+            [_workspace_surface_command(runtime), "identify"],
             cwd=runtime.config.base_dir,
             env=getattr(runtime, "env", {}),
             timeout=10.0,
@@ -1087,7 +1119,7 @@ def _resolve_workspace_ref_by_title(runtime: Any, title: str) -> str | None:
 def _list_workspaces(runtime: Any) -> tuple[tuple[str, str], ...]:
     try:
         result = runtime.process_runner.run(
-            ["cmux", "list-workspaces"],
+            [_workspace_surface_command(runtime), "list-workspaces"],
             cwd=runtime.config.base_dir,
             env=getattr(runtime, "env", {}),
             timeout=10.0,
@@ -1130,7 +1162,7 @@ def _surface_ids_from_list_output(raw: str) -> tuple[str, ...]:
 def _list_workspace_surfaces(runtime: Any, *, workspace_id: str) -> tuple[str, ...] | None:
     try:
         result = runtime.process_runner.run(
-            ["cmux", "list-pane-surfaces", "--workspace", workspace_id],
+            [_workspace_surface_command(runtime), "list-pane-surfaces", "--workspace", workspace_id],
             cwd=runtime.config.base_dir,
             env=getattr(runtime, "env", {}),
             timeout=10.0,
@@ -1160,7 +1192,7 @@ def _create_named_workspace(
     event_prefix: str = "planning.agent_launch",
 ) -> tuple[_WorkspaceLaunchTarget | None, str | None]:
     create_result = runtime.process_runner.run(
-        ["cmux", "new-workspace", "--cwd", str(runtime.config.base_dir)],
+        [_workspace_surface_command(runtime), "new-workspace", "--cwd", str(runtime.config.base_dir)],
         cwd=runtime.config.base_dir,
         env=getattr(runtime, "env", {}),
         timeout=10.0,
@@ -1170,7 +1202,7 @@ def _create_named_workspace(
     workspace_ref = _workspace_ref_from_command_output(str(getattr(create_result, "stdout", "")))
     if workspace_ref is None:
         current_result = runtime.process_runner.run(
-            ["cmux", "current-workspace"],
+            [_workspace_surface_command(runtime), "current-workspace"],
             cwd=runtime.config.base_dir,
             env=getattr(runtime, "env", {}),
             timeout=10.0,
@@ -1181,7 +1213,7 @@ def _create_named_workspace(
     if workspace_ref is None:
         return None, "workspace_create_failed"
     rename_result = runtime.process_runner.run(
-        ["cmux", "rename-workspace", "--workspace", workspace_ref, title],
+        [_workspace_surface_command(runtime), "rename-workspace", "--workspace", workspace_ref, title],
         cwd=runtime.config.base_dir,
         env=getattr(runtime, "env", {}),
         timeout=10.0,
@@ -1232,7 +1264,7 @@ def _send_surface_text(
 ) -> str | None:
     return _run_cmux_command(
         runtime,
-        ["cmux", "send", "--workspace", workspace_id, "--surface", surface_id, text],
+        [_workspace_surface_command(runtime), "send", "--workspace", workspace_id, "--surface", surface_id, text],
         emit_failure_event=emit_failure_event,
         failure_event=failure_event,
     )
@@ -1250,7 +1282,7 @@ def _paste_surface_text(
     buffer_name = f"envctl-{str(surface_id).replace(':', '-')}"
     set_error = _run_cmux_command(
         runtime,
-        ["cmux", "set-buffer", "--name", buffer_name, text],
+        [_workspace_surface_command(runtime), "set-buffer", "--name", buffer_name, text],
         emit_failure_event=emit_failure_event,
         failure_event=failure_event,
     )
@@ -1258,7 +1290,16 @@ def _paste_surface_text(
         return set_error
     return _run_cmux_command(
         runtime,
-        ["cmux", "paste-buffer", "--name", buffer_name, "--workspace", workspace_id, "--surface", surface_id],
+        [
+            _workspace_surface_command(runtime),
+            "paste-buffer",
+            "--name",
+            buffer_name,
+            "--workspace",
+            workspace_id,
+            "--surface",
+            surface_id,
+        ],
         emit_failure_event=emit_failure_event,
         failure_event=failure_event,
     )
@@ -1301,7 +1342,7 @@ def _send_surface_key(
 ) -> str | None:
     return _run_cmux_command(
         runtime,
-        ["cmux", "send-key", "--workspace", workspace_id, "--surface", surface_id, key],
+        [_workspace_surface_command(runtime), "send-key", "--workspace", workspace_id, "--surface", surface_id, key],
         emit_failure_event=emit_failure_event,
         failure_event=failure_event,
     )
@@ -1324,7 +1365,12 @@ def _run_cmux_command(
         return None
     error = _completed_process_error_text(result)
     if emit_failure_event:
-        runtime._emit(failure_event, reason="cmux_command_failed", command=command[1], error=error)
+        runtime._emit(
+            failure_event,
+            reason=f"{_workspace_surface_command(runtime)}_command_failed",
+            command=command[1],
+            error=error,
+        )
     return error
 
 
@@ -1355,7 +1401,7 @@ def _wait_for_cli_ready(runtime: Any, *, workspace_id: str, surface_id: str, cli
 def _read_surface_screen(runtime: Any, *, workspace_id: str, surface_id: str) -> str:
     result = runtime.process_runner.run(
         [
-            "cmux",
+            _workspace_surface_command(runtime),
             "read-screen",
             "--workspace",
             workspace_id,
@@ -1424,8 +1470,25 @@ def _prepare_surface(
     failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
     commands = [
-        ["cmux", "rename-tab", "--workspace", workspace_id, "--surface", surface_id, tab_title],
-        ["cmux", "respawn-pane", "--workspace", workspace_id, "--surface", surface_id, "--command", shell_command],
+        [
+            _workspace_surface_command(runtime),
+            "rename-tab",
+            "--workspace",
+            workspace_id,
+            "--surface",
+            surface_id,
+            tab_title,
+        ],
+        [
+            _workspace_surface_command(runtime),
+            "respawn-pane",
+            "--workspace",
+            workspace_id,
+            "--surface",
+            surface_id,
+            "--command",
+            shell_command,
+        ],
     ]
     for command in commands:
         error = _run_cmux_command(runtime, command, failure_event=failure_event)

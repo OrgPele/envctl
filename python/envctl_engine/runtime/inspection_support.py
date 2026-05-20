@@ -280,7 +280,9 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
             "shell": runtime.config.plan_agent_shell,
             "require_cmux_context": runtime.config.plan_agent_require_cmux_context,
             "cli_command": runtime.config.plan_agent_cli_cmd or runtime.config.plan_agent_cli,
+            "surface_transport": runtime.config.plan_agent_surface_transport,
             "cmux_workspace": runtime.config.plan_agent_cmux_workspace or None,
+            "superset_workspace": runtime.config.plan_agent_superset_workspace or None,
         },
     }
     if json_output:

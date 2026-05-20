@@ -116,7 +116,9 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_PLAN_AGENT_SHELL": "zsh",
         "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "true",
         "ENVCTL_PLAN_AGENT_CLI_CMD": "",
+        "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "cmux",
         "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "",
+        "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE": "",
         "ENVCTL_RUNTIME_TRUTH_MODE": "auto",
         "ENVCTL_REQUIREMENTS_STRICT": "true",
         "ENVCTL_BACKEND_BOOTSTRAP_STRICT": "false",
@@ -448,7 +450,9 @@ class EngineConfig:
     plan_agent_shell: str
     plan_agent_require_cmux_context: bool
     plan_agent_cli_cmd: str
+    plan_agent_surface_transport: str
     plan_agent_cmux_workspace: str
+    plan_agent_superset_workspace: str
     runtime_truth_mode: str
     requirements_strict: bool
     main_profile: StartupProfile
@@ -669,9 +673,15 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
     n8n_enabled_any = main_profile.n8n_enable or trees_profile.n8n_enable
     main_backend_expect_listener = parse_bool(resolved.get("MAIN_BACKEND_EXPECT_LISTENER"), True)
     trees_backend_expect_listener = parse_bool(resolved.get("TREES_BACKEND_EXPECT_LISTENER"), True)
+    plan_agent_surface_transport = _parse_plan_agent_surface_transport(
+        resolved.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
+    )
     plan_agent_cmux_workspace = str(resolved.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE", "") or "").strip()
-    plan_agent_terminals_enable = parse_bool(resolved.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"), False) or bool(
-        plan_agent_cmux_workspace
+    plan_agent_superset_workspace = str(resolved.get("ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE", "") or "").strip()
+    plan_agent_terminals_enable = (
+        parse_bool(resolved.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"), False)
+        or bool(plan_agent_cmux_workspace)
+        or bool(plan_agent_superset_workspace)
     )
     additional_services, additional_service_errors = _parse_additional_services(resolved)
     supabase_auth_users, supabase_auth_user_errors = _parse_supabase_auth_users(resolved)
@@ -739,7 +749,9 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         plan_agent_shell=str(resolved.get("ENVCTL_PLAN_AGENT_SHELL", "zsh") or "zsh").strip() or "zsh",
         plan_agent_require_cmux_context=parse_bool(resolved.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT"), True),
         plan_agent_cli_cmd=str(resolved.get("ENVCTL_PLAN_AGENT_CLI_CMD", "") or "").strip(),
+        plan_agent_surface_transport=plan_agent_surface_transport,
         plan_agent_cmux_workspace=plan_agent_cmux_workspace,
+        plan_agent_superset_workspace=plan_agent_superset_workspace,
         runtime_truth_mode=_parse_runtime_truth_mode(
             resolved.get("ENVCTL_RUNTIME_TRUTH_MODE"),
             DEFAULTS["ENVCTL_RUNTIME_TRUTH_MODE"],
@@ -1098,12 +1110,32 @@ def _dependency_toggle_explicit_for_mode(
 
 
 def _apply_plan_agent_aliases(resolved: dict[str, str], *, explicit_values: Mapping[str, str]) -> None:
-    if "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE" not in explicit_values and "CMUX" in explicit_values:
+    superset_alias_present = "SUPERSET" in explicit_values or "SUPERSET_WORKSPACE" in explicit_values
+    if "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE" not in explicit_values and "SUPERSET" in explicit_values:
+        resolved["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] = str(explicit_values.get("SUPERSET", ""))
+    if "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE" not in explicit_values and "SUPERSET_WORKSPACE" in explicit_values:
+        resolved["ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE"] = str(explicit_values.get("SUPERSET_WORKSPACE", ""))
+    if "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT" not in explicit_values and superset_alias_present:
+        resolved["ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT"] = "superset"
+    if (
+        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE" not in explicit_values
+        and "CMUX" in explicit_values
+        and not superset_alias_present
+    ):
         resolved["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] = str(explicit_values.get("CMUX", ""))
     if "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE" not in explicit_values and "CMUX_WORKSPACE" in explicit_values:
         resolved["ENVCTL_PLAN_AGENT_CMUX_WORKSPACE"] = str(explicit_values.get("CMUX_WORKSPACE", ""))
     if "ENVCTL_PLAN_AGENT_CODEX_CYCLES" not in explicit_values and "CYCLES" in explicit_values:
         resolved["ENVCTL_PLAN_AGENT_CODEX_CYCLES"] = str(explicit_values.get("CYCLES", ""))
+
+
+def _parse_plan_agent_surface_transport(raw: object) -> str:
+    normalized = str(raw or "").strip().lower()
+    if normalized in {"", "cmux"}:
+        return "cmux"
+    if normalized == "superset":
+        return "superset"
+    return normalized
 
 
 def discover_local_config_state(base_dir: Path, explicit_path: str | None = None) -> LocalConfigState:
