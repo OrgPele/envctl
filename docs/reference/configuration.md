@@ -361,7 +361,8 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 ## Plan Agent Launch
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` cmux terminal launch for newly created worktrees. When enabled without an explicit workspace override, envctl targets a sibling workspace named `"<current workspace> implementation"`. |
+| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` agent launch for newly created worktrees. The default workspace-backed transport is cmux. |
+| `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` | `cmux` | Workspace-backed launch transport for default `--plan` launches. Accepted values are `cmux` and `superset`; `--tmux`, `--omx`, and `--opencode` route flags override this setting. |
 | `ENVCTL_PLAN_AGENT_CLI` | `codex` | AI CLI selection for launched surfaces (`codex` or `opencode`). |
 | `ENVCTL_PLAN_AGENT_PRESET` | `implement_task` | Prompt preset name submitted after the AI CLI starts. OpenCode cmux launches send `/<preset>`; `--tmux --opencode` submits the rendered prompt body directly. Codex resolves the preset from the envctl-managed Codex prompt file and submits that prompt body directly. `implement_plan` remains available as a backward-compatible preset. |
 | `ENVCTL_PLAN_AGENT_DIRECT_PROMPT` | transport/CLI dependent | Use direct prompt-body submission instead of slash-command submission when supported. Defaults to true for `--tmux --opencode`. |
@@ -376,6 +377,11 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_PLAN_AGENT_CODEX_YOLO` | `true` | When envctl owns a Codex cmux/tmux launch and `ENVCTL_PLAN_AGENT_CLI_CMD` is unset, append `--dangerously-bypass-approvals-and-sandbox`. Set to `false` in `.envctl` when your Codex wrapper or config already supplies that flag. |
 | `ENVCTL_PLAN_AGENT_CLI_CMD` | unset | Optional raw AI CLI command override typed into the launched shell. When set, this raw command wins over the default Codex YOLO command builder. |
 | `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` | unset | Explicit cmux workspace target for new surfaces. Accepts a workspace ref/UUID/index or a workspace title such as `envctl`. When set, it also enables plan-agent terminal launch even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset. If a named workspace does not already exist, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT` | unset | Superset project id/name used when `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=superset` creates or reuses a Superset-managed workspace for the worktree branch. Required unless `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE` is set. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE` | unset | Existing Superset workspace id for `superset agents run --workspace ...`. When set, it also enables plan-agent launch and selects the Superset transport unless the canonical transport key is set. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_HOST` | unset | Superset host target. When set, envctl passes `--host <host>` instead of `--local` to `superset workspaces create`. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_LOCAL` | `true` | Pass `--local` to Superset workspace creation when no host is configured. |
+| `ENVCTL_PLAN_AGENT_SUPERSET_OPEN` | `true` | Run `superset workspaces open <workspace-id>` after a successful Superset launch when a workspace id is available. |
 
 Enabled plan-agent launches prepare backend/frontend dependencies in the selected worktree before prompt submission.
 This reuses the normal backend/frontend bootstrap logic, skips migrations, and does not start services. Configured backend
@@ -393,6 +399,9 @@ Alias env vars:
 
 - `CMUX=true` is a shorthand alias for enabling plan-agent launch with the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=<value>`
+- `SUPERSET=true` enables plan-agent launch and selects `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=superset` unless the canonical transport key is set
+- `SUPERSET_PROJECT=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_SUPERSET_PROJECT=<value>`
+- `SUPERSET_WORKSPACE=<value>` is a shorthand alias for `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE=<value>` and selects Superset transport unless the canonical transport key is set
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - canonical `ENVCTL_PLAN_AGENT_*` keys win when both canonical and alias forms are set
 - `CYCLES` only changes the effective Codex cycle count; it does not enable plan-agent launch by itself
@@ -406,6 +415,13 @@ Cycle mode notes:
 - the global default remains `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`; `$envctl-create-plan-auto-codex` computes a `0` through `8` recommendation and uses that command-scoped value for the envctl command it launches
 - `$envctl-create-plan-auto-opencode` ignores Codex cycles and uses `--tmux --opencode` with the default `/ulw-loop` prefix
 - `$envctl-create-plan-auto-omx` uses `--omx --ultragoal`; Codex `/goal` framing is submitted first when enabled, Ultragoal wraps the initial prompt, and envctl can queue the same Codex follow-up cycle workflow used by plain Codex TUI launches. Use `--omx --ralph` explicitly when you need the Ralph compatibility workflow.
+
+Superset transport notes:
+
+- Superset launches use public CLI commands only: `superset workspaces create`, `superset agents run`, and optionally `superset workspaces open`.
+- Superset public CLI accepts project and branch, not an explicit worktree path; exact envctl worktree adoption is a future extension point.
+- Superset receives only the initial rendered Codex implementation prompt in this slice. Codex cycle queueing, screen polling, tab renaming, key sending, cmux surfaces, and dashboard review tabs are not supported through Superset public CLI.
+- Superset auth and host errors are surfaced from the Superset command output; configure OAuth login or `SUPERSET_API_KEY` as Superset requires.
 
 ## Debug and Diagnostics
 | Variable | Default | Purpose |

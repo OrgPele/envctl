@@ -78,10 +78,23 @@ def resolve_plan_agent_launch_config(
     _apply_plan_agent_aliases(env_map, explicit_values=env_map)
     route_flags = getattr(route, "flags", {}) or {}
     opencode_launch_requested = bool(route_flags.get("opencode"))
-    transport: Literal["cmux", "tmux", "omx"] = (
+    configured_surface_transport = str(
+        env_map.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
+        or config.raw.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
+        or "cmux"
+    ).strip().lower() or "cmux"
+    surface_transport_warning = None
+    if configured_surface_transport not in {"cmux", "superset"}:
+        surface_transport_warning = "invalid_surface_transport"
+        configured_surface_transport = "cmux"
+    transport: Literal["cmux", "tmux", "omx", "superset"] = (
         "omx"
         if bool(route_flags.get("omx"))
-        else ("tmux" if bool(route_flags.get("tmux")) or opencode_launch_requested else "cmux")
+        else (
+            "tmux"
+            if bool(route_flags.get("tmux")) or opencode_launch_requested
+            else ("superset" if configured_surface_transport == "superset" else "cmux")
+        )
     )
     cli = str(
         "opencode"
@@ -121,6 +134,21 @@ def resolve_plan_agent_launch_config(
         or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
         or ""
     ).strip()
+    superset_project = str(
+        env_map.get("ENVCTL_PLAN_AGENT_SUPERSET_PROJECT")
+        or config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_PROJECT")
+        or ""
+    ).strip()
+    superset_workspace = str(
+        env_map.get("ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE")
+        or config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE")
+        or ""
+    ).strip()
+    superset_host = str(
+        env_map.get("ENVCTL_PLAN_AGENT_SUPERSET_HOST")
+        or config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_HOST")
+        or ""
+    ).strip()
     codex_cycles, codex_cycles_warning = _parse_codex_cycles(
         env_map.get("ENVCTL_PLAN_AGENT_CODEX_CYCLES")
         or config.raw.get("ENVCTL_PLAN_AGENT_CODEX_CYCLES")
@@ -130,7 +158,7 @@ def resolve_plan_agent_launch_config(
         env_map.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
         or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
         False,
-    ) or bool(cmux_workspace) or transport in {"tmux", "omx"}
+    ) or bool(cmux_workspace) or bool(superset_project or superset_workspace) or transport in {"tmux", "omx"}
     direct_prompt_enabled = parse_bool(
         env_map.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT")
         or config.raw.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT"),
@@ -198,6 +226,20 @@ def resolve_plan_agent_launch_config(
         ulw_suffix=ulw_suffix,
         omx_workflow=omx_workflow,
         codex_goal_enable=goal_enabled,
+        superset_project=superset_project,
+        superset_workspace=superset_workspace,
+        superset_host=superset_host,
+        superset_local=parse_bool(
+            env_map.get("ENVCTL_PLAN_AGENT_SUPERSET_LOCAL")
+            or config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_LOCAL"),
+            True,
+        ),
+        superset_open=parse_bool(
+            env_map.get("ENVCTL_PLAN_AGENT_SUPERSET_OPEN")
+            or config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_OPEN"),
+            True,
+        ),
+        surface_transport_warning=surface_transport_warning,
     )
 
 
@@ -231,8 +273,12 @@ def plan_agent_launch_prereq_commands(
     launch_config = resolve_plan_agent_launch_config(config, env, route=route)
     if not launch_config.enabled:
         return ()
+    if launch_config.surface_transport_warning:
+        return ()
     if launch_config.transport == "omx":
         return ("omx", "tmux", "script", "codex")
+    if launch_config.transport == "superset":
+        return ("superset", "codex")
     cli_executable = _command_executable(launch_config.cli_command)
     launcher = "tmux" if launch_config.transport == "tmux" else "cmux"
     if not cli_executable:
@@ -253,6 +299,8 @@ def _command_executable(raw_command: str) -> str | None:
 def _missing_launch_commands(runtime: Any, launch_config: PlanAgentLaunchConfig) -> list[str]:
     if launch_config.transport == "omx":
         required = ["omx", "tmux", "script", "codex"]
+    elif launch_config.transport == "superset":
+        required = ["superset", "codex"]
     else:
         required = ["tmux" if launch_config.transport == "tmux" else "cmux"]
         cli_executable = _command_executable(launch_config.cli_command)

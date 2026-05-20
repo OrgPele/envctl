@@ -120,6 +120,25 @@ Each launched surface stays interactive. Envctl creates the tab, renames it to a
 - envctl only appends Codex messages in this mode; it does not type `git`, `gh`, `envctl commit`, or `envctl pr` shell commands itself
 - queue injection failures fall back to the initial `implement_task` launch and leave the surface open for manual continuation
 
+## Optional Superset Agent Launch
+
+Superset is a separate high-level transport, not a cmux-compatible terminal surface. Configure a Superset project or an existing workspace, then run the same plan workflow:
+
+```sh
+SUPERSET=true SUPERSET_PROJECT=<project-id> envctl --plan <selector>
+SUPERSET_WORKSPACE=<workspace-id> envctl --plan <selector>
+```
+
+Behavior:
+
+- for each newly created envctl plan worktree, envctl runs `superset workspaces create --local --project <project> --name <name> --branch <branch> --agent codex --prompt <prompt> --json`, unless an existing workspace is configured
+- with `SUPERSET_WORKSPACE` or `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE`, envctl runs `superset agents run --workspace <workspace> --agent codex --prompt <prompt> --json`
+- `ENVCTL_PLAN_AGENT_SUPERSET_HOST=<host>` uses `--host <host>` instead of `--local`
+- `ENVCTL_PLAN_AGENT_SUPERSET_OPEN=true` opens the workspace when Superset returns a workspace id
+- Superset public CLI receives only the initial rendered Codex implementation prompt; Codex cycles, screen polling, tab renames, key sending, and dashboard review tabs are not supported through Superset in this slice
+- Superset public CLI accepts project and branch, not an explicit worktree path; exact adoption of envctl's worktree path is reserved for a later Superset CLI or host-service extension
+- Superset auth and host setup errors are reported from Superset stdout/stderr so users can log in or configure `SUPERSET_API_KEY`
+
 ## Auto-Launch Create-Plan Skills
 
 The installed create-plan skills connect planning documents to these launch paths:

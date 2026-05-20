@@ -44,6 +44,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "models.py",
             "omx_transport.py",
             "recovery.py",
+            "superset_transport.py",
             "terminal_screen.py",
             "tmux_transport.py",
             "workflow.py",
@@ -101,6 +102,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
         transport_modules = {
             "cmux_transport.py",
             "omx_transport.py",
+            "superset_transport.py",
             "tmux_transport.py",
         }
         violations: list[str] = []
@@ -202,6 +204,9 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "_spawn_omx_session_for_worktree",
                 "_find_existing_omx_attach_target",
                 "validate_plan_agent_attach_target",
+            },
+            "superset_transport.py": {
+                "_launch_plan_agent_superset_workspaces",
             },
             "recovery.py": {
                 "plan_agent_native_recovery_command",

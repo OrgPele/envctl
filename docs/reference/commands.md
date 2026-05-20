@@ -459,6 +459,9 @@ Commit defaults:
 Optional plan-agent launch config for `--plan`:
 
 - `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
+- `SUPERSET=true SUPERSET_PROJECT=<project-id> envctl --plan <selector>` asks Superset to create or reuse a workspace for the branch and start Codex with the rendered implementation prompt
+- `SUPERSET_WORKSPACE=<workspace-id> envctl --plan <selector>` runs Codex in an existing Superset workspace
+- Superset transport uses public `superset workspaces create`, `superset agents run`, and optional `superset workspaces open` commands; it does not use cmux surface commands
 - `envctl --plan <selector> --omx` launches Codex through an OMX-managed detached tmux session instead of having envctl create the tmux window itself
 - `envctl --plan <selector> --omx --ultragoal` enters the default/recommended Ultragoal OMX workflow inside that OMX-managed Codex session
 - `envctl --plan <selector> --omx --ralph` enters the explicit Ralph compatibility workflow inside that OMX-managed Codex session
@@ -491,6 +494,7 @@ Optional plan-agent launch config for `--plan`:
 - when a named target workspace does not exist yet, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface
 - `CMUX=true` enables the feature and uses the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=envctl` is a shorthand alias for targeting a named cmux workspace
+- `SUPERSET=true`, `SUPERSET_PROJECT=<value>`, and `SUPERSET_WORKSPACE=<value>` are shorthand aliases for the Superset public-CLI transport; canonical `ENVCTL_PLAN_AGENT_*` keys still win
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `CYCLES` only changes the Codex cycle count and does not enable plan-agent launch by itself
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and alias forms are set
@@ -514,6 +518,7 @@ Optional dashboard review-tab launch:
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues a plain commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 - with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first commit/push/PR/status-check follow-up, uses commit/push-only follow-ups for intermediate rounds, and reserves `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the one-shot preset workflow
+- Superset also stays on a one-shot Codex prompt in this slice; Codex cycles, screen polling, tab renames, and dashboard review tabs are cmux/tmux/OMX concerns, not Superset public-CLI behavior
 - envctl only appends queued messages; it does not type `envctl test`, `git`, `gh`, `envctl commit`, or `envctl pr` commands into the shell
 
 Debug and diagnostics:

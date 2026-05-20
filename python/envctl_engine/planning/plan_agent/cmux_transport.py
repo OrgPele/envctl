@@ -39,6 +39,12 @@ from envctl_engine.planning.plan_agent.recovery import *
 
 def review_agent_launch_readiness(runtime: Any) -> ReviewAgentLaunchReadiness:
     launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
+    if launch_config.transport == "superset":
+        return ReviewAgentLaunchReadiness(
+            ready=False,
+            reason="unsupported_superset_review_tab",
+            cli=launch_config.cli,
+        )
     missing_commands = tuple(_missing_launch_commands(runtime, launch_config))
     if missing_commands:
         return ReviewAgentLaunchReadiness(
@@ -68,6 +74,14 @@ def launch_review_agent_terminal(
     review_bundle_path: Path | None = None,
 ) -> AgentTerminalLaunchResult:
     launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
+    if launch_config.transport == "superset":
+        runtime._emit(
+            "dashboard.review_tab.failed",
+            reason="unsupported_superset_review_tab",
+            project=project_name,
+            cli=launch_config.cli,
+        )
+        return AgentTerminalLaunchResult(status="failed", reason="unsupported_superset_review_tab")
     missing_commands = _missing_launch_commands(runtime, launch_config)
     if missing_commands:
         runtime._emit(

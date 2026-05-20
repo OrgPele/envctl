@@ -108,7 +108,7 @@ class _RuntimeHarness:
         self._persist_events_snapshot_calls = 0
 
     def _command_exists(self, command: str) -> bool:
-        return command in {"cmux", "codex", "omx", "opencode", "script", "tmux", "zsh"}
+        return command in {"cmux", "codex", "omx", "opencode", "script", "superset", "tmux", "zsh"}
 
     def _emit(self, event: str, **payload: object) -> None:
         self._plan_agent_events.append({"event": event, **payload})
@@ -6134,6 +6134,189 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
             self.assertEqual(original_plan_path, active_plan.resolve())
+
+    def test_superset_alias_selects_superset_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config_obj = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "SUPERSET": "true",
+                    "SUPERSET_PROJECT": "proj-1",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config_obj,
+                {},
+                route=parse_route(["--plan", "feature-a"], env={}),
+            )
+
+        self.assertEqual(launch_config.transport, "superset")
+        self.assertTrue(launch_config.enabled)
+        self.assertEqual(launch_config.superset_project, "proj-1")
+
+    def test_superset_launch_missing_project_without_workspace_skips_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime, env={"SUPERSET": "true"})
+
+            result = launch_plan_agent_terminals(
+                rt,
+                route=parse_route(["--plan", "feature-a"], env={}),
+                created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+            )
+
+        self.assertEqual(result.status, "skipped")
+        self.assertEqual(result.reason, "missing_superset_project")
+        self.assertEqual(rt.process_runner.calls, [])
+
+    def test_superset_project_launch_uses_public_workspace_create_cli_and_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            runtime = Path(tmpdir) / "runtime"
+            worktree.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "SUPERSET": "true",
+                    "SUPERSET_PROJECT": "proj-1",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "2",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["git"], returncode=0, stdout="feature/superset\n", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["superset"],
+                        returncode=0,
+                        stdout=json.dumps({"workspace": {"id": "ws-123"}}),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="", stderr=""),
+                ]
+            )
+
+            result = launch_plan_agent_terminals(
+                rt,
+                route=parse_route(["--plan", "feature-a"], env={}),
+                created_worktrees=(
+                    CreatedPlanWorktree(name="features_envctl_plan_agent_superset_lean_launch_1", root=worktree, plan_file="a.md"),
+                ),
+            )
+
+        self.assertEqual(result.status, "launched")
+        self.assertEqual(result.outcomes[0].surface_id, "ws-123")
+        self.assertEqual(rt.process_runner.calls[0], ["git", "-C", str(worktree), "branch", "--show-current"])
+        create_call = rt.process_runner.calls[1]
+        self.assertEqual(create_call[:7], ["superset", "workspaces", "create", "--local", "--project", "proj-1", "--name"])
+        self.assertIn("--branch", create_call)
+        self.assertEqual(create_call[create_call.index("--branch") + 1], "feature/superset")
+        self.assertIn("--agent", create_call)
+        self.assertEqual(create_call[create_call.index("--agent") + 1], "codex")
+        self.assertIn("--prompt", create_call)
+        self.assertIn("Authoritative source of truth", create_call[create_call.index("--prompt") + 1])
+        self.assertEqual(create_call[-1], "--json")
+        self.assertEqual(rt.process_runner.calls[2], ["superset", "workspaces", "open", "ws-123"])
+        flattened = "\n".join(" ".join(call) for call in rt.process_runner.calls)
+        self.assertNotIn("cmux read-screen", flattened)
+        self.assertNotIn("cmux send-key", flattened)
+        self.assertNotIn("cmux set-buffer", flattened)
+        self.assertNotIn("cmux paste-buffer", flattened)
+        warnings = self._events(rt, "planning.agent_launch.superset_cycles_unsupported")
+        self.assertEqual(len(warnings), 1)
+
+    def test_superset_workspace_launch_uses_public_agent_run_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "SUPERSET_WORKSPACE": "ws-existing",
+                    "ENVCTL_PLAN_AGENT_SUPERSET_OPEN": "false",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(
+                        args=["superset"],
+                        returncode=0,
+                        stdout=json.dumps({"workspace": {"id": "ws-existing"}, "session": {"id": "agent-1"}}),
+                        stderr="",
+                    )
+                ]
+            )
+
+            result = launch_plan_agent_terminals(
+                rt,
+                route=parse_route(["--plan", "feature-a"], env={}),
+                created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+            )
+
+        self.assertEqual(result.status, "launched")
+        run_call = rt.process_runner.calls[0]
+        self.assertEqual(run_call[:5], ["superset", "agents", "run", "--workspace", "ws-existing"])
+        self.assertIn("--agent", run_call)
+        self.assertIn("--prompt", run_call)
+        self.assertEqual(run_call[-1], "--json")
+        self.assertEqual(result.outcomes[0].surface_id, "ws-existing")
+
+    def test_superset_nonzero_exit_returns_failed_outcome_with_error_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime, env={"SUPERSET_WORKSPACE": "ws-existing"})
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(
+                        args=["superset"],
+                        returncode=1,
+                        stdout="host unavailable",
+                        stderr="not logged in",
+                    )
+                ]
+            )
+
+            result = launch_plan_agent_terminals(
+                rt,
+                route=parse_route(["--plan", "feature-a"], env={}),
+                created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+            )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.outcomes[0].status, "failed")
+        self.assertIn("not logged in", str(result.outcomes[0].reason))
+
+    def test_superset_review_launch_is_explicitly_unsupported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(repo, runtime, env={"SUPERSET_WORKSPACE": "ws-existing"})
+
+            readiness = launch_support.review_agent_launch_readiness(rt)
+            result = launch_support.launch_review_agent_terminal(
+                rt,
+                repo_root=repo,
+                project_name="feature-a-1",
+                project_root=repo,
+            )
+
+        self.assertFalse(readiness.ready)
+        self.assertEqual(readiness.reason, "unsupported_superset_review_tab")
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.reason, "unsupported_superset_review_tab")
 
 
 if __name__ == "__main__":

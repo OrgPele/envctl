@@ -768,6 +768,45 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertEqual(voice.depends_on, ("backend", "redis", "worker"))
             self.assertFalse(voice.critical)
 
+    def test_superset_aliases_map_to_canonical_plan_agent_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "SUPERSET": "true",
+                    "SUPERSET_PROJECT": "proj-1",
+                    "SUPERSET_WORKSPACE": "workspace-1",
+                }
+            )
+
+        self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"], "true")
+        self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT"], "superset")
+        self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_SUPERSET_PROJECT"], "proj-1")
+        self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE"], "workspace-1")
+        self.assertTrue(config.plan_agent_terminals_enable)
+
+    def test_superset_canonical_keys_win_over_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "SUPERSET": "true",
+                    "SUPERSET_PROJECT": "alias-project",
+                    "SUPERSET_WORKSPACE": "alias-workspace",
+                    "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "cmux",
+                    "ENVCTL_PLAN_AGENT_SUPERSET_PROJECT": "canonical-project",
+                    "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE": "canonical-workspace",
+                }
+            )
+
+        self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT"], "cmux")
+        self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_SUPERSET_PROJECT"], "canonical-project")
+        self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE"], "canonical-workspace")
+
 
 if __name__ == "__main__":
     unittest.main()
