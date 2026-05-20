@@ -591,7 +591,7 @@ class StartupOrchestrator:
             if reason:
                 details.append(reason)
         suffix = f": {'; '.join(details[:3])}" if details else ""
-        return f"OpenCode AI session failed to start{suffix}"
+        return f"Plan agent session failed to start{suffix}"
 
     def _launch_plan_agent_terminals_with_spinner(
         self,
