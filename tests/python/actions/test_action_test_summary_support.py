@@ -11,8 +11,12 @@ from envctl_engine.actions.action_test_support import (
     collect_generic_suite_failures,
     collect_suite_failure_contexts,
     git_state_components,
+    new_test_results_run_dir,
+    render_test_suite_overview,
     resolve_failed_test_error,
+    short_failed_summary_path,
     suite_display_name,
+    write_failed_tests_summary,
 )
 
 
@@ -119,6 +123,96 @@ class ActionTestSummarySupportTests(unittest.TestCase):
         self.assertIsInstance(head, str)
         self.assertRegex(status_hash, r"^[0-9a-f]{40}$")
         self.assertIsInstance(status_lines, int)
+
+    def test_write_failed_tests_summary_persists_summary_state_manifest_and_shortcut(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_dir = root / "runs" / "run-id" / "test-results" / "run_20260521_120000"
+            project_root = root / "project"
+            project_root.mkdir(parents=True)
+            run_dir.mkdir(parents=True)
+
+            outcome = {
+                "index": 1,
+                "project_name": "Main",
+                "suite": "backend_pytest",
+                "returncode": 1,
+                "parsed": SimpleNamespace(
+                    failed_tests=["tests/test_app.py::test_case"],
+                    error_details={"tests/test_app.py": "assert False"},
+                ),
+            }
+
+            summary = write_failed_tests_summary(
+                run_dir=run_dir,
+                project_name="Main",
+                project_root=project_root,
+                outcomes=[outcome],
+                format_summary_error_lines=lambda text: [text],
+            )
+
+            summary_path = Path(str(summary["summary_path"]))
+            short_summary_path = Path(str(summary["short_summary_path"]))
+            manifest_path = Path(str(summary["manifest_path"]))
+            state_path = Path(str(summary["state_path"]))
+
+            self.assertTrue(summary_path.exists())
+            self.assertEqual(short_summary_path, short_failed_summary_path(run_dir=run_dir, project_name="Main"))
+            self.assertEqual(summary_path.read_text(encoding="utf-8"), short_summary_path.read_text(encoding="utf-8"))
+            self.assertIn("[Backend (pytest)]", summary_path.read_text(encoding="utf-8"))
+            self.assertIn("assert False", summary_path.read_text(encoding="utf-8"))
+            self.assertIn("state|Main|", state_path.read_text(encoding="utf-8"))
+            self.assertIn('"source": "backend_pytest"', manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(summary["status"], "failed")
+            self.assertEqual(summary["failed_tests"], 1)
+
+    def test_new_test_results_run_dir_suffixes_existing_run_directory(self) -> None:
+        class StateRepository:
+            def __init__(self, root: Path) -> None:
+                self.root = root
+
+            def test_results_dir_path(self, run_id: str) -> Path:
+                return self.root / run_id / "test-results"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = StateRepository(Path(tmpdir))
+            first = new_test_results_run_dir(repo, "run-id", now=lambda: "run_20260521_120000")
+            second = new_test_results_run_dir(repo, "run-id", now=lambda: "run_20260521_120000")
+
+        self.assertEqual(first.name, "run_20260521_120000")
+        self.assertEqual(second.name, "run_20260521_120000_1")
+
+    def test_render_test_suite_overview_groups_projects_and_links_failure_summary(self) -> None:
+        parsed = SimpleNamespace(total=2, counts_detected=True, passed=1, failed=1, skipped=0)
+        lines = render_test_suite_overview(
+            [
+                {
+                    "index": 2,
+                    "project_name": "Beta",
+                    "suite": "configured",
+                    "returncode": 0,
+                    "duration_ms": 2000.0,
+                    "parsed": parsed,
+                },
+                {
+                    "index": 1,
+                    "project_name": "Alpha",
+                    "suite": "backend_pytest",
+                    "returncode": 1,
+                    "duration_ms": 1000.0,
+                    "parsed": parsed,
+                },
+            ],
+            colorize=lambda text, **_: text,
+            summary_metadata={"Alpha": {"status": "failed", "short_summary_path": "/tmp/ft.txt"}},
+            render_summary_path=lambda path: f"rendered:{path}",
+        )
+
+        self.assertEqual(lines[0], "")
+        self.assertIn("Test Suite Summary", lines[2])
+        self.assertLess(lines.index("Alpha"), lines.index("Beta"))
+        self.assertIn("  rendered:/tmp/ft.txt", lines)
+        self.assertTrue(any(line.startswith("Overall:") for line in lines))
 
 
 if __name__ == "__main__":

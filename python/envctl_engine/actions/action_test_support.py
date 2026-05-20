@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import hashlib
 import importlib.util
 import json
@@ -26,7 +27,11 @@ from envctl_engine.actions.actions_test import (
 )
 from envctl_engine.shared.node_tooling import detect_package_manager, detect_python_bin
 from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.test_output.failure_summary import extract_failure_summary_excerpt
 from envctl_engine.test_output.parser_pytest import PytestOutputParser
+from envctl_engine.test_output.parser_base import strip_ansi
+from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.color_policy import colors_enabled
 
 
@@ -735,6 +740,348 @@ def suite_display_name(source: str, *, failed_only: bool = False) -> str:
     if source == "configured":
         return "Test command (failed only)" if failed_only else "Test command"
     return source.replace("_", " ")
+
+
+def short_failed_summary_path(*, run_dir: Path, project_name: str) -> Path:
+    digest = hashlib.sha1(project_name.encode("utf-8")).hexdigest()[:10]
+    run_root = run_dir.parent.parent
+    return run_root / f"ft_{digest}.txt"
+
+
+def new_test_results_run_dir(
+    state_repository: Any,
+    run_id: str,
+    *,
+    now: Callable[[], str] | None = None,
+) -> Path:
+    results_root = state_repository.test_results_dir_path(run_id)
+    results_root.mkdir(parents=True, exist_ok=True)
+    stamp = now() if now is not None else datetime.now(tz=UTC).strftime("run_%Y%m%d_%H%M%S")
+    candidate = results_root / stamp
+    if not candidate.exists():
+        candidate.mkdir(parents=True, exist_ok=True)
+        return candidate
+    suffix = 1
+    while True:
+        suffixed = results_root / f"{stamp}_{suffix}"
+        if not suffixed.exists():
+            suffixed.mkdir(parents=True, exist_ok=True)
+            return suffixed
+        suffix += 1
+
+
+def write_failed_tests_summary(
+    *,
+    run_dir: Path,
+    project_name: str,
+    project_root: Path,
+    outcomes: Sequence[Mapping[str, object]],
+    format_summary_error_lines: Callable[[str], Sequence[str]],
+    previous_entry: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    safe_project = project_name.replace(" ", "_")
+    output_dir = run_dir / safe_project
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / "failed_tests_summary.txt"
+    short_summary_path = short_failed_summary_path(run_dir=run_dir, project_name=project_name)
+    state_path = output_dir / "test_state.txt"
+    manifest_path = output_dir / "failed_tests_manifest.json"
+
+    failures = collect_failed_tests(outcomes, project_name=project_name)
+    generic_suite_failures = collect_generic_suite_failures(outcomes, project_name=project_name)
+    suite_failure_contexts = collect_suite_failure_contexts(outcomes, project_name=project_name)
+    manifest_entries = collect_failed_test_manifest_entries(outcomes, project_name=project_name)
+    failed_only = any(
+        bool(item.get("failed_only", False))
+        for item in outcomes
+        if str(item.get("project_name", "")).strip() == project_name
+    )
+    generated_at = datetime.now().astimezone()
+    lines = [
+        "# envctl Failed Test Summary",
+        f"# Generated at: {generated_at.strftime('%a %b %d %H:%M:%S %Z %Y')}",
+        "",
+    ]
+    if failures:
+        for suite_name, failed_test, error_text in failures:
+            clean_suite_name = strip_ansi(str(suite_name)).strip()
+            clean_failed_test = strip_ansi(str(failed_test)).strip()
+            lines.append(f"[{clean_suite_name}]")
+            lines.append(f"- {clean_failed_test}")
+            if error_text:
+                for detail in format_summary_error_lines(str(error_text)):
+                    lines.append(f"    {detail}")
+            lines.append("")
+        for suite_name, context_text in suite_failure_contexts:
+            clean_suite_name = strip_ansi(str(suite_name)).strip()
+            lines.append(f"[{clean_suite_name}]")
+            lines.append("suite context:")
+            for detail in format_summary_error_lines(str(context_text)):
+                lines.append(f"    {detail}")
+            lines.append("")
+    elif generic_suite_failures:
+        for suite_name, summary in generic_suite_failures:
+            clean_suite_name = strip_ansi(str(suite_name)).strip()
+            lines.append(f"[{clean_suite_name}]")
+            lines.append("- suite failed before envctl could extract failed tests")
+            for detail in format_summary_error_lines(str(summary)):
+                lines.append(f"    {detail}")
+            lines.append("")
+    else:
+        lines.append("No failed tests.")
+        lines.append("")
+    summary_text = "\n".join(lines)
+    summary_path.write_text(summary_text, encoding="utf-8")
+    short_summary_path.write_text(summary_text, encoding="utf-8")
+
+    head, status_hash, status_lines = git_state_components(project_root)
+    state_path.write_text(
+        f"state|{project_name}|{project_root}|{head}|{status_hash}|{status_lines}\n",
+        encoding="utf-8",
+    )
+    manifest_payload = {
+        "generated_at": generated_at.isoformat(),
+        "project_name": project_name,
+        "project_root": str(project_root),
+        "git_state": {
+            "head": head,
+            "status_hash": status_hash,
+            "status_lines": status_lines,
+        },
+        "entries": manifest_entries,
+    }
+    manifest_path.write_text(json.dumps(manifest_payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    preserve_previous = (
+        failed_only
+        and not failures
+        and bool(generic_suite_failures)
+        and not manifest_entries
+        and previous_entry is not None
+    )
+    if preserve_previous:
+        assert previous_entry is not None
+        previous_manifest_path_raw = str(previous_entry.get("manifest_path", "") or "").strip()
+        previous_manifest = (
+            load_failed_test_manifest(Path(previous_manifest_path_raw)) if previous_manifest_path_raw else None
+        )
+        if previous_manifest is not None and previous_manifest.entries:
+            preserved: dict[str, object] = dict(previous_entry)
+            preserved["status"] = "failed"
+            preserved["updated_at"] = generated_at.isoformat()
+            preserved["preserved_after_failed_only_extraction_failure"] = True
+            return preserved
+
+    return {
+        "summary_path": str(summary_path),
+        "short_summary_path": str(short_summary_path),
+        "state_path": str(state_path),
+        "manifest_path": str(manifest_path),
+        "status": "failed" if failures or generic_suite_failures else "passed",
+        "failed_tests": len(failures),
+        "failed_manifest_entries": len(manifest_entries),
+        "summary_excerpt": extract_failure_summary_excerpt(summary_text, max_lines=3),
+        "updated_at": generated_at.isoformat(),
+    }
+
+
+def persist_test_summary_artifacts(
+    *,
+    runtime: Any,
+    route: Any,
+    targets: Sequence[object],
+    outcomes: Sequence[Mapping[str, object]],
+    format_summary_error_lines: Callable[[str], Sequence[str]],
+) -> dict[str, dict[str, object]]:
+    if not targets:
+        return {}
+
+    project_roots: dict[str, Path] = {}
+    for target in targets:
+        name = str(getattr(target, "name", "")).strip()
+        root_raw = str(getattr(target, "root", "")).strip()
+        if not name or not root_raw:
+            continue
+        project_roots[name] = Path(root_raw)
+    if not project_roots:
+        for outcome in outcomes:
+            name = str(outcome.get("project_name", "")).strip()
+            root_raw = str(outcome.get("project_root", "")).strip()
+            if not name or not root_raw:
+                continue
+            project_roots[name] = Path(root_raw)
+    if not project_roots:
+        return {}
+
+    state = runtime.load_existing_state(mode=route.mode)
+    if state is None:
+        return {}
+
+    run_dir = new_test_results_run_dir(runtime.state_repository, state.run_id)
+    existing = state.metadata.get("project_test_summaries")
+    metadata = dict(existing) if isinstance(existing, dict) else {}
+    summaries: dict[str, dict[str, object]] = {}
+    for project_name, project_root in project_roots.items():
+        previous_entry = metadata.get(project_name)
+        summaries[project_name] = write_failed_tests_summary(
+            run_dir=run_dir,
+            project_name=project_name,
+            project_root=project_root,
+            outcomes=outcomes,
+            previous_entry=previous_entry if isinstance(previous_entry, dict) else None,
+            format_summary_error_lines=format_summary_error_lines,
+        )
+
+    metadata.update(summaries)
+    state.metadata["project_test_summaries"] = metadata
+    state.metadata["project_test_results_root"] = str(run_dir)
+    state.metadata["project_test_results_updated_at"] = datetime.now(tz=UTC).isoformat()
+
+    runtime.state_repository.save_resume_state(
+        state=state,
+        emit=runtime.emit,
+        runtime_map_builder=build_runtime_map,
+    )
+    runtime.emit(
+        "test.summary.persisted",
+        mode=route.mode,
+        projects=sorted(summaries),
+        run_dir=str(run_dir),
+    )
+    return summaries
+
+
+def _outcome_float(item: Mapping[str, object], key: str, *, default: float = 0.0) -> float:
+    value = item.get(key, default)
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
+
+
+def _parsed_int(parsed: object, key: str) -> int:
+    value = getattr(parsed, key, 0) if parsed is not None else 0
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
+def render_test_suite_overview(
+    outcomes: Sequence[Mapping[str, object]],
+    *,
+    colorize: Callable[..., str],
+    summary_metadata: Mapping[str, Mapping[str, object]] | None = None,
+    render_summary_path: Callable[[str], str] | None = None,
+) -> list[str]:
+    if not outcomes:
+        return []
+    lines: list[str] = [
+        "",
+        colorize("======================================================================", fg="cyan"),
+        colorize("Test Suite Summary", fg="cyan", bold=True),
+        colorize("======================================================================", fg="cyan"),
+    ]
+    project_labels = {
+        str(item.get("project_name", "")).strip() for item in outcomes if str(item.get("project_name", "")).strip()
+    }
+    multi_project = len(project_labels) > 1
+    total_passed = 0
+    total_failed = 0
+    total_skipped = 0
+    total_known = 0
+    total_duration = 0.0
+    grouped_outcomes: dict[str, list[Mapping[str, object]]] = {}
+    for item in sorted(
+        outcomes,
+        key=lambda value: (
+            str(value.get("project_name", "")).lower(),
+            _outcome_int(value, "index"),
+        ),
+    ):
+        project_name = str(item.get("project_name", "")).strip() or "Main"
+        grouped_outcomes.setdefault(project_name, []).append(item)
+
+    for project_name, project_items in grouped_outcomes.items():
+        if multi_project:
+            lines.append(colorize(project_name, fg="blue", bold=True))
+        for item in project_items:
+            source = str(item.get("suite", "suite"))
+            label = suite_display_name(source, failed_only=bool(item.get("failed_only", False)))
+            label_rendered = colorize(label, fg="cyan", bold=True)
+            if multi_project:
+                label_rendered = f"  {label_rendered}"
+            returncode = _outcome_int(item, "returncode", default=1)
+            parsed = item.get("parsed")
+            parsed_total = _parsed_int(parsed, "total")
+            counts_detected = bool(getattr(parsed, "counts_detected", False)) if parsed is not None else False
+            passed = _parsed_int(parsed, "passed")
+            failed = _parsed_int(parsed, "failed")
+            skipped = _parsed_int(parsed, "skipped")
+            duration_ms = _outcome_float(item, "duration_ms")
+            duration_text = format_duration(max(duration_ms / 1000.0, 0.0))
+
+            icon = colorize("✓", fg="green", bold=True) if returncode == 0 else colorize("✗", fg="red", bold=True)
+            if counts_detected:
+                total_passed += passed
+                total_failed += failed
+                total_skipped += skipped
+                total_known += parsed_total
+                total_duration += max(duration_ms / 1000.0, 0.0)
+                passed_text = colorize(f"{passed} passed", fg="green")
+                failed_text = colorize(f"{failed} failed", fg="red")
+                skipped_text = colorize(f"{skipped} skipped", fg="yellow")
+                lines.append(
+                    f"{icon} {label_rendered}: {passed_text}, {failed_text}, {skipped_text}"
+                    f" (total {parsed_total}, duration {duration_text})"
+                )
+            else:
+                total_duration += max(duration_ms / 1000.0, 0.0)
+                status_text = (
+                    colorize("completed", fg="green", bold=True)
+                    if returncode == 0
+                    else colorize("failed", fg="red", bold=True)
+                )
+                lines.append(
+                    f"{icon} {label_rendered}: {status_text} (no parsed test counts, duration {duration_text})"
+                )
+        summary_entry = summary_metadata.get(project_name) if isinstance(summary_metadata, Mapping) else None
+        if isinstance(summary_entry, Mapping) and str(summary_entry.get("status", "")).strip().lower() == "failed":
+            summary_path = str(
+                summary_entry.get("short_summary_path") or summary_entry.get("summary_path") or ""
+            ).strip()
+            if summary_path:
+                prefix = "  " if multi_project else ""
+                label = colorize("failure summary:", fg="gray")
+                lines.append(f"{prefix}{label}")
+                rendered_path = render_summary_path(summary_path) if render_summary_path else summary_path
+                lines.append(f"{prefix}{rendered_path}")
+        if multi_project:
+            lines.append("")
+
+    if total_known > 0:
+        overall_prefix = colorize("Overall:", fg="cyan", bold=True)
+        overall_passed = colorize(f"{total_passed} passed", fg="green")
+        overall_failed = colorize(f"{total_failed} failed", fg="red")
+        overall_skipped = colorize(f"{total_skipped} skipped", fg="yellow")
+        lines.append(
+            f"{overall_prefix} {overall_passed}, {overall_failed}, {overall_skipped}"
+            f" (total {total_known}, duration {format_duration(total_duration)})"
+        )
+    lines.append(colorize("======================================================================", fg="cyan"))
+    return lines
 
 
 def _failed_rerun_spec_for_entry(
