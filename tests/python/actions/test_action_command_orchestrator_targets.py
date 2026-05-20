@@ -78,9 +78,8 @@ class ActionCommandTargetTests(unittest.TestCase):
         route = Route(command="test", mode="main", raw_args=["--main", "test"])
 
         with (
-            patch.object(orchestrator, "_main_repo_root_for_worktree", return_value=Path("/tmp/repo")),
             patch(
-                "envctl_engine.actions.action_command_orchestrator.discover_tree_projects",
+                "envctl_engine.actions.action_worktree_runner.discover_tree_projects",
                 return_value=[("feature-a-1", worktree)],
             ),
         ):
@@ -112,10 +111,13 @@ class ActionCommandTargetTests(unittest.TestCase):
             route = Route(command="self-destruct-worktree", mode="trees")
 
             with (
-                patch("envctl_engine.actions.action_command_orchestrator.Path.cwd", return_value=tree_root),
-                patch.object(orchestrator, "_main_repo_root_for_worktree", return_value=Path("/tmp/repo")),
+                patch("envctl_engine.actions.action_worktree_runner.Path.cwd", return_value=tree_root),
                 patch(
-                    "envctl_engine.actions.action_command_orchestrator.discover_tree_projects",
+                    "envctl_engine.actions.action_worktree_runner.main_repo_root_for_worktree",
+                    return_value=Path("/tmp/repo"),
+                ),
+                patch(
+                    "envctl_engine.actions.action_worktree_runner.discover_tree_projects",
                     return_value=[("feature-a-1", tree_root)],
                 ),
             ):
@@ -130,10 +132,13 @@ class ActionCommandTargetTests(unittest.TestCase):
         route = Route(command="self-destruct-worktree", mode="trees")
 
         with (
-            patch("envctl_engine.actions.action_command_orchestrator.Path.cwd", return_value=Path("/tmp/other")),
-            patch.object(orchestrator, "_main_repo_root_for_worktree", return_value=Path("/tmp/repo")),
+            patch("envctl_engine.actions.action_worktree_runner.Path.cwd", return_value=Path("/tmp/other")),
             patch(
-                "envctl_engine.actions.action_command_orchestrator.discover_tree_projects",
+                "envctl_engine.actions.action_worktree_runner.main_repo_root_for_worktree",
+                return_value=Path("/tmp/repo"),
+            ),
+            patch(
+                "envctl_engine.actions.action_worktree_runner.discover_tree_projects",
                 return_value=[("feature-a-1", Path("/tmp/feature-a/1"))],
             ),
         ):

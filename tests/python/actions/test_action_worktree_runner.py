@@ -9,7 +9,12 @@ from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.actions.action_worktree_runner import run_delete_worktree_action  # noqa: E402
+from envctl_engine.actions.action_worktree_runner import (  # noqa: E402
+    main_repo_root_for_worktree,
+    repo_root_from_worktree_layout,
+    run_delete_worktree_action,
+    spawn_self_destruct_helper,
+)
 from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator  # noqa: E402
 from envctl_engine.runtime.command_router import parse_route  # noqa: E402
 
@@ -62,6 +67,70 @@ class _SpinnerContext:
 
 
 class ActionWorktreeRunnerTests(unittest.TestCase):
+    def test_repo_root_from_worktree_layout_detects_nested_tree_root(self) -> None:
+        worktree = Path("/tmp/repo/trees/feature-a/1")
+
+        repo_root = repo_root_from_worktree_layout(worktree, "trees")
+
+        self.assertEqual(repo_root, Path("/tmp/repo").resolve())
+
+    def test_main_repo_root_for_worktree_uses_git_common_dir_for_linked_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            worktree = Path(tmpdir) / "other" / "feature-a"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            calls: list[list[str]] = []
+
+            def run(cmd, *, cwd, timeout):  # noqa: ANN001
+                calls.append([str(part) for part in cmd])
+                self.assertEqual(Path(cwd), worktree)
+                self.assertEqual(timeout, 10.0)
+                if cmd[-1] == "--show-toplevel":
+                    return SimpleNamespace(returncode=0, stdout=f"{worktree}\n", stderr="")
+                return SimpleNamespace(returncode=0, stdout=f"{repo_root / '.git' / 'worktrees' / 'feature-a'}\n", stderr="")
+
+            resolved = main_repo_root_for_worktree(
+                worktree,
+                trees_dir_name="trees",
+                process_runner=SimpleNamespace(run=run),
+            )
+
+        self.assertEqual(resolved, repo_root.resolve())
+        self.assertEqual(calls[0], ["git", "rev-parse", "--show-toplevel"])
+        self.assertEqual(calls[1], ["git", "rev-parse", "--git-common-dir"])
+
+    def test_spawn_self_destruct_helper_writes_and_launches_detached_script(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            trees_root = repo_root / "trees"
+            worktree_root = trees_root / "feature-a" / "1"
+            worktree_root.mkdir(parents=True, exist_ok=True)
+            started: list[tuple[list[str], dict[str, object]]] = []
+
+            process_runner = SimpleNamespace(
+                start_background=lambda cmd, **kwargs: started.append((list(cmd), dict(kwargs)))
+                or SimpleNamespace(pid=4321)
+            )
+
+            launched = spawn_self_destruct_helper(
+                repo_root=repo_root,
+                trees_root=trees_root,
+                worktree_root=worktree_root,
+                process_runner=process_runner,
+                parent_pid=12345,
+            )
+
+            self.assertTrue(launched)
+            self.assertEqual(len(started), 1)
+            command, kwargs = started[0]
+            self.assertEqual(command[0], "python3")
+            self.assertEqual(command[2:], [str(repo_root), str(trees_root), str(worktree_root), "12345"])
+            helper_script = Path(command[1])
+            self.assertTrue(helper_script.is_file())
+            self.assertIn("git\", \"-C\", str(repo_root), \"worktree\", \"remove\"", helper_script.read_text())
+            self.assertEqual(kwargs["cwd"], repo_root)
+
     def test_run_delete_worktree_action_runs_cleanup_and_delete(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
@@ -177,7 +246,7 @@ class ActionWorktreeRunnerTests(unittest.TestCase):
             )
             orchestrator = ActionCommandOrchestrator(runtime)
 
-            with patch("envctl_engine.actions.action_command_orchestrator.Path.cwd", return_value=tree_root):
+            with patch("envctl_engine.actions.action_worktree_runner.Path.cwd", return_value=tree_root):
                 code = orchestrator.run_self_destruct_worktree_action(parse_route(["self-destruct-worktree"], env={}))
 
             self.assertEqual(code, 0)
