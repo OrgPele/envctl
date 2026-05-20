@@ -35,6 +35,34 @@ def lock_inventory(runtime: Any) -> list[str]:
     return sorted(lock_path.name for lock_path in runtime.port_planner.lock_dir.glob("*.lock"))
 
 
+def ensure_legacy_lock_view(runtime: Any) -> None:
+    scoped_locks = runtime.runtime_root / "locks"
+    scoped_locks.mkdir(parents=True, exist_ok=True)
+    legacy_locks = runtime.runtime_legacy_root / "locks"
+    if legacy_locks.is_symlink():
+        if legacy_locks.resolve(strict=False) == scoped_locks.resolve(strict=False):
+            return
+        try:
+            legacy_locks.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return
+    if legacy_locks.exists():
+        return
+    try:
+        legacy_locks.symlink_to(scoped_locks, target_is_directory=True)
+    except FileExistsError:
+        return
+    except OSError:
+        if legacy_locks.exists() or legacy_locks.is_symlink():
+            return
+        try:
+            legacy_locks.mkdir(parents=True, exist_ok=True)
+        except FileExistsError:
+            return
+
+
 def new_run_id(runtime: Any) -> str:
     run_id = f"run-{datetime.now(tz=UTC).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
     runtime._bind_debug_run_id(run_id)

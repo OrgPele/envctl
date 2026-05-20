@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os as _os
 import shutil as _shutil
 import sys as _sys
 import uuid
@@ -64,6 +63,7 @@ from envctl_engine.runtime.engine_runtime_event_support import (
 )
 from envctl_engine.runtime.engine_runtime_runtime_support import (
     conflict_count as runtime_conflict_count,
+    ensure_legacy_lock_view as runtime_ensure_legacy_lock_view,
     error_report_path as runtime_error_report_path,
     lock_inventory as runtime_lock_inventory,
     new_run_id as runtime_new_run_id,
@@ -565,31 +565,7 @@ class PythonEngineRuntime:
         )
 
     def _ensure_legacy_lock_view(self) -> None:
-        scoped_locks = self.runtime_root / "locks"
-        scoped_locks.mkdir(parents=True, exist_ok=True)
-        legacy_locks = self.runtime_legacy_root / "locks"
-        if legacy_locks.is_symlink():
-            if legacy_locks.resolve(strict=False) == scoped_locks.resolve(strict=False):
-                return
-            try:
-                legacy_locks.unlink()
-            except FileNotFoundError:
-                pass
-            except OSError:
-                return
-        if legacy_locks.exists():
-            return
-        try:
-            legacy_locks.symlink_to(scoped_locks, target_is_directory=True)
-        except FileExistsError:
-            return
-        except OSError:
-            if _os.path.lexists(legacy_locks):
-                return
-            try:
-                legacy_locks.mkdir(parents=True, exist_ok=True)
-            except FileExistsError:
-                return
+        runtime_ensure_legacy_lock_view(self)
 
     def add_emit_listener(self, listener: Callable[[str, dict[str, object]], None]) -> Callable[[], None]:
         self._emit_listeners.append(listener)

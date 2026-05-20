@@ -10,6 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.engine_runtime_runtime_support import (  # noqa: E402
     conflict_count,
+    ensure_legacy_lock_view,
     lock_inventory,
     new_run_id,
     normalize_log_line,
@@ -55,6 +56,39 @@ class EngineRuntimeRuntimeSupportTests(unittest.TestCase):
         self.assertIn("ModuleNotFoundError", rendered)
         self.assertIn("No module named", rendered)
         self.assertEqual(normalize_log_line(line, no_color=True), line)
+
+    def test_ensure_legacy_lock_view_creates_view_for_scoped_locks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime = SimpleNamespace(
+                runtime_root=root / "scope",
+                runtime_legacy_root=root / "python-engine",
+            )
+            runtime.runtime_legacy_root.mkdir(parents=True)
+
+            ensure_legacy_lock_view(runtime)
+
+            legacy_locks = runtime.runtime_legacy_root / "locks"
+            self.assertTrue((runtime.runtime_root / "locks").is_dir())
+            self.assertTrue(legacy_locks.exists())
+            self.assertEqual(legacy_locks.resolve(strict=False), (runtime.runtime_root / "locks").resolve(strict=False))
+
+    def test_ensure_legacy_lock_view_replaces_stale_legacy_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime = SimpleNamespace(
+                runtime_root=root / "scope",
+                runtime_legacy_root=root / "python-engine",
+            )
+            runtime.runtime_legacy_root.mkdir(parents=True)
+            stale_target = root / "missing-scope" / "locks"
+            legacy_locks = runtime.runtime_legacy_root / "locks"
+            legacy_locks.symlink_to(stale_target, target_is_directory=True)
+
+            ensure_legacy_lock_view(runtime)
+
+            self.assertTrue(legacy_locks.is_symlink())
+            self.assertEqual(legacy_locks.resolve(strict=False), (runtime.runtime_root / "locks").resolve(strict=False))
 
 
 if __name__ == "__main__":
