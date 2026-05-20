@@ -479,7 +479,8 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` queues the final Codex/OMX PR review-comments follow-up; set it to `false` in `.envctl` to skip that prompt
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux/Superset surface or tmux window when envctl owns the terminal bootstrap
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller workspace context: `CMUX_WORKSPACE_ID` for cmux or `SUPERSET_WORKSPACE_ID` for Superset
-- `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=superset` selects Superset for the default workspace-surface launcher; `--tmux` and `--omx` still take precedence
+- `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=cmux|superset` selects the default workspace-surface launcher; any other non-empty value is rejected as `invalid_surface_transport` in `explain-startup` and before launch commands run
+- `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=superset` selects Superset for the default workspace-surface launcher; `--tmux` and `--omx` still take precedence over Superset aliases
 - `ENVCTL_PLAN_AGENT_CODEX_YOLO=true` appends `--dangerously-bypass-approvals-and-sandbox` to the default envctl-owned Codex cmux/Superset/tmux launch command; set it to `false` in `.envctl` when your Codex wrapper or config already supplies that flag
 - `ENVCTL_PLAN_AGENT_CLI_CMD=/custom/cli --flag` overrides the typed AI CLI command text for envctl-owned cmux/Superset/tmux launches; when set, this raw command wins over the default Codex YOLO command builder; OMX-managed launches still use `omx --tmux` and then envctl submits the prompt into the created Codex session after discovering it from the selected OMX state root
 - plan-agent launches prepare backend and frontend dependencies inside the selected worktree before the AI prompt is submitted; this is dependency prep only, not service startup or migrations
@@ -491,10 +492,10 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=envctl` also works when you want to target a workspace by its title
 - `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE=workspace:123` targets an explicit Superset workspace, selects Superset, and also enables the feature
 - `ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE=envctl` targets a Superset workspace by title
-- when a named target workspace does not exist yet, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface
+- when a named target workspace does not exist yet, envctl creates it first and reuses that workspace's initial cmux/Superset starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface
 - `CMUX=true` enables the feature and uses the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=envctl` is a shorthand alias for targeting a named cmux workspace
-- `SUPERSET=true` enables the feature through Superset and uses the default `"<current workspace> implementation"` target
+- `SUPERSET=true` enables the feature through Superset and uses the default `"<current workspace> implementation"` target derived from `SUPERSET_WORKSPACE_ID`
 - `SUPERSET_WORKSPACE=envctl` is a shorthand alias for targeting a named Superset workspace
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `CYCLES` only changes the Codex cycle count and does not enable plan-agent launch by itself

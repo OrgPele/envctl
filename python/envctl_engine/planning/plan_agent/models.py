@@ -54,6 +54,7 @@ class PlanAgentLaunchConfig:
     omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
     codex_goal_enable: bool = True
     superset_workspace: str = ""
+    invalid_surface_transport: str = ""
 
 
 @dataclass(slots=True, frozen=True)

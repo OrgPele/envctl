@@ -22,12 +22,15 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         browser_e2e_followup_enable=launch_config.browser_e2e_followup_enable,
         pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
     )
-    workspace_id = None if launch_config.transport in {"tmux", "omx"} else _resolve_workspace_id(runtime, launch_config)
-    target_workspace = (
-        None
-        if launch_config.transport in {"tmux", "omx"}
-        else (_configured_workspace(launch_config) or _default_target_workspace_title(runtime, launch_config))
-    )
+    invalid_surface_transport = str(launch_config.invalid_surface_transport or "").strip()
+    workspace_id = None
+    target_workspace = None
+    if not invalid_surface_transport and launch_config.transport not in {"tmux", "omx"}:
+        workspace_id = _resolve_workspace_id(runtime, launch_config)
+        target_workspace = _configured_workspace(launch_config) or _default_target_workspace_title(
+            runtime,
+            launch_config,
+        )
     payload: dict[str, object] = {
         "enabled": launch_config.enabled,
         "transport": launch_config.transport,
@@ -49,11 +52,16 @@ def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, objec
         "configured_workspace": target_workspace or None,
         "reason": "disabled",
     }
+    if invalid_surface_transport:
+        payload["invalid_surface_transport"] = invalid_surface_transport
     if str(getattr(route, "command", "")).strip() != "plan":
         payload["reason"] = "not_plan_command"
         return payload
     if bool(getattr(route, "flags", {}).get("planning_prs")):
         payload["reason"] = "planning_prs_only"
+        return payload
+    if invalid_surface_transport:
+        payload["reason"] = "invalid_surface_transport"
         return payload
     if not launch_config.enabled:
         return payload
@@ -98,6 +106,19 @@ def launch_plan_agent_terminals(
     if str(getattr(route, "command", "")).strip() != "plan" or bool(getattr(route, "flags", {}).get("planning_prs")):
         runtime._emit("planning.agent_launch.skipped", reason="inapplicable_route", **base_payload)
         return PlanAgentLaunchResult(status="skipped", reason="inapplicable_route")
+    invalid_surface_transport = str(launch_config.invalid_surface_transport or "").strip()
+    if invalid_surface_transport:
+        _print_launch_summary(
+            "Plan agent launch failed: invalid ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT="
+            f"{invalid_surface_transport!r}; expected cmux or superset."
+        )
+        runtime._emit(
+            "planning.agent_launch.failed",
+            reason="invalid_surface_transport",
+            invalid_surface_transport=invalid_surface_transport,
+            **base_payload,
+        )
+        return PlanAgentLaunchResult(status="failed", reason="invalid_surface_transport")
     if not launch_config.enabled:
         runtime._emit("planning.agent_launch.skipped", reason="disabled", **base_payload)
         return PlanAgentLaunchResult(status="skipped", reason="disabled")

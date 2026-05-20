@@ -389,6 +389,7 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--ulw               tmux + OpenCode only: force /ulw-loop prefix (default for OpenCode)",
             "--tmux-new-session  create another tmux/OMX session instead of reusing an attachable existing one",
             "SUPERSET=true or ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT=superset selects Superset for workspace surfaces",
+            "Invalid ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT values fail before workspace-surface commands run",
             "SUPERSET_WORKSPACE=<value> targets a Superset workspace and enables workspace-surface launch",
         ),
         examples=(

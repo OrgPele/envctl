@@ -25,6 +25,7 @@ from envctl_engine.planning.plan_agent_launch_support import (
     PlanAgentLaunchOutcome,
     PlanAgentLaunchResult,
 )
+from envctl_engine.planning import plan_agent_launch_support
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
 from envctl_engine.requirements.orchestrator import RequirementOutcome
 from envctl_engine.test_output.parser_base import strip_ansi
@@ -3392,6 +3393,48 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             launch_mock.assert_not_called()
+
+    def test_plan_superset_alias_reaches_real_startup_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "TREES_STARTUP_ENABLE": "false",
+                        "SUPERSET": "true",
+                        "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "0",
+                        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK": "true",
+                    },
+                ),
+                env={"SUPERSET_WORKSPACE_ID": "workspace:4"},
+            )
+            transports: list[str] = []
+
+            def _record_launch(_runtime: object, *, route: object, created_worktrees: object) -> PlanAgentLaunchResult:
+                _ = _runtime, created_worktrees
+                launch_config = plan_agent_launch_support.resolve_plan_agent_launch_config(
+                    cast(Any, engine.config),
+                    cast(Any, engine.env),
+                    route=route,
+                )
+                transports.append(launch_config.transport)
+                return PlanAgentLaunchResult(status="launched", reason="launched", outcomes=())
+
+            with patch(
+                "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                side_effect=_record_launch,
+            ):
+                code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(transports, ["superset"])
 
     def test_plan_feature_with_both_cli_creates_two_worktrees_then_reuses_existing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

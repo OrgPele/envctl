@@ -2001,6 +2001,67 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertEqual(payload["plan_agent_launch"]["configured_workspace"], "workspace:9")
         self.assertEqual(payload["plan_agent_launch"]["reason"], "awaiting_new_worktrees")
 
+    def test_explain_startup_json_reports_invalid_surface_transport(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+        (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "bogus",
+            }
+        )
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--explain-startup", "--plan", "feature/task", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["plan_agent_launch"]["reason"], "invalid_surface_transport")
+        self.assertEqual(payload["plan_agent_launch"]["invalid_surface_transport"], "bogus")
+        self.assertEqual(payload["plan_agent_launch"]["workspace_id"], None)
+
+    def test_explain_startup_route_flags_override_superset_aliases(self) -> None:
+        for flag, expected_transport, expected_cli in (
+            ("--tmux", "tmux", "codex"),
+            ("--omx", "omx", "codex"),
+        ):
+            with self.subTest(flag=flag):
+                tmpdir = tempfile.TemporaryDirectory()
+                self.addCleanup(tmpdir.cleanup)
+                repo = Path(tmpdir.name) / "repo"
+                (repo / ".git").mkdir(parents=True, exist_ok=True)
+                (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+                (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+                config = load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(Path(tmpdir.name) / "runtime"),
+                        "SUPERSET": "true",
+                        "SUPERSET_WORKSPACE": "workspace:9",
+                    }
+                )
+                runtime = PythonEngineRuntime(config, env={"SUPERSET_WORKSPACE_ID": "workspace:4"})
+
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = runtime.dispatch(
+                        parse_route(["--explain-startup", "--plan", "feature/task", flag, "--json"], env={})
+                    )
+
+                self.assertEqual(code, 0)
+                payload = json.loads(buffer.getvalue())
+                self.assertEqual(payload["plan_agent_launch"]["transport"], expected_transport)
+                self.assertEqual(payload["plan_agent_launch"]["cli"], expected_cli)
+                self.assertEqual(payload["plan_agent_launch"]["workspace_id"], None)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -491,6 +491,331 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertTrue(launch_config.enabled)
         self.assertEqual(prereqs, ("superset", "codex"))
 
+    def test_invalid_surface_transport_is_rejected_before_launch_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "bogus",
+                    "CMUX_WORKSPACE_ID": "workspace:7",
+                    "SUPERSET_WORKSPACE_ID": "workspace:8",
+                },
+            )
+
+            result = launch_plan_agent_terminals(
+                rt,
+                route=parse_route(["--plan", "feature-a"], env={}),
+                created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+            )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.reason, "invalid_surface_transport")
+        self.assertEqual(rt.process_runner.calls, [])
+        failed_events = self._events(rt, "planning.agent_launch.failed")
+        self.assertEqual(failed_events[-1]["reason"], "invalid_surface_transport")
+        self.assertEqual(failed_events[-1]["invalid_surface_transport"], "bogus")
+
+    def test_invalid_surface_transport_prereqs_do_not_require_cmux(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "bogus",
+                }
+            )
+
+            prereqs = launch_support.plan_agent_launch_prereq_commands(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a"], env={}),
+            )
+
+        self.assertEqual(prereqs, ())
+
+    def test_runtime_env_superset_override_controls_all_workspace_surface_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            base_config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "0",
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
+                }
+            )
+            resolved_env = {
+                "RUN_REPO_ROOT": str(repo),
+                "RUN_SH_RUNTIME_DIR": str(runtime),
+                "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "0",
+                "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
+                "SUPERSET": "true",
+                "SUPERSET_WORKSPACE_ID": "workspace:4",
+            }
+            rt = _RuntimeHarness(
+                config=base_config,
+                env=resolved_env,
+                process_runner=_RecordingRunner(
+                    outputs=[
+                        subprocess.CompletedProcess(
+                            args=["superset"],
+                            returncode=0,
+                            stdout="workspace:4 Base\nworkspace:5 Base implementation\n",
+                            stderr="",
+                        ),
+                        subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="surface:3\n", stderr=""),
+                    ]
+                ),
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+            ):
+                _ImmediateThread.created = []
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+        self.assertEqual(result.status, "launched")
+        self.assertTrue(rt.process_runner.calls)
+        self.assertTrue(all(call[0] == "superset" for call in rt.process_runner.calls), rt.process_runner.calls)
+        self.assertNotIn("cmux", {call[0] for call in rt.process_runner.calls})
+        self.assertIn(["superset", "list-workspaces"], rt.process_runner.calls)
+        self.assertIn(["superset", "new-surface", "--workspace", "workspace:5"], rt.process_runner.calls)
+
+    def test_superset_missing_named_workspace_runs_creation_choreography(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "superset",
+                    "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE": "Needs workspace",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "0",
+                    "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="workspace:1 Other\n", stderr=""),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="workspace:10\n", stderr=""),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="surface:11\n", stderr=""),
+                ]
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+            ):
+                _ImmediateThread.created = []
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+        self.assertEqual(result.status, "launched")
+        self.assertEqual(rt.process_runner.calls[:5], [
+            ["superset", "list-workspaces"],
+            ["superset", "new-workspace", "--cwd", str(repo.resolve())],
+            ["superset", "current-workspace"],
+            ["superset", "rename-workspace", "--workspace", "workspace:10", "Needs workspace"],
+            ["superset", "list-pane-surfaces", "--workspace", "workspace:10"],
+        ])
+        self.assertNotIn(["superset", "new-surface", "--workspace", "workspace:10"], rt.process_runner.calls)
+        self.assertIn(
+            ["superset", "rename-tab", "--workspace", "workspace:10", "--surface", "surface:11", "feature-a-1"],
+            rt.process_runner.calls,
+        )
+
+    def test_superset_codex_cycle_queue_success_and_fallback_events_include_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            for queue_ready, expected_event in (
+                (True, "planning.agent_launch.workflow_queued"),
+                (False, "planning.agent_launch.workflow_fallback"),
+            ):
+                with self.subTest(queue_ready=queue_ready):
+                    config_obj = load_config(
+                        {
+                            "RUN_REPO_ROOT": str(repo),
+                            "RUN_SH_RUNTIME_DIR": str(runtime),
+                            "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                            "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "1",
+                            "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
+                        }
+                    )
+                    rt = _RuntimeHarness(
+                        config=config_obj,
+                        env={
+                            "RUN_REPO_ROOT": str(repo),
+                            "RUN_SH_RUNTIME_DIR": str(runtime),
+                            "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                            "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "1",
+                            "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "false",
+                            "SUPERSET": "true",
+                        },
+                        process_runner=_RecordingRunner(),
+                    )
+                    launch_config = launch_support.resolve_plan_agent_launch_config(cast(Any, rt.config), rt.env)
+                    self.assertEqual(launch_config.transport, "superset")
+
+                    with (
+                        patch("envctl_engine.planning.plan_agent.cmux_transport._prepare_surface", return_value=None),
+                        patch("envctl_engine.planning.plan_agent.cmux_transport._launch_cli_bootstrap_commands", return_value=[]),
+                        patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
+                        patch("envctl_engine.planning.plan_agent.cmux_transport._maybe_submit_surface_codex_goal", return_value=None),
+                        patch("envctl_engine.planning.plan_agent.cmux_transport._submit_direct_prompt_workflow_step", return_value=None),
+                        patch("envctl_engine.planning.plan_agent.cmux_transport._workflow_step_prompt_text", return_value=("queued text", None)),
+                        patch("envctl_engine.planning.plan_agent.cmux_transport._queue_codex_message", return_value=queue_ready),
+                    ):
+                        error = cmux_transport._run_surface_bootstrap(
+                            rt,
+                            workspace_id="workspace:5",
+                            surface_id="surface:3",
+                            launch_config=launch_config,
+                            worktree=CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),
+                        )
+
+                    self.assertIsNone(error)
+                    self.assertTrue(all(call[0] == "superset" for call in rt.process_runner.calls), rt.process_runner.calls)
+                    events = self._events(rt, expected_event)
+                    self.assertTrue(events)
+                    self.assertEqual(events[-1]["transport"], "superset")
+                    if not queue_ready:
+                        self.assertEqual(events[-1]["reason"], "queue_not_ready")
+                        failed_events = self._events(rt, "planning.agent_launch.workflow_queue_failed")
+                        self.assertEqual(failed_events[-1]["transport"], "superset")
+
+    def test_superset_opencode_direct_prompt_uses_superset_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            prompt_path = Path(tmpdir) / ".config" / "opencode" / "commands" / "implement_task.md"
+            repo.mkdir(parents=True, exist_ok=True)
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("Implement with OpenCode.\n", encoding="utf-8")
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "HOME": tmpdir,
+                    "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "superset",
+                    "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE": "workspace:9",
+                    "ENVCTL_PLAN_AGENT_CLI": "opencode",
+                    "ENVCTL_PLAN_AGENT_DIRECT_PROMPT": "true",
+                },
+            )
+            launch_config = launch_support.resolve_plan_agent_launch_config(cast(Any, rt.config), rt.env)
+            self.assertEqual(launch_config.transport, "superset")
+            self.assertEqual(launch_config.cli, "opencode")
+
+            with (
+                patch("envctl_engine.planning.plan_agent.cmux_transport._prepare_surface", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._launch_cli_bootstrap_commands", return_value=[]),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
+            ):
+                error = cmux_transport._run_surface_bootstrap(
+                    rt,
+                    workspace_id="workspace:9",
+                    surface_id="surface:3",
+                    launch_config=launch_config,
+                    worktree=CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),
+                )
+
+        self.assertIsNone(error)
+        self.assertTrue(all(call[0] == "superset" for call in rt.process_runner.calls), rt.process_runner.calls)
+        self.assertTrue(
+            any(
+                call[:4] == ["superset", "set-buffer", "--name", "envctl-surface-3"]
+                and str(call[-1]).strip() == "Implement with OpenCode."
+                for call in rt.process_runner.calls
+            )
+        )
+
+    def test_superset_missing_shell_is_reported_by_runtime_launch_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "superset",
+                    "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE": "workspace:9",
+                    "ENVCTL_PLAN_AGENT_SHELL": "/missing/zsh",
+                },
+            )
+            rt._command_exists = lambda command: command in {"superset", "codex"}  # type: ignore[assignment]
+
+            result = launch_plan_agent_terminals(
+                rt,
+                route=parse_route(["--plan", "feature-a"], env={}),
+                created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+            )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.reason, "missing_executables")
+        failed_events = self._events(rt, "planning.agent_launch.failed")
+        self.assertEqual(failed_events[-1]["missing"], ["/missing/zsh"])
+        self.assertEqual(rt.process_runner.calls, [])
+
+    def test_public_prereq_policy_omits_shell_for_workspace_surface_parity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            for transport, workspace_key in (
+                ("cmux", "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE"),
+                ("superset", "ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE"),
+            ):
+                with self.subTest(transport=transport):
+                    config_obj = load_config(
+                        {
+                            "RUN_REPO_ROOT": str(repo),
+                            "RUN_SH_RUNTIME_DIR": str(runtime),
+                            "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": transport,
+                            workspace_key: "workspace:9",
+                            "ENVCTL_PLAN_AGENT_SHELL": "/missing/zsh",
+                        }
+                    )
+
+                    prereqs = launch_support.plan_agent_launch_prereq_commands(
+                        config_obj,
+                        {},
+                        route=parse_route(["--plan", "feature-a"], env={}),
+                    )
+
+                    self.assertNotIn("/missing/zsh", prereqs)
+                    self.assertEqual(prereqs, (transport, "codex"))
+
     def test_superset_workspace_alias_resolves_named_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -6030,6 +6355,65 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ["cmux", "paste-buffer", "--name", "envctl-surface-12", "--workspace", "workspace:10", "--surface", "surface:12"],
                 rt.process_runner.calls,
             )
+
+    def test_superset_review_launch_uses_default_reviews_workspace_from_caller_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            project_root = repo / "trees" / "feature-a" / "1"
+            review_bundle = repo / "runtime" / "review" / "all.md"
+            original_plan = repo / "todo" / "plans" / "implementations" / "feature-a.md"
+            project_root.mkdir(parents=True, exist_ok=True)
+            review_bundle.parent.mkdir(parents=True, exist_ok=True)
+            original_plan.parent.mkdir(parents=True, exist_ok=True)
+            review_bundle.write_text("# review\n", encoding="utf-8")
+            original_plan.write_text("# Original plan\n", encoding="utf-8")
+            (project_root / ".envctl-state").mkdir(parents=True, exist_ok=True)
+            (project_root / ".envctl-state" / "worktree-provenance.json").write_text(
+                json.dumps({"schema_version": 1, "plan_file": "implementations/feature-a.md"}) + "\n",
+                encoding="utf-8",
+            )
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "SUPERSET": "true",
+                    "SUPERSET_WORKSPACE_ID": "workspace:4",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(
+                        args=["superset"],
+                        returncode=0,
+                        stdout="* workspace:4  envctl  [selected]\n  workspace:8  envctl reviews\n",
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["superset"], returncode=0, stdout="surface:12\n", stderr=""),
+                ]
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_picker_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_submit_ready", return_value=None),
+            ):
+                _ImmediateThread.created = []
+                result = launch_support.launch_review_agent_terminal(
+                    rt,
+                    repo_root=repo,
+                    project_name="feature-a-1",
+                    project_root=project_root,
+                    review_bundle_path=review_bundle,
+                )
+
+        self.assertEqual(result.status, "launched")
+        self.assertEqual(rt.process_runner.calls[0], ["superset", "list-workspaces"])
+        self.assertEqual(rt.process_runner.calls[1], ["superset", "new-surface", "--workspace", "workspace:8"])
+        self.assertNotIn(["superset", "new-workspace", "--cwd", str(repo.resolve())], rt.process_runner.calls)
+        self.assertTrue(all(call[0] == "superset" for call in rt.process_runner.calls), rt.process_runner.calls)
 
     def test_review_launch_honors_explicit_workspace_override_and_opencode_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

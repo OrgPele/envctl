@@ -41,7 +41,18 @@ from envctl_engine.planning.plan_agent.recovery import *
 def _workspace_surface_command(target: Any) -> str:
     transport = str(getattr(target, "transport", "") or "").strip().lower()
     if not transport and hasattr(target, "config"):
-        transport = str(getattr(getattr(target, "config"), "plan_agent_surface_transport", "") or "").strip().lower()
+        try:
+            launch_config = resolve_plan_agent_launch_config(
+                getattr(target, "config"),
+                getattr(target, "env", {}),
+            )
+            transport = launch_config.transport
+        except Exception:
+            transport = (
+                str(getattr(getattr(target, "config"), "plan_agent_surface_transport", "") or "")
+                .strip()
+                .lower()
+            )
     return "superset" if transport == "superset" else "cmux"
 
 

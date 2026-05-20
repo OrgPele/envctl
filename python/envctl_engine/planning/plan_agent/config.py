@@ -78,7 +78,7 @@ def resolve_plan_agent_launch_config(
     _apply_plan_agent_aliases(env_map, explicit_values=env_map)
     route_flags = getattr(route, "flags", {}) or {}
     opencode_launch_requested = bool(route_flags.get("opencode"))
-    surface_transport = _resolve_surface_transport(config, env_map)
+    surface_transport, invalid_surface_transport = _resolve_surface_transport(config, env_map)
     transport: Literal["cmux", "superset", "tmux", "omx"] = (
         "omx"
         if bool(route_flags.get("omx"))
@@ -205,25 +205,28 @@ def resolve_plan_agent_launch_config(
         omx_workflow=omx_workflow,
         codex_goal_enable=goal_enabled,
         superset_workspace=superset_workspace,
+        invalid_surface_transport=invalid_surface_transport,
     )
 
 
 def _resolve_surface_transport(
     config: EngineConfig,
     env_map: Mapping[str, str],
-) -> Literal["cmux", "superset"]:
+) -> tuple[Literal["cmux", "superset"], str]:
     raw = str(
         env_map.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
         or config.raw.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
         or ""
     ).strip().lower()
+    if raw not in {"", "cmux", "superset"}:
+        return "cmux", raw
     if raw == "superset":
-        return "superset"
+        return "superset", ""
     if str(env_map.get("ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE") or "").strip():
-        return "superset"
+        return "superset", ""
     if str(config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE") or "").strip():
-        return "superset"
-    return "cmux"
+        return "superset", ""
+    return "cmux", ""
 
 
 def _default_plan_agent_cli_command(cli: str, *, codex_yolo_enabled: bool = True) -> str:
@@ -256,6 +259,8 @@ def plan_agent_launch_prereq_commands(
     launch_config = resolve_plan_agent_launch_config(config, env, route=route)
     if not launch_config.enabled:
         return ()
+    if launch_config.invalid_surface_transport:
+        return ()
     if launch_config.transport == "omx":
         return ("omx", "tmux", "script", "codex")
     cli_executable = _command_executable(launch_config.cli_command)
@@ -276,6 +281,8 @@ def _command_executable(raw_command: str) -> str | None:
 
 
 def _missing_launch_commands(runtime: Any, launch_config: PlanAgentLaunchConfig) -> list[str]:
+    if launch_config.invalid_surface_transport:
+        return []
     if launch_config.transport == "omx":
         required = ["omx", "tmux", "script", "codex"]
     else:
