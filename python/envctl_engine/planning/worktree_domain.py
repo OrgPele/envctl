@@ -1619,12 +1619,21 @@ def _worktree_cgc_index_enabled(self: Any) -> bool:
 def _index_worktree_with_cgc(self: Any, *, target: Path) -> None:
     if not getattr(self, "_command_exists", lambda _name: False)("cgc"):
         return
-    result = self.process_runner.run(
-        ["cgc", "index", str(target)],
-        cwd=target,
-        env=self._command_env(port=0),
-        timeout=600.0,
-    )
+    try:
+        result = self.process_runner.run(
+            ["cgc", "index", str(target)],
+            cwd=target,
+            env=self._command_env(port=0),
+            timeout=600.0,
+        )
+    except OSError as exc:
+        self._emit(
+            "setup.worktree.code_intelligence.cgc_index",
+            target=str(target),
+            success=False,
+            error=str(exc),
+        )
+        return
     self._emit(
         "setup.worktree.code_intelligence.cgc_index",
         target=str(target),

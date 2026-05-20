@@ -570,6 +570,89 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             self.assertEqual(Path(cgc_calls[0][0][2]).resolve(), target_root.resolve())
             self.assertEqual(cgc_calls[0][1].resolve() if cgc_calls[0][1] else None, target_root.resolve())
 
+    def test_setup_worktree_forced_cgc_index_skips_when_cgc_is_not_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena" / "project.yml").write_text('project_name: "repo"\n', encoding="utf-8")
+            cgc_calls: list[list[str]] = []
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true"})
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[:2] == ["cgc", "index"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=False):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertEqual(cgc_calls, [])
+            self.assertEqual(
+                (target_root / ".serena" / "project.yml").read_text(encoding="utf-8"),
+                'project_name: "repo"\n',
+            )
+
+    def test_setup_worktree_cgc_launch_failure_does_not_fail_worktree_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            emitted: list[dict[str, object]] = []
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true"})
+            engine._emit = lambda event, **payload: emitted.append({"event": event, **payload})  # type: ignore[method-assign]
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[:2] == ["cgc", "index"]:
+                    raise FileNotFoundError("cgc")
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=True):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertTrue(target_root.is_dir())
+            self.assertIn(
+                {
+                    "event": "setup.worktree.code_intelligence.cgc_index",
+                    "target": str(target_root.resolve()),
+                    "success": False,
+                    "error": "cgc",
+                },
+                emitted,
+            )
+
     def test_setup_worktree_without_serena_or_cgc_config_does_not_fail_or_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
