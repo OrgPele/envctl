@@ -1,62 +1,56 @@
-# Prompt Workflow Modernization Remains Complete
+# Prompt Workflow Modernization Complete
 
 ## Context and objective
 
-The previous `MAIN_TASK.md` is archived as `OLD_TASK_8.md`. It recorded that
-the prompt workflow modernization sequence had no remaining implementation scope
-after these commits:
+The previous `MAIN_TASK.md` is archived as `OLD_TASK_7.md`. It was an
+audit-only rollover stating that the prompt workflow modernization sequence had
+no remaining implementation scope after commits:
 
 - `644cc2c Modernize plan-agent prompt workflow`
 - `3b0885c Complete residual prompt workflow contract cleanup`
 - `aa99171 Archive completed residual prompt workflow task`
 - `5bf5b6b Archive completed prompt workflow iteration audit`
-- `bcd14fb Archive completed prompt workflow modernization task`
 
-This rollover is audit-only. Current task, code, test, and git evidence show no
-remaining prompt workflow implementation work.
+The objective for this task record is to preserve that audit result without
+inventing follow-up work. Current repo evidence still shows the prompt workflow
+modernization sequence is complete.
 
 ## Remaining requirements (complete and exhaustive)
 
 There are no remaining implementation requirements from the prompt workflow
 modernization sequence.
 
-Do not infer new work from this completed task history. Any future prompt,
-launcher, documentation, validation, `envctl ship`, or `envctl test-plan`
-implementation must be driven by a new explicit requirement, bug report,
-reviewer finding, or plan.
+Future work must be driven by a new explicit requirement, bug report, reviewer
+finding, or plan. Do not infer new prompt, launcher, documentation, validation,
+`envctl ship`, or `envctl test-plan` implementation work from this completed
+task history.
 
 ## Gaps from prior iteration (mapped to evidence)
 
 Fully implemented:
 
-- Plan-agent launch code contains the goal-required queued Codex workflow
-  changes:
-  - `python/envctl_engine/planning/plan_agent/models.py`
-  - `python/envctl_engine/planning/plan_agent/workflow.py`
-  - `python/envctl_engine/planning/plan_agent/cmux_transport.py`
-  - `python/envctl_engine/planning/plan_agent/tmux_transport.py`
-- Runtime prompt templates contain the modern focused-validation,
+- `python/envctl_engine/planning/plan_agent/models.py`,
+  `workflow.py`, `cmux_transport.py`, and `tmux_transport.py` contain the
+  goal-required queued Codex workflow changes from the broader modernization.
+- `python/envctl_engine/runtime/prompt_templates/implement_task.md`,
+  `finalize_task.md`, `implement_plan.md`, private plan-agent follow-up
+  templates, and `continue_task.md` contain the modern focused-validation,
   protected-artifact, planned `envctl test-plan`, planned `envctl ship`, and
-  compact fallback guidance:
-  - `python/envctl_engine/runtime/prompt_templates/implement_task.md`
-  - `python/envctl_engine/runtime/prompt_templates/finalize_task.md`
-  - `python/envctl_engine/runtime/prompt_templates/implement_plan.md`
-  - `python/envctl_engine/runtime/prompt_templates/continue_task.md`
-  - private plan-agent follow-up templates.
-- Auto-Codex and auto-OpenCode create-plan templates select and record
+  compact fallback guidance.
+- `python/envctl_engine/runtime/prompt_templates/create_plan_auto_codex.md` and
+  `create_plan_auto_opencode.md` select and record
   `selected_launch_scope_flags` and use `<launch_scope_flags>` in launch command
-  shapes:
-  - `python/envctl_engine/runtime/prompt_templates/create_plan_auto_codex.md`
-  - `python/envctl_engine/runtime/prompt_templates/create_plan_auto_opencode.md`
-- User docs describe plan-selected launch scope and surface differences:
-  - `docs/user/planning-and-worktrees.md`
-  - `docs/user/ai-playbooks.md`
-- Regression tests cover the prompt contracts, stale broad-scope wording
-  removal, continuation contract, and queued goal-frame behavior:
-  - `tests/python/runtime/test_prompt_install_support.py`
-  - `tests/python/planning/test_plan_agent_launch_support.py`
-- Task history is preserved in `OLD_TASK_2.md`, `OLD_TASK_5.md`,
-  `OLD_TASK_6.md`, and `OLD_TASK_7.md`.
+  shapes.
+- `docs/user/planning-and-worktrees.md` and `docs/user/ai-playbooks.md`
+  describe plan-selected launch scope and the Codex/OpenCode/OMX surface
+  differences.
+- `tests/python/runtime/test_prompt_install_support.py` covers prompt contract
+  terms, auto-launch command shapes, stale broad-scope wording removal, and the
+  continuation contract.
+- `tests/python/planning/test_plan_agent_launch_support.py` covers queued
+  goal-frame behavior for plan-agent launches.
+- `OLD_TASK_2.md`, `OLD_TASK_5.md`, and `OLD_TASK_6.md` preserve the previous
+  task history for the residual cleanup and no-remaining-work rollovers.
 
 Partially implemented:
 
@@ -69,7 +63,7 @@ Not implemented:
 Working-tree evidence:
 
 - `.envctl-state/worktree-provenance.json` has a generated local provenance
-  difference. It is not implementation scope and should remain local unless a
+  difference. This is not implementation scope and should remain local unless a
   future task explicitly targets provenance metadata behavior.
 
 Validation evidence from the completed implementation:
@@ -118,7 +112,7 @@ If completion needs to be reconfirmed, run:
 
 ## Definition of done
 
-- `OLD_TASK_8.md` archives the previous no-remaining-work task record.
+- `OLD_TASK_7.md` archives the previous no-remaining-work task record.
 - This `MAIN_TASK.md` states that no implementation work remains from the prompt
   workflow modernization sequence.
 - Future work starts from a new explicit requirement rather than inferred
