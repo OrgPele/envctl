@@ -1,30 +1,29 @@
-# Prompt Workflow Modernization Has No Remaining Scope
+# Prompt Workflow Modernization Remains Complete
 
 ## Context and objective
 
-The previous `MAIN_TASK.md` is archived as `OLD_TASK_9.md`. It recorded that
-the prompt workflow modernization sequence remained complete after these
-commits:
+The previous `MAIN_TASK.md` is archived as `OLD_TASK_8.md`. It recorded that
+the prompt workflow modernization sequence had no remaining implementation scope
+after these commits:
 
 - `644cc2c Modernize plan-agent prompt workflow`
 - `3b0885c Complete residual prompt workflow contract cleanup`
 - `aa99171 Archive completed residual prompt workflow task`
 - `5bf5b6b Archive completed prompt workflow iteration audit`
 - `bcd14fb Archive completed prompt workflow modernization task`
-- `20a6ad6 Archive completed prompt workflow rollover`
 
-This is an audit-only rollover. Current task, code, test, and git evidence show
-no remaining prompt workflow implementation work.
+This rollover is audit-only. Current task, code, test, and git evidence show no
+remaining prompt workflow implementation work.
 
 ## Remaining requirements (complete and exhaustive)
 
 There are no remaining implementation requirements from the prompt workflow
 modernization sequence.
 
-Future work must be driven by a new explicit requirement, bug report, reviewer
-finding, or plan. Do not infer new prompt, launcher, documentation, validation,
-`envctl ship`, or `envctl test-plan` implementation work from this completed
-task history.
+Do not infer new work from this completed task history. Any future prompt,
+launcher, documentation, validation, `envctl ship`, or `envctl test-plan`
+implementation must be driven by a new explicit requirement, bug report,
+reviewer finding, or plan.
 
 ## Gaps from prior iteration (mapped to evidence)
 
@@ -57,7 +56,7 @@ Fully implemented:
   - `tests/python/runtime/test_prompt_install_support.py`
   - `tests/python/planning/test_plan_agent_launch_support.py`
 - Task history is preserved in `OLD_TASK_2.md`, `OLD_TASK_5.md`,
-  `OLD_TASK_6.md`, `OLD_TASK_7.md`, and `OLD_TASK_8.md`.
+  `OLD_TASK_6.md`, and `OLD_TASK_7.md`.
 
 Partially implemented:
 
@@ -119,7 +118,7 @@ If completion needs to be reconfirmed, run:
 
 ## Definition of done
 
-- `OLD_TASK_9.md` archives the previous no-remaining-work task record.
+- `OLD_TASK_8.md` archives the previous no-remaining-work task record.
 - This `MAIN_TASK.md` states that no implementation work remains from the prompt
   workflow modernization sequence.
 - Future work starts from a new explicit requirement rather than inferred
