@@ -25,6 +25,7 @@ Completed and preserved planning ownership slices:
   worktrees.
 - `planning/worktree_selection_memory.py` owns plan selection memory path resolution, load/save behavior, and initial
   selected-count calculation.
+- `planning/worktree_shared_artifacts.py` owns generated-worktree shared-artifact compatibility links.
 - `planning/worktree_domain.py` remains a compatibility facade for those extracted helpers.
 
 Fully implement the remaining decomposition work without changing CLI semantics, persistent state formats, generated
@@ -45,8 +46,7 @@ implementation commits unless a task explicitly requires changing it.
      - plan selection and prompt parsing,
      - interactive planning menu rendering/key handling,
      - worktree sync/create/delete orchestration,
-     - partial worktree-add recovery and placeholder fallback,
-     - generated worktree shared-artifact linking.
+     - partial worktree-add recovery and placeholder fallback.
    - Keep public helper names and orchestrator call sites stable until callers are moved safely.
    - Preserve the strict boundary that planning operations only write inside the current checkout or generated plan
      worktrees.
@@ -183,9 +183,11 @@ Fully implemented:
   `python/envctl_engine/planning/worktree_project_catalog.py`.
 - Plan selection memory load/save and initial selected-count calculation are extracted to
   `python/envctl_engine/planning/worktree_selection_memory.py`.
+- Generated-worktree shared-artifact compatibility links are extracted to
+  `python/envctl_engine/planning/worktree_shared_artifacts.py`.
 - Structure guards exist in `tests/python/shared/test_structure_layout.py` for the planning owner modules.
 - Focused planning tests exist for `worktree_git_hooks.py`, `worktree_main_task.py`, and
-  `worktree_project_catalog.py`, and `worktree_selection_memory.py`.
+  `worktree_project_catalog.py`, `worktree_selection_memory.py`, and `worktree_shared_artifacts.py`.
 - Most recent reported validation:
   - `uv run --extra dev pytest -q tests/python/planning/test_worktree_main_task.py tests/python/shared/test_structure_layout.py::StructureLayoutTests::test_worktree_main_task_has_owned_module`
     -> `6 passed`.
@@ -199,8 +201,8 @@ Fully implemented:
 
 Partially implemented:
 
-- Planning/worktree split is started, but `worktree_domain.py` still owns selection, menu, sync/create/delete, partial
-  recovery, shared-artifact linking, cleanup, candidate discovery, and sorting.
+- Planning/worktree split is started, but `worktree_domain.py` still owns selection, menu, sync/create/delete, and
+  partial recovery.
 - Runtime support modules already exist under `runtime/engine_runtime_*_support.py`, but
   `runtime/engine_runtime.py` is still about 1,679 lines and still owns many delegate-worthy responsibilities.
 - Startup support modules already exist, but `startup/startup_orchestrator.py` is still about 2,272 lines and still owns
