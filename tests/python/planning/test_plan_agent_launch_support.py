@@ -478,17 +478,16 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 }
             )
 
-            with patch("envctl_engine.planning.plan_agent.config.shutil.which", return_value="/usr/local/bin/cmux"):
-                launch_config = launch_support.resolve_plan_agent_launch_config(
-                    config,
-                    {},
-                    route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
-                )
-                prereqs = launch_support.plan_agent_launch_prereq_commands(
-                    config,
-                    {},
-                    route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
-                )
+            launch_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+            )
+            prereqs = launch_support.plan_agent_launch_prereq_commands(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+            )
 
         self.assertEqual(launch_config.transport, "cmux")
         self.assertEqual(launch_config.cli, "opencode")
@@ -704,50 +703,48 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(cmux_config.transport, "cmux")
         self.assertEqual(cmux_config.cli, "codex")
 
-    def test_default_plan_agent_transport_prefers_cmux_when_available(self) -> None:
+    def test_default_plan_agent_transport_prefers_cmux(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             repo.mkdir(parents=True, exist_ok=True)
             config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime)})
 
-            with patch("envctl_engine.planning.plan_agent.config.shutil.which", return_value="/usr/local/bin/cmux"):
-                default_config = launch_support.resolve_plan_agent_launch_config(
-                    config,
-                    {},
-                    route=parse_route(["--plan", "feature-a"], env={}),
-                )
-                opencode_config = launch_support.resolve_plan_agent_launch_config(
-                    config,
-                    {},
-                    route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
-                )
+            default_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a"], env={}),
+            )
+            opencode_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+            )
 
         self.assertEqual(default_config.transport, "cmux")
         self.assertEqual(opencode_config.transport, "cmux")
         self.assertEqual(opencode_config.cli, "opencode")
 
-    def test_default_plan_agent_transport_falls_back_to_tmux_without_cmux(self) -> None:
+    def test_default_plan_agent_transport_stays_cmux_without_cmux(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             repo.mkdir(parents=True, exist_ok=True)
             config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime)})
 
-            with patch("envctl_engine.planning.plan_agent.config.shutil.which", return_value=None):
-                default_config = launch_support.resolve_plan_agent_launch_config(
-                    config,
-                    {},
-                    route=parse_route(["--plan", "feature-a"], env={}),
-                )
-                opencode_config = launch_support.resolve_plan_agent_launch_config(
-                    config,
-                    {},
-                    route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
-                )
+            default_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a"], env={}),
+            )
+            opencode_config = launch_support.resolve_plan_agent_launch_config(
+                config,
+                {},
+                route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+            )
 
-        self.assertEqual(default_config.transport, "tmux")
-        self.assertEqual(opencode_config.transport, "tmux")
+        self.assertEqual(default_config.transport, "cmux")
+        self.assertEqual(opencode_config.transport, "cmux")
         self.assertEqual(opencode_config.cli, "opencode")
 
     def test_resolve_plan_agent_launch_config_goal_defaults_and_route_overrides(self) -> None:

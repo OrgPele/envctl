@@ -19,3 +19,11 @@ def default_commit_command(base_dir: Path) -> list[str] | None:
     if python_bin is None:
         return None
     return [python_bin, "-m", "envctl_engine.actions.actions_cli", "commit"]
+
+
+def default_ship_command(base_dir: Path) -> list[str] | None:
+    _ = base_dir
+    python_bin = detect_envctl_python()
+    if python_bin is None:
+        return None
+    return [python_bin, "-m", "envctl_engine.actions.actions_cli", "ship"]

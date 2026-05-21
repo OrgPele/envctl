@@ -218,6 +218,39 @@ Use direct setup when:
 - you want numbered worktrees directly
 - you do not need the plan-file discovery step
 
+## Worktree Identity and Handoff
+
+Generated worktrees use one identity string for the branch name, envctl project
+name, and `--project` selector. For a plan slug such as `features_demo`, the
+first generated worktree is `features_demo-1`; the matching branch and selector
+are also `features_demo-1`.
+
+When envctl runs from a generated tree directory shaped like
+`<repo>/trees/<feature>/<iteration>`, it resolves the parent repo as the
+control-plane root for `.envctl`, runtime state, port locks, and tree discovery,
+while keeping the generated worktree as the execution root for service commands
+and tests. An explicit `ENVCTL_CONFIG_FILE` still selects the config file.
+
+During implementation, ask envctl for focused validation commands before running
+large suites:
+
+```bash
+envctl test-plan --project features_demo-1 --json
+```
+
+The JSON result lists exact commands, confidence, reasons, changed files, and
+whether a broad full-gate run is recommended. For final handoff, use:
+
+```bash
+envctl ship --project features_demo-1 --json
+```
+
+`ship` reuses `envctl commit` and `envctl pr`, so `.envctl-commit-message.md`
+continues to drive the default commit message and envctl-local artifacts such as
+`.envctl-state/`, `MAIN_TASK.md`, `OLD_TASK_*.md`, `trees/`, and `trees-*` stay
+local. The command returns the PR URL plus GitHub check status in a structured
+payload.
+
 Use `--plan` when:
 
 - plan files are already your source of truth

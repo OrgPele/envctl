@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Mapping
 
 from envctl_engine.planning import planning_feature_name
@@ -327,6 +328,213 @@ def run_pr_action(context: ActionProjectContext) -> int:
             body_file.unlink()
         except OSError:
             pass
+
+
+def run_ship_action(context: ActionProjectContext) -> int:
+    git_root = resolve_git_root(context.project_root, context.repo_root)
+    json_output = parse_bool(context.env.get("ENVCTL_ACTION_JSON"), False)
+    started = time.monotonic()
+    if shutil.which("git") is None:
+        payload = _ship_payload(
+            context=context,
+            git_root=git_root,
+            branch="",
+            status="git_unavailable",
+            started=started,
+        )
+        return _print_ship_result(payload, json_output=json_output, ok=False)
+
+    branch = _git_output(git_root, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    if not branch or branch == "HEAD":
+        payload = _ship_payload(
+            context=context,
+            git_root=git_root,
+            branch=branch or "HEAD",
+            status="detached_head",
+            started=started,
+        )
+        return _print_ship_result(payload, json_output=json_output, ok=True)
+
+    before_sha = _git_output(git_root, ["rev-parse", "HEAD"]).strip()
+    protected_paths = _ship_protected_paths(git_root)
+    pre_commit_dirty = probe_dirty_worktree(
+        context.project_root,
+        context.repo_root,
+        project_name=context.project_name,
+    ).dirty
+    step_statuses: list[str] = []
+    existing_url = existing_pr_url(git_root, branch)
+
+    commit_code = run_commit_action(context)
+    after_sha = _git_output(git_root, ["rev-parse", "HEAD"]).strip()
+    committed = bool(after_sha and before_sha and after_sha != before_sha) or bool(
+        pre_commit_dirty and commit_code == 0
+    )
+    step_statuses.append("committed_pushed" if committed else "clean_no_changes")
+    if commit_code != 0:
+        payload = _ship_payload(
+            context=context,
+            git_root=git_root,
+            branch=branch,
+            status="commit_failed",
+            started=started,
+            commit_sha=after_sha,
+            committed=committed,
+            protected_paths=protected_paths,
+            step_statuses=step_statuses,
+        )
+        return _print_ship_result(payload, json_output=json_output, ok=False)
+
+    pr_url = existing_url
+    pr_created = False
+    if not pr_url:
+        pr_code = run_pr_action(context)
+        if pr_code != 0:
+            payload = _ship_payload(
+                context=context,
+                git_root=git_root,
+                branch=branch,
+                status="pr_failed",
+                started=started,
+                commit_sha=after_sha,
+                committed=committed,
+                protected_paths=protected_paths,
+                step_statuses=step_statuses,
+            )
+            return _print_ship_result(payload, json_output=json_output, ok=False)
+        pr_url = existing_pr_url(git_root, branch)
+        pr_created = bool(pr_url)
+        step_statuses.append("pr_created" if pr_created else "pr_unresolved")
+    else:
+        step_statuses.append("pr_exists")
+
+    checks = _github_pr_checks(git_root, branch=branch, pr_url=pr_url)
+    status = str(checks.get("state") or ("pr_created" if pr_created else "pr_exists"))
+    if status:
+        step_statuses.append(status)
+    payload = _ship_payload(
+        context=context,
+        git_root=git_root,
+        branch=branch,
+        status=status,
+        started=started,
+        commit_sha=after_sha,
+        committed=committed,
+        pushed=committed,
+        pr_url=pr_url,
+        pr_created=pr_created,
+        protected_paths=protected_paths,
+        checks=checks,
+        step_statuses=step_statuses,
+    )
+    ok = status not in {"checks_failed", "commit_failed", "pr_failed"}
+    return _print_ship_result(payload, json_output=json_output, ok=ok)
+
+
+def _ship_protected_paths(git_root: Path) -> list[str]:
+    status_output = _git_output(git_root, ["status", "--porcelain", "--untracked-files=all"])
+    partition = _partition_envctl_protected_paths(status_output)
+    return _ordered_unique_paths(partition.protected_staged_paths, partition.protected_skipped_paths)
+
+
+def _github_pr_checks(git_root: Path, *, branch: str, pr_url: str) -> dict[str, object]:
+    del pr_url
+    gh_path = shutil.which("gh")
+    if gh_path is None:
+        return {
+            "state": "gh_unavailable",
+            "failing_checks": [],
+            "pending_checks": [],
+            "duration_seconds": 0.0,
+        }
+    started = time.monotonic()
+    completed = subprocess.run(
+        [gh_path, "pr", "checks", branch, "--json", "name,state,workflow,link"],
+        cwd=str(git_root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    duration = round(time.monotonic() - started, 3)
+    if completed.returncode != 0:
+        return {
+            "state": "checks_pending_timeout",
+            "failing_checks": [],
+            "pending_checks": [],
+            "duration_seconds": duration,
+            "error": (completed.stderr or completed.stdout).strip(),
+        }
+    try:
+        loaded = json.loads(completed.stdout or "[]")
+    except json.JSONDecodeError:
+        loaded = []
+    checks = loaded if isinstance(loaded, list) else []
+    failing_states = {"FAILURE", "FAILED", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
+    passing_states = {"SUCCESS", "PASSED", "COMPLETED", "NEUTRAL", "SKIPPED"}
+    failing = [check for check in checks if str(check.get("state", "")).upper() in failing_states]
+    pending = [check for check in checks if str(check.get("state", "")).upper() not in failing_states | passing_states]
+    if failing:
+        state = "checks_failed"
+    elif pending:
+        state = "checks_pending_timeout"
+    else:
+        state = "checks_passed"
+    return {
+        "state": state,
+        "failing_checks": failing,
+        "pending_checks": pending,
+        "duration_seconds": duration,
+    }
+
+
+def _ship_payload(
+    *,
+    context: ActionProjectContext,
+    git_root: Path,
+    branch: str,
+    status: str,
+    started: float,
+    commit_sha: str = "",
+    committed: bool = False,
+    pushed: bool = False,
+    pr_url: str = "",
+    pr_created: bool = False,
+    protected_paths: list[str] | None = None,
+    checks: Mapping[str, object] | None = None,
+    step_statuses: list[str] | None = None,
+) -> dict[str, object]:
+    checks_payload = dict(checks or {})
+    return {
+        "contract_version": "envctl.ship.v1",
+        "project": context.project_name,
+        "project_root": str(context.project_root.resolve()),
+        "repo_root": str(context.repo_root.resolve()),
+        "git_root": str(git_root.resolve()),
+        "branch": branch,
+        "status": status,
+        "step_statuses": step_statuses or [],
+        "commit_sha": commit_sha,
+        "committed": committed,
+        "pushed": pushed,
+        "pr_url": pr_url,
+        "pr_created": pr_created,
+        "checks_state": checks_payload.get("state", ""),
+        "failing_checks": checks_payload.get("failing_checks", []),
+        "pending_checks": checks_payload.get("pending_checks", []),
+        "monitor_duration_seconds": checks_payload.get("duration_seconds", 0.0),
+        "duration_seconds": round(time.monotonic() - started, 3),
+        "protected_local_artifacts_skipped": protected_paths or [],
+    }
+
+
+def _print_ship_result(payload: Mapping[str, object], *, json_output: bool, ok: bool) -> int:
+    if json_output:
+        print(json.dumps(dict(payload), indent=2, sort_keys=True))
+    else:
+        status = str(payload.get("status") or "ship_complete")
+        pr_url = str(payload.get("pr_url") or "").strip()
+        print(f"ship: {status}" + (f" {pr_url}" if pr_url else ""))
+    return 0 if ok else 1
 
 
 def run_review_action(context: ActionProjectContext) -> int:

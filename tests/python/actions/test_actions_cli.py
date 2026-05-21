@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -32,14 +33,130 @@ class ActionsCliTests(unittest.TestCase):
             "A  MAIN_TASK.md\n"
             "?? .envctl-commit-message.md\n"
             " M .envctl-state/run.json\n"
+            "?? OLD_TASK_1.md\n"
+            "?? trees/feature/1/file.py\n"
+            "?? trees-feature/file.py\n"
             "M  app.py\n"
             " M docs/reference/commands.md\n"
             "R  old_name.py -> new_name.py\n"
         )
 
         self.assertEqual(partition.protected_staged_paths, ["MAIN_TASK.md"])
-        self.assertEqual(partition.protected_skipped_paths, [".envctl-commit-message.md", ".envctl-state/run.json"])
+        self.assertEqual(
+            partition.protected_skipped_paths,
+            [
+                ".envctl-commit-message.md",
+                ".envctl-state/run.json",
+                "OLD_TASK_1.md",
+                "trees/feature/1/file.py",
+                "trees-feature/file.py",
+            ],
+        )
         self.assertEqual(partition.stageable_paths, ["app.py", "docs/reference/commands.md", "new_name.py"])
+
+    def test_ship_action_reuses_commit_and_pr_then_reports_passed_checks_json(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            context = domain.ActionProjectContext(
+                repo_root=repo_root,
+                project_root=repo_root,
+                project_name="Main",
+                env={"ENVCTL_ACTION_JSON": "true"},
+            )
+
+            git_outputs = {
+                ("rev-parse", "--abbrev-ref", "HEAD"): "feature/demo\n",
+                ("rev-parse", "HEAD"): "abc123\n",
+                ("status", "--porcelain", "--untracked-files=all"): "?? app.py\n?? .envctl-commit-message.md\n",
+            }
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                return git_outputs.get(tuple(args), "")
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/gh"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.run_commit_action", return_value=0) as commit_action,
+                patch("envctl_engine.actions.project_action_domain.run_pr_action", return_value=0) as pr_action,
+                patch(
+                    "envctl_engine.actions.project_action_domain.existing_pr_url",
+                    side_effect=["", "https://github.com/acme/repo/pull/7"],
+                ),
+                patch(
+                    "envctl_engine.actions.project_action_domain._github_pr_checks",
+                    return_value={
+                        "state": "checks_passed",
+                        "failing_checks": [],
+                        "pending_checks": [],
+                        "duration_seconds": 0.1,
+                    },
+                ),
+                redirect_stdout(StringIO()) as stdout,
+            ):
+                code = domain.run_ship_action(context)
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "checks_passed")
+        self.assertEqual(payload["branch"], "feature/demo")
+        self.assertEqual(payload["pr_url"], "https://github.com/acme/repo/pull/7")
+        self.assertTrue(payload["committed"])
+        self.assertTrue(payload["pr_created"])
+        self.assertEqual(payload["step_statuses"], ["committed_pushed", "pr_created", "checks_passed"])
+        self.assertIn(".envctl-commit-message.md", payload["protected_local_artifacts_skipped"])
+        commit_action.assert_called_once_with(context)
+        pr_action.assert_called_once_with(context)
+
+    def test_ship_action_reports_existing_pr_and_failed_checks(self) -> None:
+        domain = importlib.import_module("envctl_engine.actions.project_action_domain")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            context = domain.ActionProjectContext(
+                repo_root=repo_root,
+                project_root=repo_root,
+                project_name="Main",
+                env={"ENVCTL_ACTION_JSON": "true"},
+            )
+
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/demo\n"
+                if args == ["rev-parse", "HEAD"]:
+                    return "abc123\n"
+                return ""
+
+            with (
+                patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/gh"),
+                patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain.run_commit_action", return_value=0) as commit_action,
+                patch("envctl_engine.actions.project_action_domain.run_pr_action", return_value=0) as pr_action,
+                patch(
+                    "envctl_engine.actions.project_action_domain.existing_pr_url",
+                    return_value="https://github.com/acme/repo/pull/7",
+                ),
+                patch(
+                    "envctl_engine.actions.project_action_domain._github_pr_checks",
+                    return_value={
+                        "state": "checks_failed",
+                        "failing_checks": [{"name": "pytest", "state": "FAILURE"}],
+                        "pending_checks": [],
+                        "duration_seconds": 0.1,
+                    },
+                ),
+                redirect_stdout(StringIO()) as stdout,
+            ):
+                code = domain.run_ship_action(context)
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "checks_failed")
+        self.assertFalse(payload["pr_created"])
+        self.assertEqual(payload["step_statuses"], ["clean_no_changes", "pr_exists", "checks_failed"])
+        commit_action.assert_called_once_with(context)
+        pr_action.assert_not_called()
 
     def test_probe_dirty_worktree_classifies_porcelain_status(self) -> None:
         domain = importlib.import_module("envctl_engine.actions.project_action_domain")

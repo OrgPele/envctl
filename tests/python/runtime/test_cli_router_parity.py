@@ -22,8 +22,10 @@ class CliRouterParityTests(unittest.TestCase):
             "--health": "health",
             "--errors": "errors",
             "--test": "test",
+            "--test-plan": "test-plan",
             "--pr": "pr",
             "--commit": "commit",
+            "--ship": "ship",
             "--review": "review",
             "--analyze": "review",
             "--migrate": "migrate",
@@ -218,6 +220,20 @@ class CliRouterParityTests(unittest.TestCase):
         route = parse_route(["commit", "--commit-message", "ship it"], env={})
         self.assertEqual(route.command, "commit")
         self.assertEqual(route.flags.get("commit_message"), "ship it")
+
+        route = parse_route(["ship", "--project", "feature-a-1", "--json"], env={})
+        self.assertEqual(route.command, "ship")
+        self.assertEqual(route.projects, ["feature-a-1"])
+        self.assertTrue(route.flags.get("json"))
+        self.assertTrue(route.flags.get("skip_startup"))
+        self.assertTrue(route.flags.get("load_state"))
+
+        route = parse_route(["test-plan", "--project=feature-a-1", "--json"], env={})
+        self.assertEqual(route.command, "test-plan")
+        self.assertEqual(route.projects, ["feature-a-1"])
+        self.assertTrue(route.flags.get("json"))
+        self.assertTrue(route.flags.get("skip_startup"))
+        self.assertTrue(route.flags.get("load_state"))
 
         route = parse_route(["review", "--review-mode=grouped"], env={})
         self.assertEqual(route.command, "review")

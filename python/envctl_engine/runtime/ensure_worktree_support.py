@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from envctl_engine.actions.actions_worktree import delete_worktree_path
+from envctl_engine.planning import generated_worktree_identity
 
 
 def run_ensure_worktree_command(runtime: Any, route: object) -> int:
@@ -27,6 +28,7 @@ def run_ensure_worktree_command(runtime: Any, route: object) -> int:
 
     feature = parsed["feature"]
     iteration = parsed["iteration"]
+    identity = generated_worktree_identity(feature=feature, iteration=iteration)
     feature_root = runtime._preferred_tree_root_for_feature(feature)
     worktree_root = feature_root / iteration
     existed_before = worktree_root.exists()
@@ -37,7 +39,7 @@ def run_ensure_worktree_command(runtime: Any, route: object) -> int:
             feature=feature,
             iteration=iteration,
             worktree_root=worktree_root,
-            branch_name=f"{feature}-{iteration}",
+            branch_name=identity.branch_name,
             action=action,
             existed_before=existed_before,
             created=not existed_before,
@@ -64,7 +66,7 @@ def run_ensure_worktree_command(runtime: Any, route: object) -> int:
         feature=feature,
         iteration=iteration,
         worktree_root=worktree_root,
-        branch_name=f"{feature}-{iteration}",
+        branch_name=identity.branch_name,
         action=action,
         existed_before=existed_before,
         created=not existed_before or recreate_existing,
@@ -126,7 +128,7 @@ def _print_ensure_worktree_success(
         "ok": True,
         "feature": feature,
         "iteration": iteration,
-        "project_name": f"{feature}-{iteration}",
+        "project_name": generated_worktree_identity(feature=feature, iteration=iteration).project_name,
         "branch_name": branch_name,
         "worktree_root": str(worktree_root.resolve()),
         "feature_root": str(worktree_root.parent.resolve()),

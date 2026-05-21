@@ -196,10 +196,22 @@ envctl errors --all
 ## Tight Loop for One Project
 
 ```bash
+envctl test-plan --project api --json
 envctl test --project api
 envctl logs --project api --logs-follow
 envctl restart --project api
 ```
+
+Use the `test-plan` output to choose focused checks while coding. At final
+handoff, prefer the narrow ship flow:
+
+```bash
+envctl ship --project api --json
+```
+
+This commits with the same `.envctl-commit-message.md` behavior as
+`envctl commit`, creates a PR only when needed, and reports GitHub check status.
+For generated worktrees, the project selector is the branch name.
 
 ## Multi-Repo Control
 

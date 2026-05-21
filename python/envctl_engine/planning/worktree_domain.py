@@ -25,6 +25,7 @@ from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.planning import (
     discover_tree_projects,
     filter_projects_for_plan,
+    generated_worktree_identity,
     list_planning_files,
     planning_existing_counts,
     planning_feature_name,
@@ -1368,9 +1369,10 @@ def _create_feature_worktrees_result(
             _prepare_worktree_code_intelligence(self, target=target)
         _seed_main_task_from_plan(target=target, plan_path=plan_path)
         worktree_cli = cli_sequence[index] if index < len(cli_sequence) else ""
+        identity = generated_worktree_identity(feature=feature, iteration=iteration)
         created_worktrees.append(
             CreatedPlanWorktree(
-                name=f"{feature}-{iteration}",
+                name=identity.project_name,
                 root=target.resolve(),
                 plan_file=plan_file,
                 cli=worktree_cli,
@@ -1467,7 +1469,7 @@ def _run_worktree_add(self: Any, *, feature: str, iteration: str, target: Path, 
 
 
 def _worktree_branch_name(*, feature: str, iteration: str) -> str:
-    return f"{feature}-{iteration}"
+    return generated_worktree_identity(feature=feature, iteration=iteration).branch_name
 
 
 def _worktree_branch_exists(self: Any, *, branch_name: str) -> bool:

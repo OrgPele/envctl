@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from typing import Any, Callable, Mapping, cast
 
 from envctl_engine.actions.actions_analysis import default_review_command, default_migrate_command
-from envctl_engine.actions.actions_git import default_commit_command, default_pr_command
+from envctl_engine.actions.actions_git import default_commit_command, default_pr_command, default_ship_command
 from envctl_engine.actions.action_command_support import (
     build_action_env,
     build_action_extra_env,
@@ -42,6 +42,7 @@ from envctl_engine.actions.action_test_support import (
     rich_progress_available as _rich_progress_available,
 )
 from envctl_engine.actions.action_test_runner import run_test_action as run_test_action_impl
+from envctl_engine.actions.test_plan_action import run_test_plan_action as run_test_plan_action_impl
 from envctl_engine.actions.action_worktree_runner import run_delete_worktree_action as run_delete_worktree_action_impl
 from envctl_engine.planning import discover_tree_projects
 from envctl_engine.runtime.command_router import Route
@@ -234,8 +235,10 @@ class ActionCommandOrchestrator:
 
         handler_map: dict[str, Callable[[Route, list[object]], int]] = {
             "test": self.run_test_action,
+            "test-plan": self.run_test_plan_action,
             "pr": self.run_pr_action,
             "commit": self.run_commit_action,
+            "ship": self.run_ship_action,
             "review": self.run_review_action,
             "migrate": self.run_migrate_action,
         }
@@ -247,7 +250,8 @@ class ActionCommandOrchestrator:
         spinner_policy = resolve_spinner_policy(getattr(rt, "env", {}))
         op_id = f"action.{route.command}"
         start_status = self._command_start_status(route.command, targets)
-        suppress_action_spinner = bool(route.flags.get("interactive_command"))
+        json_output = bool(route.flags.get("json"))
+        suppress_action_spinner = bool(route.flags.get("interactive_command")) or json_output
         action_spinner_enabled = spinner_policy.enabled and not suppress_action_spinner
         emit_spinner_policy(
             getattr(rt.raw_runtime, "_emit", None),
@@ -263,8 +267,10 @@ class ActionCommandOrchestrator:
                 reason="interactive_command_spinner_suppressed",
             )
 
-        rt.emit("action.command.start", command=route.command, mode=route.mode)
-        self._emit_status(start_status)
+        if not json_output:
+            rt.emit("action.command.start", command=route.command, mode=route.mode)
+        if not json_output:
+            self._emit_status(start_status)
         with (
             use_spinner_policy(spinner_policy),
             spinner(
@@ -350,7 +356,8 @@ class ActionCommandOrchestrator:
         self._deferred_post_action_output = None
         if deferred_output is not None:
             deferred_output()
-        rt.emit("action.command.finish", command=route.command, code=code)
+        if not json_output:
+            rt.emit("action.command.finish", command=route.command, code=code)
         return code
 
     def resolve_targets(self, route: Route, *, trees_only: bool) -> tuple[list[object], str | None]:
@@ -360,7 +367,7 @@ class ActionCommandOrchestrator:
             if current is not None:
                 return [current], None
             return [], "self-destruct-worktree must be run from inside a discovered worktree."
-        if not trees_only and route.mode == "main" and route.command in {"commit", "pr", "test"}:
+        if not trees_only and route.mode == "main" and route.command in {"commit", "pr", "ship", "test", "test-plan"}:
             current = self._resolve_current_worktree_target(require_configured_main_root=True)
             if current is not None:
                 return [current], None
@@ -670,6 +677,17 @@ if result.returncode != 0:
             resolve_spinner_policy=resolve_spinner_policy,
         )
 
+    def run_test_plan_action(self, route: Route, targets: list[object]) -> int:
+        codes: list[int] = []
+        for target in targets:
+            context = SimpleNamespace(
+                repo_root=self.runtime.config.base_dir,  # type: ignore[attr-defined]
+                project_root=Path(str(getattr(target, "root"))),
+                project_name=str(getattr(target, "name", "")),
+            )
+            codes.append(run_test_plan_action_impl(context, json_output=bool(route.flags.get("json"))))
+        return 0 if all(code == 0 for code in codes) else 1
+
     def run_pr_action(self, route: Route, targets: list[object]) -> int:
         rt = self.runtime
         return self.run_project_action(
@@ -691,6 +709,19 @@ if result.returncode != 0:
             command_name="commit",
             env_key="ENVCTL_ACTION_COMMIT_CMD",
             default_command=default_commit_command(rt.config.base_dir),  # type: ignore[attr-defined]
+            default_cwd=rt.config.base_dir,  # type: ignore[attr-defined]
+            default_append_project_path=False,
+            extra_env=self.action_extra_env(route),
+        )
+
+    def run_ship_action(self, route: Route, targets: list[object]) -> int:
+        rt = self.runtime
+        return self.run_project_action(
+            route,
+            targets,
+            command_name="ship",
+            env_key="ENVCTL_ACTION_SHIP_CMD",
+            default_command=default_ship_command(rt.config.base_dir),  # type: ignore[attr-defined]
             default_cwd=rt.config.base_dir,  # type: ignore[attr-defined]
             default_append_project_path=False,
             extra_env=self.action_extra_env(route),
@@ -775,7 +806,7 @@ if result.returncode != 0:
                 env=dict(env),
                 timeout=300.0,
             ),
-            emit_status=self._emit_status,
+            emit_status=(self._noop_status if bool(route.flags.get("json")) else self._emit_status),
             interactive_print_failures=False,
             on_success=handle_success,
             on_failure=handle_failure,
@@ -1153,7 +1184,7 @@ if result.returncode != 0:
                     timeout=300.0,
                 )
             ),
-            emit_status=self._emit_status,
+            emit_status=(self._noop_status if bool(route.flags.get("json")) else self._emit_status),
             interactive_print_failures=(not interactive_command) or command_name in {"pr", "review"},
             emit_success_output=not stream_review_output,
             on_success=self._project_action_success_handler(command_name, route.mode, interactive_command),
@@ -1312,6 +1343,10 @@ if result.returncode != 0:
         if not text:
             return
         rt.emit("ui.status", message=text)
+
+    @staticmethod
+    def _noop_status(_message: str) -> None:
+        return
 
     def _install_action_spinner_status_bridge(
         self,

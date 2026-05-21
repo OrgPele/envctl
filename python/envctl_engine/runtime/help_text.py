@@ -41,8 +41,10 @@ GENERAL_ACTION_ORDER = (
     "health",
     "errors",
     "test",
+    "test-plan",
     "commit",
     "pr",
+    "ship",
     "review",
     "migrate",
     "delete-worktree",
@@ -543,6 +545,22 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         aliases=("tests", "t", "--test", "--tests"),
         related=("health", "logs", "review"),
     ),
+    "test-plan": CommandHelpTopic(
+        command="test-plan",
+        summary="print focused validation commands for the selected project",
+        usage=("envctl test-plan --project <name> [--json]",),
+        what_it_does=(
+            "collects changed files from git and maps common envctl code areas to focused test commands",
+            "includes reasons, confidence, ruff suggestions for touched Python paths, and full-gate guidance",
+        ),
+        flags=(
+            "--project <name>        plan validation for one project/worktree",
+            "--json                  print the envctl.test_plan.v1 payload",
+        ),
+        examples=("envctl test-plan --project feature-a-1 --json",),
+        aliases=("--test-plan",),
+        related=("test", "ship", "commit"),
+    ),
     "pr": CommandHelpTopic(
         command="pr",
         summary="create a pull request for the selected branch/worktree",
@@ -579,6 +597,23 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         examples=("envctl commit --main", "envctl commit --project feature-a-1 --commit-message-file /tmp/msg.md"),
         aliases=("c", "--commit"),
         related=("pr", "review"),
+    ),
+    "ship": CommandHelpTopic(
+        command="ship",
+        summary="commit, push, open/update PR, and report GitHub checks for one target",
+        usage=("envctl ship --project <name> [--json]",),
+        what_it_does=(
+            "reuses envctl commit behavior, including .envctl-commit-message.md and protected local artifacts",
+            "reuses envctl PR detection/creation so an existing PR is not recreated",
+            "queries GitHub PR checks and returns passed, failed, pending-timeout, or gh-unavailable status",
+        ),
+        flags=(
+            "--project <name>        ship one worktree/project",
+            "--json                  print the envctl.ship.v1 payload",
+        ),
+        examples=("envctl ship --project feature-a-1 --json",),
+        aliases=("--ship",),
+        related=("test-plan", "commit", "pr"),
     ),
     "review": CommandHelpTopic(
         command="review",

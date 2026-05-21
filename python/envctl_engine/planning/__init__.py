@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +34,30 @@ class PlanProjectPrediction:
     root: Path
     plan_file: str
     action: str
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedWorktreeIdentity:
+    feature: str
+    iteration: str
+    project_name: str
+    branch_name: str
+    selector: str
+    path_segments: tuple[str, str]
+
+
+def generated_worktree_identity(*, feature: str, iteration: str | int) -> GeneratedWorktreeIdentity:
+    normalized_feature = str(feature).strip()
+    normalized_iteration = str(iteration).strip()
+    name = f"{normalized_feature}-{normalized_iteration}"
+    return GeneratedWorktreeIdentity(
+        feature=normalized_feature,
+        iteration=normalized_iteration,
+        project_name=name,
+        branch_name=name,
+        selector=name,
+        path_segments=(normalized_feature, normalized_iteration),
+    )
 
 
 def list_planning_files(planning_dir: Path) -> list[str]:
@@ -238,7 +263,8 @@ def predict_plan_projects(
         for _ in range(missing):
             iteration = _next_available_iteration(existing_iterations)
             root = feature_root / str(iteration)
-            name = f"{feature}-{iteration}"
+            identity = generated_worktree_identity(feature=feature, iteration=iteration)
+            name = identity.project_name
             dedupe_key = f"{name}|{root}"
             if dedupe_key in seen:
                 existing_iterations.add(iteration)
@@ -319,7 +345,8 @@ def _append_feature_projects(
         for iter_dir in nested_iters:
             if not _looks_like_tree_project_root(iter_dir):
                 continue
-            project_name = f"{feature_name}-{iter_dir.name}"
+            identity = generated_worktree_identity(feature=feature_name, iteration=iter_dir.name)
+            project_name = _branch_project_name_for_worktree(iter_dir) or identity.project_name
             dedupe_key = f"{project_name}|{iter_dir.resolve()}"
             if dedupe_key in seen:
                 continue
@@ -334,6 +361,28 @@ def _append_feature_projects(
         return
     seen.add(dedupe_key)
     projects.append((feature_name, feature_dir))
+
+
+def _branch_project_name_for_worktree(path: Path) -> str:
+    if not ((path / ".git").is_file() or (path / ".git").is_dir()):
+        return ""
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=str(path),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if completed.returncode != 0:
+        return ""
+    branch = completed.stdout.strip()
+    if not branch or branch == "HEAD":
+        return ""
+    return branch
 
 
 def _looks_like_tree_project_root(path: Path) -> bool:
