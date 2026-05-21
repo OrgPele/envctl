@@ -21,6 +21,8 @@ Completed and preserved planning ownership slices:
 - `planning/worktree_git_hooks.py` owns `ENVCTL_WORKTREE_GIT_HOOKS` parsing and disabled/inherit policy checks.
 - `planning/worktree_main_task.py` owns generated worktree `MAIN_TASK.md` seeding, plan archival into `todo/done`,
   and numeric iteration gap selection.
+- `planning/worktree_project_catalog.py` owns project candidate discovery, cleanup, and sorting for generated
+  worktrees.
 - `planning/worktree_selection_memory.py` owns plan selection memory path resolution, load/save behavior, and initial
   selected-count calculation.
 - `planning/worktree_domain.py` remains a compatibility facade for those extracted helpers.
@@ -44,8 +46,7 @@ implementation commits unless a task explicitly requires changing it.
      - interactive planning menu rendering/key handling,
      - worktree sync/create/delete orchestration,
      - partial worktree-add recovery and placeholder fallback,
-     - generated worktree shared-artifact linking,
-     - project candidate discovery, cleanup, and sorting.
+     - generated worktree shared-artifact linking.
    - Keep public helper names and orchestrator call sites stable until callers are moved safely.
    - Preserve the strict boundary that planning operations only write inside the current checkout or generated plan
      worktrees.
@@ -178,11 +179,13 @@ Fully implemented:
 - Worktree git-hook policy resolution is extracted to `python/envctl_engine/planning/worktree_git_hooks.py`.
 - Generated worktree `MAIN_TASK.md` seeding, plan archival, and numeric iteration gap selection are extracted to
   `python/envctl_engine/planning/worktree_main_task.py`.
+- Project candidate discovery, cleanup, and sorting are extracted to
+  `python/envctl_engine/planning/worktree_project_catalog.py`.
 - Plan selection memory load/save and initial selected-count calculation are extracted to
   `python/envctl_engine/planning/worktree_selection_memory.py`.
 - Structure guards exist in `tests/python/shared/test_structure_layout.py` for the planning owner modules.
 - Focused planning tests exist for `worktree_git_hooks.py`, `worktree_main_task.py`, and
-  `worktree_selection_memory.py`.
+  `worktree_project_catalog.py`, and `worktree_selection_memory.py`.
 - Most recent reported validation:
   - `uv run --extra dev pytest -q tests/python/planning/test_worktree_main_task.py tests/python/shared/test_structure_layout.py::StructureLayoutTests::test_worktree_main_task_has_owned_module`
     -> `6 passed`.
