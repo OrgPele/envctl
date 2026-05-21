@@ -985,6 +985,11 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--                    separates envctl flags from the passthrough command",
         ),
         examples=("envctl playwright --project feature-a-1 -- npx playwright test",),
+        notes=(
+            "use `envctl playwright --help` for wrapper help; tokens after `--` are treated as the command to run",
+            "pass a concrete executable after `--`; for Playwright projects this is usually `npx playwright test`",
+            "use `envctl endpoints --project <name> --json` first when you need to inspect resolved URLs",
+        ),
         aliases=("--playwright",),
         related=("endpoints", "qa-user", "test"),
     ),
