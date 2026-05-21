@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from envctl_engine.actions.actions_worktree import delete_worktree_path
+from envctl_engine.planning.worktree_creation_commands import (
+    run_worktree_add as _run_worktree_add_impl,
+    worktree_branch_exists as _worktree_branch_exists_impl,
+    worktree_branch_name as _worktree_branch_name_impl,
+    worktree_start_point as _worktree_start_point_impl,
+)
 from envctl_engine.planning.worktree_creation_recovery import (
     recover_partial_worktree_creation as _recover_partial_worktree_creation_impl,
     setup_worktree_placeholder_fallback_enabled as _setup_worktree_placeholder_fallback_enabled_impl,
@@ -1388,52 +1394,35 @@ def _worktree_target_created(target: Path) -> bool:
 
 
 def _run_worktree_add(self: Any, *, feature: str, iteration: str, target: Path, env: Mapping[str, str]) -> object:
-    branch_name = _worktree_branch_name(feature=feature, iteration=iteration)
-    start_point = _worktree_start_point(self)
-    branch_flag = "-B" if _worktree_branch_exists(self, branch_name=branch_name) else "-b"
-    command = ["git"]
-    if _worktree_git_hooks_disabled(self):
-        command.extend(["-c", "core.hooksPath=/dev/null"])
-    command.extend(
-        [
-            "-C",
-            str(self.config.base_dir),
-            "worktree",
-            "add",
-            branch_flag,
-            branch_name,
-            str(target),
-        ]
-    )
-    if start_point:
-        command.append(start_point)
-    return self.process_runner.run(
-        command,
-        cwd=self.config.base_dir,
+    return _run_worktree_add_impl(
+        repo_root=self.config.base_dir,
+        feature=feature,
+        iteration=iteration,
+        target=target,
         env=env,
-        timeout=120.0,
+        git_hooks_disabled=_worktree_git_hooks_disabled(self),
+        branch_exists=lambda branch_name: _worktree_branch_exists(self, branch_name=branch_name),
+        start_point=lambda: _worktree_start_point(self),
+        run=self.process_runner.run,
     )
 
 
 def _worktree_branch_name(*, feature: str, iteration: str) -> str:
-    return f"{feature}-{iteration}"
+    return _worktree_branch_name_impl(feature=feature, iteration=iteration)
 
 
 def _worktree_branch_exists(self: Any, *, branch_name: str) -> bool:
-    normalized = branch_name.strip()
-    if not normalized:
-        return False
-    return bool(_git_command_output(self, ["rev-parse", "--verify", f"refs/heads/{normalized}"]).strip())
+    return _worktree_branch_exists_impl(
+        branch_name=branch_name,
+        git_command_output=lambda args: _git_command_output(self, args),
+    )
 
 
 def _worktree_start_point(self: Any) -> str | None:
-    provenance = _build_worktree_provenance(self) or {}
-    for key in ("source_ref", "source_branch"):
-        candidate = str(provenance.get(key, "")).strip()
-        if candidate and _git_command_output(self, ["rev-parse", "--verify", candidate]).strip():
-            return candidate
-    head_commit = _git_command_output(self, ["rev-parse", "HEAD"]).strip()
-    return head_commit or None
+    return _worktree_start_point_impl(
+        provenance=_build_worktree_provenance(self) or {},
+        git_command_output=lambda args: _git_command_output(self, args),
+    )
 
 
 def _setup_worktree_placeholder_fallback_enabled(self: Any) -> bool:
