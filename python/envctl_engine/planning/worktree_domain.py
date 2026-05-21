@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import sys
 from collections import OrderedDict
 from collections.abc import Mapping
@@ -17,6 +16,11 @@ from envctl_engine.planning.worktree_main_task import (
     move_plan_to_done as _move_plan_to_done_impl,
     next_available_iteration as _next_available_iteration_impl,
     seed_main_task_from_plan as _seed_main_task_from_plan_impl,
+)
+from envctl_engine.planning.worktree_project_catalog import (
+    cleanup_empty_feature_root as _cleanup_empty_feature_root_impl,
+    feature_project_candidates as _feature_project_candidates_impl,
+    project_sort_key_for_feature as _project_sort_key_for_feature_impl,
 )
 from envctl_engine.planning.worktree_selection_memory import (
     initial_plan_selected_counts as _initial_plan_selected_counts_impl,
@@ -1629,16 +1633,10 @@ def _read_worktree_provenance(root: Path) -> dict[str, object]:
 
 
 def _cleanup_empty_feature_root(self: Any, *, feature: str) -> None:
-    feature_root = self._preferred_tree_root_for_feature(feature)
-    if not feature_root.is_dir():
-        return
-    try:
-        next(feature_root.iterdir())
-    except StopIteration:
-        try:
-            feature_root.rmdir()
-        except OSError:
-            return
+    _cleanup_empty_feature_root_impl(
+        preferred_tree_root_for_feature=self._preferred_tree_root_for_feature,
+        feature=feature,
+    )
 
 
 def _move_plan_to_done(self: Any, plan_file: str) -> None:
@@ -1661,31 +1659,11 @@ def _feature_project_candidates(
     projects: list[tuple[str, Path]],
     feature: str,
 ) -> list[tuple[str, Path]]:
-    lowered_feature = feature.lower()
-    prefix = f"{lowered_feature}-"
-    candidates = [
-        project
-        for project in projects
-        if project[0].lower() == lowered_feature or project[0].lower().startswith(prefix)
-    ]
-    candidates.sort(key=lambda item: self._project_sort_key_for_feature(item[0], feature))
-    return candidates
+    return _feature_project_candidates_impl(projects=projects, feature=feature)
 
 
 def _project_sort_key_for_feature(project_name: str, feature: str) -> tuple[int, object]:
-    lowered = project_name.lower()
-    feature_prefix = f"{feature.lower()}-"
-    if lowered == feature.lower():
-        return (0, 0)
-    if not lowered.startswith(feature_prefix):
-        return (3, lowered)
-    suffix = lowered[len(feature_prefix) :]
-    if suffix.isdigit():
-        return (1, int(suffix))
-    iter_match = re.fullmatch(r"iter[-_]?(\d+)", suffix)
-    if iter_match:
-        return (1, int(iter_match.group(1)))
-    return (2, suffix)
+    return _project_sort_key_for_feature_impl(project_name, feature)
 
 
 def _next_available_iteration(existing_iters: set[int]) -> int:
