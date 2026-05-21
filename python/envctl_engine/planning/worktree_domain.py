@@ -35,6 +35,9 @@ from envctl_engine.planning.worktree_plan_selection import (
     planning_keep_plan_enabled as _planning_keep_plan_enabled_impl,
     route_requests_fresh_ai_worktree as _route_requests_fresh_ai_worktree_impl,
 )
+from envctl_engine.planning.worktree_plan_project_selection import (
+    select_plan_projects as _select_plan_projects_impl,
+)
 from envctl_engine.planning.worktree_planning_menu import (
     run_planning_selection_menu as _run_planning_selection_menu_impl,
 )
@@ -85,13 +88,8 @@ from envctl_engine.planning.plan_agent.models import (
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.planning import (
     discover_tree_projects,
-    filter_projects_for_plan,
-    list_planning_files,
     planning_existing_counts,
     planning_feature_name,
-    predict_plan_projects,
-    resolve_planning_files,
-    select_projects_for_plan_files,
 )
 from envctl_engine.ui.path_links import render_path_fragment_for_terminal
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
@@ -375,324 +373,20 @@ def _select_plan_projects(
     self: Any, route: Route, project_contexts: list[ProjectContextLike]
 ) -> list[ProjectContextLike]:
     setattr(self, "_last_plan_selection_result", PlanSelectionResult(raw_projects=[], selected_contexts=[]))
-    raw_projects = [(ctx.name, ctx.root) for ctx in project_contexts]
-    planning_files = list_planning_files(self.config.planning_dir)
-    selection_raw = ",".join(route.passthrough_args).strip()
-    keep_plan = self._planning_keep_plan_enabled(route)
-
-    if selection_raw:
-        if planning_files:
-            try:
-                plan_counts = resolve_planning_files(
-                    selection_raw=selection_raw,
-                    planning_files=planning_files,
-                    base_dir=self.config.base_dir,
-                    planning_dir=self.config.planning_dir,
-                    requested_cli=str(
-                        self.env.get("ENVCTL_PLAN_AGENT_CLI")
-                        or self.config.raw.get("ENVCTL_PLAN_AGENT_CLI")
-                        or ""
-                    ),
-                )
-                plan_counts = _adjust_plan_counts_for_fresh_ai_launch(
-                    raw_projects=raw_projects,
-                    plan_counts=plan_counts,
-                    route=route,
-                )
-                if bool(getattr(route, "flags", {}).get("dry_run")):
-                    predictions = predict_plan_projects(
-                        projects=raw_projects,
-                        plan_counts=plan_counts,
-                        base_dir=self.config.base_dir,
-                        trees_dir_name=self.config.trees_dir_name,
-                    )
-                    predicted_raw_projects = [(prediction.name, Path(prediction.root)) for prediction in predictions]
-                    selected_contexts = self._contexts_from_raw_projects(predicted_raw_projects)
-                    created_worktrees = tuple(
-                        CreatedPlanWorktree(
-                            name=prediction.name,
-                            root=Path(prediction.root),
-                            plan_file=prediction.plan_file,
-                        )
-                        for prediction in predictions
-                        if prediction.action == "create"
-                    )
-                    setattr(
-                        self,
-                        "_last_plan_selection_result",
-                        PlanSelectionResult(
-                            raw_projects=predicted_raw_projects,
-                            selected_contexts=selected_contexts,
-                            created_worktrees=created_worktrees,
-                        ),
-                    )
-                    return selected_contexts
-            except ValueError as exc:
-                self._emit("planning.selection.invalid", selection=selection_raw, error=str(exc))
-                print(str(exc))
-                setattr(
-                    self,
-                    "_last_plan_selection_result",
-                    PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error=str(exc)),
-                )
-                return []
-            sync_result = self._sync_plan_worktrees_from_plan_counts(
-                plan_counts=plan_counts,
-                raw_projects=raw_projects,
-                keep_plan=keep_plan,
-                fresh_ai_launch=_route_requests_fresh_ai_worktree(route),
-                launch_transport=_fresh_ai_launch_transport(route),
-            )
-            raw_projects = list(sync_result.raw_projects)
-            if sync_result.error:
-                print(sync_result.error)
-                setattr(
-                    self,
-                    "_last_plan_selection_result",
-                    PlanSelectionResult(
-                        raw_projects=raw_projects,
-                        selected_contexts=[],
-                        created_worktrees=sync_result.created_worktrees,
-                        error=sync_result.error,
-                    ),
-                )
-                return []
-            refreshed_contexts = self._contexts_from_raw_projects(raw_projects)
-            duplicate_error = self._duplicate_project_context_error(refreshed_contexts)
-            if duplicate_error:
-                print(duplicate_error)
-                setattr(
-                    self,
-                    "_last_plan_selection_result",
-                    PlanSelectionResult(
-                        raw_projects=raw_projects,
-                        selected_contexts=[],
-                        created_worktrees=sync_result.created_worktrees,
-                        error=duplicate_error,
-                    ),
-                )
-                return []
-            filtered = select_projects_for_plan_files(projects=raw_projects, plan_counts=plan_counts)
-            if _route_requests_fresh_ai_worktree(route) and sync_result.created_worktrees:
-                created_names = {item.name for item in sync_result.created_worktrees}
-                filtered = [project for project in filtered if project[0] in created_names]
-            if filtered:
-                self._emit(
-                    "planning.selection.resolved",
-                    selection=selection_raw,
-                    selected=[name for name, _ in filtered],
-                    plans=list(plan_counts.keys()),
-                )
-                selected_names = {name for name, _ in filtered}
-                selected_contexts = [ctx for ctx in refreshed_contexts if ctx.name in selected_names]
-                setattr(
-                    self,
-                    "_last_plan_selection_result",
-                    PlanSelectionResult(
-                        raw_projects=raw_projects,
-                        selected_contexts=selected_contexts,
-                        created_worktrees=sync_result.created_worktrees,
-                    ),
-                )
-                return selected_contexts
-            print("No tree paths found for selected planning file(s).")
-            setattr(
-                self,
-                "_last_plan_selection_result",
-                PlanSelectionResult(
-                    raw_projects=raw_projects,
-                    selected_contexts=[],
-                    created_worktrees=sync_result.created_worktrees,
-                    error="No tree paths found for selected planning file(s).",
-                ),
-            )
-            return []
-
-        filtered = filter_projects_for_plan(
-            raw_projects,
-            route.passthrough_args,
-            strict_no_match=self.config.plan_strict_selection,
-        )
-        if not filtered:
-            print("No tree paths found for requested project filter(s): " + ", ".join(route.passthrough_args) + ".")
-            setattr(
-                self,
-                "_last_plan_selection_result",
-                PlanSelectionResult(
-                    raw_projects=raw_projects,
-                    selected_contexts=[],
-                    error="No tree paths found for requested project filter(s).",
-                ),
-            )
-            return []
-        selected_names = {name for name, _ in filtered}
-        selected_contexts = [ctx for ctx in project_contexts if ctx.name in selected_names]
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=selected_contexts),
-        )
-        return selected_contexts
-
-    if not planning_files:
-        print(
-            f"No planning files found in {self.config.planning_dir}. "
-            "Pass explicit selectors (for example: envctl --plan feature-a) or use --trees."
-        )
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No planning files found."),
-        )
-        return []
-
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        print(
-            "No TTY available for planning selection. "
-            "Run 'envctl --list-trees --json' and retry with '--headless --plan <selector>'."
-        )
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No TTY available."),
-        )
-        return []
-
-    dry_run = bool(getattr(route, "flags", {}).get("dry_run"))
-    plan_counts = self._prompt_planning_selection(planning_files, raw_projects, persist_memory=not dry_run)
-    if plan_counts is None:
-        print("Planning selection cancelled.")
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="Planning selection cancelled."),
-        )
-        return []
-    if not plan_counts:
-        print("No planning files selected.")
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No planning files selected."),
-        )
-        return []
-
-    positive_plan_counts: OrderedDict[str, int] = OrderedDict(
-        (plan_file, int(count)) for plan_file, count in plan_counts.items() if int(count) > 0
+    selection_result = _select_plan_projects_impl(
+        route=route,
+        project_contexts=project_contexts,
+        config=self.config,
+        env=getattr(self, "env", {}),
+        emit=self._emit,
+        contexts_from_raw_projects=self._contexts_from_raw_projects,
+        duplicate_project_context_error=self._duplicate_project_context_error,
+        planning_keep_plan_enabled=self._planning_keep_plan_enabled,
+        prompt_planning_selection=self._prompt_planning_selection,
+        sync_plan_worktrees_from_plan_counts=self._sync_plan_worktrees_from_plan_counts,
     )
-    if dry_run:
-        predictions = predict_plan_projects(
-            projects=raw_projects,
-            plan_counts=positive_plan_counts,
-            base_dir=self.config.base_dir,
-            trees_dir_name=self.config.trees_dir_name,
-        )
-        predicted_raw_projects = [(prediction.name, Path(prediction.root)) for prediction in predictions]
-        selected_contexts = self._contexts_from_raw_projects(predicted_raw_projects)
-        created_worktrees = tuple(
-            CreatedPlanWorktree(
-                name=prediction.name,
-                root=Path(prediction.root),
-                plan_file=prediction.plan_file,
-            )
-            for prediction in predictions
-            if prediction.action == "create"
-        )
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(
-                raw_projects=predicted_raw_projects,
-                selected_contexts=selected_contexts,
-                created_worktrees=created_worktrees,
-            ),
-        )
-        return selected_contexts
-
-    sync_result = self._sync_plan_worktrees_from_plan_counts(
-        plan_counts=plan_counts,
-        raw_projects=raw_projects,
-        keep_plan=keep_plan,
-        fresh_ai_launch=_route_requests_fresh_ai_worktree(route),
-        launch_transport=_fresh_ai_launch_transport(route),
-    )
-    raw_projects = list(sync_result.raw_projects)
-    if sync_result.error:
-        print(sync_result.error)
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(
-                raw_projects=raw_projects,
-                selected_contexts=[],
-                created_worktrees=sync_result.created_worktrees,
-                error=sync_result.error,
-            ),
-        )
-        return []
-    refreshed_contexts = self._contexts_from_raw_projects(raw_projects)
-    duplicate_error = self._duplicate_project_context_error(refreshed_contexts)
-    if duplicate_error:
-        print(duplicate_error)
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(
-                raw_projects=raw_projects,
-                selected_contexts=[],
-                created_worktrees=sync_result.created_worktrees,
-                error=duplicate_error,
-            ),
-        )
-        return []
-
-    if not positive_plan_counts:
-        print("Planning counts scaled to zero; no worktrees remain.")
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(
-                raw_projects=raw_projects,
-                selected_contexts=[],
-                created_worktrees=sync_result.created_worktrees,
-                error="Planning counts scaled to zero; no worktrees remain.",
-            ),
-        )
-        return []
-
-    filtered = select_projects_for_plan_files(projects=raw_projects, plan_counts=positive_plan_counts)
-    if not filtered:
-        print("No tree paths found for selected planning file(s).")
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(
-                raw_projects=raw_projects,
-                selected_contexts=[],
-                created_worktrees=sync_result.created_worktrees,
-                error="No tree paths found for selected planning file(s).",
-            ),
-        )
-        return []
-
-    self._emit(
-        "planning.selection.resolved",
-        selection="interactive",
-        selected=[name for name, _ in filtered],
-        plans=list(positive_plan_counts.keys()),
-    )
-    selected_names = {name for name, _ in filtered}
-    selected_contexts = [ctx for ctx in refreshed_contexts if ctx.name in selected_names]
-    setattr(
-        self,
-        "_last_plan_selection_result",
-        PlanSelectionResult(
-            raw_projects=raw_projects,
-            selected_contexts=selected_contexts,
-            created_worktrees=sync_result.created_worktrees,
-        ),
-    )
-    return selected_contexts
+    setattr(self, "_last_plan_selection_result", selection_result)
+    return selection_result.selected_contexts
 
 
 def _prompt_planning_selection(
