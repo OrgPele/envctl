@@ -747,6 +747,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 )
 
         self.assertEqual(default_config.transport, "tmux")
+        self.assertFalse(default_config.enabled)
         self.assertEqual(opencode_config.transport, "tmux")
         self.assertEqual(opencode_config.cli, "opencode")
 

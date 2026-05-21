@@ -648,7 +648,7 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertTrue(target.exists())
             written = target.read_text(encoding="utf-8")
             self.assertIn(
-                "envctl --plan <category>/<slug> --tmux --opencode --entire-system "
+                "envctl --plan <category>/<slug> --cmux --opencode --entire-system "
                 "--headless --new-session",
                 written,
             )
