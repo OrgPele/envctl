@@ -31,10 +31,14 @@ Completed and preserved planning ownership slices:
   keep-plan flag/config parsing.
 - `planning/worktree_creation_commands.py` owns git worktree-add branch naming, branch existence checks, start-point
   selection, and command execution.
+- `planning/worktree_identity.py` owns the shared generated-worktree identity so branch names and envctl project names
+  remain identical.
 - `planning/worktree_planning_menu.py` owns interactive planning menu invocation, result normalization, fallback, and
   terminal-state cleanup.
 - `planning/worktree_setup_entries.py` owns setup flag parsing, include-token resolution, and single/multi setup-entry
   application.
+- `planning/worktree_sync_deletion.py` owns excess plan-worktree deletion ordering, fresh-AI protection skips, blast
+  cleanup warnings, and delete failure propagation.
 - `planning/worktree_domain.py` remains a compatibility facade for those extracted helpers.
 
 Fully implement the remaining decomposition work without changing CLI semantics, persistent state formats, generated
@@ -53,7 +57,8 @@ implementation commits unless a task explicitly requires changing it.
      owner modules:
      - the remaining spinner-wrapped setup-worktree selection coordinator,
      - plan selection and prompt parsing beyond fresh-AI/keep-plan helpers,
-     - worktree sync/create/delete orchestration beyond git worktree-add command construction.
+     - worktree sync/create orchestration and deletion result summarization beyond git worktree-add command
+       construction.
    - Keep public helper names and orchestrator call sites stable until callers are moved safely.
    - Preserve the strict boundary that planning operations only write inside the current checkout or generated plan
      worktrees.
@@ -198,15 +203,20 @@ Fully implemented:
   `python/envctl_engine/planning/worktree_plan_selection.py`.
 - Git worktree-add branch naming, branch existence checks, start-point selection, and command execution are extracted to
   `python/envctl_engine/planning/worktree_creation_commands.py`.
+- Generated-worktree project and branch identity is centralized in
+  `python/envctl_engine/planning/worktree_identity.py`.
 - Interactive planning menu invocation, result normalization, fallback behavior, and terminal-state cleanup are
   extracted to `python/envctl_engine/planning/worktree_planning_menu.py`.
 - Setup flag parsing, include-token resolution, and single/multi setup-entry application are extracted to
   `python/envctl_engine/planning/worktree_setup_entries.py`.
+- Excess plan-worktree deletion ordering, fresh-AI protection skips, blast cleanup warnings, and delete failure
+  propagation are extracted to `python/envctl_engine/planning/worktree_sync_deletion.py`.
 - Structure guards exist in `tests/python/shared/test_structure_layout.py` for the planning owner modules.
 - Focused planning tests exist for `worktree_git_hooks.py`, `worktree_main_task.py`, and
-  `worktree_creation_commands.py`, `worktree_creation_recovery.py`, `worktree_plan_selection.py`,
+  `worktree_creation_commands.py`, `worktree_creation_recovery.py`, `worktree_identity.py`,
+  `worktree_plan_selection.py`,
   `worktree_planning_menu.py`, `worktree_project_catalog.py`, `worktree_selection_memory.py`, and
-  `worktree_setup_entries.py`, and `worktree_shared_artifacts.py`.
+  `worktree_setup_entries.py`, `worktree_sync_deletion.py`, and `worktree_shared_artifacts.py`.
 - Most recent reported validation:
   - `uv run --extra dev pytest -q tests/python/planning/test_worktree_main_task.py tests/python/shared/test_structure_layout.py::StructureLayoutTests::test_worktree_main_task_has_owned_module`
     -> `6 passed`.
@@ -221,7 +231,7 @@ Fully implemented:
 Partially implemented:
 
 - Planning/worktree split is started, but `worktree_domain.py` still owns the spinner-wrapped setup coordinator,
-  prompt parsing beyond the extracted helpers, and sync/create/delete orchestration.
+  prompt parsing beyond the extracted helpers, and sync/create orchestration plus deletion result summarization.
 - Runtime support modules already exist under `runtime/engine_runtime_*_support.py`, but
   `runtime/engine_runtime.py` is still about 1,679 lines and still owns many delegate-worthy responsibilities.
 - Startup support modules already exist, but `startup/startup_orchestrator.py` is still about 2,272 lines and still owns
