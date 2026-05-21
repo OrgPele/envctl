@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os as _os
 import shutil as _shutil
 import sys as _sys
 import uuid
@@ -216,6 +215,13 @@ from envctl_engine.runtime.engine_runtime_doctor_support import (
     doctor_should_check_tests as runtime_doctor_should_check_tests,
     enforce_runtime_readiness_contract as runtime_enforce_runtime_readiness_contract,
     evaluate_runtime_shipability as runtime_evaluate_runtime_shipability,
+)
+from envctl_engine.runtime.engine_runtime_bookkeeping_support import (
+    add_emit_listener as runtime_add_emit_listener,
+    consume_project_startup_warnings as runtime_consume_project_startup_warnings,
+    ensure_legacy_lock_view as runtime_ensure_legacy_lock_view,
+    record_project_startup_warning as runtime_record_project_startup_warning,
+    reset_project_startup_warnings as runtime_reset_project_startup_warnings,
 )
 from envctl_engine.runtime.engine_runtime_dispatch import dispatch_command as runtime_dispatch_command
 from envctl_engine.runtime.engine_runtime_ui_bridge import (
@@ -592,42 +598,10 @@ class PythonEngineRuntime:
         )
 
     def _ensure_legacy_lock_view(self) -> None:
-        scoped_locks = self.runtime_root / "locks"
-        scoped_locks.mkdir(parents=True, exist_ok=True)
-        legacy_locks = self.runtime_legacy_root / "locks"
-        if legacy_locks.is_symlink():
-            if legacy_locks.resolve(strict=False) == scoped_locks.resolve(strict=False):
-                return
-            try:
-                legacy_locks.unlink()
-            except FileNotFoundError:
-                pass
-            except OSError:
-                return
-        if legacy_locks.exists():
-            return
-        try:
-            legacy_locks.symlink_to(scoped_locks, target_is_directory=True)
-        except FileExistsError:
-            return
-        except OSError:
-            if _os.path.lexists(legacy_locks):
-                return
-            try:
-                legacy_locks.mkdir(parents=True, exist_ok=True)
-            except FileExistsError:
-                return
+        runtime_ensure_legacy_lock_view(self)
 
     def add_emit_listener(self, listener: Callable[[str, dict[str, object]], None]) -> Callable[[], None]:
-        self._emit_listeners.append(listener)
-
-        def remove() -> None:
-            try:
-                self._emit_listeners.remove(listener)
-            except ValueError:
-                return
-
-        return remove
+        return runtime_add_emit_listener(self, listener)
 
     def dispatch(self, route: Route) -> int:
         self.process_probe = ProcessProbe(self._build_process_probe_backend())
@@ -1389,24 +1363,13 @@ class PythonEngineRuntime:
         runtime_bind_debug_run_id(self, run_id)
 
     def _reset_project_startup_warnings(self) -> None:
-        with self._startup_warnings_lock:
-            self._startup_warnings_by_project = {}
+        runtime_reset_project_startup_warnings(self)
 
     def _record_project_startup_warning(self, project: str, message: str) -> None:
-        project_name = str(project).strip()
-        warning_text = str(message).strip()
-        if not project_name or not warning_text:
-            return
-        with self._startup_warnings_lock:
-            self._startup_warnings_by_project.setdefault(project_name, []).append(warning_text)
+        runtime_record_project_startup_warning(self, project, message)
 
     def _consume_project_startup_warnings(self, project: str) -> list[str]:
-        project_name = str(project).strip()
-        if not project_name:
-            return []
-        with self._startup_warnings_lock:
-            warnings = list(self._startup_warnings_by_project.pop(project_name, []))
-        return warnings
+        return runtime_consume_project_startup_warnings(self, project)
 
     def _conflict_count(self, suffix: str) -> int:
         return runtime_conflict_count(self, suffix)
