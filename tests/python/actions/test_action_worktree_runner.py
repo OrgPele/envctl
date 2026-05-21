@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
+from envctl_engine.actions import action_worktree_runner  # noqa: E402
 from envctl_engine.actions.action_worktree_runner import run_delete_worktree_action  # noqa: E402
 from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator  # noqa: E402
 from envctl_engine.runtime.command_router import parse_route  # noqa: E402
@@ -181,6 +182,46 @@ class ActionWorktreeRunnerTests(unittest.TestCase):
                 code = orchestrator.run_self_destruct_worktree_action(parse_route(["self-destruct-worktree"], env={}))
 
             self.assertEqual(code, 0)
+
+    def test_run_self_destruct_worktree_action_uses_explicit_current_worktree_safety_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tree_root = Path(tmpdir).resolve()
+            target = SimpleNamespace(name="feature-a-1", root=tree_root)
+            warnings: list[str] = []
+            calls: list[tuple[str, object]] = []
+
+            runtime = SimpleNamespace(
+                _blast_worktree_before_delete=lambda **kwargs: (
+                    calls.append(("cleanup", kwargs)) or ["cleanup warning"]
+                ),
+                _trees_root_for_worktree=lambda value: calls.append(("trees_root", value)) or tree_root.parent,
+            )
+            orchestrator = SimpleNamespace(
+                runtime=runtime,
+                resolve_targets=lambda route, *, trees_only: calls.append(("resolve", (route.command, trees_only)))
+                or ([target], None),
+                _main_repo_root_for_worktree=lambda value: calls.append(("main_repo", value)) or tree_root.parent,
+                _spawn_self_destruct_helper=lambda **kwargs: calls.append(("spawn", kwargs)) or True,
+            )
+
+            with (
+                patch("envctl_engine.actions.action_worktree_runner.Path.cwd", return_value=tree_root),
+                patch("builtins.print", side_effect=lambda value: warnings.append(str(value))),
+            ):
+                code = action_worktree_runner.run_self_destruct_worktree_action(
+                    orchestrator,
+                    parse_route(["self-destruct-worktree"], env={}),
+                )
+
+            self.assertEqual(code, 0)
+            self.assertIn("Warning: cleanup warning", warnings)
+            self.assertIn(
+                "Self-destruct launched for feature-a-1. This worktree will be removed after envctl exits.",
+                warnings,
+            )
+            self.assertEqual(calls[0], ("resolve", ("self-destruct-worktree", True)))
+            self.assertTrue(any(kind == "cleanup" for kind, _payload in calls))
+            self.assertTrue(any(kind == "spawn" for kind, _payload in calls))
 
 
 if __name__ == "__main__":

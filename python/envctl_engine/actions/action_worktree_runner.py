@@ -125,6 +125,47 @@ def run_delete_worktree_action(orchestrator: Any, route: Route) -> int:
     return 0 if failures == 0 else 1
 
 
+def run_self_destruct_worktree_action(orchestrator: Any, route: Route) -> int:
+    targets, error = orchestrator.resolve_targets(route, trees_only=True)
+    if error is not None:
+        print(error)
+        return 1
+    if len(targets) != 1:
+        print("self-destruct-worktree requires exactly one current worktree target.")
+        return 1
+    target = targets[0]
+    target_root = Path(str(getattr(target, "root"))).resolve()
+    target_name = str(getattr(target, "name", target_root.name))
+    cwd = Path.cwd().resolve()
+    if target_root != cwd:
+        print("self-destruct-worktree must be launched from the worktree root.")
+        return 1
+
+    warnings = orchestrator.runtime._blast_worktree_before_delete(
+        project_name=target_name,
+        project_root=target_root,
+        source_command="self-destruct-worktree",
+    )
+    for warning in warnings:
+        print(f"Warning: {warning}")
+
+    repo_root = orchestrator._main_repo_root_for_worktree(target_root)
+    if repo_root is None:
+        print("Could not determine main repo root for current worktree.")
+        return 1
+    trees_root = orchestrator.runtime._trees_root_for_worktree(target_root)
+    if not orchestrator._spawn_self_destruct_helper(
+        repo_root=repo_root,
+        trees_root=trees_root,
+        worktree_root=target_root,
+    ):
+        print("Failed to launch detached worktree self-destruct helper.")
+        return 1
+
+    print(f"Self-destruct launched for {target_name}. This worktree will be removed after envctl exits.")
+    return 0
+
+
 def _run_cleanup(
     *,
     runtime: Any,

@@ -42,7 +42,10 @@ from envctl_engine.actions.action_test_support import (
     rich_progress_available as _rich_progress_available,
 )
 from envctl_engine.actions.action_test_runner import run_test_action as run_test_action_impl
-from envctl_engine.actions.action_worktree_runner import run_delete_worktree_action as run_delete_worktree_action_impl
+from envctl_engine.actions.action_worktree_runner import (
+    run_delete_worktree_action as run_delete_worktree_action_impl,
+    run_self_destruct_worktree_action as run_self_destruct_worktree_action_impl,
+)
 from envctl_engine.planning import discover_tree_projects
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.launcher_support import main_repo_root_for_linked_worktree
@@ -424,44 +427,7 @@ class ActionCommandOrchestrator:
         return selected, None
 
     def run_self_destruct_worktree_action(self, route: Route) -> int:
-        targets, error = self.resolve_targets(route, trees_only=True)
-        if error is not None:
-            print(error)
-            return 1
-        if len(targets) != 1:
-            print("self-destruct-worktree requires exactly one current worktree target.")
-            return 1
-        target = targets[0]
-        target_root = Path(str(getattr(target, "root"))).resolve()
-        target_name = str(getattr(target, "name", target_root.name))
-        cwd = Path.cwd().resolve()
-        if target_root != cwd:
-            print("self-destruct-worktree must be launched from the worktree root.")
-            return 1
-
-        warnings = self.runtime._blast_worktree_before_delete(
-            project_name=target_name,
-            project_root=target_root,
-            source_command="self-destruct-worktree",
-        )
-        for warning in warnings:
-            print(f"Warning: {warning}")
-
-        repo_root = self._main_repo_root_for_worktree(target_root)
-        if repo_root is None:
-            print("Could not determine main repo root for current worktree.")
-            return 1
-        trees_root = self.runtime._trees_root_for_worktree(target_root)
-        if not self._spawn_self_destruct_helper(
-            repo_root=repo_root,
-            trees_root=trees_root,
-            worktree_root=target_root,
-        ):
-            print("Failed to launch detached worktree self-destruct helper.")
-            return 1
-
-        print(f"Self-destruct launched for {target_name}. This worktree will be removed after envctl exits.")
-        return 0
+        return run_self_destruct_worktree_action_impl(self, route)
 
     def _resolve_current_worktree_target(self, *, require_configured_main_root: bool = False) -> object | None:
         invocation_cwd = str(self.runtime.env.get("ENVCTL_INVOCATION_CWD") or "").strip()
