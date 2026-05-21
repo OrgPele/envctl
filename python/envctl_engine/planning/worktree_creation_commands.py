@@ -3,9 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from envctl_engine.planning.worktree_identity import worktree_project_name
+
 
 def worktree_branch_name(*, feature: str, iteration: str) -> str:
-    return f"{feature}-{iteration}"
+    return worktree_project_name(feature=feature, iteration=iteration)
 
 
 def worktree_branch_exists(*, branch_name: str, git_command_output: Callable[[list[str]], str]) -> bool:

@@ -5,6 +5,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
+from envctl_engine.planning.worktree_identity import worktree_project_name
+
 _ITERATION_RE = re.compile(r"^(?:\d+|iter[-_]?\d+)$", re.IGNORECASE)
 OMX_ARTIFACT_DIR_NAME = ".omx"
 ENVCTL_STATE_DIR_NAME = ".envctl-state"
@@ -238,7 +240,7 @@ def predict_plan_projects(
         for _ in range(missing):
             iteration = _next_available_iteration(existing_iterations)
             root = feature_root / str(iteration)
-            name = f"{feature}-{iteration}"
+            name = worktree_project_name(feature=feature, iteration=iteration)
             dedupe_key = f"{name}|{root}"
             if dedupe_key in seen:
                 existing_iterations.add(iteration)
@@ -319,7 +321,7 @@ def _append_feature_projects(
         for iter_dir in nested_iters:
             if not _looks_like_tree_project_root(iter_dir):
                 continue
-            project_name = f"{feature_name}-{iter_dir.name}"
+            project_name = worktree_project_name(feature=feature_name, iteration=iter_dir.name)
             dedupe_key = f"{project_name}|{iter_dir.resolve()}"
             if dedupe_key in seen:
                 continue

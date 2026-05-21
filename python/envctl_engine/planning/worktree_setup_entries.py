@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from envctl_engine.planning.worktree_identity import worktree_project_name
 from envctl_engine.shared.parsing import parse_int
 
 RawProject = tuple[str, Path]
@@ -54,7 +55,7 @@ def resolve_included_setup_worktrees(
         resolved = None
         if token.isdigit():
             for feature in setup_features:
-                candidate_name = f"{feature}-{token}"
+                candidate_name = worktree_project_name(feature=feature, iteration=token)
                 candidate = project_lookup.get(candidate_name.lower())
                 if candidate is not None:
                     resolved = candidate
@@ -138,4 +139,4 @@ def apply_single_setup_entry(
         create_error = create_single_worktree(feature=feature, iteration=iteration)
         if create_error:
             raise RuntimeError(create_error)
-    return discover_tree_projects(), f"{feature}-{iteration}"
+    return discover_tree_projects(), worktree_project_name(feature=feature, iteration=iteration)

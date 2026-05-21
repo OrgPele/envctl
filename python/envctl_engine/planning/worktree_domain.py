@@ -13,6 +13,7 @@ from envctl_engine.planning.worktree_creation_commands import (
     worktree_branch_name as _worktree_branch_name_impl,
     worktree_start_point as _worktree_start_point_impl,
 )
+from envctl_engine.planning.worktree_identity import worktree_project_name as _worktree_project_name_impl
 from envctl_engine.planning.worktree_creation_recovery import (
     recover_partial_worktree_creation as _recover_partial_worktree_creation_impl,
     setup_worktree_placeholder_fallback_enabled as _setup_worktree_placeholder_fallback_enabled_impl,
@@ -56,6 +57,9 @@ from envctl_engine.planning.worktree_setup_entries import (
     apply_single_setup_entry as _apply_single_setup_entry_impl,
     coerce_setup_entries as _coerce_setup_entries_impl,
     resolve_included_setup_worktrees as _resolve_included_setup_worktrees_impl,
+)
+from envctl_engine.planning.worktree_sync_deletion import (
+    delete_feature_worktrees as _delete_feature_worktrees_impl,
 )
 from envctl_engine.planning.worktree_code_intelligence import (
     prepare_worktree_code_intelligence as _prepare_worktree_code_intelligence_impl,
@@ -1291,7 +1295,7 @@ def _create_feature_worktrees_result(
         worktree_cli = cli_sequence[index] if index < len(cli_sequence) else ""
         created_worktrees.append(
             CreatedPlanWorktree(
-                name=f"{feature}-{iteration}",
+                name=_worktree_project_name_impl(feature=feature, iteration=iteration),
                 root=target.resolve(),
                 plan_file=plan_file,
                 cli=worktree_cli,
@@ -1451,52 +1455,23 @@ def _delete_feature_worktrees(
     candidates: list[tuple[str, Path]],
     remove_count: int,
 ) -> str | None:
-    if remove_count <= 0:
-        return None
-    ordered = sorted(
-        candidates,
-        key=lambda item: self._project_sort_key_for_feature(item[0], feature),
-        reverse=True,
+    return _delete_feature_worktrees_impl(
+        feature=feature,
+        candidates=candidates,
+        remove_count=remove_count,
+        project_sort_key_for_feature=self._project_sort_key_for_feature,
+        active_protection_reason=lambda *, name, root: _active_fresh_ai_worktree_protection_reason(
+            self,
+            name=name,
+            root=root,
+        ),
+        blast_worktree_before_delete=getattr(self, "_blast_worktree_before_delete", None),
+        delete_worktree=delete_worktree_path,
+        repo_root=self.config.base_dir,
+        trees_root_for_worktree=self._trees_root_for_worktree,
+        process_runner=self.process_runner,
+        emit=self._emit,
     )
-    deleted_count = 0
-    for _name, root in ordered:
-        if deleted_count >= remove_count:
-            break
-        protection_reason = _active_fresh_ai_worktree_protection_reason(self, name=_name, root=root)
-        if protection_reason:
-            self._emit(  # type: ignore[attr-defined]
-                "planning.worktree.cleanup.skipped_active_ai_session",
-                worktree=_name,
-                root=str(Path(root).resolve(strict=False)),
-                reason=protection_reason,
-            )
-            continue
-        blast_cleanup = getattr(self, "_blast_worktree_before_delete", None)
-        if callable(blast_cleanup):
-            warnings = blast_cleanup(
-                project_name=_name,
-                project_root=root,
-                source_command="blast-worktree",
-            )
-            if not isinstance(warnings, list):
-                warnings = []
-            for warning in warnings:
-                self._emit(  # type: ignore[attr-defined]
-                    "cleanup.worktree.warning",
-                    project=_name,
-                    warning=warning,
-                    source_command="blast-worktree",
-                )
-        result = delete_worktree_path(
-            repo_root=self.config.base_dir,
-            trees_root=self._trees_root_for_worktree(root),
-            worktree_root=root,
-            process_runner=self.process_runner,
-        )
-        if not result.success:
-            return result.message
-        deleted_count += 1
-    return None
 
 
 def _active_fresh_ai_worktree_protection_reason(self: Any, *, name: str, root: Path) -> str:

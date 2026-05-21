@@ -194,6 +194,26 @@ class StructureLayoutTests(unittest.TestCase):
             facade.read_text(encoding="utf-8"),
         )
 
+    def test_worktree_sync_deletion_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_deletion.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_sync_deletion import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_identity_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_identity.py"
+        creation_commands = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_creation_commands.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_identity import",
+            creation_commands.read_text(encoding="utf-8"),
+        )
+
     def test_python_engine_architecture_inventory_exists(self) -> None:
         inventory = REPO_ROOT / "docs" / "reference" / "python-engine-architecture.md"
 
