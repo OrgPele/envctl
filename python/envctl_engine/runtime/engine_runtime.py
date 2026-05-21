@@ -210,6 +210,13 @@ from envctl_engine.runtime.engine_runtime_cli_support import (
     run_config as runtime_run_config,
     unsupported_command as runtime_unsupported_command,
 )
+from envctl_engine.runtime.engine_runtime_doctor_support import (
+    doctor as runtime_doctor,
+    doctor_readiness_gates as runtime_doctor_readiness_gates,
+    doctor_should_check_tests as runtime_doctor_should_check_tests,
+    enforce_runtime_readiness_contract as runtime_enforce_runtime_readiness_contract,
+    evaluate_runtime_shipability as runtime_evaluate_runtime_shipability,
+)
 from envctl_engine.runtime.engine_runtime_dispatch import dispatch_command as runtime_dispatch_command
 from envctl_engine.runtime.engine_runtime_ui_bridge import (
     current_ui_backend as bridge_current_ui_backend,
@@ -245,7 +252,6 @@ from envctl_engine.shared.process_probe import (
 )
 from envctl_engine.shared.process_runner import ProcessRunner
 from envctl_engine.requirements.orchestrator import RequirementOutcome, RequirementsOrchestrator
-from envctl_engine.runtime.release_gate import evaluate_shipability
 from envctl_engine.startup.resume_orchestrator import ResumeOrchestrator
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.runtime.runtime_context import RuntimeContext
@@ -793,7 +799,7 @@ class PythonEngineRuntime:
         return runtime_migrate_hooks(self, route)
 
     def _doctor(self) -> int:
-        return self.doctor_orchestrator.execute()
+        return runtime_doctor(self)
 
     def _debug_pack(self, route: Route) -> int:
         return runtime_debug_pack(self, route)
@@ -819,27 +825,23 @@ class PythonEngineRuntime:
         return runtime_debug_report(self, route)
 
     def _doctor_readiness_gates(self) -> dict[str, bool]:
-        return self.doctor_orchestrator.readiness_gates()
+        return runtime_doctor_readiness_gates(self)
 
     def _evaluate_shipability(
         self,
         *,
         enforce_runtime_readiness_contract: bool = True,
     ) -> object:
-        return evaluate_shipability(
-            repo_root=self.config.base_dir,
-            check_tests=self._doctor_should_check_tests(),
+        return runtime_evaluate_runtime_shipability(
+            self,
             enforce_runtime_readiness_contract=enforce_runtime_readiness_contract,
         )
 
     def _doctor_should_check_tests(self) -> bool:
-        return self.doctor_orchestrator.doctor_should_check_tests()
+        return runtime_doctor_should_check_tests(self)
 
     def _enforce_runtime_readiness_contract(self, *, scope: str, strict_required: bool | None = None) -> bool:
-        return self.doctor_orchestrator.enforce_runtime_readiness_contract(
-            scope=scope,
-            strict_required=strict_required,
-        )
+        return runtime_enforce_runtime_readiness_contract(self, scope=scope, strict_required=strict_required)
 
     def _parity_manifest_is_complete(self) -> bool:
         return runtime_parity_manifest_is_complete(self)
