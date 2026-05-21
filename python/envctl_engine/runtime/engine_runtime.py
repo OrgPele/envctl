@@ -186,6 +186,23 @@ from envctl_engine.runtime.engine_runtime_state_truth import (
     requirement_truth_issues as runtime_requirement_truth_issues,
     state_fingerprint as runtime_state_fingerprint,
 )
+from envctl_engine.runtime.engine_runtime_action_support import (
+    action_env as runtime_action_env,
+    action_extra_env as runtime_action_extra_env,
+    action_replacements as runtime_action_replacements,
+    project_name_from_service as runtime_project_name_from_service,
+    projects_for_services as runtime_projects_for_services,
+    resolve_action_targets as runtime_resolve_action_targets,
+    run_action_command as runtime_run_action_command,
+    run_analyze_action as runtime_run_analyze_action,
+    run_commit_action as runtime_run_commit_action,
+    run_delete_worktree_action as runtime_run_delete_worktree_action,
+    run_migrate_action as runtime_run_migrate_action,
+    run_pr_action as runtime_run_pr_action,
+    run_project_action as runtime_run_project_action,
+    run_test_action as runtime_run_test_action,
+    selectors_from_passthrough as runtime_selectors_from_passthrough,
+)
 from envctl_engine.runtime.engine_runtime_dispatch import dispatch_command as runtime_dispatch_command
 from envctl_engine.runtime.engine_runtime_ui_bridge import (
     current_ui_backend as bridge_current_ui_backend,
@@ -1054,48 +1071,37 @@ class PythonEngineRuntime:
         runtime_assert_project_services_post_start_truth(self, context=context, services=services)
 
     def _run_action_command(self, route: Route) -> int:
-        return self.action_command_orchestrator.execute(route)
+        return runtime_run_action_command(self, route)
 
     def _resolve_action_targets(self, route: Route, *, trees_only: bool) -> tuple[list[ProjectContext], str | None]:
-        return self.action_command_orchestrator.resolve_targets(route, trees_only=trees_only)
+        targets, error = runtime_resolve_action_targets(self, route, trees_only=trees_only)
+        return targets, error  # type: ignore[return-value]
 
     @staticmethod
     def _selectors_from_passthrough(passthrough_args: Iterable[str]) -> set[str]:
-        selectors: set[str] = set()
-        for token in passthrough_args:
-            if token.startswith("-"):
-                continue
-            parts = [part.strip().lower() for part in token.split(",")]
-            selectors.update(part for part in parts if part)
-        return selectors
+        return runtime_selectors_from_passthrough(passthrough_args)
 
     def _projects_for_services(self, service_targets: list[object]) -> list[str]:
-        return self.action_command_orchestrator.projects_for_services(service_targets)
+        return runtime_projects_for_services(self, service_targets)
 
     @staticmethod
     def _project_name_from_service(service_name: str) -> str:
-        text = service_name.strip()
-        lowered = text.lower()
-        if lowered.endswith(" backend"):
-            return text[:-8].strip()
-        if lowered.endswith(" frontend"):
-            return text[:-9].strip()
-        return ""
+        return runtime_project_name_from_service(service_name)
 
     def _run_test_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return self.action_command_orchestrator.run_test_action(route, targets)
+        return runtime_run_test_action(self, route, targets)
 
     def _run_pr_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return self.action_command_orchestrator.run_pr_action(route, targets)
+        return runtime_run_pr_action(self, route, targets)
 
     def _run_commit_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return self.action_command_orchestrator.run_commit_action(route, targets)
+        return runtime_run_commit_action(self, route, targets)
 
     def _run_analyze_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return self.action_command_orchestrator.run_review_action(route, targets)
+        return runtime_run_analyze_action(self, route, targets)
 
     def _run_migrate_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return self.action_command_orchestrator.run_migrate_action(route, targets)
+        return runtime_run_migrate_action(self, route, targets)
 
     def _run_project_action(
         self,
@@ -1109,7 +1115,8 @@ class PythonEngineRuntime:
         default_append_project_path: bool,
         extra_env: Mapping[str, str],
     ) -> int:
-        return self.action_command_orchestrator.run_project_action(
+        return runtime_run_project_action(
+            self,
             route,
             targets,
             command_name=command_name,
@@ -1121,7 +1128,7 @@ class PythonEngineRuntime:
         )
 
     def _run_delete_worktree_action(self, route: Route) -> int:
-        return self.action_command_orchestrator.run_delete_worktree_action(route)
+        return runtime_run_delete_worktree_action(self, route)
 
     def _action_replacements(
         self,
@@ -1129,7 +1136,7 @@ class PythonEngineRuntime:
         *,
         target: ProjectContext | None,
     ) -> dict[str, str]:
-        return self.action_command_orchestrator.action_replacements(targets, target=target)
+        return runtime_action_replacements(self, targets, target=target)
 
     def _action_env(
         self,
@@ -1139,7 +1146,8 @@ class PythonEngineRuntime:
         target: ProjectContext | None,
         extra: Mapping[str, str] | None = None,
     ) -> dict[str, str]:
-        return self.action_command_orchestrator.action_env(
+        return runtime_action_env(
+            self,
             command_name,
             targets,
             target=target,
@@ -1148,7 +1156,7 @@ class PythonEngineRuntime:
 
     @staticmethod
     def _action_extra_env(route: Route) -> dict[str, str]:
-        return ActionCommandOrchestrator.action_extra_env(route)
+        return runtime_action_extra_env(route)
 
     def _unsupported_command(self, command: str) -> int:
         print(f"Command is not yet fully implemented in the Python runtime: {command}.")

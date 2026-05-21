@@ -6,7 +6,7 @@ This inventory is the ownership map for the Python engine refactor. Keep it alig
 
 | Workflow | Primary owner | Supporting modules | Compatibility boundary |
 | --- | --- | --- | --- |
-| CLI command routing and runtime facade | `python/envctl_engine/runtime/command_router.py` and `python/envctl_engine/runtime/engine_runtime.py` | `runtime/engine_runtime_*_support.py`, `runtime/command_policy.py`, `runtime/command_resolution.py` | `PythonEngineRuntime` remains the CLI-facing facade. |
+| CLI command routing and runtime facade | `python/envctl_engine/runtime/command_router.py` and `python/envctl_engine/runtime/engine_runtime.py` | `runtime/engine_runtime_*_support.py`, `runtime/engine_runtime_action_support.py`, `runtime/command_policy.py`, `runtime/command_resolution.py` | `PythonEngineRuntime` remains the CLI-facing facade. |
 | Runtime lifecycle, start, resume, stop, and cleanup | `python/envctl_engine/runtime/engine_runtime_lifecycle_support.py` | `startup/startup_orchestrator.py`, `runtime/lifecycle_cleanup_orchestrator.py`, `runtime/session_management.py` | Existing lifecycle command flags and exit statuses stay stable. |
 | Startup orchestration | `python/envctl_engine/startup/startup_orchestrator.py` | `startup/requirements_execution.py`, `startup/service_execution.py`, `startup/finalization.py`, `startup/run_reuse_support.py`, `startup/service_bootstrap_domain.py` | `StartupOrchestrator.execute` is the sequence owner. |
 | Action commands | `python/envctl_engine/actions/action_command_orchestrator.py` | `actions/action_target_support.py`, `actions/action_test_runner.py`, `actions/action_worktree_runner.py`, `actions/project_action_domain.py` | Action command output, artifacts, and return codes remain compatible. |
