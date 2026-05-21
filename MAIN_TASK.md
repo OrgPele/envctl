@@ -31,6 +31,7 @@ Completed and preserved planning ownership slices:
   keep-plan flag/config parsing.
 - `planning/worktree_plan_project_selection.py` owns plan selector resolution, dry-run prediction, no-TTY/no-plan
   handling, and plan-worktree sync result mapping.
+- `planning/worktree_prompt_selection.py` owns interactive plan-count prompt seeding and memory persistence decisions.
 - `planning/worktree_creation_commands.py` owns git worktree-add branch naming, branch existence checks, start-point
   selection, and command execution.
 - `planning/worktree_identity.py` owns the shared generated-worktree identity so branch names and envctl project names
@@ -204,6 +205,8 @@ Fully implemented:
   `python/envctl_engine/planning/worktree_plan_selection.py`.
 - Plan selector resolution, dry-run prediction, no-TTY/no-plan handling, and sync result mapping are extracted to
   `python/envctl_engine/planning/worktree_plan_project_selection.py`.
+- Interactive plan-count prompt seeding and memory persistence decisions are extracted to
+  `python/envctl_engine/planning/worktree_prompt_selection.py`.
 - Git worktree-add branch naming, branch existence checks, start-point selection, and command execution are extracted to
   `python/envctl_engine/planning/worktree_creation_commands.py`.
 - Generated-worktree project and branch identity is centralized in
@@ -221,7 +224,8 @@ Fully implemented:
   `worktree_creation_commands.py`, `worktree_creation_recovery.py`, `worktree_identity.py`,
   `worktree_plan_project_selection.py`,
   `worktree_plan_selection.py`,
-  `worktree_planning_menu.py`, `worktree_project_catalog.py`, `worktree_selection_memory.py`, and
+  `worktree_planning_menu.py`, `worktree_project_catalog.py`, `worktree_prompt_selection.py`,
+  `worktree_selection_memory.py`, and
   `worktree_setup_coordinator.py`, `worktree_setup_entries.py`, `worktree_sync_deletion.py`, and
   `worktree_shared_artifacts.py`.
 - Most recent reported validation:

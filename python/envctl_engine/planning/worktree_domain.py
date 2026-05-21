@@ -38,6 +38,9 @@ from envctl_engine.planning.worktree_plan_selection import (
 from envctl_engine.planning.worktree_plan_project_selection import (
     select_plan_projects as _select_plan_projects_impl,
 )
+from envctl_engine.planning.worktree_prompt_selection import (
+    prompt_planning_selection as _prompt_planning_selection_impl,
+)
 from envctl_engine.planning.worktree_planning_menu import (
     run_planning_selection_menu as _run_planning_selection_menu_impl,
 )
@@ -88,7 +91,6 @@ from envctl_engine.planning.plan_agent.models import (
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.planning import (
     discover_tree_projects,
-    planning_existing_counts,
     planning_feature_name,
 )
 from envctl_engine.ui.path_links import render_path_fragment_for_terminal
@@ -396,19 +398,14 @@ def _prompt_planning_selection(
     *,
     persist_memory: bool = True,
 ) -> dict[str, int]:
-    existing_counts = planning_existing_counts(projects=raw_projects, planning_files=planning_files)
-    selected_counts = self._initial_plan_selected_counts(
+    return _prompt_planning_selection_impl(
         planning_files=planning_files,
-        existing_counts=existing_counts,
+        raw_projects=raw_projects,
+        initial_plan_selected_counts=self._initial_plan_selected_counts,
+        run_planning_selection_menu=self._run_planning_selection_menu,
+        save_plan_selection_memory=self._save_plan_selection_memory,
+        persist_memory=persist_memory,
     )
-    chosen = self._run_planning_selection_menu(
-        planning_files=planning_files,
-        selected_counts=selected_counts,
-        existing_counts=existing_counts,
-    )
-    if chosen and persist_memory:
-        self._save_plan_selection_memory(chosen)
-    return chosen
 
 
 def _route_requests_fresh_ai_worktree(route: Route) -> bool:
