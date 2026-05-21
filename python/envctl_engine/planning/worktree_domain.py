@@ -22,6 +22,12 @@ from envctl_engine.planning.worktree_main_task import (
     next_available_iteration as _next_available_iteration_impl,
     seed_main_task_from_plan as _seed_main_task_from_plan_impl,
 )
+from envctl_engine.planning.worktree_plan_selection import (
+    adjust_plan_counts_for_fresh_ai_launch as _adjust_plan_counts_for_fresh_ai_launch_impl,
+    fresh_ai_launch_transport as _fresh_ai_launch_transport_impl,
+    planning_keep_plan_enabled as _planning_keep_plan_enabled_impl,
+    route_requests_fresh_ai_worktree as _route_requests_fresh_ai_worktree_impl,
+)
 from envctl_engine.planning.worktree_project_catalog import (
     cleanup_empty_feature_root as _cleanup_empty_feature_root_impl,
     feature_project_candidates as _feature_project_candidates_impl,
@@ -55,7 +61,7 @@ from envctl_engine.planning.plan_agent.models import (
     PlanWorktreeSyncResult,
 )
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.shared.parsing import parse_bool, parse_int
+from envctl_engine.shared.parsing import parse_int
 from envctl_engine.planning import (
     discover_tree_projects,
     filter_projects_for_plan,
@@ -851,23 +857,11 @@ def _prompt_planning_selection(
 
 
 def _route_requests_fresh_ai_worktree(route: Route) -> bool:
-    flags = getattr(route, "flags", {}) or {}
-    if not bool(flags.get("new_session")):
-        return False
-    if bool(flags.get("dry_run")):
-        return False
-    return bool(flags.get("cmux") or flags.get("tmux") or flags.get("omx"))
+    return _route_requests_fresh_ai_worktree_impl(route)
 
 
 def _fresh_ai_launch_transport(route: Route) -> str:
-    flags = getattr(route, "flags", {}) or {}
-    if bool(flags.get("omx")):
-        return "omx"
-    if bool(flags.get("tmux")):
-        return "tmux"
-    if bool(flags.get("cmux")):
-        return "cmux"
-    return ""
+    return _fresh_ai_launch_transport_impl(route)
 
 
 def _adjust_plan_counts_for_fresh_ai_launch(
@@ -876,13 +870,11 @@ def _adjust_plan_counts_for_fresh_ai_launch(
     plan_counts: OrderedDict[str, int],
     route: Route,
 ) -> OrderedDict[str, int]:
-    if not _route_requests_fresh_ai_worktree(route):
-        return plan_counts
-    existing_counts = planning_existing_counts(projects=raw_projects, planning_files=list(plan_counts.keys()))
-    adjusted: OrderedDict[str, int] = OrderedDict()
-    for plan_file, requested_count in plan_counts.items():
-        adjusted[plan_file] = int(requested_count) + int(existing_counts.get(plan_file, 0))
-    return adjusted
+    return _adjust_plan_counts_for_fresh_ai_launch_impl(
+        raw_projects=raw_projects,
+        plan_counts=plan_counts,
+        route=route,
+    )
 
 
 def _initial_plan_selected_counts(
@@ -1074,10 +1066,7 @@ def _save_plan_selection_memory(self: Any, selected_counts: dict[str, int]) -> N
 
 
 def _planning_keep_plan_enabled(self: Any, route: Route) -> bool:
-    if bool(route.flags.get("keep_plan")):
-        return True
-    raw = self.env.get("PLANNING_KEEP_PLAN") or self.config.raw.get("PLANNING_KEEP_PLAN")
-    return parse_bool(raw, False)
+    return _planning_keep_plan_enabled_impl(route=route, env=self.env, config_raw=self.config.raw)
 
 
 def _sync_plan_worktrees_from_plan_counts(
