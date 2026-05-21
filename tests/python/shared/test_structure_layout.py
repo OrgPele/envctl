@@ -269,6 +269,16 @@ class StructureLayoutTests(unittest.TestCase):
             facade.read_text(encoding="utf-8"),
         )
 
+    def test_engine_runtime_cli_support_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_cli_support.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.runtime.engine_runtime_cli_support import",
+            facade.read_text(encoding="utf-8"),
+        )
+
     def test_repo_local_launcher_is_python_script(self) -> None:
         launcher = REPO_ROOT / "bin" / "envctl"
         self.assertTrue(launcher.is_file())

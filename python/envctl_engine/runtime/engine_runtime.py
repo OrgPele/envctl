@@ -203,6 +203,13 @@ from envctl_engine.runtime.engine_runtime_action_support import (
     run_test_action as runtime_run_test_action,
     selectors_from_passthrough as runtime_selectors_from_passthrough,
 )
+from envctl_engine.runtime.engine_runtime_cli_support import (
+    migrate_hooks as runtime_migrate_hooks,
+    print_help as runtime_print_help,
+    render_help_text as runtime_render_help_text,
+    run_config as runtime_run_config,
+    unsupported_command as runtime_unsupported_command,
+)
 from envctl_engine.runtime.engine_runtime_dispatch import dispatch_command as runtime_dispatch_command
 from envctl_engine.runtime.engine_runtime_ui_bridge import (
     current_ui_backend as bridge_current_ui_backend,
@@ -217,15 +224,12 @@ from envctl_engine.runtime.engine_runtime_ui_bridge import (
     select_grouped_targets as bridge_select_grouped_targets,
     select_project_targets as bridge_select_project_targets,
 )
-from envctl_engine.runtime.hook_migration_support import run_hook_migration as runtime_run_hook_migration
 from envctl_engine.runtime.command_router import (
     MODE_FALSE_TOKENS,
     MODE_MAIN_TOKENS,
     MODE_TREE_TOKENS,
     Route,
 )
-from envctl_engine.runtime.help_text import render_help_text as runtime_render_help_text
-from envctl_engine.config.command_support import run_config_command
 from envctl_engine.config import EngineConfig
 from envctl_engine.shared.hooks import HookInvocationResult
 from envctl_engine.runtime.lifecycle_cleanup_orchestrator import LifecycleCleanupOrchestrator
@@ -780,13 +784,13 @@ class PythonEngineRuntime:
         runtime_print_summary(self, state, contexts)
 
     def _print_help(self, route: Route | None = None) -> None:
-        print(_render_help_text(route))
+        runtime_print_help(route)
 
     def _config(self, route: Route) -> int:
-        return run_config_command(self, route)
+        return runtime_run_config(self, route)
 
     def _migrate_hooks(self, route: Route) -> int:
-        return runtime_run_hook_migration(self, route)
+        return runtime_migrate_hooks(self, route)
 
     def _doctor(self) -> int:
         return self.doctor_orchestrator.execute()
@@ -1159,8 +1163,7 @@ class PythonEngineRuntime:
         return runtime_action_extra_env(route)
 
     def _unsupported_command(self, command: str) -> int:
-        print(f"Command is not yet fully implemented in the Python runtime: {command}.")
-        return 1
+        return runtime_unsupported_command(command)
 
     def _stop(self, route: Route) -> int:
         return self.lifecycle_cleanup_orchestrator.execute(route)
