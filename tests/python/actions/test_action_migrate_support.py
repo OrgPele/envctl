@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+from contextlib import redirect_stdout
+from io import StringIO
+from pathlib import Path
+import tempfile
+import unittest
+
+from envctl_engine.actions.action_migrate_support import (
+    MigrateResultRecord,
+    migrate_env_source_hint_lines,
+    migrate_failure_hint_lines,
+    migrate_result_record,
+    print_migrate_result_records,
+)
+from envctl_engine.test_output.parser_base import strip_ansi
+
+
+class ActionMigrateSupportTests(unittest.TestCase):
+    def test_migrate_result_record_deduplicates_hints_and_derives_headline(self) -> None:
+        record = migrate_result_record(
+            project_name="feature-a-1",
+            action_entry={
+                "status": "failed",
+                "summary": "\n".join(
+                    [
+                        "Traceback (most recent call last):",
+                        "RuntimeError: migration failed",
+                        "hint: check DATABASE_URL",
+                        "hint: check DATABASE_URL",
+                    ]
+                ),
+                "report_path": "/tmp/report.txt",
+            },
+            failure_headline=lambda summary: summary.splitlines()[1],
+        )
+
+        self.assertEqual(
+            record,
+            MigrateResultRecord(
+                project_name="feature-a-1",
+                status="failed",
+                headline="RuntimeError: migration failed",
+                hint_lines=("hint: check DATABASE_URL",),
+                report_path="/tmp/report.txt",
+            ),
+        )
+
+    def test_migrate_failure_hint_lines_explain_missing_env_from_alembic_env(self) -> None:
+        hints = migrate_failure_hint_lines(
+            "\n".join(
+                [
+                    "Traceback (most recent call last):",
+                    '  File "/repo/backend/alembic/env.py", line 12, in <module>',
+                    "pydantic_core._pydantic_core.ValidationError: 2 validation errors for Settings",
+                    "DATABASE_URL",
+                    "  Field required [type=missing]",
+                    "REDIS_URL",
+                    "  Field required [type=missing]",
+                ]
+            )
+        )
+
+        self.assertIn(
+            "hint: migrate failed before Alembic reached revisions because required env vars were missing "
+            "(DATABASE_URL, REDIS_URL).",
+            hints,
+        )
+        self.assertIn("hint: envctl migrate loads backend env from backend/.env by default.", hints)
+
+    def test_migrate_env_source_hint_lines_include_override_resolution(self) -> None:
+        hints = migrate_env_source_hint_lines(
+            {
+                "env_file_source": "override",
+                "env_file_path": "/repo/backend/custom.env",
+                "override_requested": True,
+                "override_resolution": "found",
+            }
+        )
+
+        self.assertEqual(
+            hints,
+            ["hint: backend env source: override | /repo/backend/custom.env | override_resolution=found"],
+        )
+
+    def test_print_migrate_result_records_compacts_multi_project_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_dir = Path(tmpdir) / "reports"
+            report_dir.mkdir()
+            report_a = report_dir / "feature-a-migrate.txt"
+            report_b = report_dir / "feature-b-migrate.txt"
+            report_a.write_text("a\n", encoding="utf-8")
+            report_b.write_text("b\n", encoding="utf-8")
+            records = [
+                MigrateResultRecord(
+                    project_name="feature-a-1",
+                    status="failed",
+                    headline="RuntimeError: missing env",
+                    hint_lines=("hint: shared fix", "hint: backend env source: default"),
+                    report_path=str(report_a),
+                ),
+                MigrateResultRecord(
+                    project_name="feature-b-1",
+                    status="failed",
+                    headline="RuntimeError: missing env",
+                    hint_lines=("hint: shared fix", "hint: backend env source: default"),
+                    report_path=str(report_b),
+                ),
+            ]
+            stdout = StringIO()
+
+            with redirect_stdout(stdout):
+                print_migrate_result_records(records=records, env={}, interactive_tty=False)
+
+        visible = strip_ansi(stdout.getvalue())
+        self.assertIn("✗ migrate failed for feature-a-1: RuntimeError: missing env", visible)
+        self.assertIn("✗ migrate failed for feature-b-1: RuntimeError: missing env", visible)
+        self.assertEqual(visible.count("hint: shared fix"), 1)
+        self.assertNotIn("hint: backend env source:", visible)
+        self.assertIn("migrate failure logs:", visible)
+        self.assertIn(str(report_dir), visible)
+        self.assertIn(f"- feature-a-1: {report_a.name}", visible)
+        self.assertIn(f"- feature-b-1: {report_b.name}", visible)
+
+
+if __name__ == "__main__":
+    unittest.main()
