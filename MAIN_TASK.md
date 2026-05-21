@@ -1,239 +1,159 @@
-# Envctl Codex Cycle Range Three-Point Scale
+# Envctl Codex Cycle Range Completion Audit
 
-## Goals / non-goals / assumptions
+## Context and objective
 
-Goals:
+The prior task, archived as `OLD_TASK_2.md`, requested a compact Codex
+plan-agent cycle scale from `0` through `3`, with runtime clamping, workflow
+expansion, prompt guidance, installed skill text, docs, and tests all aligned to
+that same scale.
 
-- Change the Codex plan-agent cycle range from the current broad recommendation
-  scale to a compact `0` through `3` scale.
-- Make `3` mean a genuinely complex task, not a normal multi-file task.
-- Keep the global default at `2` unless implementation evidence shows a better
-  default is required.
-- Align runtime clamping, generated prompt guidance, installed skill text, docs,
-  and tests so the behavior is not split between "prompt recommendation" and
-  "runtime implementation cap".
+Current repo evidence shows that the implementation is complete in commit
+`95bce36` (`Limit Codex plan cycles to three`) on top of provenance base
+`origin/codex/reuse-cgc-worktree-context` at merge-base
+`dc131e8461c70657c63e8faaea72f12a357de62e`. There is no remaining product
+implementation work for the prior task.
 
-Non-goals:
+Objective: preserve the completed task history and keep this worktree ready for
+handoff by documenting that the prior implementation is complete. Do not invent
+new feature scope. Any subsequent work should be driven by a new user task,
+review finding, failing check, or explicit product requirement.
 
-- Do not redesign the queued Codex workflow shape in this change.
-- Do not change OpenCode behavior; OpenCode still ignores Codex cycle counts.
-- Do not change launch surface defaults such as cmux, tmux, OMX, or
-  `--new-session` beyond updating stale examples encountered in the touched
-  docs/tests.
+## Remaining requirements (complete and exhaustive)
 
-Assumption:
+No remaining implementation requirements are carried forward from
+`OLD_TASK_2.md`.
 
-- The user wants product behavior to use the smaller range, not only the wording
-  in `$envctl-create-plan-auto-codex`. Therefore direct env/config values above
-  `3` should be bounded to `3`, and prompt recommendations should never select
-  `4` or higher.
+The prior task's requirements are complete:
 
-## Goal (user experience)
+1. Runtime source of truth:
+   - `_PLAN_AGENT_CODEX_CYCLE_CAP` is `3` in
+     `python/envctl_engine/planning/plan_agent/constants.py`.
+   - `_parse_codex_cycles` still preserves invalid and negative handling as
+     `invalid_codex_cycles`.
+   - Values above `3` still produce `bounded_codex_cycles` and return `3`.
+   - The global default remains `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`.
 
-When a user creates or launches a Codex plan-agent workflow, every visible
-recommendation and every accepted cycle count follows the same compact scale:
+2. Workflow expansion:
+   - `_build_plan_agent_workflow` still uses `_PLAN_AGENT_CODEX_CYCLE_CAP`.
+   - Direct workflow construction with `codex_cycles=999` is bounded to
+     `workflow.codex_cycles == 3`.
+   - Existing queued workflow shape is preserved.
 
-- `0`: one initial implementation prompt only, plus whatever non-cycle follow-up
-  prompts remain enabled.
-- `1`: small localized change.
-- `2`: normal implementation that benefits from one continuation/finalization
-  round.
-- `3`: genuinely complex, risky, cross-module, or architecture-sensitive work
-  that needs the maximum available continuation depth.
+3. Prompt recommendation rubric:
+   - `create_plan.md`, `create_plan_auto_codex.md`, and
+     `create_plan_auto_omx.md` require exactly one integer from `0` through `3`.
+   - The rubric documents `3` as genuinely complex, high-risk, cross-module,
+     runtime-sensitive, or architecture-sensitive work.
+   - The prompt wording preserves the "prefer the smallest number" behavior and
+     makes `3` exceptional.
 
-If a user or config provides `ENVCTL_PLAN_AGENT_CODEX_CYCLES=999` or
-`CYCLES=999`, envctl should report the bounded-cycle warning and use `3`.
+4. Docs and installed skill contracts:
+   - User and reference docs describe the same `0` through `3` scale.
+   - Docs remove the old split between create-plan recommendations and a
+     separate runtime cap.
+   - OpenCode notes continue to state that OpenCode ignores Codex cycle
+     settings.
+   - Auto-plan examples touched by the prior iteration use current `--cmux`
+     wording where appropriate.
 
-## Business logic and data model mapping
+5. Tests:
+   - Planning tests cover canonical `3`, canonical `4` bounded to `3`, alias
+     `999` bounded to `3`, and workflow construction with `codex_cycles=999`.
+   - Runtime prompt/install tests assert `0` through `3` and assert the old
+     `0` through `8` phrase is absent from rendered prompt bodies and installed
+     skill text.
 
-- Runtime parsing lives in
-  `python/envctl_engine/planning/plan_agent/config.py::_parse_codex_cycles`.
-  It reads `ENVCTL_PLAN_AGENT_CODEX_CYCLES`, the `CYCLES` alias, and config raw
-  values, then bounds them using `_PLAN_AGENT_CODEX_CYCLE_CAP`.
-- The hard cap constant lives in
-  `python/envctl_engine/planning/plan_agent/constants.py` as
-  `_PLAN_AGENT_CODEX_CYCLE_CAP = 10`.
-- Workflow expansion lives in
-  `python/envctl_engine/planning/plan_agent/workflow.py::_build_plan_agent_workflow`.
-  It independently bounds the requested cycles with the same cap before
-  expanding queued `continue_task`, `implement_task`, and `finalize_task` steps.
-- Prompt recommendation wording lives in:
-  - `python/envctl_engine/runtime/prompt_templates/create_plan.md`
-  - `python/envctl_engine/runtime/prompt_templates/create_plan_auto_codex.md`
-  - `python/envctl_engine/runtime/prompt_templates/create_plan_auto_omx.md`
-- Installed prompt rendering and prompt contract tests live in
-  `python/envctl_engine/runtime/prompt_install_support.py` and
-  `tests/python/runtime/test_prompt_install_support.py`.
-- Runtime and command docs currently mention the old range in:
-  - `docs/user/planning-and-worktrees.md`
-  - `docs/user/ai-playbooks.md`
-  - `docs/reference/configuration.md`
-  - `docs/reference/commands.md`
+## Gaps from prior iteration (mapped to evidence)
 
-## Current behavior (verified in code)
+No product gaps remain.
 
-- `constants.py` sets `_PLAN_AGENT_CODEX_CYCLE_CAP = 10`.
-- `_parse_codex_cycles` returns `_PLAN_AGENT_CODEX_CYCLE_CAP` plus
-  `bounded_codex_cycles` when an env/config value is above the cap.
-- `_build_plan_agent_workflow` also clamps to `_PLAN_AGENT_CODEX_CYCLE_CAP`, so a
-  direct call with `codex_cycles=999` expands a workflow with `10` cycles.
-- `tests/python/planning/test_plan_agent_launch_support.py` currently asserts
-  this old cap in:
-  - `test_resolve_plan_agent_launch_config_bounds_large_cycles_alias`
-  - `test_build_plan_agent_workflow_bounds_large_cycle_counts`
-- `tests/python/runtime/test_prompt_install_support.py` asserts that create-plan
-  prompts contain `exactly one integer from \`0\` through \`8\``.
-- `tests/python/runtime/test_command_exit_codes.py` checks the installed
-  auto-Codex skill text for the same `0` through `8` phrase.
-- Docs under `docs/user` and `docs/reference` describe create-plan skills as
-  computing `0` through `8` recommendations, while also saying lower-level
-  runtime parsing uses a separate implementation cap.
+Evidence reviewed:
 
-## Root cause(s) / gaps
+- `git status --short` returned no unstaged or staged changes before this
+  archival task.
+- `git diff --name-status` returned no unstaged paths.
+- `git diff --cached --name-status` returned no staged paths.
+- Provenance file `.envctl-state/worktree-provenance.json` points to
+  `source_ref: origin/codex/reuse-cgc-worktree-context` and
+  `source_branch: codex/reuse-cgc-worktree-context`.
+- `git merge-base HEAD origin/codex/reuse-cgc-worktree-context` returned
+  `dc131e8461c70657c63e8faaea72f12a357de62e`.
+- `git log --oneline --decorate <merge-base>..HEAD` showed exactly one
+  implementation commit:
+  `95bce36 Limit Codex plan cycles to three`.
+- `git diff --name-status <merge-base>..HEAD` showed the runtime constant,
+  prompt templates, docs, tests, worktree provenance, and previous task file as
+  the only changed paths.
+- Search evidence found no remaining old range descriptions in `python`,
+  `tests`, or `docs` outside `docs/changelog/**`; the only `0` through `8` hits
+  in active paths are negative assertions that verify the phrase is absent.
+- Historical changelog text under `docs/changelog/**` remains intentionally
+  unchanged, matching the archived task's risk register.
 
-- The recommendation scale and runtime cap drifted apart: prompts talk about
-  `0` through `8`, while runtime still accepts and expands up to `10`.
-- The broad `0` through `8` rubric encourages over-launching continuation cycles
-  for ordinary work.
-- Tests lock the old values in several layers, so changing only prompt markdown
-  would leave direct env/config behavior and workflow expansion inconsistent.
-- Docs explicitly preserve the old split between create-plan recommendation
-  policy and runtime implementation cap; that split should go away for this
-  simpler behavior.
+## Acceptance criteria (requirement-by-requirement)
 
-## Plan
+This archival/audit task is complete when all of the following are true:
 
-### 1) Introduce the new cap as the runtime source of truth
+1. `OLD_TASK_2.md` exists and contains the prior `MAIN_TASK.md` content for
+   "Envctl Codex Cycle Range Three-Point Scale".
+2. `MAIN_TASK.md` states that no implementation work remains from the archived
+   task and records the evidence supporting that conclusion.
+3. `.envctl-commit-message.md` contains one focused next commit message for this
+   archival/audit change after the `### Envctl pointer ###` marker.
+4. No files outside the current worktree are modified.
 
-- Change `_PLAN_AGENT_CODEX_CYCLE_CAP` in
-  `python/envctl_engine/planning/plan_agent/constants.py` from `10` to `3`.
-- Keep `_parse_codex_cycles` warning semantics unchanged:
-  values above `3` should still produce `bounded_codex_cycles`.
-- Keep invalid and negative handling unchanged:
-  invalid or negative values should resolve to `0` with
-  `invalid_codex_cycles`.
-- Confirm `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` remains the global default and does
-  not need migration.
+## Required implementation scope (frontend/backend/data/integration)
 
-### 2) Update workflow expansion expectations
+- Task bookkeeping:
+  - Rename the prior `MAIN_TASK.md` to `OLD_TASK_2.md`.
+  - Create this new `MAIN_TASK.md`.
+  - Update `.envctl-commit-message.md` for the next commit.
 
-- Keep `_build_plan_agent_workflow` using `_PLAN_AGENT_CODEX_CYCLE_CAP`.
-- Update tests so `codex_cycles=999` expands to exactly `3` cycles.
-- Verify the number of queued workflow steps still follows the existing formula
-  for the reduced cap.
-- Add or update a focused test that direct canonical values `0`, `1`, `2`, and
-  `3` are accepted without warnings.
+- Frontend:
+  - None.
 
-### 3) Rewrite the create-plan recommendation rubric
+- Backend:
+  - None.
 
-- Update `create_plan.md`, `create_plan_auto_codex.md`, and
-  `create_plan_auto_omx.md` to say the allowed recommendation is exactly one
-  integer from `0` through `3`.
-- Replace the old five-band rubric with:
-  - `0`: trivial docs, prompt, static edit, or very small one-file change.
-  - `1`: small localized code/test change with low integration risk.
-  - `2`: normal multi-file feature/fix, moderate verification, or a task that
-    benefits from one continuation/finalization pass.
-  - `3`: genuinely complex, high-risk, cross-module, runtime-sensitive, or
-    architecture-sensitive work.
-- Keep "prefer the smallest number" wording so `3` is exceptional.
-- Update auto-Codex and auto-OMX wording so `recommended_codex_cycles=<n>` is
-  constrained to the new scale.
+- Data/migrations:
+  - None.
 
-### 4) Update docs and installed skill contracts
+- Runtime/integration:
+  - None.
 
-- Update `docs/user/planning-and-worktrees.md`,
-  `docs/user/ai-playbooks.md`, `docs/reference/configuration.md`, and
-  `docs/reference/commands.md` to describe the `0` through `3` scale.
-- Remove wording that says create-plan uses `0` through `8` while runtime uses a
-  separate cap.
-- Keep OpenCode notes explicit that OpenCode ignores Codex cycle settings.
-- If touched docs still show old launch examples such as `--tmux` where current
-  repo behavior prefers cmux, update those examples only when they are in the
-  same edited paragraph and are part of the auto-plan contract.
+## Required tests and quality gates
 
-### 5) Update tests that lock the old range
+No product test rerun is required for this task-file-only archival change. The
+prior implementation was already validated with:
 
-- In `tests/python/runtime/test_prompt_install_support.py`, replace assertions
-  for `0` through `8` with `0` through `3`.
-- In `tests/python/runtime/test_command_exit_codes.py`, update installed skill
-  assertions to expect `0` through `3`.
-- In `tests/python/planning/test_plan_agent_launch_support.py`, update:
-  - bounded alias parsing from `10` to `3`;
-  - large workflow expansion from `10` to `3`;
-  - any canonical-value tests that currently treat `4` as valid. Values above
-    `3` should now assert `bounded_codex_cycles`.
-- Search for remaining literal `0 through 8`, `through \`8\``, and
-  `_PLAN_AGENT_CODEX_CYCLE_CAP = 10` references and remove or intentionally
-  update them.
-
-## Tests (add these)
-
-### Backend tests
-
-- Extend `tests/python/planning/test_plan_agent_launch_support.py`:
-  - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` resolves to `3` with no warning.
-  - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4` resolves to `3` with
-    `bounded_codex_cycles`.
-  - `CYCLES=999` resolves to `3` with `bounded_codex_cycles`.
-  - `_build_plan_agent_workflow(..., codex_cycles=999)` has
-    `workflow.codex_cycles == 3`.
-
-### Frontend tests
-
-- None. This is CLI/runtime prompt behavior with no frontend surface.
-
-### Integration/E2E tests
-
-- Extend prompt-install coverage in
-  `tests/python/runtime/test_prompt_install_support.py` and
-  `tests/python/runtime/test_command_exit_codes.py` so installed skills and
-  rendered direct prompt bodies contain `0` through `3` and not `0` through `8`.
-- Run focused docs/prompt tests rather than full-stack E2E.
-
-## Observability / logging
-
-- Keep existing `codex_cycles_warning="bounded_codex_cycles"` behavior. No new
-  telemetry event is required.
-- If command output or JSON payloads already expose `codex_cycles`, the bounded
-  value should now be `3`.
-
-## Rollout / verification
-
-Recommended Codex cycles: 2.
-
-Rationale: this is a localized behavior change across runtime config, prompts,
-docs, and tests; it does not need the future maximum of `3`.
-
-Launch scope flags: `--cmux --no-infra --headless --new-session`.
-
-Focused verification commands:
-
-- `uv run pytest -q tests/python/planning/test_plan_agent_launch_support.py -k 'codex_cycles or build_plan_agent_workflow_bounds_large_cycle_counts'`
-- `uv run pytest -q tests/python/runtime/test_prompt_install_support.py -k 'cycle or auto_codex'`
-- `uv run pytest -q tests/python/runtime/test_command_exit_codes.py -k create_plan_auto_codex`
+- `uv run --extra dev pytest -q tests/python/planning/test_plan_agent_launch_support.py -k 'codex_cycles or build_plan_agent_workflow_bounds_large_cycle_counts'`
+- `uv run --extra dev pytest -q tests/python/runtime/test_prompt_install_support.py -k 'cycle or auto_codex or auto_opencode'`
+- `uv run --extra dev pytest -q tests/python/runtime/test_command_exit_codes.py -k 'create_plan_auto_codex or create_plan_auto_opencode'`
+- `uv run --extra dev ruff check python tests scripts`
 - `uv tool run ruff check python tests scripts`
 
-Escalate to broader runtime tests only if changing the cap exposes unrelated
-launch parsing failures.
+For final handoff of this archival task, run:
+
+- `git status --short`
+- `git diff --name-status`
+- `git diff --cached --name-status`
+
+## Edge cases and failure handling
+
+- Do not create a new implementation requirement solely because the invoking
+  prompt says the prior delivery was incomplete; rely on current task, code,
+  tests, docs, and git evidence.
+- Do not rewrite historical changelog entries that intentionally preserve past
+  release notes.
+- Do not modify sibling worktrees or paths outside this repo root.
+- If future GitHub checks appear and fail, treat their logs as new evidence and
+  create a new task only for the concrete failing requirement.
 
 ## Definition of done
 
-- No prompt, installed skill, or user/reference doc describes the Codex
-  recommendation range as `0` through `8`.
-- Runtime parsing and workflow expansion bound any value above `3` down to `3`.
-- `3` is documented as the maximum for genuinely complex work.
-- Focused tests pass and lock both the prompt text and runtime behavior.
-
-## Risk register
-
-- Lowering the runtime cap from `10` to `3` is behaviorally visible for users who
-  intentionally set larger values. That is aligned with the requested simpler
-  scale, but release notes or docs should call it out.
-- Some historical changelog files mention the old range. Treat release notes and
-  archived changelogs as historical unless tests require otherwise; do not rewrite
-  old release history just to remove the phrase.
-
-## Open questions
-
-- None.
+- The previous task is archived as `OLD_TASK_2.md`.
+- This `MAIN_TASK.md` clearly states that the prior task has no remaining
+  implementation scope.
+- `.envctl-commit-message.md` is updated for the archival/audit commit.
+- Git evidence confirms the only uncommitted changes are the task archival,
+  replacement task file, and commit-message bookkeeping.
