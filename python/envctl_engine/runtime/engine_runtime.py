@@ -225,7 +225,7 @@ from envctl_engine.runtime.engine_runtime_bookkeeping_support import (
     record_project_startup_warning as runtime_record_project_startup_warning,
     reset_project_startup_warnings as runtime_reset_project_startup_warnings,
 )
-from envctl_engine.runtime.engine_runtime_dispatch import dispatch_command as runtime_dispatch_command
+from envctl_engine.runtime.engine_runtime_dispatch import dispatch as runtime_dispatch
 from envctl_engine.runtime.engine_runtime_ui_bridge import (
     can_interactive_tty as bridge_can_interactive_tty,
     current_ui_backend as bridge_current_ui_backend,
@@ -608,26 +608,7 @@ class PythonEngineRuntime:
         return runtime_add_emit_listener(self, listener)
 
     def dispatch(self, route: Route) -> int:
-        self.process_probe = ProcessProbe(self._build_process_probe_backend())
-        effective_mode = route.mode
-        if route.command in {"start", "plan", "restart"}:
-            effective_mode = self._effective_start_mode(route)
-
-        self._configure_debug_recorder(route)
-
-        self._emit(
-            "engine.mode.selected",
-            mode=route.mode,
-            effective_mode=effective_mode,
-            command=route.command,
-        )
-        self._emit(
-            "command.route.selected",
-            mode=route.mode,
-            effective_mode=effective_mode,
-            command=route.command,
-        )
-        return runtime_dispatch_command(self, route)
+        return runtime_dispatch(self, route)
 
     def _start(self, route: Route) -> int:
         return self.startup_orchestrator.execute(route)
