@@ -130,6 +130,7 @@ class _WorkspaceLaunchTarget:
 class _PlanAgentWorkflowStep:
     kind: str
     text: str
+    requires_goal: bool = False
 
 
 @dataclass(slots=True, frozen=True)

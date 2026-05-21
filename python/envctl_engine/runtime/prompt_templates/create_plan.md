@@ -121,30 +121,31 @@ Prefer the smallest number that can plausibly finish the task and verify it. Inc
     - `--omx --team`: same OMX-managed launch, but the first submitted prompt enters the Team workflow
     - `--headless`: envctl stays non-interactive and prints follow-up/attach guidance instead of taking over the current terminal
     - `--new-session`: create a fresh cmux surface, tmux session, or OMX-managed session instead of attaching to an existing one
-  - whenever you show a follow-up command, include `--entire-system` by default; use narrower flags (`--only-frontend`, `--only-backend`, or `--no-infra`) only when the plan records why full-stack E2E does not apply
+  - whenever you show a follow-up command, include `--entire-system` only when runtime services are actually needed; use `--no-infra` for prompt/static-only plans and narrower service flags when the plan records why full-stack E2E does not apply
   - default to the cmux launcher when cmux is installed; use `--tmux` only when cmux is unavailable or the user explicitly asks for tmux
   - whenever you show a follow-up command, also explain in plain language what happens when that exact command runs: whether envctl only prints guidance or actually launches a session, whether the session is tmux-managed by envctl or OMX-managed by omx, whether the current terminal is taken over, and how the user can reconnect to the launched session later
   - keep the wording operational rather than marketing: spell out what envctl creates or syncs, what CLI or session it starts, what prompt preset it submits, and what remains for the user or AI to do after launch
   - make clear that `opencode` applies only to the cmux/tmux launcher paths today; OMX-managed launches are Codex-only
   - if you show a cmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --cmux --entire-system`
-  - if you show an OpenCode tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --tmux --opencode --entire-system`
-  - if you show a Codex tmux launch command, include an explicit repo-scoped shell form such as `cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system`
+  - if you show an OpenCode launch command, include an explicit repo-scoped shell form such as `cd <repo> && envctl --plan <selector> --cmux --opencode --entire-system`
+  - if you show a Codex launch command, include an explicit repo-scoped shell form such as `cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --cmux --entire-system`
   - if you show an OMX-managed Codex launch command, include an explicit repo-scoped shell form such as `cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --omx --entire-system`
   - if you show an OMX-managed Ultragoal launch command, include `cd <repo> && envctl --plan <selector> --omx --ultragoal --entire-system`
   - if you show an OMX-managed Ralph compatibility launch command, include `cd <repo> && envctl --plan <selector> --omx --ralph --entire-system`
   - if you show an OMX-managed Team launch command, include `cd <repo> && envctl --plan <selector> --omx --team --entire-system`
-  - if you show a headless OpenCode tmux launch command, include `cd <repo> && envctl --plan <selector> --tmux --opencode --entire-system --headless`
-  - if you show a headless Codex tmux launch command, include `cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system --headless`
+  - if you show a headless OpenCode launch command, include `cd <repo> && envctl --plan <selector> --cmux --opencode --entire-system --headless --new-session`
+  - if you show a headless Codex launch command, include `cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --cmux --entire-system --headless --new-session`
   - when you execute envctl launch commands yourself from an AI session, always add `--new-session` so you create a fresh session instead of attaching to an existing one unless the task explicitly requires reuse
   - when you explain how to reconnect to a launched tmux or OMX-managed session later, use `tmux attach -t <session>` rather than `tmux switch-client -t <session>`
   - if an existing tmux session may already exist and the user wants another one without being prompted, include `--new-session` in the shown command
-  - if the user selects `codex + opencode`, run or show both repo-scoped commands explicitly as two separate envctl invocations: one Codex tmux command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` and one OpenCode tmux command without that env var
-  - if the user selects `codex + omx`, run or show both repo-scoped commands explicitly as two separate envctl invocations: one tmux Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` and one OMX-managed Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
+  - if the user selects `codex + opencode`, run or show both repo-scoped commands explicitly as two separate envctl invocations: one Codex cmux command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` and one OpenCode cmux command without that env var
+  - if the user selects `codex + omx`, run or show both repo-scoped commands explicitly as two separate envctl invocations: one cmux Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` and one OMX-managed Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
   - when the user selects multiple AI launch choices, state clearly that each command creates its own separate session; do not describe them as one shared session
   - do not claim that envctl can launch multiple CLIs or launch surfaces in one combined command; multi-launch follow-up means executing the separate repo-scoped commands one after another behind the scenes
   - leave `ENVCTL_PLAN_AGENT_CLI_CMD` unset unless the selected CLI requires a non-standard executable name
   - default the launch preset to `implement_task`
-  - if you mention Codex behavior, be accurate: envctl launches the CLI and submits the rendered `implement_task` prompt body (and optional rendered follow-up prompts/messages when configured), but it does not itself run `git`, `gh`, `envctl commit`, or `envctl pr`
+  - if you mention Codex behavior, be accurate: goal mode is on by default for Codex plan-agent workflows, envctl submits `/goal` before the initial prompt when enabled, and queued Codex cycle prompts are goal-scoped before submission; `--no-goal` and `--no-codex-goal` are unusual explicit opt-outs
+  - if you mention handoff behavior, be accurate: prompts prefer the planned `envctl ship --project <project> --json` single handoff and use a compact manual fallback until that command exists; envctl launch itself does not run shell handoff commands
   - do not tell the user to manually type `/prompts:implement_task`, `$envctl-implement-task`, or any other in-session command after an envctl-managed launch unless repo evidence proves a separate manual step is required; describe envctl as submitting the rendered prompt/workflow automatically when launch is enabled
   - the final question must mention only the launch settings that should be surfaced to the user
   - do not surface the internal `--new-session` default in the user-facing approval question unless the task specifically requires explaining it

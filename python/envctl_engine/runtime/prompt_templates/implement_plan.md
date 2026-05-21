@@ -16,10 +16,12 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 ## Non-negotiables
 - Read as much relevant code as needed. If you're unsure, the answer is: read more code.
 - Implement the entire feature from top to bottom. No TODOs, no stubs, no "left as an exercise".
-- Before any implementation work, run `git add .` to stage the current baseline.
 - Use TDD: write/adjust tests first so they fail for the right reason -> implement -> make tests pass -> refactor -> ensure everything still passes.
 - Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
-- After changes, append (not overwrite) a detailed summary to docs/changelog/{tree_name}_changelog.md (tree_name from worktree like trees/<feature>/<iter> => <feature>-<iter>, else main). Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
+- This is a compatibility prompt; follow the same modern workflow contract as `implement_task`: focused validation from repo evidence by default, planned `envctl test-plan --project <current-worktree-name> --json` when available, and a single handoff through planned `envctl ship --project <current-worktree-name> --json` when available.
+- Until `envctl ship` exists, use the compact manual fallback exactly once at the handoff boundary: inspect `git status --short`, stage only intentional files, commit, push, open or update the PR if required, and wait for required GitHub checks.
+- Treat `MAIN_TASK.md`, `.envctl-commit-message.md`, `.envctl-state/`, generated provenance, and related envctl control files as protected artifacts. Do not stage generated or local control files unless they are intentionally part of the task.
+- After changes, keep `.envctl-commit-message.md` focused on one complete next commit message when that file is part of the worktree flow. Include: scope, key behavior changes, file paths/modules touched, focused tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
 - Preserve existing conventions (architecture, naming, patterns, lint rules, formatting, error handling).
 - Iterate until requirements are met and tests are green; expect multiple cycles.
 - Make reasonable assumptions from repo evidence and resolve the task fully on your own. Surface assumptions in the final response only if they materially affected implementation.
@@ -27,7 +29,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Do not stop after partial implementation.
 
 ## Context-gathering protocol (do this before coding)
-0. Run `git add .` and verify the baseline is staged (`git status --short`).
+0. Run `git status --short` and identify existing user/envctl changes before editing. Do not stage a blanket baseline.
 1. Open the authoritative spec file and extract explicit requirements and implied constraints.
 2. Identify the target file(s)/module(s) affected by the task; locate them in the repo.
 3. Find and read ALL call sites and dependencies (imports, interfaces, types, services, configs).

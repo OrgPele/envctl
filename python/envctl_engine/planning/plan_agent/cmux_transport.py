@@ -750,6 +750,31 @@ def _queue_codex_workflow_steps(
     cli: str,
 ) -> str | None:
     for step_index, step in enumerate(queued_steps):
+        if launch_config.codex_goal_enable and step.requires_goal:
+            goal_text = _codex_goal_text_for_worktree(
+                worktree=worktree,
+                preset=launch_config.preset,
+                workflow_mode=workflow.mode,
+                omx_workflow=launch_config.omx_workflow,
+            )
+            queued_goal_text = f"/goal {goal_text}"
+            send_goal_error = _paste_surface_text(
+                runtime,
+                workspace_id=workspace_id,
+                surface_id=surface_id,
+                text=queued_goal_text,
+                emit_failure_event=False,
+            )
+            if send_goal_error is not None:
+                return _QueueFailure("queue_goal_send_failed", step_index=step_index, step_kind=step.kind)
+            if not _queue_codex_message(
+                runtime,
+                workspace_id=workspace_id,
+                surface_id=surface_id,
+                text=queued_goal_text,
+                require_text_match=False,
+            ):
+                return _QueueFailure("queue_goal_not_ready", step_index=step_index, step_kind=step.kind)
         queued_text, resolution_error = _workflow_step_prompt_text(
             runtime,
             launch_config=launch_config,

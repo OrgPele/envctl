@@ -117,14 +117,14 @@ Each launched surface stays interactive. Envctl creates the tab, renames it to a
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
 
-- default/unset is `2`, so Codex launches first queue a commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- default/unset is `2`, so Codex launches first queue a state/update follow-up, then goal-scoped `continue_task`, goal-scoped `implement_task`, goal-scoped `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 - `CYCLES=<n>` resolves to the same effective value as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `0` submits the single implementation prompt and queues enabled browser-E2E and PR review-comments follow-ups for Codex/OMX surfaces
-- `2` queues a plain follow-up asking Codex to commit, push, open or update the PR, and wait for GitHub status checks after the first pass, then queues `continue_task`, `implement_task`, `finalize_task`, `$browser` E2E, and the PR review-comments follow-up
-- `3` or more keep that first commit/push/PR/status-check follow-up, then use commit/push-only follow-ups for intermediate rounds, and reserve `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the final round
+- `2` queues a plain state/update follow-up after the first pass, then queues goal-scoped `continue_task`, `implement_task`, `finalize_task`, `$browser` E2E, and the PR review-comments follow-up
+- `3` or more keep that first state/update follow-up, then use state/update follow-ups for intermediate rounds, and reserve `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the final round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the existing one-shot preset flow
 - `CYCLES` does not enable the plan-agent launcher on its own; you still need enablement such as `--cmux`, `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
-- envctl only appends Codex messages in this mode; it does not type `git`, `gh`, `envctl commit`, or `envctl pr` shell commands itself
+- envctl queues Codex prompt bodies and goal frames in this mode. Handoff is handled by the prompted agent via the planned `envctl ship --project <project> --json` contract when available, or by the compact manual fallback.
 - queue injection failures fall back to the initial `implement_task` launch and leave the surface open for manual continuation
 
 ## Optional Superset Agent Launch
@@ -154,9 +154,9 @@ The installed create-plan skills connect planning documents to these launch path
 
 - `$envctl-create-plan` stays plan-only and approval-first.
 - `$envctl-create-plan` records a recommended Codex cycle count from `0` through `8` in the plan and uses that recommendation in Codex follow-up command examples.
-- `$envctl-create-plan-auto-codex` writes `todo/plans/<category>/<slug>.md`, derives `<category>/<slug>` from that path, chooses a recommended Codex cycle count from `0` through `8`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --tmux --entire-system --headless --new-session`.
-- `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --new-session`; OpenCode prepends `/ulw-loop` by default.
-- `$envctl-create-plan-auto-omx` writes the plan, records the same recommendation for visibility, derives the selector, then runs `envctl --plan <selector> --omx --ultragoal --entire-system --headless --new-session`; optional `/goal` framing is submitted first, Ultragoal wraps the initial prompt, and envctl may queue Codex follow-up cycles using the current cycle configuration. Use `--ralph` explicitly when you need the Ralph compatibility workflow.
+- `$envctl-create-plan-auto-codex` writes `todo/plans/<category>/<slug>.md`, derives `<category>/<slug>` from that path, chooses a recommended Codex cycle count from `0` through `8`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --cmux --entire-system --headless --new-session` by default; use `--no-infra` for prompt/static-only plans and `--tmux` only when cmux is unavailable or explicitly requested.
+- `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --cmux --opencode --entire-system --headless --new-session` by default; OpenCode prepends `/ulw-loop` by default, and `--no-ulw-loop` removes it for a one-off plain prompt.
+- `$envctl-create-plan-auto-omx` writes the plan, records the same recommendation for visibility, derives the selector, then runs `envctl --plan <selector> --omx --ultragoal --entire-system --headless --new-session`; optional `/goal` framing is submitted first, Ultragoal wraps the initial prompt, and envctl may queue Codex follow-up cycles using the current cycle configuration. OMX does not re-submit `/goal` before each queued cycle prompt; it relies on the initial goal frame staying active in the managed Codex session. Use `--ralph` explicitly when you need the Ralph compatibility workflow.
 
 The auto variants are explicit opt-ins for immediate implementation. Each uses the plan file path as the selector source and asks envctl to create a fresh headless session, so invoke them only when you want implementation work to start right after planning.
 Create-plan prompt recommendations use a `0` through `8` policy range even though direct `ENVCTL_PLAN_AGENT_CODEX_CYCLES` runtime parsing still follows the runtime implementation cap.

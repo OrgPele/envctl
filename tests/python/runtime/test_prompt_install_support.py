@@ -216,7 +216,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             for target in (claude_target,):
                 written = target.read_text(encoding="utf-8")
                 self.assertTrue(written.startswith("You are implementing real code, end-to-end."))
-                self.assertIn("Before any implementation work, run `git add .`", written)
+                self.assertIn("Do not stage a blanket baseline", written)
             self.assertEqual(list(home.rglob("*.bak-*")), [])
 
     def test_install_prompts_overwrite_prompt_hyperlinks_existing_paths_when_enabled(self) -> None:
@@ -577,8 +577,9 @@ class PromptInstallSupportTests(unittest.TestCase):
                     "recommended_codex_cycles=<n>",
                     "exactly one integer from `0` through `8`",
                     "uses the `implement_task` preset through the current plan-agent default",
-                    "envctl queues the rendered follow-up prompts/messages",
-                    "envctl itself does not run `git`, `gh`, `envctl commit`, or `envctl pr`",
+                    "Codex goal mode is on by default",
+                    "queues goal frames before goal-scoped cycle prompts",
+                    "envctl ship --project <project> --json",
                 ),
             },
             "create_plan_auto_opencode": {
@@ -601,6 +602,7 @@ class PromptInstallSupportTests(unittest.TestCase):
                     "`--ultragoal` is the default persistence workflow for this surface",
                     "use `--ralph` explicitly when you need the Ralph compatibility workflow",
                     "envctl can queue the same Codex follow-up cycle workflow",
+                    "OMX does not re-submit `/goal` before each queued cycle prompt",
                 ),
             },
         }
@@ -689,10 +691,11 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("### Envctl pointer ###", codex)
         self.assertIn("boundary after the last successful commit", codex)
         self.assertIn("one complete next commit message", codex)
-        self.assertIn("Prefer `envctl commit --headless --main` first", codex)
-        self.assertIn("fall back to the git CLI", codex)
-        self.assertIn("wait for GitHub status checks to complete", codex)
-        self.assertIn("all required checks have passed", codex)
+        self.assertIn("envctl test-plan --project <current-worktree-name> --json", codex)
+        self.assertIn("envctl ship --project <current-worktree-name> --json", codex)
+        self.assertIn("compact fallback exactly once at the handoff boundary", codex)
+        self.assertIn("stage only intentional files", codex)
+        self.assertIn("wait for required GitHub checks", codex)
         self.assertIn("Inspect all unresolved PR review comments", codex)
         self.assertIn("address ALL actionable comments", codex)
         self.assertIn("wait for final PR confirmation", codex)
@@ -710,7 +713,7 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("envctl endpoints --project <current-worktree-name> --json", codex)
         self.assertIn("envctl qa-user ensure --project <current-worktree-name>", codex)
         self.assertIn("envctl playwright --project <current-worktree-name> -- <command>", codex)
-        self.assertIn("Default to `envctl --entire-system --headless`", codex)
+        self.assertIn("Validation defaults to focused, relevant checks", codex)
         self.assertIn("Use `envctl --fullstack --headless` only", codex)
         self.assertIn("Use backend only", codex)
         self.assertIn("Use frontend only", codex)
@@ -734,18 +737,17 @@ class PromptInstallSupportTests(unittest.TestCase):
 
         finalize_prompt = _load_template("finalize_task")
         self.assertEqual(finalize_prompt.name, "finalize_task")
-        self.assertIn("run `envctl test --project <current-worktree-name>`", finalize_prompt.body)
+        self.assertIn("envctl test-plan --project <current-worktree-name> --json", finalize_prompt.body)
+        self.assertIn("Escalate to `envctl test --project <current-worktree-name>` only", finalize_prompt.body)
         self.assertIn("envctl endpoints --project <current-worktree-name> --json", finalize_prompt.body)
         self.assertIn("envctl qa-user ensure --project <current-worktree-name>", finalize_prompt.body)
         self.assertIn("envctl playwright --project <current-worktree-name> -- <command>", finalize_prompt.body)
         self.assertIn("$browser", finalize_prompt.body)
         self.assertNotIn("$browser-use", finalize_prompt.body)
-        self.assertIn("Commit the work.", finalize_prompt.body)
-        self.assertIn("Push the branch.", finalize_prompt.body)
-        self.assertIn("Open the PR if none exists yet, or update the existing PR.", finalize_prompt.body)
-        self.assertIn("PR title and body/message are finalized to a high standard", finalize_prompt.body)
-        self.assertIn("wait for GitHub status checks to complete", finalize_prompt.body)
-        self.assertIn("all required checks pass", finalize_prompt.body)
+        self.assertIn("envctl ship --project <current-worktree-name> --json", finalize_prompt.body)
+        self.assertIn("stage only intentional files", finalize_prompt.body)
+        self.assertIn("wait for required GitHub checks", finalize_prompt.body)
+        self.assertIn("PR URL plus check status", finalize_prompt.body)
         self.assertIn("Inspect all unresolved PR review comments", finalize_prompt.body)
         self.assertIn("address ALL actionable comments", finalize_prompt.body)
 
@@ -788,7 +790,7 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertNotIn("Changelog entry appended.", plan_prompt.body)
         self.assertIn("envctl --headless --plan <selector>", plan_prompt.body)
         self.assertIn(
-            "cd <repo> && envctl --plan <selector> --tmux --opencode",
+            "cd <repo> && envctl --plan <selector> --cmux --opencode",
             plan_prompt.body,
         )
         self.assertIn(
@@ -796,7 +798,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
-            "cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux",
+            "cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --cmux",
             plan_prompt.body,
         )
         self.assertIn(
@@ -860,11 +862,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             plan_prompt.body,
         )
         self.assertIn(
-            "cd <repo> && envctl --plan <selector> --tmux --opencode --entire-system --headless",
+            "cd <repo> && envctl --plan <selector> --cmux --opencode --entire-system --headless --new-session",
             plan_prompt.body,
         )
         self.assertIn(
-            "cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system --headless",
+            "cd <repo> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --cmux --entire-system --headless --new-session",
             plan_prompt.body,
         )
         self.assertNotIn(
@@ -896,14 +898,16 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertNotIn("CMUX=true", plan_prompt.body)
         self.assertNotIn("ENVCTL_PLAN_AGENT_CLI=", plan_prompt.body)
         self.assertNotIn("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE", plan_prompt.body)
-        self.assertIn("--tmux --opencode", plan_prompt.body)
+        self.assertIn("--cmux --opencode", plan_prompt.body)
         self.assertNotIn("--tmux --codex", plan_prompt.body)
         self.assertNotIn("AI CLI choice: `codex`, `opencode`, or `both`", plan_prompt.body)
         self.assertIn(
-            "one tmux Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` "
+            "one cmux Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` "
             "and one OMX-managed Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`",
             plan_prompt.body,
         )
+        self.assertIn("queued Codex cycle prompts are goal-scoped before submission", plan_prompt.body)
+        self.assertIn("envctl ship --project <project> --json", plan_prompt.body)
         self.assertIn("do not tell the user to manually type `/prompts:implement_task`, `$envctl-implement-task`, or any other in-session command", plan_prompt.body)
         self.assertIn("keep research narrow", plan_prompt.body)
         self.assertIn("CURRENT-REPO BOUNDARY IS ALSO STRICT FOR RESEARCH", plan_prompt.body)
@@ -1178,6 +1182,29 @@ class PromptInstallSupportTests(unittest.TestCase):
                 self.assertNotIn("docs/changelog/{tree_name}_changelog.md", prompt.body)
                 self.assertIn("keep `.envctl-commit-message.md` focused on one complete next commit message", prompt.body)
                 self.assertIn("full cumulative set of changes between commits", prompt.body)
+
+    def test_installed_prompt_contract_rejects_stale_plan_agent_workflow_terms(self) -> None:
+        for preset in _available_presets():
+            template = _load_template(preset)
+            with self.subTest(preset=preset):
+                self.assertNotIn("--tmux-new-session", template.body)
+                self.assertNotIn("Before any implementation work, run `git add .`", template.body)
+                self.assertNotIn("Prefer `envctl commit --headless --main` first", template.body)
+
+        implement_prompt = _load_template("implement_task").body
+        finalize_prompt = _load_template("finalize_task").body
+        create_plan_prompt = _load_template("create_plan").body
+
+        self.assertIn("Validation defaults to focused, relevant checks", implement_prompt)
+        self.assertIn("envctl test-plan --project <current-worktree-name> --json", implement_prompt)
+        self.assertIn("envctl ship --project <current-worktree-name> --json", implement_prompt)
+        self.assertIn("Escalate to `envctl test --project <current-worktree-name>` only", finalize_prompt)
+        self.assertIn("--new-session", create_plan_prompt)
+        self.assertIn("default to the cmux launcher when cmux is installed", create_plan_prompt)
+        self.assertIn("queued Codex cycle prompts are goal-scoped before submission", create_plan_prompt)
+        self.assertIn("`--no-goal` and `--no-codex-goal` are unusual explicit opt-outs", create_plan_prompt)
+        self.assertIn("prepends `/ulw-loop` to the first submitted prompt by default", create_plan_prompt)
+        self.assertIn("`--no-ulw-loop`", create_plan_prompt)
 
 
 if __name__ == "__main__":

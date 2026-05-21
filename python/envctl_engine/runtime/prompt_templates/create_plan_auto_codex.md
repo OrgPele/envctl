@@ -129,7 +129,7 @@ cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> envc
 
 For example, a no-runtime-infrastructure plan may replace the default with `cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> envctl --plan <category>/<slug> --cmux --no-infra --headless --new-session`, but feature plans should keep `--entire-system` by default. Use `--tmux` only when cmux is unavailable or the user explicitly asks for tmux.
 
-This command uses the `implement_task` preset through the current plan-agent default. For this auto-Codex skill, `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles>` is command-scoped to the launched envctl process and must not be described as changing the global runtime default. envctl queues the rendered follow-up prompts/messages for the Codex cycle workflow; envctl itself does not run `git`, `gh`, `envctl commit`, or `envctl pr`.
+This command uses the `implement_task` preset through the current plan-agent default. For this auto-Codex skill, `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles>` is command-scoped to the launched envctl process and must not be described as changing the global runtime default. Codex goal mode is on by default; envctl submits `/goal` before the initial prompt and queues goal frames before goal-scoped cycle prompts unless the user explicitly opts out with `--no-goal` or `--no-codex-goal`. Handoff is handled by the prompted agent through `envctl ship --project <project> --json` when available, or through the compact manual fallback until that command exists.
 
 ## Final response format
 1. Path of the plan file created.

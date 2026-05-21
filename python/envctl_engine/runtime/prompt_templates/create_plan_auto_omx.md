@@ -129,9 +129,9 @@ cd <repo-root> && envctl --plan <category>/<slug> --omx --ultragoal --entire-sys
 
 For example, a frontend-only plan still keeps `--entire-system` by default; use `--only-frontend` or `--no-infra` only when the plan records why full-stack E2E does not apply.
 
-OMX-managed launches are Codex-only, and `--ultragoal` is the default persistence workflow for this surface. Codex `/goal` framing is submitted first when enabled, Ultragoal wraps the initial implementation prompt, and envctl can queue the same Codex follow-up cycle workflow used by plain Codex TUI launches. Set `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` when you want only the initial Ultragoal prompt plus enabled final follow-ups; use `--ralph` explicitly when you need the Ralph compatibility workflow.
+OMX-managed launches are Codex-only, and `--ultragoal` is the default persistence workflow for this surface. Codex `/goal` framing is submitted first when enabled, Ultragoal wraps the initial implementation prompt, and envctl can queue the same Codex follow-up cycle workflow used by plain Codex TUI launches. Unlike cmux and tmux, OMX does not re-submit `/goal` before each queued cycle prompt; its guarantee is the initial goal frame plus the managed Codex session keeping that goal active. Set `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` when you want only the initial Ultragoal prompt plus enabled final follow-ups; use `--ralph` explicitly when you need the Ralph compatibility workflow.
 
-In the final response, include `Recommended Codex-equivalent cycles: <n>` and mark it informational. Also state: `OMX Ultragoal selected; envctl may queue Codex follow-up cycles for this surface using the current cycle configuration.`
+In the final response, include `Recommended Codex-equivalent cycles: <n>` and mark it informational. Also state: `OMX Ultragoal selected; envctl may queue Codex follow-up cycles for this surface using the current cycle configuration after the initial goal frame.`
 
 ## Final response format
 1. Path of the plan file created.

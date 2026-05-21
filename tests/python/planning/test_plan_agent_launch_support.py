@@ -1608,8 +1608,13 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertIsNone(error)
             self.assertEqual(send_text_mock.call_count, 0)
-            self.assertEqual(send_prompt_mock.call_count, 6)
-            self.assertEqual(queue_mock.call_count, 6)
+            self.assertEqual(send_prompt_mock.call_count, 9)
+            self.assertEqual(queue_mock.call_count, 9)
+            queued_prompt_texts = [call.kwargs["text"] for call in send_prompt_mock.call_args_list]
+            self.assertEqual(sum(str(text).startswith("/goal ") for text in queued_prompt_texts), 3)
+            self.assertIn("resolved::queue_direct_prompt::continue_task", queued_prompt_texts)
+            self.assertIn("resolved::queue_direct_prompt::implement_task", queued_prompt_texts)
+            self.assertIn("resolved::queue_direct_prompt::finalize_task", queued_prompt_texts)
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queued"),
                 [
@@ -1681,7 +1686,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 "cli": "codex",
                 "workflow_mode": "codex_cycles",
                 "codex_cycles": 1,
-                "reason": "queue_not_ready",
+                "reason": "queue_goal_not_ready",
                 "transport": "tmux",
                 "queue_failed_step_index": 0,
                 "queue_failed_step_kind": "queue_direct_prompt",
@@ -3722,6 +3727,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
+        self.assertTrue(workflow.steps[0].requires_goal)
 
     def test_browser_e2e_followup_requires_main_task_browser_visible_validation_and_fix_loop(self) -> None:
         self.assertIsNotNone(_browser_e2e_instruction_text)
@@ -3732,7 +3738,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertIn("envctl qa-user ensure --project <current-worktree-name>", prompt)
         self.assertIn("envctl playwright --project <current-worktree-name> -- <command>", prompt)
         self.assertIn("MAIN_TASK.md", prompt)
-        self.assertIn("completely implemented end-to-end", prompt)
+        self.assertIn("smallest runtime scope that proves it", prompt)
+        self.assertIn("do not default to a full stack for prompt-only", prompt)
         self.assertIn("visible in the browser", prompt)
         self.assertIn("fix any issue", prompt)
         self.assertIn("introduced by the implementation", prompt)
@@ -3777,6 +3784,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
+        self.assertTrue(workflow.steps[0].requires_goal)
 
     def test_build_plan_agent_workflow_for_single_cycle_adds_finalization_and_browser_e2e_messages(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
@@ -3794,6 +3802,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
+        self.assertTrue(workflow.steps[0].requires_goal)
+        self.assertTrue(workflow.steps[1].requires_goal)
 
     def test_build_plan_agent_workflow_for_multiple_cycles_queues_continue_and_implement_rounds(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
@@ -3815,6 +3825,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
+        self.assertTrue(workflow.steps[0].requires_goal)
+        self.assertTrue(workflow.steps[2].requires_goal)
+        self.assertTrue(workflow.steps[3].requires_goal)
+        self.assertTrue(workflow.steps[4].requires_goal)
 
     def test_build_plan_agent_workflow_for_three_cycles_uses_commit_push_middle_round(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
@@ -3839,6 +3853,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
+        self.assertTrue(all(step.requires_goal for step in workflow.steps if step.kind.endswith("direct_prompt")))
 
     def test_build_plan_agent_workflow_keeps_opencode_on_single_prompt_even_when_cycles_set(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
@@ -3849,6 +3864,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             [(step.kind, step.text) for step in workflow.steps],
             [("submit_prompt", "/implement_task")],
         )
+        self.assertFalse(workflow.steps[0].requires_goal)
 
     def test_build_plan_agent_workflow_uses_direct_submission_for_opencode_when_enabled(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
@@ -4671,19 +4687,23 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             "│ directory: ~/repo                                 │\n"
             "• Working (32s • esc to interrupt)\n"
         )
-        typed_screen = (
-            "╭───────────────────────────────────────────────────╮\n"
-            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
-            "│ model:     gpt-5.4 high   fast   /model to change │\n"
-            "│ directory: ~/repo                                 │\n"
-            "  You are finalizing an implementation that should already be substantially complete in the current worktree.\n"
-            "  tab to queue message\n"
-        )
-        state = {"typed": False}
+        state: dict[str, object] = {"typed": False, "text": ""}
+
+        def typed_screen() -> str:
+            first_line = str(state["text"]).splitlines()[0]
+            return (
+                "╭───────────────────────────────────────────────────╮\n"
+                "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                "│ directory: ~/repo                                 │\n"
+                f"  {first_line}\n"
+                "  tab to queue message\n"
+            )
 
         def fake_paste_text(*_args, text, **_kwargs):  # noqa: ANN202, ANN001
             pasted_texts.append(text)
             state["typed"] = True
+            state["text"] = text
             return None
 
         def fake_send_key(*_args, key, **_kwargs):  # noqa: ANN202, ANN001
@@ -4707,7 +4727,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", side_effect=fake_send_key),
             patch(
                 "envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen",
-                side_effect=lambda *_args, **_kwargs: typed_screen if state["typed"] else busy_screen,
+                side_effect=lambda *_args, **_kwargs: typed_screen() if state["typed"] else busy_screen,
             ),
             patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
             patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
@@ -4724,9 +4744,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
         self.assertIsNone(reason)
-        self.assertEqual(len(pasted_texts), 1)
-        self.assertIn("You are finalizing an implementation", pasted_texts[0])
-        self.assertEqual(sent_keys, ["tab"])
+        self.assertEqual(len(pasted_texts), 2)
+        self.assertTrue(pasted_texts[0].startswith("/goal "))
+        self.assertIn("You are finalizing an implementation", pasted_texts[1])
+        self.assertEqual(sent_keys, ["tab", "tab"])
 
     def test_codex_cycle_queue_direct_prompt_tabs_without_picker_resolution(self) -> None:
         sent_keys: list[str] = []

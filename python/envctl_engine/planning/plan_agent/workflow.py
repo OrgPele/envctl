@@ -46,8 +46,13 @@ def _build_plan_agent_workflow(
 ) -> _PlanAgentWorkflow:
     normalized_cli = str(cli).strip().lower()
     bounded_cycles = max(0, min(int(codex_cycles), _PLAN_AGENT_CODEX_CYCLE_CAP))
+    goal_scoped_direct_prompt = normalized_cli == "codex"
     if _uses_direct_submission(cli=normalized_cli, direct_prompt_enabled=direct_prompt_enabled):
-        initial_step = _PlanAgentWorkflowStep(kind="submit_direct_prompt", text=str(preset).strip())
+        initial_step = _PlanAgentWorkflowStep(
+            kind="submit_direct_prompt",
+            text=str(preset).strip(),
+            requires_goal=goal_scoped_direct_prompt,
+        )
     else:
         initial_step = _PlanAgentWorkflowStep(kind="submit_prompt", text=_slash_command(cli, preset))
     if normalized_cli != "codex" or bounded_cycles <= 0:
@@ -64,10 +69,10 @@ def _build_plan_agent_workflow(
             codex_cycles=bounded_cycles,
             steps=tuple(steps),
         )
-    steps = [_PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")]
+    steps = [_PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task", requires_goal=True)]
     for cycle in range(1, bounded_cycles + 1):
         if cycle == bounded_cycles:
-            steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="finalize_task"))
+            steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="finalize_task", requires_goal=True))
             if browser_e2e_followup_enable:
                 steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=_browser_e2e_instruction_text()))
             if pr_review_comments_followup_enable:
@@ -80,8 +85,8 @@ def _build_plan_agent_workflow(
         else:
             completion_text = _intermediate_cycle_completion_instruction_text()
         steps.append(_PlanAgentWorkflowStep(kind="queue_message", text=completion_text))
-        steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="continue_task"))
-        steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="implement_task"))
+        steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="continue_task", requires_goal=True))
+        steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="implement_task", requires_goal=True))
     return _PlanAgentWorkflow(
         mode=_PLAN_AGENT_WORKFLOW_CODEX_CYCLES,
         codex_cycles=bounded_cycles,
@@ -623,7 +628,7 @@ def resolve_plan_agent_launch_command(
             shlex.quote(_cli_display_path(repo_root)),
             "--plan",
             shlex.quote(selector),
-            "--tmux",
+            "--cmux",
             "--opencode",
             "--headless",
             "--new-session",

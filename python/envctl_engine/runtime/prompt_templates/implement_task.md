@@ -16,12 +16,13 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 ## Non-negotiables
 - Read as much relevant code as needed. If you're unsure, the answer is: read more code.
 - Implement the entire feature from top to bottom. No TODOs, no stubs, no "left as an exercise".
-- Before any implementation work, run `git add .` to stage the current baseline.
 - Use TDD: write/adjust tests first so they fail for the right reason -> implement -> make tests pass -> refactor -> ensure everything still passes.
 - Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
+- Treat `MAIN_TASK.md`, `.envctl-commit-message.md`, `.envctl-state/`, generated provenance, and related envctl control files as protected artifacts: change them only when the task requires it, never stage them accidentally, and prefer per-worktree `.git/info/exclude` entries for local generated control files over repo-wide ignores unless the artifact is genuinely machine-local.
 - After changes, keep `.envctl-commit-message.md` focused on one complete next commit message. Treat `### Envctl pointer ###` as the boundary after the last successful commit; everything after it is the next default commit message, and if the marker is absent no commit pointer has been established yet. If more implementation changes happen before the next commit, return to that same next commit message and refine it so it reflects the full cumulative set of changes between commits, not separate messages for each intermediate step. Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
-- When the implementation is complete and the relevant tests are green, commit the work. Prefer `envctl commit --headless --main` first so the repo-standard commit flow is used without blocking on interactive prompts and targets the main commit path; if `envctl commit --headless --main` does not work, fall back to the git CLI and still produce the commit.
-- Only at the very end of the implementation task, after the implementation work is complete, the relevant tests are green, and the implementation commit is complete, create or update the pull request as part of the same implementation task. Prefer the repo-standard envctl/gh-backed PR flow when available; otherwise use the GitHub CLI. Make sure the PR title/body are accurate, polished, and reflect the implemented behavior, validation results, and any residual risks. After creating or updating the PR, wait for GitHub status checks to complete (for example, `gh pr checks --watch` when available) and verify that all required checks have passed before final handoff. Include the PR URL and status-check result in the final response.
+- Validation defaults to focused, relevant checks selected from repo evidence. Prefer the planned structured contract `envctl test-plan --project <current-worktree-name> --json` when it exists; until then, name and run the exact pytest, lint, typecheck, build, smoke, or browser commands that prove the changed behavior. Escalate to `envctl test --project <current-worktree-name>` only for broad, risky, or cross-surface work where focused checks are not enough.
+- When implementation and validation are complete, prefer the planned single handoff contract `envctl ship --project <current-worktree-name> --json` when available. It is expected to stage the intended files only, read `.envctl-commit-message.md`, commit, push, create or update the PR when needed, monitor GitHub status, and return structured status.
+- Until `envctl ship` exists in this repo, use this compact fallback exactly once at the handoff boundary: inspect `git status --short`, stage only intentional files, commit with the prepared message, push the branch, create or update the PR with accurate validation notes, wait for required GitHub checks, then address unresolved actionable review threads before final handoff.
 - Inspect all unresolved PR review comments and review threads after the PR exists, address ALL actionable comments, commit and push any follow-up fixes, then wait for final PR confirmation/status checks before closing out the task. If comments are already resolved or non-actionable, report that evidence.
 - Preserve existing conventions (architecture, naming, patterns, lint rules, formatting, error handling).
 - Iterate until requirements are met and tests are green; expect multiple cycles.
@@ -50,14 +51,14 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Use `envctl playwright --project <current-worktree-name> -- <command>` for Playwright or browser-test commands that should run against the active project frontend without starting a second dev server.
 
 ## Context-gathering protocol (do this before coding)
-0. Run `git add .` and verify the baseline is staged (`git status --short`).
+0. Run `git status --short` and identify existing user/envctl changes before editing. Do not stage a blanket baseline.
 1. Open the authoritative spec file and extract explicit requirements and implied constraints.
 2. Identify the target file(s)/module(s) affected by the task; locate them in the repo.
 3. Find and read ALL call sites and dependencies (imports, interfaces, types, services, configs).
 4. Locate existing tests touching this behavior, and read them.
 5. Search the repo for related symbols/keywords from the spec; open the most relevant modules.
 6. Identify the correct test command(s) and how tests are organized (unit/integration/e2e).
-7. Only after you can explain where the change belongs, start writing tests.
+7. Only after you can explain where the change belongs, start writing focused tests that fail for the right reason.
 
 ## TDD workflow (must follow)
 ### A) Design the test surface

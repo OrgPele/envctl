@@ -1,1 +1,1 @@
-When the current implementation pass finishes, commit the work and push the branch.
+When the current implementation pass finishes, update the cycle state for the next queued prompt: summarize implemented scope, focused validation evidence, and remaining gaps. Do not commit, push, or update the PR during this intermediate cycle unless the active `MAIN_TASK.md` explicitly requires a handoff boundary. Keep the eventual single handoff aligned with `envctl ship --project <current-worktree-name> --json` or the compact fallback if that command is not implemented yet.
