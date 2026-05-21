@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 import tempfile
 import unittest
 
@@ -12,7 +13,10 @@ from envctl_engine.actions.action_target_support import (  # noqa: E402
     ActionCommandResolution,
     execute_targeted_action,
     emit_action_output,
+    projects_for_services,
+    resolve_action_targets,
 )
+from envctl_engine.runtime.command_router import parse_route  # noqa: E402
 
 
 @dataclass
@@ -29,6 +33,75 @@ class _Target:
 
 
 class ActionTargetSupportTests(unittest.TestCase):
+    def test_projects_for_services_resolves_from_state_and_deduplicates(self) -> None:
+        state = SimpleNamespace(
+            services={
+                "feature-a-1 Backend": SimpleNamespace(type="backend"),
+                "feature-a-1 Frontend": SimpleNamespace(type="frontend"),
+                "feature-b-1 Worker": SimpleNamespace(type="worker"),
+            }
+        )
+        runtime = SimpleNamespace(
+            load_existing_state=lambda mode: state if mode == "trees" else None,
+            project_name_from_service=lambda name: str(name).split()[0] if str(name).startswith("feature-") else "",
+        )
+
+        resolved = projects_for_services(runtime, ["service:backend", "feature-a-1 frontend", "worker"])
+
+        self.assertEqual(resolved, ["feature-a-1", "feature-b-1"])
+
+    def test_resolve_action_targets_uses_single_candidate_without_prompt(self) -> None:
+        target = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
+        runtime = SimpleNamespace(
+            discover_projects=lambda mode: [target] if mode == "trees" else [],
+            selectors_from_passthrough=lambda _args: [],
+        )
+        route = parse_route(["test"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+
+        selected, error = resolve_action_targets(
+            runtime=runtime,
+            route=route,
+            trees_only=False,
+            resolve_current_worktree_target=lambda **_kwargs: None,
+            interactive_selection_allowed=lambda _route: False,
+            no_target_selected_message=lambda _route: "no target",
+        )
+
+        self.assertEqual(selected, [target])
+        self.assertIsNone(error)
+
+    def test_resolve_action_targets_applies_interactive_selection(self) -> None:
+        target_a = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
+        target_b = _Target(name="feature-b-1", root="/tmp/repo/trees/feature-b/1")
+
+        class _Selection:
+            cancelled = False
+
+            def apply_to_route(self, route):  # noqa: ANN001
+                route.projects.append("feature-b-1")
+
+        calls: list[dict[str, object]] = []
+        runtime = SimpleNamespace(
+            discover_projects=lambda mode: [target_a, target_b] if mode == "trees" else [],
+            selectors_from_passthrough=lambda _args: [],
+            select_project_targets=lambda **kwargs: calls.append(kwargs) or _Selection(),
+        )
+        route = parse_route(["test"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+
+        selected, error = resolve_action_targets(
+            runtime=runtime,
+            route=route,
+            trees_only=False,
+            resolve_current_worktree_target=lambda **_kwargs: None,
+            interactive_selection_allowed=lambda _route: True,
+            no_target_selected_message=lambda _route: "no target",
+        )
+
+        self.assertEqual(selected, [target_b])
+        self.assertIsNone(error)
+        self.assertEqual(calls[0]["prompt"], "Select test target")
+        self.assertTrue(calls[0]["allow_untested"])
+
     def test_emit_action_output_trims_and_emits_status(self) -> None:
         printed: list[str] = []
         emitted: list[str] = []

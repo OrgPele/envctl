@@ -44,6 +44,8 @@ from envctl_engine.actions.action_target_support import (
     ActionCommandResolution,
     ActionTargetContext,
     execute_targeted_action,
+    projects_for_services as projects_for_services_impl,
+    resolve_action_targets as resolve_action_targets_impl,
 )
 from envctl_engine.actions.action_test_support import (
     FailedTestManifest,
@@ -81,7 +83,6 @@ from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
 from envctl_engine.ui.path_links import render_path_for_terminal
 from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
-from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
@@ -366,74 +367,14 @@ class ActionCommandOrchestrator:
         return code
 
     def resolve_targets(self, route: Route, *, trees_only: bool) -> tuple[list[object], str | None]:
-        rt = self.runtime
-        if trees_only and route.command == "self-destruct-worktree":
-            current = self._resolve_current_worktree_target()
-            if current is not None:
-                return [current], None
-            return [], "self-destruct-worktree must be run from inside a discovered worktree."
-        if not trees_only and route.mode == "main" and route.command in {"commit", "pr", "test"}:
-            current = self._resolve_current_worktree_target(require_configured_main_root=True)
-            if current is not None:
-                return [current], None
-        if trees_only:
-            candidates = rt.discover_projects(mode="trees")
-        else:
-            candidates = rt.discover_projects(mode=route.mode)
-            if not candidates and route.mode == "main":
-                candidates = rt.discover_projects(mode="trees")
-
-        run_all = bool(route.flags.get("all"))
-        untested_selected = bool(route.flags.get("untested"))
-        project_selectors = {name.lower() for name in route.projects}
-        project_selectors.update(rt.selectors_from_passthrough(route.passthrough_args))
-
-        services = route.flags.get("services")
-        if isinstance(services, list):
-            for project in self.projects_for_services(services):
-                project_selectors.add(project.lower())
-
-        if run_all:
-            if not candidates:
-                return [], "No projects discovered for selected mode."
-            return candidates, None
-
-        if not project_selectors and not run_all:
-            if len(candidates) == 1:
-                return candidates, None
-            if self._interactive_selection_allowed(route):
-                selection = cast(
-                    TargetSelection,
-                    rt.select_project_targets(
-                        prompt=f"Select {route.command} target",
-                        projects=candidates,
-                        allow_all=True,
-                        allow_untested=route.command == "test",
-                        multi=True,
-                    ),
-                )
-                if selection.cancelled:
-                    return [], self._no_target_selected_message(route)
-                selection.apply_to_route(route)
-                run_all = bool(route.flags.get("all"))
-                project_selectors = {name.lower() for name in route.projects}
-                untested_selected = bool(route.flags.get("untested"))
-            else:
-                return [], self._no_target_selected_message(route)
-
-        if not project_selectors and not run_all and not untested_selected:
-            return [], self._no_target_selected_message(route)
-        if run_all:
-            if not candidates:
-                return [], "No projects discovered for selected mode."
-            return candidates, None
-        selected = [candidate for candidate in candidates if candidate.name.lower() in project_selectors]
-        if not selected:
-            if route.command == "test" and untested_selected:
-                return [], None
-            requested = ", ".join(sorted(project_selectors))
-            return [], f"No matching targets found for: {requested}"
-        return selected, None
+        return resolve_action_targets_impl(
+            runtime=self.runtime,
+            route=route,
+            trees_only=trees_only,
+            resolve_current_worktree_target=self._resolve_current_worktree_target,
+            interactive_selection_allowed=self._interactive_selection_allowed,
+            no_target_selected_message=self._no_target_selected_message,
+        )
 
     def run_self_destruct_worktree_action(self, route: Route) -> int:
         return run_self_destruct_worktree_action_impl(self, route)
@@ -596,42 +537,7 @@ if result.returncode != 0:
         return interactive_selection_allowed(self.runtime.raw_runtime, route, allow_dashboard_override=True)
 
     def projects_for_services(self, service_targets: list[object]) -> list[str]:
-        rt = self.runtime
-        normalized_targets = [
-            str(target).strip().lower().removeprefix("service:")
-            for target in service_targets
-            if str(target).strip()
-        ]
-        if not normalized_targets:
-            return []
-
-        state = rt.load_existing_state(mode="trees") or rt.load_existing_state(mode="main")
-        resolved: list[str] = []
-        for target in normalized_targets:
-            matched = False
-            if state is not None:
-                for service_name, service in state.services.items():
-                    service_type = str(getattr(service, "type", "") or "").strip().lower()
-                    if service_name.lower() == target or service_type == target:
-                        project = rt.project_name_from_service(service_name)
-                        if project:
-                            resolved.append(project)
-                            matched = True
-            if matched:
-                continue
-            project = rt.project_name_from_service(target)
-            if project:
-                resolved.append(project)
-
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for project in resolved:
-            lowered = project.lower()
-            if lowered in seen:
-                continue
-            seen.add(lowered)
-            deduped.append(project)
-        return deduped
+        return projects_for_services_impl(self.runtime, service_targets)
 
     def run_test_action(self, route: Route, targets: list[object]) -> int:
         return run_test_action_impl(
