@@ -21,6 +21,10 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Read as much relevant code, tests, and docs as needed.
 - Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
 - After changes, keep `.envctl-commit-message.md` focused on one complete next commit message. Treat `### Envctl pointer ###` as the boundary after the last successful commit; everything after it is the next default commit message, and if the marker is absent no commit pointer has been established yet. If more implementation changes happen before the next commit, return to that same next commit message and refine it so it reflects the full cumulative set of changes between commits, not separate messages for each intermediate step. Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
+- Treat `MAIN_TASK.md`, `.envctl-commit-message.md`, `.envctl-state/`, generated provenance, and related envctl control files as protected artifacts. Only stage or commit them when the active task explicitly requires it; otherwise keep them local and preserve repo/product commits for intentional implementation files.
+- Use focused validation evidence selected from repo evidence. Prefer the planned structured contract `envctl test-plan --project <current-worktree-name> --json` when it exists; until then, record the exact pytest, lint, typecheck, build, smoke, or browser commands that prove implemented and remaining behavior. Escalate to broad `envctl test --project <current-worktree-name>` only when focused evidence is not strong enough.
+- When a rollover cycle is also an explicit handoff boundary, prefer `envctl ship --project <current-worktree-name> --json` when available. Until `envctl ship` exists, use one compact manual fallback: inspect status, stage only intentional files, commit with the prepared message, push, update the PR, and wait for required GitHub checks.
+- If this prompt is queued by a Codex plan-agent cycle, assume continuation work must remain goal-scoped when Codex goal mode is enabled. Do not downgrade the next `MAIN_TASK.md` to a plain prompt continuation.
 - Do NOT ask questions unless truly blocked by ambiguity that cannot be resolved from code, tests, git history, or docs.
 - Optimize for completeness over speed: assume unlimited time, and specify everything required for full implementation.
 - Make reasonable assumptions from repo evidence and resolve the task fully on your own. Surface assumptions in the final response only if they materially affected the new MAIN_TASK.
@@ -40,6 +44,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
    - If worktree provenance exists, resolve the originating base (`source_ref` first, then `source_branch`), run `git merge-base HEAD <originating-base>`, then audit both `git diff --name-status <merge-base>..HEAD` and `git log --oneline --decorate <merge-base>..HEAD`
    - If no worktree provenance exists, explicitly note that committed-divergence evidence could not be anchored to an originating branch/ref and fall back to the best available git evidence
    - Inspect relevant changed files and tests
+   - Inspect focused validation evidence already run for the implementation. If coverage is missing, name the exact focused validation commands the next task must run, using `envctl test-plan --project <current-worktree-name> --json` when available.
 3. Build a requirement status matrix from current MAIN_TASK.md:
    - Fully implemented
    - Partially implemented
@@ -47,7 +52,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 4. Rename task file:
    - Move `MAIN_TASK.md` -> `OLD_TASK_<iteration>.md` (next available integer).
 5. Create a new `MAIN_TASK.md` that includes only remaining work (partial + missing), rewritten as fully actionable requirements.
-6. Ensure the new MAIN_TASK is implementation-ready with explicit acceptance criteria and no ambiguity.
+6. Ensure the new MAIN_TASK is implementation-ready with explicit acceptance criteria, focused validation commands, protected-artifact guidance, and no ambiguity.
 
 ## New MAIN_TASK.md structure (must follow)
 - # <Title focused on remaining scope>
@@ -64,6 +69,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Every remaining gap from the previous task is included.
 - Requirements are specific enough to implement confidently from the spec.
 - Explicitly state to fully implement all items end-to-end.
+- Keep the original goal active for queued Codex continuations by making the new task clear, bounded, and compatible with goal-scoped plan-agent cycles.
 - No placeholders, no TODO language, no “later” buckets for core scope.
 - If the previous iteration is genuinely 100% complete and nothing remains, do not invent more work; make that explicit in the new `MAIN_TASK.md` by stating clearly that there is nothing left to implement and that the prior task is fully complete.
 

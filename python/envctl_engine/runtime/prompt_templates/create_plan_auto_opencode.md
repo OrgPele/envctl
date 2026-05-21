@@ -83,17 +83,15 @@ Use this structure (adapt section names only if truly necessary):
 ## Deliverables (required)
 - One plan file created in todo/plans/<category>/.
 
-## Launch scope default
-Before showing or running any envctl worktree-and-prompt follow-up, default implementation launches to the full stack with `--entire-system` so every feature plan starts with dependencies plus all configured backend/frontend services available for E2E validation.
+## Launch scope selection
+Before showing or running any envctl worktree-and-prompt follow-up, select `selected_launch_scope_flags` from the verified plan scope and record it in the plan's `Rollout / verification` section.
 
-- For backend-only changes, still default to `--entire-system` unless the user explicitly requests `--only-backend` or repo evidence proves full-stack startup is impossible or actively harmful.
-- For frontend-only changes, still default to `--entire-system` unless the user explicitly requests `--only-frontend` or repo evidence proves full-stack startup is impossible or actively harmful.
-- For changes that touch both backend and frontend, cross-stack contracts, shared runtime config, browser-visible behavior, or anything uncertain, use `--entire-system`.
-- For plans that truly need no runtime infrastructure (docs-only, prompt-only, pure static analysis, non-runtime metadata, or other edits that cannot benefit from backend, frontend, managed dependencies, or dependency prep), include `--no-infra` and explain why full-stack E2E does not apply.
-- For explicitly requested dependency/container/infrastructure verification, keep `--entire-system` unless a narrower dependency-only validation is part of the user's request or the repo's evidence.
+- Use `--no-infra` for docs-only, prompt-only, static, pure analysis, non-runtime metadata, or other plans that cannot benefit from backend, frontend, managed dependencies, or dependency prep.
+- Use `--entire-system` only when runtime services, full-stack behavior, browser validation, managed dependencies, cross-stack contracts, or integration risk actually require it.
+- Use narrower explicit scopes such as `--only-backend`, `--only-frontend`, or dependency-only validation only when the plan records why that narrower scope proves the work.
 - If the user explicitly requests a launch scope, honor that request unless it conflicts with verified repo requirements.
 
-Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run.
+Record the inferred `selected_launch_scope_flags` in the plan's `Rollout / verification` section and include the exact envctl flags in any follow-up command you show or run.
 
 ## Automatic envctl follow-up
 The explicit auto skill invocation is the approval to launch envctl after the plan is written. Do not ask an approval question before launching.
@@ -110,13 +108,13 @@ If the envctl launch command exits non-zero, report the plan path, attempted com
 If launch succeeds, report the plan path, selected launch surface, exact envctl command executed, attach/reconnect guidance printed by envctl when available, and that implementation work is now delegated to the launched session.
 The prompt must not begin implementing in the original planning session after launching envctl.
 
-Run the launch command after the plan path exists and selector derivation succeeds. Use `--entire-system` immediately before `--headless` by default; only replace it with a narrower explicit scope such as `--no-infra`, `--only-backend`, or `--only-frontend` when the plan records why full-stack E2E does not apply. Run exactly this default command:
+Run the launch command after the plan path exists and selector derivation succeeds. Use the `selected_launch_scope_flags` recorded in the plan's `Rollout / verification` section. Run exactly this command shape, replacing `<launch_scope_flags>` with the recorded flags:
 
 ```bash
-cd <repo-root> && envctl --plan <category>/<slug> --cmux --opencode --entire-system --headless --new-session
+cd <repo-root> && envctl --plan <category>/<slug> --cmux --opencode <launch_scope_flags> --headless --new-session
 ```
 
-For example, a backend-only plan still keeps `--entire-system` by default; use `--only-backend` or `--no-infra` only when the plan records why full-stack E2E does not apply.
+For example, a prompt-only plan should use `cd <repo-root> && envctl --plan <category>/<slug> --cmux --opencode --no-infra --headless --new-session`, while a browser-visible full-stack plan should use `--entire-system`.
 
 OpenCode plan-agent launches use the `/ulw-loop` prefix by default, so this auto skill does not need `--ulw`. Use `--no-ulw-loop` only when the user explicitly asks for a plain OpenCode prompt without that prefix. Codex cycle settings are intentionally ignored for this surface. If the launch fails because OpenCode or ULW support is unavailable in the user environment, report the exact error and leave the plan file in place; do not silently fall back to Codex.
 

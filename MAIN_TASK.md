@@ -1,161 +1,199 @@
-# Envctl Worktree CGC Backend Default Hardening
+# Prompt Workflow Residual Contract Cleanup
 
 ## Context and objective
 
-The prior task, archived as `OLD_TASK_2.md`, implemented most of the envctl worktree code-intelligence isolation feature:
-generated worktrees get unique Serena project names, deterministic CGC contexts, explicit `cgc index <worktree>
---context <context>` commands, `.envctl-state/code-intelligence.json` metadata, docs, and targeted test coverage.
+The prior iteration archived as `OLD_TASK_2.md` implemented most of the envctl
+prompt workflow modernization in commit `644cc2c`:
 
-The remaining issue is real CodeGraphContext backend reliability. The implementation currently leaves
-`ENVCTL_WORKTREE_CGC_DATABASE` empty by default, so generated worktrees create CGC contexts without `--database`.
-On this machine, a real generated-context index used CGC's FalkorDB-backed default path, failed to start FalkorDB
-cleanly, fell back, and indexing sat without progress until manually killed. Because this branch also commits
-`.cgcignore`, `ENVCTL_WORKTREE_CGC_INDEX=auto` can now trigger CGC indexing for generated envctl worktrees and hit that
-flaky default backend path.
+- implementation/finalization prompts now prefer focused validation,
+  `envctl test-plan --project <project> --json` when available, planned
+  `envctl ship --project <project> --json`, compact manual fallback handoff, and
+  artifact-protection wording;
+- plan-agent first/intermediate/browser/review follow-up prompts no longer force
+  repeated handoff work between cycles;
+- cmux and tmux Codex cycle queueing now carries `requires_goal` metadata and
+  queues `/goal ...` before goal-required queued direct prompts;
+- OMX wording now states that OMX uses the initial goal frame and does not
+  re-submit `/goal` before every queued cycle prompt;
+- docs and prompt-install tests cover many stale contract terms, including
+  `--tmux-new-session`, blanket `git add .`, old `envctl commit --headless`
+  guidance, cmux launch examples, OpenCode `/ulw-loop`, and queued Codex goal
+  behavior.
 
-Objective: make the default generated-worktree CGC backend robust by defaulting worktree CGC context creation to
-`kuzudb` when no explicit database is configured, while preserving explicit user/config overrides and the best-effort
-non-fatal behavior from the prior task.
-
-This is a follow-up hardening task, not a rewrite of the prior implementation.
+The current task is a focused residual cleanup. Fully implement the remaining
+prompt contract gaps end-to-end, without broadening into unrelated launcher
+features.
 
 ## Remaining requirements (complete and exhaustive)
 
-1. Fully implement a default CGC database backend for envctl-generated worktree contexts.
-   - When `ENVCTL_WORKTREE_CGC_DATABASE` is unset or absent from config, `_worktree_cgc_database()` must return
-     `kuzudb`.
-   - `cgc context create <context>` must therefore include `--database kuzudb` by default for generated worktree CGC
-     indexing.
-   - Explicit env values must continue to win over config raw values.
-   - Explicit config raw values must continue to win over the default.
-   - Empty or whitespace-only env/config values must be treated as absent and must fall back to `kuzudb`.
+1. Modernize `continue_task.md`.
+   - Preserve its existing purpose: archive the previous `MAIN_TASK.md` to the
+     next `OLD_TASK_<n>.md`, audit implementation evidence, and create a new
+     implementation-ready `MAIN_TASK.md` for the next cycle.
+   - Align its workflow language with the modern implementation/finalization
+     contract:
+     - use focused validation evidence selected from repo evidence;
+     - reference the planned `envctl test-plan --project <current-worktree-name> --json`
+       contract when available;
+     - reference the planned `envctl ship --project <current-worktree-name> --json`
+       handoff and compact manual fallback when handoff is actually needed;
+     - keep `.envctl-commit-message.md` focused on one cumulative next commit;
+     - treat `MAIN_TASK.md`, `.envctl-commit-message.md`, `.envctl-state/`,
+       generated provenance, and related envctl control files as protected
+       artifacts;
+     - mention that queued Codex continuation cycles are expected to remain
+       goal-scoped when Codex goal mode is enabled.
+   - Do not reintroduce blanket `git add .`, old `envctl commit --headless`
+     preference, broad default `envctl test --project ...`, or repeated
+     commit/push/PR loops.
 
-2. Preserve opt-out and override behavior.
-   - `ENVCTL_WORKTREE_CGC_INDEX=false` must still skip indexing.
-   - `ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` must still skip all code-intelligence bootstrap behavior.
-   - A non-empty `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` must still pass that backend to `cgc context create`.
-   - Existing context handling must continue to treat "already exists" output as success and proceed to indexing.
-   - Missing `cgc`, context creation failure, and index failure must remain non-fatal for worktree creation.
+2. Finish automatic create-plan launch-scope wording.
+   - Update `create_plan_auto_codex.md` and `create_plan_auto_opencode.md` so
+     auto-launch command guidance is not hard-coded to `--entire-system` as the
+     default for all plans.
+   - The templates must require the generated plan's `Rollout / verification`
+     section to record explicit launch-scope flags.
+   - The launch command must use the selected launch-scope flags:
+     - `--no-infra` for prompt-only, docs-only, static, or otherwise no-runtime
+       plans;
+     - `--entire-system` only when runtime services, full-stack behavior, browser
+       validation, or integration risk actually require it;
+     - narrower flags only when the plan records why they are sufficient.
+   - Remove stale wording such as "feature plans should keep `--entire-system`
+     by default" and "backend-only plan still keeps `--entire-system` by
+     default".
+   - Keep cmux, `--headless`, `--new-session`, OpenCode `/ulw-loop`, and Codex
+     goal/default-cycle guidance intact.
 
-3. Persist and emit the selected default database clearly.
-   - `.envctl-state/code-intelligence.json` must record `"cgc_database": "kuzudb"` when the default is used.
-   - The `setup.worktree.code_intelligence.cgc_context` event must include `database="kuzudb"` when the default is used.
-   - Attempted command metadata must show `["cgc", "context", "create", <context>, "--database", "kuzudb"]` by default.
+3. Update user docs for the residual launch-scope contract.
+   - Update `docs/user/planning-and-worktrees.md` and `docs/user/ai-playbooks.md`
+     so auto-Codex and auto-OpenCode descriptions say launch scope comes from
+     the plan, rather than implying unconditional `--entire-system`.
+   - Include explicit examples or wording for `--no-infra` on prompt/static-only
+     plans and `--entire-system` only when runtime services are required.
+   - Do not reintroduce stale tmux-default wording or old manual handoff claims.
 
-4. Update docs and repo guidance.
-   - `docs/user/planning-and-worktrees.md` must state that generated worktree CGC contexts default to `kuzudb`.
-   - The docs must explain that `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` overrides the default.
-   - The docs must explain why the default exists: to avoid relying on CGC's global/default backend selection for
-     generated worktrees.
-   - Do not reintroduce references to the old `codegraph` CLI.
-
-5. Do not retrofit existing worktrees as part of this task.
-   - Existing already-created implementation worktrees may still have `.serena/project.yml` with `project_name:
-     "envctl"` and may lack `.envctl-state/code-intelligence.json` because they were created before the prior fix.
-   - This task must harden behavior for newly generated or regenerated worktrees.
-   - Do not mutate sibling worktrees or paths outside the current repo root.
+4. Strengthen regression coverage.
+   - Extend `tests/python/runtime/test_prompt_install_support.py` so
+     `continue_task` is checked for the same modern contract terms as
+     implementation/finalization where relevant.
+   - Add assertions that auto-Codex and auto-OpenCode templates no longer
+     hard-code broad `--entire-system` as the default for all plans and no longer
+     contain the stale "feature plans" / "backend-only plan" broad-scope wording.
+   - Keep existing assertions for cmux, `--new-session`, OpenCode `/ulw-loop`,
+     `--no-ulw-loop`, Codex goal behavior, and OMX initial-goal limitations.
 
 ## Gaps from prior iteration (mapped to evidence)
 
-Fully implemented in commits `2cad2a5` and `916789d`:
+Fully implemented in commit `644cc2c`:
 
-- Deterministic generated worktree identity exists in
-  `python/envctl_engine/planning/worktree_domain.py::_worktree_code_intelligence_identity`.
-- Copied Serena project config is rewritten by `_copy_worktree_serena_project_file` and
-  `_rewrite_serena_project_name`.
-- CGC indexing now calls `cgc context create <context>` before `cgc index <worktree> --context <context>`.
-- Metadata is written to `.envctl-state/code-intelligence.json`.
-- Docs describe generated Serena project names, CGC contexts, templates, and metadata.
-- Targeted validation passed:
-  - `uv run --extra dev pytest -q tests/python/planning/test_planning_worktree_setup.py` -> `44 passed`
-  - `uv run --extra dev ruff check python/envctl_engine/planning/worktree_domain.py tests/python/planning/test_planning_worktree_setup.py` -> passed
-- PR #232 checks passed for `ruff`, `build & shipability`, and `pytest`.
+- `python/envctl_engine/planning/plan_agent/models.py` adds
+  `_PlanAgentWorkflowStep.requires_goal`.
+- `python/envctl_engine/planning/plan_agent/workflow.py` marks Codex direct
+  implementation, continuation, and finalization prompts as goal-required.
+- `python/envctl_engine/planning/plan_agent/cmux_transport.py` and
+  `tmux_transport.py` queue `/goal ...` before goal-required queued direct
+  prompts when `codex_goal_enable` is true.
+- `python/envctl_engine/runtime/prompt_templates/implement_task.md`,
+  `finalize_task.md`, `implement_plan.md`, and private plan-agent follow-up
+  templates use the modern focused-validation and single-handoff vocabulary.
+- `create_plan.md`, `create_plan_auto_codex.md`, `create_plan_auto_opencode.md`,
+  `create_plan_auto_omx.md`, `docs/user/planning-and-worktrees.md`, and
+  `docs/user/ai-playbooks.md` largely prefer cmux and `--new-session`.
+- `tests/python/runtime/test_prompt_install_support.py` and
+  `tests/python/planning/test_plan_agent_launch_support.py` cover stale prompt
+  terms and queued goal-frame behavior.
+- Validation passed after the prior implementation:
+  - `uv run --extra dev pytest -q tests/python/runtime/test_prompt_install_support.py tests/python/planning/test_plan_agent_launch_support.py tests/python/runtime/test_runtime_feature_inventory.py`
+    -> `251 passed, 45 subtests passed`
+  - `uv tool run ruff check python tests scripts` -> passed.
 
-Remaining/partial:
+Partially implemented:
 
-- `_worktree_cgc_database()` currently returns `""` when no env/config value is present, so the default command is
-  `cgc context create <context>` with no `--database`.
-- Docs currently say users can set `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb`, but they do not say `kuzudb` is the default.
-- Existing tests cover explicit `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb`, but not the default-unset path requiring
-  `--database kuzudb`.
-- Real machine evidence shows the empty default can select a flaky FalkorDB-backed path, fail to start FalkorDB cleanly,
-  fall back, and then stall indexing.
+- `continue_task.md` still carries the older rollover prompt. It preserves
+  history and audits git evidence, but it does not include the modern focused
+  validation, `envctl test-plan`, `envctl ship`, protected-artifact, or
+  goal-scoped continuation vocabulary required by the previous task.
+- Auto-create prompt launch scope is still too broad:
+  - `create_plan_auto_codex.md` says to use `--entire-system` by default and
+    says feature plans should keep `--entire-system` by default.
+  - `create_plan_auto_opencode.md` says to use `--entire-system` by default and
+    says backend-only plans still keep `--entire-system` by default.
+  - docs mirror the auto-Codex/OpenCode command examples as unconditional
+    `--entire-system` defaults.
+- Existing tests still lock the auto-Codex and auto-OpenCode default commands
+  with `--entire-system`, so they would not catch this residual contract drift.
 
-Not implemented and not required:
+Not carried forward:
 
-- No retroactive migration for the current implementation worktree's `.serena/project.yml` or missing
-  `.envctl-state/code-intelligence.json`.
-- No CGC MCP server, no CGC backend implementation, and no old `codegraph` CLI behavior.
+- Do not implement real `envctl ship` or `envctl test-plan` commands in this
+  task. The prompt contract may reference them as planned commands with compact
+  fallback behavior.
+- Do not change the existing cmux/tmux queued-goal implementation unless a test
+  failure caused by the residual prompt updates proves it is necessary.
+- Do not change branch/worktree identity or parent `.envctl` runtime-root logic;
+  existing code and docs already cover those behaviors outside this residual
+  prompt cleanup.
 
 ## Acceptance criteria (requirement-by-requirement)
 
-- A generated worktree with `ENVCTL_WORKTREE_CGC_INDEX=true` and no `ENVCTL_WORKTREE_CGC_DATABASE` runs:
-  - `cgc context create <generated-context> --database kuzudb`
-  - `cgc index <worktree> --context <generated-context>`
-- A generated worktree with `ENVCTL_WORKTREE_CGC_INDEX=true` and `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` runs:
-  - `cgc context create <generated-context> --database <backend>`
-  - `cgc index <worktree> --context <generated-context>`
-- Metadata for the default path records `"cgc_database": "kuzudb"` and includes the default database in the attempted
-  context-create command.
-- Metadata for the override path records the override backend.
-- Existing tests for missing `cgc`, CGC launch failure, existing context, context failure, and index behavior remain
-  green.
-- Docs state the default backend and override behavior accurately.
-- GitHub PR checks pass after the follow-up commit.
+- `continue_task.md` retains the rollover/history-preservation protocol and now
+  includes modern focused-validation, planned test-plan, planned ship handoff,
+  protected-artifact, and goal-scoped continuation wording.
+- No installed prompt template contains `--tmux-new-session`, blanket
+  `git add .`, `Prefer envctl commit --headless --main`, or stale repeated
+  manual handoff-loop wording.
+- `create_plan_auto_codex.md` and `create_plan_auto_opencode.md` require
+  launch-scope flags to come from the generated plan and no longer present
+  `--entire-system` as the default for all plans.
+- `docs/user/planning-and-worktrees.md` and `docs/user/ai-playbooks.md` describe
+  auto launch scope as plan-selected and include `--no-infra` for prompt/static
+  work plus `--entire-system` only when runtime services are required.
+- Prompt-install tests fail before the residual fixes and pass after them.
+- Focused runtime inventory coverage remains green.
 
 ## Required implementation scope (frontend/backend/data/integration)
 
-- Backend/Python engine:
-  - Update `python/envctl_engine/planning/worktree_domain.py`.
-  - Prefer the narrowest possible change around `_worktree_cgc_database()` and any helper needed to keep env/config
-    precedence clear.
-- Tests:
-  - Update `tests/python/planning/test_planning_worktree_setup.py`.
+- Runtime prompt templates:
+  - `python/envctl_engine/runtime/prompt_templates/continue_task.md`
+  - `python/envctl_engine/runtime/prompt_templates/create_plan_auto_codex.md`
+  - `python/envctl_engine/runtime/prompt_templates/create_plan_auto_opencode.md`
 - Docs:
-  - Update `docs/user/planning-and-worktrees.md`.
-- Frontend:
-  - None.
-- Data/migrations:
-  - None.
-- Runtime services:
-  - None.
+  - `docs/user/planning-and-worktrees.md`
+  - `docs/user/ai-playbooks.md`
+- Tests:
+  - `tests/python/runtime/test_prompt_install_support.py`
+- Frontend: none.
+- Backend/runtime services: none.
+- Data/migrations/config: none.
 
 ## Required tests and quality gates
 
 Run all of the following after implementation:
 
-- `uv run --extra dev pytest -q tests/python/planning/test_planning_worktree_setup.py`
-- `uv run --extra dev ruff check python/envctl_engine/planning/worktree_domain.py tests/python/planning/test_planning_worktree_setup.py`
-- A focused Python 3.12 smoke for the real-git fake-`cgc` test if available locally:
-  - `python3.12 -m pytest -q tests/python/planning/test_planning_worktree_setup.py::PlanningWorktreeSetupTests::test_setup_worktree_real_git_smoke_writes_isolated_code_intelligence`
+- `uv run --extra dev pytest -q tests/python/runtime/test_prompt_install_support.py`
+- `uv run --extra dev pytest -q tests/python/runtime/test_runtime_feature_inventory.py`
+- `uv tool run ruff check python tests scripts`
 
-Recommended test additions or adjustments:
-
-- Add or update a test proving the unset database path includes `--database kuzudb`.
-- Keep the existing explicit database test proving `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb` or another non-empty backend is
-  respected.
-- Add a test for whitespace-only `ENVCTL_WORKTREE_CGC_DATABASE` falling back to `kuzudb` if that can be done without
-  duplicating excessive setup.
-- Ensure metadata assertions cover the selected database for default and override paths.
+Escalate to `tests/python/planning/test_plan_agent_launch_support.py` only if
+the implementation touches plan-agent runtime code or launch orchestration.
 
 ## Edge cases and failure handling
 
-- Empty or whitespace-only database env/config values fall back to `kuzudb`.
-- Non-empty database values are sanitized using existing identity sanitization before being passed to CGC.
-- If `cgc` is missing, no context-create or index command runs, and metadata still records the selected database and
-  `cgc_available=false`.
-- If `cgc context create` fails, worktree creation still succeeds, indexing is skipped, and metadata/events include the
-  database, return code, and short stdout/stderr summaries.
-- If `cgc context create` reports that the context already exists, indexing still runs with the generated context.
-- If `cgc index` fails or hangs in real usage, envctl must still treat the subprocess result/failure as non-fatal within
-  the current timeout/error behavior; this task only changes backend selection, not CGC internals.
+- Keep auto launch guidance deterministic enough for installed prompt snapshot
+  tests while allowing the selected launch-scope flag to differ by plan evidence.
+- Keep `--no-infra` examples explicitly tied to prompt/static/no-runtime plans.
+- Keep `--entire-system` available for runtime-service and browser-visible work;
+  the cleanup must not make agents skip required validation for high-risk
+  product changes.
+- Preserve all existing surface-specific differences between Codex, OpenCode,
+  and OMX prompts.
 
 ## Definition of done
 
-- New generated envctl worktrees default to `kuzudb` for CGC context creation when no database override is configured.
-- User/config overrides for `ENVCTL_WORKTREE_CGC_DATABASE` still work.
-- Metadata and events clearly record the selected database.
-- Docs describe the default, override, and rationale.
-- Targeted tests and Ruff pass locally.
-- Follow-up commit is pushed to PR #232 or its successor.
-- GitHub required checks pass.
+- `OLD_TASK_2.md` archives the previous full prompt workflow modernization task.
+- This `MAIN_TASK.md` contains only the residual prompt-contract cleanup work.
+- Prompt templates, docs, and tests fully satisfy the acceptance criteria above.
+- Required focused tests and Ruff pass locally.
+- The implementation is committed, pushed to the active PR branch, and the PR is
+  updated with validation evidence.

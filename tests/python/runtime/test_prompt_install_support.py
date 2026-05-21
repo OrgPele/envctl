@@ -571,11 +571,13 @@ class PromptInstallSupportTests(unittest.TestCase):
             "create_plan_auto_codex": {
                 "command": (
                     "ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> "
-                    "envctl --plan <category>/<slug> --cmux --entire-system --headless --new-session"
+                    "envctl --plan <category>/<slug> --cmux <launch_scope_flags> --headless --new-session"
                 ),
                 "phrases": (
                     "recommended_codex_cycles=<n>",
                     "exactly one integer from `0` through `8`",
+                    "selected_launch_scope_flags",
+                    "Rollout / verification",
                     "uses the `implement_task` preset through the current plan-agent default",
                     "Codex goal mode is on by default",
                     "queues goal frames before goal-scoped cycle prompts",
@@ -584,10 +586,12 @@ class PromptInstallSupportTests(unittest.TestCase):
             },
             "create_plan_auto_opencode": {
                 "command": (
-                    "envctl --plan <category>/<slug> --cmux --opencode --entire-system "
+                    "envctl --plan <category>/<slug> --cmux --opencode <launch_scope_flags> "
                     "--headless --new-session"
                 ),
                 "phrases": (
+                    "selected_launch_scope_flags",
+                    "Rollout / verification",
                     "OpenCode plan-agent launches use the `/ulw-loop` prefix by default",
                     "Codex cycle settings are intentionally ignored for this surface",
                     "do not silently fall back to Codex",
@@ -628,17 +632,21 @@ class PromptInstallSupportTests(unittest.TestCase):
                 self.assertIn("attach/reconnect guidance", body)
                 self.assertIn("must not begin implementing in the original planning session", body)
                 self.assertIn(contract["command"], body)
+                if preset != "create_plan_auto_omx":
+                    self.assertNotIn("Use `--entire-system` immediately before `--headless` by default", body)
+                    self.assertNotIn("feature plans should keep `--entire-system` by default", body)
+                    self.assertNotIn("backend-only plan still keeps `--entire-system` by default", body)
                 for phrase in contract["phrases"]:
                     self.assertIn(phrase, body)
                 self.assertIn("--headless", body)
                 self.assertIn("--new-session", body)
-                self.assertIn("Launch scope default", body)
+                if preset == "create_plan_auto_omx":
+                    self.assertIn("Launch scope default", body)
+                else:
+                    self.assertIn("Launch scope selection", body)
                 self.assertIn("--entire-system", body)
-                self.assertIn("backend-only", body)
                 self.assertIn("--only-backend", body)
-                self.assertIn("frontend-only", body)
                 self.assertIn("--only-frontend", body)
-                self.assertIn("no runtime infrastructure", body)
                 self.assertIn("--no-infra", body)
                 self.assertNotIn("Do not run `envctl` unless the user explicitly says yes", body)
 
@@ -734,6 +742,10 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("### Envctl pointer ###", continue_prompt.body)
         self.assertIn(".envctl-state/worktree-provenance.json", continue_prompt.body)
         self.assertIn("git merge-base HEAD <originating-base>", continue_prompt.body)
+        self.assertIn("envctl test-plan --project <current-worktree-name> --json", continue_prompt.body)
+        self.assertIn("envctl ship --project <current-worktree-name> --json", continue_prompt.body)
+        self.assertIn("protected artifacts", continue_prompt.body)
+        self.assertIn("goal-scoped", continue_prompt.body)
 
         finalize_prompt = _load_template("finalize_task")
         self.assertEqual(finalize_prompt.name, "finalize_task")
@@ -990,10 +1002,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertTrue(expected.exists())
             written = expected.read_text(encoding="utf-8")
             self.assertIn(
-                "envctl --plan <category>/<slug> --cmux --opencode --entire-system "
+                "envctl --plan <category>/<slug> --cmux --opencode <launch_scope_flags> "
                 "--headless --new-session",
                 written,
             )
+            self.assertIn("selected_launch_scope_flags", written)
             self.assertIn("Codex cycle settings are intentionally ignored for this surface", written)
 
     def test_resolve_codex_direct_prompt_body_prefers_user_installed_file(self) -> None:
@@ -1100,7 +1113,8 @@ class PromptInstallSupportTests(unittest.TestCase):
             )
 
         self.assertIn("Automatic envctl follow-up", resolved)
-        self.assertIn("--cmux --opencode --entire-system --headless --new-session", resolved)
+        self.assertIn("--cmux --opencode <launch_scope_flags> --headless --new-session", resolved)
+        self.assertIn("selected_launch_scope_flags", resolved)
         self.assertIn("Auto launch OpenCode ULW after planning", resolved)
 
     def test_resolve_opencode_direct_prompt_body_keeps_browser_use_skill_name(self) -> None:
@@ -1194,10 +1208,13 @@ class PromptInstallSupportTests(unittest.TestCase):
         implement_prompt = _load_template("implement_task").body
         finalize_prompt = _load_template("finalize_task").body
         create_plan_prompt = _load_template("create_plan").body
+        continue_prompt = _load_template("continue_task").body
 
         self.assertIn("Validation defaults to focused, relevant checks", implement_prompt)
         self.assertIn("envctl test-plan --project <current-worktree-name> --json", implement_prompt)
         self.assertIn("envctl ship --project <current-worktree-name> --json", implement_prompt)
+        self.assertIn("envctl test-plan --project <current-worktree-name> --json", continue_prompt)
+        self.assertIn("envctl ship --project <current-worktree-name> --json", continue_prompt)
         self.assertIn("Escalate to `envctl test --project <current-worktree-name>` only", finalize_prompt)
         self.assertIn("--new-session", create_plan_prompt)
         self.assertIn("default to the cmux launcher when cmux is installed", create_plan_prompt)

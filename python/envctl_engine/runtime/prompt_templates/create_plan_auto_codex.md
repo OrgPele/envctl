@@ -83,17 +83,15 @@ Use this structure (adapt section names only if truly necessary):
 ## Deliverables (required)
 - One plan file created in todo/plans/<category>/.
 
-## Launch scope default
-Before showing or running any envctl worktree-and-prompt follow-up, default implementation launches to the full stack with `--entire-system` so every feature plan starts with dependencies plus all configured backend/frontend services available for E2E validation.
+## Launch scope selection
+Before showing or running any envctl worktree-and-prompt follow-up, select `selected_launch_scope_flags` from the verified plan scope and record it in the plan's `Rollout / verification` section.
 
-- For backend-only changes, still default to `--entire-system` unless the user explicitly requests `--only-backend` or repo evidence proves full-stack startup is impossible or actively harmful.
-- For frontend-only changes, still default to `--entire-system` unless the user explicitly requests `--only-frontend` or repo evidence proves full-stack startup is impossible or actively harmful.
-- For changes that touch both backend and frontend, cross-stack contracts, shared runtime config, browser-visible behavior, or anything uncertain, use `--entire-system`.
-- For plans that truly need no runtime infrastructure (docs-only, prompt-only, pure static analysis, non-runtime metadata, or other edits that cannot benefit from backend, frontend, managed dependencies, or dependency prep), include `--no-infra` and explain why full-stack E2E does not apply.
-- For explicitly requested dependency/container/infrastructure verification, keep `--entire-system` unless a narrower dependency-only validation is part of the user's request or the repo's evidence.
+- Use `--no-infra` for docs-only, prompt-only, static, pure analysis, non-runtime metadata, or other plans that cannot benefit from backend, frontend, managed dependencies, or dependency prep.
+- Use `--entire-system` only when runtime services, full-stack behavior, browser validation, managed dependencies, cross-stack contracts, or integration risk actually require it.
+- Use narrower explicit scopes such as `--only-backend`, `--only-frontend`, or dependency-only validation only when the plan records why that narrower scope proves the work.
 - If the user explicitly requests a launch scope, honor that request unless it conflicts with verified repo requirements.
 
-Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run.
+Record the inferred `selected_launch_scope_flags` in the plan's `Rollout / verification` section and include the exact envctl flags in any follow-up command you show or run.
 
 ## Codex cycle recommendation
 Before launching envctl, assign `recommended_codex_cycles=<n>` where `<n>` is exactly one integer from `0` through `8`. Use this rubric:
@@ -104,7 +102,7 @@ Before launching envctl, assign `recommended_codex_cycles=<n>` where `<n>` is ex
 - `5-6`: cross-module/runtime behavior, meaningful edge cases, or broad test/docs updates.
 - `7-8`: high-complexity, multi-surface, risky, or architecture-sensitive work that benefits from many continuation/review rounds.
 
-Prefer the smallest number that can plausibly finish the task and verify it. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record both the recommended Codex cycle count and the intended launch-scope flags.
+Prefer the smallest number that can plausibly finish the task and verify it. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record both the recommended Codex cycle count and `selected_launch_scope_flags`.
 
 ## Automatic envctl follow-up
 The explicit auto skill invocation is the approval to launch envctl after the plan is written. Do not ask an approval question before launching.
@@ -121,13 +119,13 @@ If the envctl launch command exits non-zero, report the plan path, attempted com
 If launch succeeds, report the plan path, selected launch surface, exact envctl command executed, attach/reconnect guidance printed by envctl when available, and that implementation work is now delegated to the launched session.
 The prompt must not begin implementing in the original planning session after launching envctl.
 
-Run the launch command after the plan path exists and selector derivation succeeds. Use `--entire-system` immediately before `--headless` by default; only replace it with a narrower explicit scope such as `--no-infra`, `--only-backend`, or `--only-frontend` when the plan records why full-stack E2E does not apply. Run exactly this default command:
+Run the launch command after the plan path exists and selector derivation succeeds. Use the `selected_launch_scope_flags` recorded in the plan's `Rollout / verification` section. Run exactly this command shape, replacing `<launch_scope_flags>` with the recorded flags:
 
 ```bash
-cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> envctl --plan <category>/<slug> --cmux --entire-system --headless --new-session
+cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> envctl --plan <category>/<slug> --cmux <launch_scope_flags> --headless --new-session
 ```
 
-For example, a no-runtime-infrastructure plan may replace the default with `cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> envctl --plan <category>/<slug> --cmux --no-infra --headless --new-session`, but feature plans should keep `--entire-system` by default. Use `--tmux` only when cmux is unavailable or the user explicitly asks for tmux.
+For example, a prompt-only plan should use `cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> envctl --plan <category>/<slug> --cmux --no-infra --headless --new-session`, while a browser-visible full-stack plan should use `--entire-system`. Use `--tmux` only when cmux is unavailable or the user explicitly asks for tmux.
 
 This command uses the `implement_task` preset through the current plan-agent default. For this auto-Codex skill, `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles>` is command-scoped to the launched envctl process and must not be described as changing the global runtime default. Codex goal mode is on by default; envctl submits `/goal` before the initial prompt and queues goal frames before goal-scoped cycle prompts unless the user explicitly opts out with `--no-goal` or `--no-codex-goal`. Handoff is handled by the prompted agent through `envctl ship --project <project> --json` when available, or through the compact manual fallback until that command exists.
 
