@@ -29,6 +29,8 @@ Completed and preserved planning ownership slices:
 - `planning/worktree_creation_recovery.py` owns partial worktree-add recovery and placeholder fallback behavior.
 - `planning/worktree_plan_selection.py` owns fresh-AI plan-count adjustment, launch transport selection, and
   keep-plan flag/config parsing.
+- `planning/worktree_plan_project_selection.py` owns plan selector resolution, dry-run prediction, no-TTY/no-plan
+  handling, and plan-worktree sync result mapping.
 - `planning/worktree_creation_commands.py` owns git worktree-add branch naming, branch existence checks, start-point
   selection, and command execution.
 - `planning/worktree_identity.py` owns the shared generated-worktree identity so branch names and envctl project names
@@ -56,7 +58,6 @@ implementation commits unless a task explicitly requires changing it.
    - Keep the completed owner modules listed above as the implementation owners for their behavior.
    - Continue reducing `planning/worktree_domain.py` by extracting the remaining responsibilities into focused planning
      owner modules:
-     - plan selection and prompt parsing beyond fresh-AI/keep-plan helpers,
      - worktree sync/create orchestration and deletion result summarization beyond git worktree-add command
        construction.
    - Keep public helper names and orchestrator call sites stable until callers are moved safely.
@@ -201,6 +202,8 @@ Fully implemented:
   `python/envctl_engine/planning/worktree_creation_recovery.py`.
 - Fresh-AI plan-count adjustment, launch transport selection, and keep-plan flag/config parsing are extracted to
   `python/envctl_engine/planning/worktree_plan_selection.py`.
+- Plan selector resolution, dry-run prediction, no-TTY/no-plan handling, and sync result mapping are extracted to
+  `python/envctl_engine/planning/worktree_plan_project_selection.py`.
 - Git worktree-add branch naming, branch existence checks, start-point selection, and command execution are extracted to
   `python/envctl_engine/planning/worktree_creation_commands.py`.
 - Generated-worktree project and branch identity is centralized in
@@ -216,6 +219,7 @@ Fully implemented:
 - Structure guards exist in `tests/python/shared/test_structure_layout.py` for the planning owner modules.
 - Focused planning tests exist for `worktree_git_hooks.py`, `worktree_main_task.py`, and
   `worktree_creation_commands.py`, `worktree_creation_recovery.py`, `worktree_identity.py`,
+  `worktree_plan_project_selection.py`,
   `worktree_plan_selection.py`,
   `worktree_planning_menu.py`, `worktree_project_catalog.py`, `worktree_selection_memory.py`, and
   `worktree_setup_coordinator.py`, `worktree_setup_entries.py`, `worktree_sync_deletion.py`, and
@@ -233,8 +237,8 @@ Fully implemented:
 
 Partially implemented:
 
-- Planning/worktree split is started, but `worktree_domain.py` still owns prompt parsing beyond the extracted helpers
-  and sync/create orchestration plus deletion result summarization.
+- Planning/worktree split is started, but `worktree_domain.py` still owns sync/create orchestration plus deletion result
+  summarization.
 - Runtime support modules already exist under `runtime/engine_runtime_*_support.py`, but
   `runtime/engine_runtime.py` is still about 1,679 lines and still owns many delegate-worthy responsibilities.
 - Startup support modules already exist, but `startup/startup_orchestrator.py` is still about 2,272 lines and still owns
