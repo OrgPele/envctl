@@ -194,6 +194,16 @@ class StructureLayoutTests(unittest.TestCase):
             facade.read_text(encoding="utf-8"),
         )
 
+    def test_worktree_setup_coordinator_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_setup_coordinator.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_setup_coordinator import",
+            facade.read_text(encoding="utf-8"),
+        )
+
     def test_worktree_sync_deletion_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_deletion.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"

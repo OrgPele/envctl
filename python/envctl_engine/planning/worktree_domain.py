@@ -58,6 +58,9 @@ from envctl_engine.planning.worktree_setup_entries import (
     coerce_setup_entries as _coerce_setup_entries_impl,
     resolve_included_setup_worktrees as _resolve_included_setup_worktrees_impl,
 )
+from envctl_engine.planning.worktree_setup_coordinator import (
+    apply_setup_worktree_selection as _apply_setup_worktree_selection_impl,
+)
 from envctl_engine.planning.worktree_sync_deletion import (
     delete_feature_worktrees as _delete_feature_worktrees_impl,
 )
@@ -261,130 +264,18 @@ def _create_single_worktree(self, *, feature: str, iteration: str) -> str | None
 def _apply_setup_worktree_selection(
     self: Any, route: Route, project_contexts: list[ProjectContextLike]
 ) -> list[ProjectContextLike]:
-    if not self._setup_worktree_requested(route):
-        return project_contexts
-    if bool(route.flags.get("docker")):
-        raise RuntimeError("setup-worktrees is not supported in Docker mode.")
-
-    multi_entries = self._coerce_setup_entries(
+    return _apply_setup_worktree_selection_impl(
         route=route,
-        flag_name="setup_worktrees",
-        value_name="count",
+        project_contexts=project_contexts,
+        setup_worktree_requested=self._setup_worktree_requested,
+        env=getattr(self, "env", {}),
+        emit=getattr(self, "_emit", None),
+        coerce_setup_entries=self._coerce_setup_entries,
+        apply_multi_setup_entry=lambda **kwargs: _apply_multi_setup_entry(self, **kwargs),
+        apply_single_setup_entry=lambda **kwargs: _apply_single_setup_entry(self, **kwargs),
+        resolve_included_setup_worktrees=_resolve_included_setup_worktrees_impl,
+        contexts_from_raw_projects=self._contexts_from_raw_projects,
     )
-    single_entries = self._coerce_setup_entries(
-        route=route,
-        flag_name="setup_worktree",
-        value_name="iteration",
-    )
-    include_tokens = route.flags.get("include_existing_worktrees")
-    include_list: list[str] = []
-    if isinstance(include_tokens, list):
-        include_list = [str(token).strip() for token in include_tokens if str(token).strip()]
-
-    setup_worktree_existing = bool(route.flags.get("setup_worktree_existing"))
-    setup_worktree_recreate = bool(route.flags.get("setup_worktree_recreate"))
-    if setup_worktree_existing and setup_worktree_recreate:
-        raise RuntimeError("Use only one of --setup-worktree-existing or --setup-worktree-recreate.")
-
-    raw_projects = [(context.name, context.root) for context in project_contexts]
-    selected_names: set[str] = set()
-    setup_features: list[str] = []
-    policy = _worktree_spinner_policy(self, op_id="worktree.setup")
-    enabled = bool(policy.enabled)
-
-    with (
-        use_spinner_policy(policy),
-        spinner(
-            "Setting up worktrees...",
-            enabled=enabled,
-            start_immediately=False,
-        ) as active_spinner,
-    ):
-        _worktree_spinner_start(
-            self,
-            enabled=enabled,
-            active_spinner=active_spinner,
-            op_id="worktree.setup",
-            message="Setting up worktrees...",
-        )
-        try:
-            for feature, count_raw in multi_entries:
-                raw_projects, created_names = _apply_multi_setup_entry(
-                    self,
-                    feature=feature,
-                    count_raw=count_raw,
-                    raw_projects=raw_projects,
-                    enabled=enabled,
-                    active_spinner=active_spinner,
-                    op_id="worktree.setup",
-                )
-                setup_features.append(feature)
-                selected_names.update(created_names)
-
-            for feature, iteration_raw in single_entries:
-                raw_projects, selected_name = _apply_single_setup_entry(
-                    self,
-                    feature=feature,
-                    iteration_raw=iteration_raw,
-                    raw_projects=raw_projects,
-                    setup_worktree_existing=setup_worktree_existing,
-                    setup_worktree_recreate=setup_worktree_recreate,
-                    enabled=enabled,
-                    active_spinner=active_spinner,
-                    op_id="worktree.setup",
-                )
-                setup_features.append(feature)
-                selected_names.add(selected_name)
-
-            if include_list:
-                selected_names, missing = _resolve_included_setup_worktrees_impl(
-                    raw_projects=raw_projects,
-                    setup_features=setup_features,
-                    selected_names=selected_names,
-                    include_tokens=include_list,
-                )
-                if missing:
-                    _worktree_spinner_update(
-                        self,
-                        enabled=enabled,
-                        active_spinner=active_spinner,
-                        op_id="worktree.setup",
-                        message="Skipping non-existent additional worktrees: " + ",".join(missing) + ".",
-                    )
-
-            refreshed_contexts = self._contexts_from_raw_projects(raw_projects)
-            if not selected_names:
-                _worktree_spinner_finish(
-                    self,
-                    enabled=enabled,
-                    active_spinner=active_spinner,
-                    op_id="worktree.setup",
-                    message="Worktree setup completed",
-                )
-                return refreshed_contexts
-            selected_lower = {name.lower() for name in selected_names}
-            filtered = [context for context in refreshed_contexts if context.name.lower() in selected_lower]
-            if not filtered:
-                raise RuntimeError("No worktrees selected to run.")
-            _worktree_spinner_finish(
-                self,
-                enabled=enabled,
-                active_spinner=active_spinner,
-                op_id="worktree.setup",
-                message="Worktree setup completed",
-            )
-            return filtered
-        except Exception:
-            _worktree_spinner_fail(
-                self,
-                enabled=enabled,
-                active_spinner=active_spinner,
-                op_id="worktree.setup",
-                message="Worktree setup failed",
-            )
-            raise
-        finally:
-            _worktree_spinner_stop(self, enabled=enabled, op_id="worktree.setup")
 
 
 def _apply_multi_setup_entry(
