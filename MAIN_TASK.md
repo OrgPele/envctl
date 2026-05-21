@@ -1,161 +1,239 @@
-# Envctl Worktree CGC Backend Default Hardening
+# Envctl Codex Cycle Range Three-Point Scale
 
-## Context and objective
+## Goals / non-goals / assumptions
 
-The prior task, archived as `OLD_TASK_2.md`, implemented most of the envctl worktree code-intelligence isolation feature:
-generated worktrees get unique Serena project names, deterministic CGC contexts, explicit `cgc index <worktree>
---context <context>` commands, `.envctl-state/code-intelligence.json` metadata, docs, and targeted test coverage.
+Goals:
 
-The remaining issue is real CodeGraphContext backend reliability. The implementation currently leaves
-`ENVCTL_WORKTREE_CGC_DATABASE` empty by default, so generated worktrees create CGC contexts without `--database`.
-On this machine, a real generated-context index used CGC's FalkorDB-backed default path, failed to start FalkorDB
-cleanly, fell back, and indexing sat without progress until manually killed. Because this branch also commits
-`.cgcignore`, `ENVCTL_WORKTREE_CGC_INDEX=auto` can now trigger CGC indexing for generated envctl worktrees and hit that
-flaky default backend path.
+- Change the Codex plan-agent cycle range from the current broad recommendation
+  scale to a compact `0` through `3` scale.
+- Make `3` mean a genuinely complex task, not a normal multi-file task.
+- Keep the global default at `2` unless implementation evidence shows a better
+  default is required.
+- Align runtime clamping, generated prompt guidance, installed skill text, docs,
+  and tests so the behavior is not split between "prompt recommendation" and
+  "runtime implementation cap".
 
-Objective: make the default generated-worktree CGC backend robust by defaulting worktree CGC context creation to
-`kuzudb` when no explicit database is configured, while preserving explicit user/config overrides and the best-effort
-non-fatal behavior from the prior task.
+Non-goals:
 
-This is a follow-up hardening task, not a rewrite of the prior implementation.
+- Do not redesign the queued Codex workflow shape in this change.
+- Do not change OpenCode behavior; OpenCode still ignores Codex cycle counts.
+- Do not change launch surface defaults such as cmux, tmux, OMX, or
+  `--new-session` beyond updating stale examples encountered in the touched
+  docs/tests.
 
-## Remaining requirements (complete and exhaustive)
+Assumption:
 
-1. Fully implement a default CGC database backend for envctl-generated worktree contexts.
-   - When `ENVCTL_WORKTREE_CGC_DATABASE` is unset or absent from config, `_worktree_cgc_database()` must return
-     `kuzudb`.
-   - `cgc context create <context>` must therefore include `--database kuzudb` by default for generated worktree CGC
-     indexing.
-   - Explicit env values must continue to win over config raw values.
-   - Explicit config raw values must continue to win over the default.
-   - Empty or whitespace-only env/config values must be treated as absent and must fall back to `kuzudb`.
+- The user wants product behavior to use the smaller range, not only the wording
+  in `$envctl-create-plan-auto-codex`. Therefore direct env/config values above
+  `3` should be bounded to `3`, and prompt recommendations should never select
+  `4` or higher.
 
-2. Preserve opt-out and override behavior.
-   - `ENVCTL_WORKTREE_CGC_INDEX=false` must still skip indexing.
-   - `ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` must still skip all code-intelligence bootstrap behavior.
-   - A non-empty `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` must still pass that backend to `cgc context create`.
-   - Existing context handling must continue to treat "already exists" output as success and proceed to indexing.
-   - Missing `cgc`, context creation failure, and index failure must remain non-fatal for worktree creation.
+## Goal (user experience)
 
-3. Persist and emit the selected default database clearly.
-   - `.envctl-state/code-intelligence.json` must record `"cgc_database": "kuzudb"` when the default is used.
-   - The `setup.worktree.code_intelligence.cgc_context` event must include `database="kuzudb"` when the default is used.
-   - Attempted command metadata must show `["cgc", "context", "create", <context>, "--database", "kuzudb"]` by default.
+When a user creates or launches a Codex plan-agent workflow, every visible
+recommendation and every accepted cycle count follows the same compact scale:
 
-4. Update docs and repo guidance.
-   - `docs/user/planning-and-worktrees.md` must state that generated worktree CGC contexts default to `kuzudb`.
-   - The docs must explain that `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` overrides the default.
-   - The docs must explain why the default exists: to avoid relying on CGC's global/default backend selection for
-     generated worktrees.
-   - Do not reintroduce references to the old `codegraph` CLI.
+- `0`: one initial implementation prompt only, plus whatever non-cycle follow-up
+  prompts remain enabled.
+- `1`: small localized change.
+- `2`: normal implementation that benefits from one continuation/finalization
+  round.
+- `3`: genuinely complex, risky, cross-module, or architecture-sensitive work
+  that needs the maximum available continuation depth.
 
-5. Do not retrofit existing worktrees as part of this task.
-   - Existing already-created implementation worktrees may still have `.serena/project.yml` with `project_name:
-     "envctl"` and may lack `.envctl-state/code-intelligence.json` because they were created before the prior fix.
-   - This task must harden behavior for newly generated or regenerated worktrees.
-   - Do not mutate sibling worktrees or paths outside the current repo root.
+If a user or config provides `ENVCTL_PLAN_AGENT_CODEX_CYCLES=999` or
+`CYCLES=999`, envctl should report the bounded-cycle warning and use `3`.
 
-## Gaps from prior iteration (mapped to evidence)
+## Business logic and data model mapping
 
-Fully implemented in commits `2cad2a5` and `916789d`:
+- Runtime parsing lives in
+  `python/envctl_engine/planning/plan_agent/config.py::_parse_codex_cycles`.
+  It reads `ENVCTL_PLAN_AGENT_CODEX_CYCLES`, the `CYCLES` alias, and config raw
+  values, then bounds them using `_PLAN_AGENT_CODEX_CYCLE_CAP`.
+- The hard cap constant lives in
+  `python/envctl_engine/planning/plan_agent/constants.py` as
+  `_PLAN_AGENT_CODEX_CYCLE_CAP = 10`.
+- Workflow expansion lives in
+  `python/envctl_engine/planning/plan_agent/workflow.py::_build_plan_agent_workflow`.
+  It independently bounds the requested cycles with the same cap before
+  expanding queued `continue_task`, `implement_task`, and `finalize_task` steps.
+- Prompt recommendation wording lives in:
+  - `python/envctl_engine/runtime/prompt_templates/create_plan.md`
+  - `python/envctl_engine/runtime/prompt_templates/create_plan_auto_codex.md`
+  - `python/envctl_engine/runtime/prompt_templates/create_plan_auto_omx.md`
+- Installed prompt rendering and prompt contract tests live in
+  `python/envctl_engine/runtime/prompt_install_support.py` and
+  `tests/python/runtime/test_prompt_install_support.py`.
+- Runtime and command docs currently mention the old range in:
+  - `docs/user/planning-and-worktrees.md`
+  - `docs/user/ai-playbooks.md`
+  - `docs/reference/configuration.md`
+  - `docs/reference/commands.md`
 
-- Deterministic generated worktree identity exists in
-  `python/envctl_engine/planning/worktree_domain.py::_worktree_code_intelligence_identity`.
-- Copied Serena project config is rewritten by `_copy_worktree_serena_project_file` and
-  `_rewrite_serena_project_name`.
-- CGC indexing now calls `cgc context create <context>` before `cgc index <worktree> --context <context>`.
-- Metadata is written to `.envctl-state/code-intelligence.json`.
-- Docs describe generated Serena project names, CGC contexts, templates, and metadata.
-- Targeted validation passed:
-  - `uv run --extra dev pytest -q tests/python/planning/test_planning_worktree_setup.py` -> `44 passed`
-  - `uv run --extra dev ruff check python/envctl_engine/planning/worktree_domain.py tests/python/planning/test_planning_worktree_setup.py` -> passed
-- PR #232 checks passed for `ruff`, `build & shipability`, and `pytest`.
+## Current behavior (verified in code)
 
-Remaining/partial:
+- `constants.py` sets `_PLAN_AGENT_CODEX_CYCLE_CAP = 10`.
+- `_parse_codex_cycles` returns `_PLAN_AGENT_CODEX_CYCLE_CAP` plus
+  `bounded_codex_cycles` when an env/config value is above the cap.
+- `_build_plan_agent_workflow` also clamps to `_PLAN_AGENT_CODEX_CYCLE_CAP`, so a
+  direct call with `codex_cycles=999` expands a workflow with `10` cycles.
+- `tests/python/planning/test_plan_agent_launch_support.py` currently asserts
+  this old cap in:
+  - `test_resolve_plan_agent_launch_config_bounds_large_cycles_alias`
+  - `test_build_plan_agent_workflow_bounds_large_cycle_counts`
+- `tests/python/runtime/test_prompt_install_support.py` asserts that create-plan
+  prompts contain `exactly one integer from \`0\` through \`8\``.
+- `tests/python/runtime/test_command_exit_codes.py` checks the installed
+  auto-Codex skill text for the same `0` through `8` phrase.
+- Docs under `docs/user` and `docs/reference` describe create-plan skills as
+  computing `0` through `8` recommendations, while also saying lower-level
+  runtime parsing uses a separate implementation cap.
 
-- `_worktree_cgc_database()` currently returns `""` when no env/config value is present, so the default command is
-  `cgc context create <context>` with no `--database`.
-- Docs currently say users can set `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb`, but they do not say `kuzudb` is the default.
-- Existing tests cover explicit `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb`, but not the default-unset path requiring
-  `--database kuzudb`.
-- Real machine evidence shows the empty default can select a flaky FalkorDB-backed path, fail to start FalkorDB cleanly,
-  fall back, and then stall indexing.
+## Root cause(s) / gaps
 
-Not implemented and not required:
+- The recommendation scale and runtime cap drifted apart: prompts talk about
+  `0` through `8`, while runtime still accepts and expands up to `10`.
+- The broad `0` through `8` rubric encourages over-launching continuation cycles
+  for ordinary work.
+- Tests lock the old values in several layers, so changing only prompt markdown
+  would leave direct env/config behavior and workflow expansion inconsistent.
+- Docs explicitly preserve the old split between create-plan recommendation
+  policy and runtime implementation cap; that split should go away for this
+  simpler behavior.
 
-- No retroactive migration for the current implementation worktree's `.serena/project.yml` or missing
-  `.envctl-state/code-intelligence.json`.
-- No CGC MCP server, no CGC backend implementation, and no old `codegraph` CLI behavior.
+## Plan
 
-## Acceptance criteria (requirement-by-requirement)
+### 1) Introduce the new cap as the runtime source of truth
 
-- A generated worktree with `ENVCTL_WORKTREE_CGC_INDEX=true` and no `ENVCTL_WORKTREE_CGC_DATABASE` runs:
-  - `cgc context create <generated-context> --database kuzudb`
-  - `cgc index <worktree> --context <generated-context>`
-- A generated worktree with `ENVCTL_WORKTREE_CGC_INDEX=true` and `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` runs:
-  - `cgc context create <generated-context> --database <backend>`
-  - `cgc index <worktree> --context <generated-context>`
-- Metadata for the default path records `"cgc_database": "kuzudb"` and includes the default database in the attempted
-  context-create command.
-- Metadata for the override path records the override backend.
-- Existing tests for missing `cgc`, CGC launch failure, existing context, context failure, and index behavior remain
-  green.
-- Docs state the default backend and override behavior accurately.
-- GitHub PR checks pass after the follow-up commit.
+- Change `_PLAN_AGENT_CODEX_CYCLE_CAP` in
+  `python/envctl_engine/planning/plan_agent/constants.py` from `10` to `3`.
+- Keep `_parse_codex_cycles` warning semantics unchanged:
+  values above `3` should still produce `bounded_codex_cycles`.
+- Keep invalid and negative handling unchanged:
+  invalid or negative values should resolve to `0` with
+  `invalid_codex_cycles`.
+- Confirm `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` remains the global default and does
+  not need migration.
 
-## Required implementation scope (frontend/backend/data/integration)
+### 2) Update workflow expansion expectations
 
-- Backend/Python engine:
-  - Update `python/envctl_engine/planning/worktree_domain.py`.
-  - Prefer the narrowest possible change around `_worktree_cgc_database()` and any helper needed to keep env/config
-    precedence clear.
-- Tests:
-  - Update `tests/python/planning/test_planning_worktree_setup.py`.
-- Docs:
-  - Update `docs/user/planning-and-worktrees.md`.
-- Frontend:
-  - None.
-- Data/migrations:
-  - None.
-- Runtime services:
-  - None.
+- Keep `_build_plan_agent_workflow` using `_PLAN_AGENT_CODEX_CYCLE_CAP`.
+- Update tests so `codex_cycles=999` expands to exactly `3` cycles.
+- Verify the number of queued workflow steps still follows the existing formula
+  for the reduced cap.
+- Add or update a focused test that direct canonical values `0`, `1`, `2`, and
+  `3` are accepted without warnings.
 
-## Required tests and quality gates
+### 3) Rewrite the create-plan recommendation rubric
 
-Run all of the following after implementation:
+- Update `create_plan.md`, `create_plan_auto_codex.md`, and
+  `create_plan_auto_omx.md` to say the allowed recommendation is exactly one
+  integer from `0` through `3`.
+- Replace the old five-band rubric with:
+  - `0`: trivial docs, prompt, static edit, or very small one-file change.
+  - `1`: small localized code/test change with low integration risk.
+  - `2`: normal multi-file feature/fix, moderate verification, or a task that
+    benefits from one continuation/finalization pass.
+  - `3`: genuinely complex, high-risk, cross-module, runtime-sensitive, or
+    architecture-sensitive work.
+- Keep "prefer the smallest number" wording so `3` is exceptional.
+- Update auto-Codex and auto-OMX wording so `recommended_codex_cycles=<n>` is
+  constrained to the new scale.
 
-- `uv run --extra dev pytest -q tests/python/planning/test_planning_worktree_setup.py`
-- `uv run --extra dev ruff check python/envctl_engine/planning/worktree_domain.py tests/python/planning/test_planning_worktree_setup.py`
-- A focused Python 3.12 smoke for the real-git fake-`cgc` test if available locally:
-  - `python3.12 -m pytest -q tests/python/planning/test_planning_worktree_setup.py::PlanningWorktreeSetupTests::test_setup_worktree_real_git_smoke_writes_isolated_code_intelligence`
+### 4) Update docs and installed skill contracts
 
-Recommended test additions or adjustments:
+- Update `docs/user/planning-and-worktrees.md`,
+  `docs/user/ai-playbooks.md`, `docs/reference/configuration.md`, and
+  `docs/reference/commands.md` to describe the `0` through `3` scale.
+- Remove wording that says create-plan uses `0` through `8` while runtime uses a
+  separate cap.
+- Keep OpenCode notes explicit that OpenCode ignores Codex cycle settings.
+- If touched docs still show old launch examples such as `--tmux` where current
+  repo behavior prefers cmux, update those examples only when they are in the
+  same edited paragraph and are part of the auto-plan contract.
 
-- Add or update a test proving the unset database path includes `--database kuzudb`.
-- Keep the existing explicit database test proving `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb` or another non-empty backend is
-  respected.
-- Add a test for whitespace-only `ENVCTL_WORKTREE_CGC_DATABASE` falling back to `kuzudb` if that can be done without
-  duplicating excessive setup.
-- Ensure metadata assertions cover the selected database for default and override paths.
+### 5) Update tests that lock the old range
 
-## Edge cases and failure handling
+- In `tests/python/runtime/test_prompt_install_support.py`, replace assertions
+  for `0` through `8` with `0` through `3`.
+- In `tests/python/runtime/test_command_exit_codes.py`, update installed skill
+  assertions to expect `0` through `3`.
+- In `tests/python/planning/test_plan_agent_launch_support.py`, update:
+  - bounded alias parsing from `10` to `3`;
+  - large workflow expansion from `10` to `3`;
+  - any canonical-value tests that currently treat `4` as valid. Values above
+    `3` should now assert `bounded_codex_cycles`.
+- Search for remaining literal `0 through 8`, `through \`8\``, and
+  `_PLAN_AGENT_CODEX_CYCLE_CAP = 10` references and remove or intentionally
+  update them.
 
-- Empty or whitespace-only database env/config values fall back to `kuzudb`.
-- Non-empty database values are sanitized using existing identity sanitization before being passed to CGC.
-- If `cgc` is missing, no context-create or index command runs, and metadata still records the selected database and
-  `cgc_available=false`.
-- If `cgc context create` fails, worktree creation still succeeds, indexing is skipped, and metadata/events include the
-  database, return code, and short stdout/stderr summaries.
-- If `cgc context create` reports that the context already exists, indexing still runs with the generated context.
-- If `cgc index` fails or hangs in real usage, envctl must still treat the subprocess result/failure as non-fatal within
-  the current timeout/error behavior; this task only changes backend selection, not CGC internals.
+## Tests (add these)
+
+### Backend tests
+
+- Extend `tests/python/planning/test_plan_agent_launch_support.py`:
+  - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` resolves to `3` with no warning.
+  - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4` resolves to `3` with
+    `bounded_codex_cycles`.
+  - `CYCLES=999` resolves to `3` with `bounded_codex_cycles`.
+  - `_build_plan_agent_workflow(..., codex_cycles=999)` has
+    `workflow.codex_cycles == 3`.
+
+### Frontend tests
+
+- None. This is CLI/runtime prompt behavior with no frontend surface.
+
+### Integration/E2E tests
+
+- Extend prompt-install coverage in
+  `tests/python/runtime/test_prompt_install_support.py` and
+  `tests/python/runtime/test_command_exit_codes.py` so installed skills and
+  rendered direct prompt bodies contain `0` through `3` and not `0` through `8`.
+- Run focused docs/prompt tests rather than full-stack E2E.
+
+## Observability / logging
+
+- Keep existing `codex_cycles_warning="bounded_codex_cycles"` behavior. No new
+  telemetry event is required.
+- If command output or JSON payloads already expose `codex_cycles`, the bounded
+  value should now be `3`.
+
+## Rollout / verification
+
+Recommended Codex cycles: 2.
+
+Rationale: this is a localized behavior change across runtime config, prompts,
+docs, and tests; it does not need the future maximum of `3`.
+
+Launch scope flags: `--cmux --no-infra --headless --new-session`.
+
+Focused verification commands:
+
+- `uv run pytest -q tests/python/planning/test_plan_agent_launch_support.py -k 'codex_cycles or build_plan_agent_workflow_bounds_large_cycle_counts'`
+- `uv run pytest -q tests/python/runtime/test_prompt_install_support.py -k 'cycle or auto_codex'`
+- `uv run pytest -q tests/python/runtime/test_command_exit_codes.py -k create_plan_auto_codex`
+- `uv tool run ruff check python tests scripts`
+
+Escalate to broader runtime tests only if changing the cap exposes unrelated
+launch parsing failures.
 
 ## Definition of done
 
-- New generated envctl worktrees default to `kuzudb` for CGC context creation when no database override is configured.
-- User/config overrides for `ENVCTL_WORKTREE_CGC_DATABASE` still work.
-- Metadata and events clearly record the selected database.
-- Docs describe the default, override, and rationale.
-- Targeted tests and Ruff pass locally.
-- Follow-up commit is pushed to PR #232 or its successor.
-- GitHub required checks pass.
+- No prompt, installed skill, or user/reference doc describes the Codex
+  recommendation range as `0` through `8`.
+- Runtime parsing and workflow expansion bound any value above `3` down to `3`.
+- `3` is documented as the maximum for genuinely complex work.
+- Focused tests pass and lock both the prompt text and runtime behavior.
+
+## Risk register
+
+- Lowering the runtime cap from `10` to `3` is behaviorally visible for users who
+  intentionally set larger values. That is aligned with the requested simpler
+  scale, but release notes or docs should call it out.
+- Some historical changelog files mention the old range. Treat release notes and
+  archived changelogs as historical unless tests require otherwise; do not rewrite
+  old release history just to remove the phrase.
+
+## Open questions
+
+- None.

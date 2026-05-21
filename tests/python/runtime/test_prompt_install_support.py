@@ -575,7 +575,7 @@ class PromptInstallSupportTests(unittest.TestCase):
                 ),
                 "phrases": (
                     "recommended_codex_cycles=<n>",
-                    "exactly one integer from `0` through `8`",
+                    "exactly one integer from `0` through `3`",
                     "uses the `implement_task` preset through the current plan-agent default",
                     "envctl queues the rendered follow-up prompts/messages",
                     "envctl itself does not run `git`, `gh`, `envctl commit`, or `envctl pr`",
@@ -646,7 +646,8 @@ class PromptInstallSupportTests(unittest.TestCase):
                 body = _load_template(preset).body
 
                 self.assertIn("Codex cycle recommendation", body)
-                self.assertIn("exactly one integer from `0` through `8`", body)
+                self.assertIn("exactly one integer from `0` through `3`", body)
+                self.assertNotIn("exactly one integer from `0` through `8`", body)
                 self.assertIn("Prefer the smallest number", body)
                 self.assertIn("Rollout / verification", body)
 
@@ -1084,7 +1085,8 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("Automatic envctl follow-up", resolved)
         self.assertIn("recommended_codex_cycles=<n>", resolved)
         self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles>", resolved)
-        self.assertIn("exactly one integer from `0` through `8`", resolved)
+        self.assertIn("exactly one integer from `0` through `3`", resolved)
+        self.assertNotIn("exactly one integer from `0` through `8`", resolved)
         self.assertIn("Auto launch Codex after planning", resolved)
 
     def test_resolve_opencode_direct_prompt_body_supports_create_plan_auto_opencode(self) -> None:

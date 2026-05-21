@@ -618,7 +618,8 @@ class CommandExitCodeTests(unittest.TestCase):
             written = target.read_text(encoding="utf-8")
             self.assertIn("$envctl-create-plan-auto-codex", written)
             self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles>", written)
-            self.assertIn("exactly one integer from `0` through `8`", written)
+            self.assertIn("exactly one integer from `0` through `3`", written)
+            self.assertNotIn("exactly one integer from `0` through `8`", written)
             self.assertNotIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <category>/<slug>", written)
             self.assertIn("--new-session", written)
 
@@ -648,7 +649,7 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertTrue(target.exists())
             written = target.read_text(encoding="utf-8")
             self.assertIn(
-                "envctl --plan <category>/<slug> --tmux --opencode --entire-system "
+                "envctl --plan <category>/<slug> --cmux --opencode --entire-system "
                 "--headless --new-session",
                 written,
             )
