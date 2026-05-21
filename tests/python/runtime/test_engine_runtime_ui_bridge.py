@@ -132,6 +132,26 @@ class EngineRuntimeUiBridgeTests(unittest.TestCase):
         self.assertEqual(backend.project_calls, 1)
         self.assertEqual(backend.grouped_calls, 1)
 
+    def test_terminal_interaction_helpers_delegate_to_runtime_terminal_ui(self) -> None:
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        with (
+            patch(
+                "envctl_engine.runtime.engine_runtime_ui_bridge.RuntimeTerminalUI.restore_terminal_after_input",
+                side_effect=lambda **kwargs: calls.append(("restore", kwargs)),
+            ),
+            patch(
+                "envctl_engine.runtime.engine_runtime_ui_bridge.RuntimeTerminalUI._can_interactive_tty",
+                return_value=True,
+            ) as can_tty,
+        ):
+            bridge.restore_terminal_after_input(fd=4, original_state=[1, 2, 3])
+            available = bridge.can_interactive_tty()
+
+        self.assertEqual(calls, [("restore", {"fd": 4, "original_state": [1, 2, 3]})])
+        self.assertTrue(available)
+        can_tty.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

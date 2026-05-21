@@ -227,12 +227,14 @@ from envctl_engine.runtime.engine_runtime_bookkeeping_support import (
 )
 from envctl_engine.runtime.engine_runtime_dispatch import dispatch_command as runtime_dispatch_command
 from envctl_engine.runtime.engine_runtime_ui_bridge import (
+    can_interactive_tty as bridge_can_interactive_tty,
     current_ui_backend as bridge_current_ui_backend,
     dashboard as bridge_dashboard,
     flush_pending_interactive_input as bridge_flush_pending_interactive_input,
     parse_interactive_command as bridge_parse_interactive_command,
     read_interactive_command_line as bridge_read_interactive_command_line,
     recover_single_letter_command_from_escape_fragment as bridge_recover_single_letter_command_from_escape_fragment,
+    restore_terminal_after_input as bridge_restore_terminal_after_input,
     run_interactive_command as bridge_run_interactive_command,
     run_interactive_dashboard_loop as bridge_run_interactive_dashboard_loop,
     sanitize_interactive_input as bridge_sanitize_interactive_input,
@@ -907,17 +909,11 @@ class PythonEngineRuntime:
 
     @staticmethod
     def _restore_terminal_after_input(*, fd: int, original_state: list[int] | None) -> None:
-        """Restore terminal state after raw input handling."""
-        from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
-
-        RuntimeTerminalUI.restore_terminal_after_input(fd=fd, original_state=original_state)
+        bridge_restore_terminal_after_input(fd=fd, original_state=original_state)
 
     @staticmethod
     def _can_interactive_tty() -> bool:
-        """Check if interactive TTY is available."""
-        from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
-
-        return RuntimeTerminalUI._can_interactive_tty()
+        return bridge_can_interactive_tty()
 
     def _build_process_probe_backend(self) -> ProbeBackend:
         return runtime_build_process_probe_backend(self)
