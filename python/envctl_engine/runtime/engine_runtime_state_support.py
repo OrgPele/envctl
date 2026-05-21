@@ -18,6 +18,14 @@ def state_has_synthetic_services(state: RunState) -> bool:
     return False
 
 
+def state_lookup_strict_mode_match(runtime: Any, route: object) -> bool:
+    return bool(runtime._route_has_explicit_mode(route))
+
+
+def state_action(runtime: Any, route: object) -> int:
+    return runtime.state_action_orchestrator.execute(route)
+
+
 def on_port_event(runtime: Any, event_name: str, payload: dict[str, object]) -> None:
     runtime._emit(event_name, **payload)
 

@@ -170,7 +170,9 @@ from envctl_engine.runtime.engine_runtime_state_support import (
     load_state_artifact as runtime_load_state_artifact,
     on_port_event as runtime_on_port_event,
     run_state_to_json as runtime_run_state_to_json,
+    state_action as runtime_state_action,
     state_has_synthetic_services as runtime_state_has_synthetic_services,
+    state_lookup_strict_mode_match as runtime_state_lookup_strict_mode_match,
 )
 from envctl_engine.runtime.engine_runtime_state_lookup import (
     state_matches_scope as runtime_state_matches_scope,
@@ -952,10 +954,10 @@ class PythonEngineRuntime:
         return runtime_route_has_explicit_mode(route, explicit_mode_tokens=EXPLICIT_MODE_TOKENS)
 
     def _state_lookup_strict_mode_match(self, route: Route) -> bool:
-        return self._route_has_explicit_mode(route)
+        return runtime_state_lookup_strict_mode_match(self, route)
 
     def _state_action(self, route: Route) -> int:
-        return self.state_action_orchestrator.execute(route)
+        return runtime_state_action(self, route)
 
     def _recent_failure_messages(self, *, max_items: int = 5) -> list[str]:
         return runtime_recent_failure_messages(self, max_items=max_items)
