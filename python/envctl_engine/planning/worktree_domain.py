@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from envctl_engine.actions.actions_worktree import delete_worktree_path
+from envctl_engine.planning.worktree_creation_recovery import (
+    recover_partial_worktree_creation as _recover_partial_worktree_creation_impl,
+    setup_worktree_placeholder_fallback_enabled as _setup_worktree_placeholder_fallback_enabled_impl,
+    worktree_add_failure as _worktree_add_failure_impl,
+    worktree_target_created as _worktree_target_created_impl,
+)
 from envctl_engine.planning.worktree_git_hooks import (
     worktree_git_hooks_disabled as _worktree_git_hooks_disabled_impl,
     worktree_git_hooks_policy as _worktree_git_hooks_policy_impl,
@@ -1354,34 +1360,19 @@ def _create_feature_worktrees_result(
 
 
 def _worktree_add_failure(self: Any, *, feature: str, iteration: str, target: Path, result: object) -> str | None:
-    reason = self._command_result_error_text(result=result)
-    if self._setup_worktree_placeholder_fallback_enabled():
-        target.mkdir(parents=True, exist_ok=True)
-        marker = target / ".envctl_worktree_placeholder"
-        marker.write_text(
-            (
-                "envctl placeholder worktree created after git worktree add failure\n"
-                f"feature={feature}\n"
-                f"iteration={iteration}\n"
-                f"error={reason}\n"
-            ),
-            encoding="utf-8",
-        )
-        _link_repo_local_shared_artifacts(self, target=target)
-        self._emit(
-            "setup.worktree.placeholder_fallback",
-            feature=feature,
-            iteration=iteration,
-            target=str(target),
-            reason=reason,
-        )
-        return None
-    target_status = "target exists" if target.exists() else "target missing"
-    hook_policy_hint = (
-        "envctl disables repo-local Git hooks during managed worktree creation by default; "
-        "set ENVCTL_WORKTREE_GIT_HOOKS=inherit to opt into hooks."
+    return _worktree_add_failure_impl(
+        feature=feature,
+        iteration=iteration,
+        target=target,
+        result=result,
+        placeholder_fallback_enabled=self._setup_worktree_placeholder_fallback_enabled(),
+        command_result_error_text=lambda command_result: self._command_result_error_text(result=command_result),
+        link_repo_local_shared_artifacts=lambda linked_target: _link_repo_local_shared_artifacts(
+            self,
+            target=linked_target,
+        ),
+        emit=self._emit,
     )
-    return f"failed creating worktree {feature}/{iteration}: {reason} ({target_status}). {hook_policy_hint}"
 
 
 def _recover_partial_worktree_creation(
@@ -1392,23 +1383,19 @@ def _recover_partial_worktree_creation(
     target: Path,
     result: object,
 ) -> bool:
-    if not _worktree_git_hooks_disabled(self):
-        return False
-    if not _worktree_target_created(target):
-        return False
-    reason = self._command_result_error_text(result=result)
-    self._emit(
-        "setup.worktree.partial_git_failure_recovered",
+    return _recover_partial_worktree_creation_impl(
+        git_hooks_disabled=_worktree_git_hooks_disabled(self),
+        target=target,
         feature=feature,
         iteration=iteration,
-        target=str(target),
-        reason=reason,
+        result=result,
+        command_result_error_text=lambda command_result: self._command_result_error_text(result=command_result),
+        emit=self._emit,
     )
-    return True
 
 
 def _worktree_target_created(target: Path) -> bool:
-    return target.is_dir() and (target / ".git").exists()
+    return _worktree_target_created_impl(target)
 
 
 def _run_worktree_add(self: Any, *, feature: str, iteration: str, target: Path, env: Mapping[str, str]) -> object:
@@ -1461,10 +1448,7 @@ def _worktree_start_point(self: Any) -> str | None:
 
 
 def _setup_worktree_placeholder_fallback_enabled(self: Any) -> bool:
-    raw = self.env.get("ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK") or self.config.raw.get(
-        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK"
-    )
-    return parse_bool(raw, False)
+    return _setup_worktree_placeholder_fallback_enabled_impl(env=self.env, config_raw=self.config.raw)
 
 
 def _worktree_git_hooks_policy(self: Any) -> str:
