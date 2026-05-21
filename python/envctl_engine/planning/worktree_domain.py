@@ -51,6 +51,12 @@ from envctl_engine.planning.worktree_selection_memory import (
 from envctl_engine.planning.worktree_shared_artifacts import (
     link_repo_local_shared_artifacts as _link_repo_local_shared_artifacts_impl,
 )
+from envctl_engine.planning.worktree_setup_entries import (
+    apply_multi_setup_entry as _apply_multi_setup_entry_impl,
+    apply_single_setup_entry as _apply_single_setup_entry_impl,
+    coerce_setup_entries as _coerce_setup_entries_impl,
+    resolve_included_setup_worktrees as _resolve_included_setup_worktrees_impl,
+)
 from envctl_engine.planning.worktree_code_intelligence import (
     prepare_worktree_code_intelligence as _prepare_worktree_code_intelligence_impl,
 )
@@ -70,7 +76,6 @@ from envctl_engine.planning.plan_agent.models import (
     PlanWorktreeSyncResult,
 )
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.shared.parsing import parse_int
 from envctl_engine.planning import (
     discover_tree_projects,
     filter_projects_for_plan,
@@ -225,25 +230,7 @@ def _coerce_setup_entries(
     flag_name: str,
     value_name: str,
 ) -> list[tuple[str, str]]:
-    raw = route.flags.get(flag_name)
-    if raw is None:
-        return []
-    if not isinstance(raw, list):
-        raise RuntimeError(f"Invalid {flag_name} flag payload.")
-    entries: list[tuple[str, str]] = []
-    for item in raw:
-        if not isinstance(item, Mapping):
-            raise RuntimeError(f"Invalid {flag_name} flag payload.")
-        feature = str(item.get("feature", "")).strip()
-        value = str(item.get(value_name, "")).strip()
-        if not feature:
-            raise RuntimeError(f"Missing feature for {flag_name}.")
-        if "/" in feature or feature in {".", ".."}:
-            raise RuntimeError(f"Invalid feature name for {flag_name}: {feature}")
-        if not value:
-            raise RuntimeError(f"Missing {value_name} for {flag_name}.")
-        entries.append((feature, value))
-    return entries
+    return _coerce_setup_entries_impl(flags=route.flags, flag_name=flag_name, value_name=value_name)
 
 
 def _create_single_worktree(self, *, feature: str, iteration: str) -> str | None:
@@ -346,25 +333,12 @@ def _apply_setup_worktree_selection(
                 selected_names.add(selected_name)
 
             if include_list:
-                project_lookup = {name.lower(): name for name, _root in raw_projects}
-                missing: list[str] = []
-                for token in include_list:
-                    direct = project_lookup.get(token.lower())
-                    if direct is not None:
-                        selected_names.add(direct)
-                        continue
-                    resolved = None
-                    if token.isdigit():
-                        for feature in setup_features:
-                            candidate_name = f"{feature}-{token}"
-                            candidate = project_lookup.get(candidate_name.lower())
-                            if candidate is not None:
-                                resolved = candidate
-                                break
-                    if resolved is not None:
-                        selected_names.add(resolved)
-                    else:
-                        missing.append(token)
+                selected_names, missing = _resolve_included_setup_worktrees_impl(
+                    raw_projects=raw_projects,
+                    setup_features=setup_features,
+                    selected_names=selected_names,
+                    include_tokens=include_list,
+                )
                 if missing:
                     _worktree_spinner_update(
                         self,
@@ -419,29 +393,21 @@ def _apply_multi_setup_entry(
     active_spinner: Any,
     op_id: str,
 ) -> tuple[list[tuple[str, Path]], set[str]]:
-    count = parse_int(count_raw, -1)
-    if count < 1:
-        raise RuntimeError(f"Invalid count for --setup-worktrees {feature}: {count_raw}")
-    before = {name for name, _root in self._feature_project_candidates(projects=raw_projects, feature=feature)}
-    _worktree_spinner_update(
-        self,
-        enabled=enabled,
-        active_spinner=active_spinner,
-        op_id=op_id,
-        message=f"Setting up {count} worktree(s) for {feature}...",
-    )
-    create_error = self._create_feature_worktrees(
+    return _apply_multi_setup_entry_impl(
         feature=feature,
-        count=count,
-        plan_file=f"_setup/{feature}.md",
+        count_raw=count_raw,
+        raw_projects=raw_projects,
+        feature_project_candidates=self._feature_project_candidates,
+        update=lambda message: _worktree_spinner_update(
+            self,
+            enabled=enabled,
+            active_spinner=active_spinner,
+            op_id=op_id,
+            message=message,
+        ),
+        create_feature_worktrees=self._create_feature_worktrees,
+        discover_tree_projects=lambda: discover_tree_projects(self.config.base_dir, self.config.trees_dir_name),
     )
-    if create_error:
-        raise RuntimeError(create_error)
-    raw_projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
-    candidates = self._feature_project_candidates(projects=raw_projects, feature=feature)
-    after = {name for name, _root in candidates}
-    created = after.difference(before)
-    return raw_projects, (created or after)
 
 
 def _apply_single_setup_entry(
@@ -456,39 +422,30 @@ def _apply_single_setup_entry(
     active_spinner: Any,
     op_id: str,
 ) -> tuple[list[tuple[str, Path]], str]:
-    if not iteration_raw.isdigit() or int(iteration_raw) < 1:
-        raise RuntimeError(f"Invalid iteration for --setup-worktree {feature}: {iteration_raw}")
-    iteration = str(int(iteration_raw))
-    feature_root = self._preferred_tree_root_for_feature(feature)
-    target_root = feature_root / iteration
-    _worktree_spinner_update(
-        self,
-        enabled=enabled,
-        active_spinner=active_spinner,
-        op_id=op_id,
-        message=f"Ensuring worktree {feature}/{iteration}...",
+    return _apply_single_setup_entry_impl(
+        feature=feature,
+        iteration_raw=iteration_raw,
+        raw_projects=raw_projects,
+        preferred_tree_root_for_feature=self._preferred_tree_root_for_feature,
+        trees_root_for_worktree=self._trees_root_for_worktree,
+        delete_worktree=lambda **kwargs: (
+            (result := delete_worktree_path(**kwargs)).success,
+            result.message,
+        ),
+        create_single_worktree=self._create_single_worktree,
+        discover_tree_projects=lambda: discover_tree_projects(self.config.base_dir, self.config.trees_dir_name),
+        update=lambda message: _worktree_spinner_update(
+            self,
+            enabled=enabled,
+            active_spinner=active_spinner,
+            op_id=op_id,
+            message=message,
+        ),
+        repo_root=self.config.base_dir,
+        process_runner=self.process_runner,
+        setup_worktree_existing=setup_worktree_existing,
+        setup_worktree_recreate=setup_worktree_recreate,
     )
-    if target_root.exists():
-        if setup_worktree_recreate:
-            result = delete_worktree_path(
-                repo_root=self.config.base_dir,
-                trees_root=self._trees_root_for_worktree(target_root),
-                worktree_root=target_root,
-                process_runner=self.process_runner,
-            )
-            if not result.success:
-                raise RuntimeError(result.message)
-        elif not setup_worktree_existing:
-            raise RuntimeError(
-                f"Worktree {feature}/{iteration} already exists. "
-                "Use --setup-worktree-existing or --setup-worktree-recreate."
-            )
-    if not target_root.exists():
-        create_error = self._create_single_worktree(feature=feature, iteration=iteration)
-        if create_error:
-            raise RuntimeError(create_error)
-    refreshed_projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
-    return refreshed_projects, f"{feature}-{iteration}"
 
 
 def _preferred_tree_root_for_feature(self, feature: str) -> Path:
