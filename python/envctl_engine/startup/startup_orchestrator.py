@@ -439,6 +439,40 @@ class StartupOrchestrator:
             self.runtime,
             validate_plan_agent_attach_target,
         )
+
+        def finalize_degraded_handoff(session: StartupSession) -> int:
+            return finalize_plan_agent_degraded_handoff(
+                runtime=self.runtime,
+                session=session,
+                ensure_run_id=partial(ensure_run_id, self.runtime),
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
+                build_success_run_state=build_success_run_state,
+                emit_phase=partial(emit_startup_phase, self.runtime),
+                render_plan_agent_degraded_handoff=lambda session: (
+                    finalization_render_plan_agent_degraded_handoff_for_terminal(
+                        self.runtime,
+                        session,
+                        stream=sys.stdout,
+                        print_fn=print,
+                    )
+                ),
+                headless_plan_output_only=finalization_headless_plan_output_only,
+                maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
+                    runtime=self.runtime,
+                    session=session,
+                    validate_plan_agent_handoff=validate_plan_agent_handoff,
+                    attach_plan_agent_terminal=attach_plan_agent_terminal,
+                    print_headless_plan_session_summary=lambda session, *, attach_target: (
+                        print_headless_plan_session_summary_impl(
+                            session,
+                            validate_plan_agent_handoff=validate_plan_agent_handoff,
+                            print_fn=print,
+                            attach_target=attach_target,
+                        )
+                    ),
+                ),
+            )
+
         return finalize_successful_startup(
             runtime=self.runtime,
             session=session,
@@ -481,45 +515,7 @@ class StartupOrchestrator:
                     )
                 ),
             ),
-            finalize_plan_agent_degraded_handoff=self._finalize_plan_agent_degraded_handoff,
-        )
-
-    def _finalize_plan_agent_degraded_handoff(self, session: StartupSession) -> int:
-        validate_plan_agent_handoff = partial(
-            validate_plan_agent_handoff_with_attach_target,
-            self.runtime,
-            validate_plan_agent_attach_target,
-        )
-        return finalize_plan_agent_degraded_handoff(
-            runtime=self.runtime,
-            session=session,
-            ensure_run_id=partial(ensure_run_id, self.runtime),
-            validate_plan_agent_handoff=validate_plan_agent_handoff,
-            build_success_run_state=build_success_run_state,
-            emit_phase=partial(emit_startup_phase, self.runtime),
-            render_plan_agent_degraded_handoff=lambda session: (
-                finalization_render_plan_agent_degraded_handoff_for_terminal(
-                    self.runtime,
-                    session,
-                    stream=sys.stdout,
-                    print_fn=print,
-                )
-            ),
-            headless_plan_output_only=finalization_headless_plan_output_only,
-            maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
-                runtime=self.runtime,
-                session=session,
-                validate_plan_agent_handoff=validate_plan_agent_handoff,
-                attach_plan_agent_terminal=attach_plan_agent_terminal,
-                print_headless_plan_session_summary=lambda session, *, attach_target: (
-                    print_headless_plan_session_summary_impl(
-                        session,
-                        validate_plan_agent_handoff=validate_plan_agent_handoff,
-                        print_fn=print,
-                        attach_target=attach_target,
-                    )
-                ),
-            ),
+            finalize_plan_agent_degraded_handoff=finalize_degraded_handoff,
         )
 
     def start_project_context(
