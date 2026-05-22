@@ -62,6 +62,7 @@ from envctl_engine.startup.plan_agent_handoff import (
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.restart_prestop_support import (
     restart_fallback_start_route,
+    restart_orphan_listener_scan,
     restart_port_assignments,
     restart_prestop_preservation,
     restart_start_route,
@@ -433,24 +434,14 @@ class StartupOrchestrator:
         aggressive: bool,
     ) -> None:
         rt = self.runtime
-        span = max(int(getattr(rt.config, "port_spacing", 20) or 20), 1)
-        ports_by_type: dict[str, set[int]] = {
-            "backend": set(range(int(rt.config.backend_port_base), int(rt.config.backend_port_base) + span)),
-            "frontend": set(range(int(rt.config.frontend_port_base), int(rt.config.frontend_port_base) + span)),
-        }
-        selected_by_cwd: dict[str, set[str]] = {}
-        for service_name, service in state.services.items():
-            if service_name not in selected_services:
-                continue
-            service_type = str(getattr(service, "type", "") or "").strip().lower()
-            cwd = str(getattr(service, "cwd", "") or "").strip()
-            if service_type in ports_by_type and cwd:
-                selected_by_cwd.setdefault(cwd, set()).add(service_type)
-                for attr_name in ("actual_port", "requested_port"):
-                    port = getattr(service, attr_name, None)
-                    if isinstance(port, int) and port > 0:
-                        ports_by_type[service_type].update(range(max(1, port - span), port + span + 1))
-        if not selected_by_cwd:
+        scan = restart_orphan_listener_scan(
+            state,
+            selected_services=selected_services,
+            backend_port_base=int(rt.config.backend_port_base),
+            frontend_port_base=int(rt.config.frontend_port_base),
+            port_spacing=int(getattr(rt.config, "port_spacing", 20) or 20),
+        )
+        if not scan.selected_by_cwd:
             return
         listener_pids_for_port = cast(Callable[[int], Iterable[int]], getattr(rt, "_listener_pids_for_port", None))
         process_runtime = self._process_runtime(rt)
@@ -459,9 +450,9 @@ class StartupOrchestrator:
         if not callable(listener_pids_for_port) or not callable(terminate_pid):
             return
         seen_pids: set[int] = set()
-        for cwd, service_types in selected_by_cwd.items():
+        for cwd, service_types in scan.selected_by_cwd.items():
             for service_type in service_types:
-                for port in sorted(ports_by_type[service_type]):
+                for port in sorted(scan.ports_by_type[service_type]):
                     for pid in listener_pids_for_port(port):
                         if pid in seen_pids or pid <= 0:
                             continue

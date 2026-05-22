@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.restart_prestop_support import (
+    restart_orphan_listener_scan,
     restart_fallback_start_route,
     restart_port_assignments,
     restart_prestop_preservation,
@@ -156,6 +157,61 @@ class RestartPrestopSupportTests(unittest.TestCase):
             ),
             {"fallback": {"backend": 8000}},
         )
+
+    def test_restart_orphan_listener_scan_tracks_selected_cwds_and_nearby_ports(self) -> None:
+        state = SimpleNamespace(
+            services={
+                "Main Backend": SimpleNamespace(
+                    type="backend",
+                    cwd="/repo/backend",
+                    actual_port=8010,
+                    requested_port=8000,
+                ),
+                "Main Frontend": SimpleNamespace(
+                    type="frontend",
+                    cwd="/repo/frontend",
+                    actual_port=None,
+                    requested_port=3010,
+                ),
+                "Other Backend": SimpleNamespace(
+                    type="backend",
+                    cwd="/repo/other",
+                    actual_port=8110,
+                    requested_port=8100,
+                ),
+            }
+        )
+
+        scan = restart_orphan_listener_scan(
+            state,
+            selected_services={"Main Backend", "Main Frontend"},
+            backend_port_base=8000,
+            frontend_port_base=3000,
+            port_spacing=2,
+        )
+
+        self.assertEqual(scan.selected_by_cwd, {"/repo/backend": {"backend"}, "/repo/frontend": {"frontend"}})
+        self.assertTrue({8000, 8001, 8010, 8011, 8012}.issubset(scan.ports_by_type["backend"]))
+        self.assertTrue({3000, 3001, 3009, 3010, 3011}.issubset(scan.ports_by_type["frontend"]))
+        self.assertNotIn(8110, scan.ports_by_type["backend"])
+
+    def test_restart_orphan_listener_scan_ignores_services_without_supported_type_or_cwd(self) -> None:
+        state = SimpleNamespace(
+            services={
+                "Main Worker": SimpleNamespace(type="worker", cwd="/repo/worker", actual_port=9000),
+                "Main Backend": SimpleNamespace(type="backend", cwd="", actual_port=8000),
+            }
+        )
+
+        scan = restart_orphan_listener_scan(
+            state,
+            selected_services={"Main Worker", "Main Backend"},
+            backend_port_base=8000,
+            frontend_port_base=3000,
+            port_spacing=1,
+        )
+
+        self.assertEqual(scan.selected_by_cwd, {})
 
 
 if __name__ == "__main__":

@@ -14,6 +14,12 @@ class RestartPrestopPreservation:
     requirements_to_release: dict[str, object]
 
 
+@dataclass(frozen=True, slots=True)
+class RestartOrphanListenerScan:
+    ports_by_type: dict[str, set[int]]
+    selected_by_cwd: dict[str, set[str]]
+
+
 def restart_fallback_start_route(route: Route, *, restart_lookup_mode: str) -> Route:
     return Route(
         command="start",
@@ -93,3 +99,35 @@ def restart_port_assignments(
         if isinstance(port, int) and port > 0:
             by_project.setdefault(project_name.lower(), {})[service_type] = port
     return by_project
+
+
+def restart_orphan_listener_scan(
+    state: Any,
+    *,
+    selected_services: set[str],
+    backend_port_base: int,
+    frontend_port_base: int,
+    port_spacing: int,
+) -> RestartOrphanListenerScan:
+    span = max(int(port_spacing or 20), 1)
+    ports_by_type: dict[str, set[int]] = {
+        "backend": set(range(int(backend_port_base), int(backend_port_base) + span)),
+        "frontend": set(range(int(frontend_port_base), int(frontend_port_base) + span)),
+    }
+    selected_by_cwd: dict[str, set[str]] = {}
+    for service_name, service in getattr(state, "services", {}).items():
+        if service_name not in selected_services:
+            continue
+        service_type = str(getattr(service, "type", "") or "").strip().lower()
+        cwd = str(getattr(service, "cwd", "") or "").strip()
+        if service_type not in ports_by_type or not cwd:
+            continue
+        selected_by_cwd.setdefault(cwd, set()).add(service_type)
+        for attr_name in ("actual_port", "requested_port"):
+            port = getattr(service, attr_name, None)
+            if isinstance(port, int) and port > 0:
+                ports_by_type[service_type].update(range(max(1, port - span), port + span + 1))
+    return RestartOrphanListenerScan(
+        ports_by_type=ports_by_type,
+        selected_by_cwd=selected_by_cwd,
+    )
