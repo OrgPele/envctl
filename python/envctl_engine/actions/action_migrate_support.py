@@ -9,6 +9,7 @@ from typing import Any, Callable, Mapping
 from envctl_engine.actions.action_test_summary_support import (
     format_summary_error_lines as default_format_summary_error_lines,
 )
+from envctl_engine.state.models import PortPlan, RequirementsResult
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.path_links import render_path_for_terminal, render_path_fragment_for_terminal
@@ -21,6 +22,13 @@ class MigrateResultRecord:
     headline: str = ""
     hint_lines: tuple[str, ...] = ()
     report_path: str = ""
+
+
+@dataclass(frozen=True)
+class MigrateProjectContext:
+    name: str
+    root: Path
+    ports: dict[str, PortPlan]
 
 
 def print_migrate_result_summary(
@@ -178,6 +186,77 @@ def visible_migrate_hint_lines(hint_lines: tuple[str, ...]) -> tuple[str, ...]:
 
 def is_migrate_env_source_hint(hint_line: str) -> bool:
     return hint_line.lower().startswith("hint: backend env source:")
+
+
+def migrate_requirements_for_target(
+    *,
+    runtime: Any,
+    route: object | None,
+    project_name: str,
+) -> RequirementsResult | None:
+    route_mode = getattr(route, "mode", None)
+    state = runtime.load_existing_state(mode=route_mode) if isinstance(route_mode, str) else None
+    if state is None:
+        return None
+    requirements_map = getattr(state, "requirements", None)
+    if not isinstance(requirements_map, dict):
+        return None
+    candidate = requirements_map.get(project_name)
+    if isinstance(candidate, RequirementsResult):
+        return candidate
+    normalized_name = project_name.strip().lower()
+    for key, value in requirements_map.items():
+        if str(key).strip().lower() == normalized_name and isinstance(value, RequirementsResult):
+            return value
+    return None
+
+
+def migrate_backend_cwd(target_root: Path) -> Path:
+    backend_dir = target_root / "backend"
+    if backend_dir.is_dir():
+        return backend_dir
+    return target_root
+
+
+def migrate_project_context(
+    *,
+    project_name: str,
+    project_root: Path,
+    requirements: RequirementsResult,
+) -> MigrateProjectContext:
+    ports: dict[str, PortPlan] = {}
+    for component_name, port_key in (
+        ("postgres", "db"),
+        ("redis", "redis"),
+        ("n8n", "n8n"),
+        ("supabase", "db"),
+    ):
+        if port_key in ports:
+            continue
+        component = requirements.component(component_name)
+        port = migrate_component_port(component)
+        if port <= 0:
+            continue
+        ports[port_key] = PortPlan(
+            project=project_name,
+            requested=port,
+            assigned=port,
+            final=port,
+            source="requirements_state",
+        )
+    return MigrateProjectContext(name=project_name, root=project_root, ports=ports)
+
+
+def migrate_component_port(component: Mapping[str, object]) -> int:
+    for key in ("final", "requested", "assigned"):
+        raw = component.get(key)
+        try:
+            value = int(raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return 0
 
 
 def project_action_failure_summary_lines(

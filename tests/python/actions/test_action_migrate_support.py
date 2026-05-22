@@ -3,19 +3,26 @@ from __future__ import annotations
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 import tempfile
 import unittest
 
 from envctl_engine.actions.action_migrate_support import (
     MigrateResultRecord,
+    MigrateProjectContext,
+    migrate_backend_cwd,
+    migrate_component_port,
     migrate_failure_headline,
     migrate_failure_headline_from_lines,
     migrate_env_source_hint_lines,
     migrate_failure_hint_lines,
+    migrate_project_context,
+    migrate_requirements_for_target,
     project_action_failure_summary_lines,
     migrate_result_record,
     print_migrate_result_records,
 )
+from envctl_engine.state.models import PortPlan, RequirementsResult
 from envctl_engine.test_output.parser_base import strip_ansi
 
 
@@ -133,6 +140,74 @@ class ActionMigrateSupportTests(unittest.TestCase):
             lines,
         )
         self.assertEqual(len(lines), len(dict.fromkeys(lines)))
+
+    def test_migrate_project_context_projects_dependency_ports_from_requirements_state(self) -> None:
+        requirements = RequirementsResult(
+            project="feature-a-1",
+            components={
+                "postgres": {"requested": 5433},
+                "redis": {"assigned": 6380},
+                "n8n": {"final": 5679},
+                "supabase": {"final": 6543},
+            },
+        )
+
+        context = migrate_project_context(
+            project_name="feature-a-1",
+            project_root=Path("/repo/trees/feature-a/1"),
+            requirements=requirements,
+        )
+
+        self.assertEqual(
+            context,
+            MigrateProjectContext(
+                name="feature-a-1",
+                root=Path("/repo/trees/feature-a/1"),
+                ports={
+                    "db": PortPlan(
+                        project="feature-a-1",
+                        requested=5433,
+                        assigned=5433,
+                        final=5433,
+                        source="requirements_state",
+                    ),
+                    "redis": PortPlan(
+                        project="feature-a-1",
+                        requested=6380,
+                        assigned=6380,
+                        final=6380,
+                        source="requirements_state",
+                    ),
+                    "n8n": PortPlan(
+                        project="feature-a-1",
+                        requested=5679,
+                        assigned=5679,
+                        final=5679,
+                        source="requirements_state",
+                    ),
+                },
+            ),
+        )
+        self.assertEqual(migrate_component_port({"final": 0, "requested": "2222", "assigned": 3333}), 2222)
+
+    def test_migrate_requirements_for_target_matches_project_name_case_insensitively(self) -> None:
+        requirements = RequirementsResult(project="Feature-A-1")
+        runtime = SimpleNamespace(
+            load_existing_state=lambda mode=None: SimpleNamespace(requirements={"Feature-A-1": requirements})
+        )
+        route = SimpleNamespace(mode="trees")
+
+        self.assertIs(
+            migrate_requirements_for_target(runtime=runtime, route=route, project_name="feature-a-1"),
+            requirements,
+        )
+
+    def test_migrate_backend_cwd_prefers_backend_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self.assertEqual(migrate_backend_cwd(root), root)
+            (root / "backend").mkdir()
+            self.assertEqual(migrate_backend_cwd(root), root / "backend")
 
     def test_print_migrate_result_records_compacts_multi_project_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

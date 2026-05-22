@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
 import concurrent.futures
 import os
@@ -14,12 +13,17 @@ from envctl_engine.actions.actions_analysis import default_review_command
 from envctl_engine.actions.actions_git import default_commit_command, default_pr_command
 from envctl_engine.actions.action_command_support import service_types_from_route_services
 from envctl_engine.actions.action_migrate_support import (
+    MigrateProjectContext as _MigrateProjectContext,
     MigrateResultRecord as _MigrateResultRecord,
     is_migrate_env_source_hint as is_migrate_env_source_hint_impl,
+    migrate_backend_cwd as migrate_backend_cwd_impl,
+    migrate_component_port as migrate_component_port_impl,
     migrate_env_source_hint_lines as migrate_env_source_hint_lines_impl,
     migrate_failure_headline as migrate_failure_headline_impl,
     migrate_failure_headline_from_lines as migrate_failure_headline_from_lines_impl,
     migrate_failure_hint_lines as migrate_failure_hint_lines_impl,
+    migrate_project_context as migrate_project_context_impl,
+    migrate_requirements_for_target as migrate_requirements_for_target_impl,
     migrate_result_record as migrate_result_record_impl,
     migrate_result_records as migrate_result_records_impl,
     print_compact_migrate_failure_logs as print_compact_migrate_failure_logs_impl,
@@ -120,7 +124,7 @@ from envctl_engine.runtime.launcher_support import main_repo_root_for_linked_wor
 from envctl_engine.startup.service_bootstrap_domain import (
     _resolve_backend_env_contract,
 )
-from envctl_engine.state.models import PortPlan, RequirementsResult
+from envctl_engine.state.models import RequirementsResult
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.test_output.test_runner import TestRunner
 from envctl_engine.ui.color_policy import colors_enabled
@@ -141,13 +145,6 @@ def _stdout_is_live_terminal() -> bool:
         except Exception:
             continue
     return False
-
-
-@dataclass(frozen=True)
-class _MigrateProjectContext:
-    name: str
-    root: Path
-    ports: dict[str, PortPlan]
 
 
 class ActionRuntimeFacade:
@@ -1398,28 +1395,11 @@ if result.returncode != 0:
         route: Route | None,
         project_name: str,
     ) -> RequirementsResult | None:
-        route_mode = getattr(route, "mode", None)
-        state = self.runtime.load_existing_state(mode=route_mode) if isinstance(route_mode, str) else None
-        if state is None:
-            return None
-        requirements_map = getattr(state, "requirements", None)
-        if not isinstance(requirements_map, dict):
-            return None
-        candidate = requirements_map.get(project_name)
-        if isinstance(candidate, RequirementsResult):
-            return candidate
-        normalized_name = project_name.strip().lower()
-        for key, value in requirements_map.items():
-            if str(key).strip().lower() == normalized_name and isinstance(value, RequirementsResult):
-                return value
-        return None
+        return migrate_requirements_for_target_impl(runtime=self.runtime, route=route, project_name=project_name)
 
     @staticmethod
     def _migrate_backend_cwd(target_root: Path) -> Path:
-        backend_dir = target_root / "backend"
-        if backend_dir.is_dir():
-            return backend_dir
-        return target_root
+        return migrate_backend_cwd_impl(target_root)
 
     @staticmethod
     def _migrate_project_context(
@@ -1428,39 +1408,15 @@ if result.returncode != 0:
         project_root: Path,
         requirements: RequirementsResult,
     ) -> _MigrateProjectContext:
-        ports: dict[str, PortPlan] = {}
-        for component_name, port_key in (
-            ("postgres", "db"),
-            ("redis", "redis"),
-            ("n8n", "n8n"),
-            ("supabase", "db"),
-        ):
-            if port_key in ports:
-                continue
-            component = requirements.component(component_name)
-            port = ActionCommandOrchestrator._migrate_component_port(component)
-            if port <= 0:
-                continue
-            ports[port_key] = PortPlan(
-                project=project_name,
-                requested=port,
-                assigned=port,
-                final=port,
-                source="requirements_state",
-            )
-        return _MigrateProjectContext(name=project_name, root=project_root, ports=ports)
+        return migrate_project_context_impl(
+            project_name=project_name,
+            project_root=project_root,
+            requirements=requirements,
+        )
 
     @staticmethod
     def _migrate_component_port(component: Mapping[str, object]) -> int:
-        for key in ("final", "requested", "assigned"):
-            raw = component.get(key)
-            try:
-                value = int(raw)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                continue
-            if value > 0:
-                return value
-        return 0
+        return migrate_component_port_impl(component)
 
     @staticmethod
     def _format_summary_error_lines(error_text: str) -> list[str]:
