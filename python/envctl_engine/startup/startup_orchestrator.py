@@ -67,6 +67,13 @@ from envctl_engine.startup.restart_prestop_support import (
     terminate_restart_orphan_listeners,
 )
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
+from envctl_engine.startup.session_lifecycle import (
+    announce_session_identifiers as announce_session_identifiers_impl,
+    create_startup_session,
+    ensure_run_id,
+    resolved_run_id,
+    validate_startup_route_contract,
+)
 from envctl_engine.startup.selected_context_startup import start_selected_contexts
 from envctl_engine.startup.startup_progress import (
     ProjectSpinnerGroup,
@@ -95,7 +102,7 @@ from envctl_engine.startup.startup_execution_support import (
     start_requirements_for_project as start_requirements_for_project_impl,
     startup_breakdown_enabled as startup_breakdown_enabled_impl,
 )
-from envctl_engine.ui.debug_snapshot import emit_plan_handoff_snapshot, snapshot_enabled
+from envctl_engine.ui.debug_snapshot import emit_plan_handoff_snapshot
 from envctl_engine.ui.path_links import local_paths_in_text, render_paths_in_terminal_text
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
@@ -140,58 +147,24 @@ class StartupOrchestrator:
             return self._finalize_failure(session, str(exc))
 
     def _create_session(self, route: Route) -> StartupSession:
-        rt = self.runtime
-        runtime_mode = rt._effective_start_mode(route)
-        session = StartupSession(
-            requested_route=route,
-            effective_route=route,
-            requested_command=route.command,
-            runtime_mode=runtime_mode,
-            run_id=None,
-            startup_event_index=len(rt.events),
-            debug_plan_snapshot=snapshot_enabled(dict(rt.env)),
-        )
-        rt._reset_project_startup_warnings()
-        return session
+        return create_startup_session(self.runtime, route)
 
     def _ensure_run_id(self, session: StartupSession) -> None:
-        if session.run_id is None:
-            session.run_id = self.runtime._new_run_id()
+        ensure_run_id(self.runtime, session)
 
     @staticmethod
     def _resolved_run_id(session: StartupSession) -> str:
-        if session.run_id is None:
-            raise RuntimeError("run_id must be resolved before use")
-        return session.run_id
+        return resolved_run_id(session)
 
     def _announce_session_identifiers(self, session: StartupSession) -> None:
-        if session.identifiers_announced:
-            return
-        self._ensure_run_id(session)
-        if not self._headless_plan_output_only(session):
-            print(f"run_id: {self._resolved_run_id(session)}")
-            print(f"session_id: {self.runtime._current_session_id() or 'unknown'}")
-        session.identifiers_announced = True
+        announce_session_identifiers_impl(
+            self.runtime,
+            session,
+            headless_plan_output_only=self._headless_plan_output_only,
+        )
 
     def _validate_route_contract(self, session: StartupSession) -> int | None:
-        rt = self.runtime
-        hook_contract_issue = rt._startup_hook_contract_issue()
-        if hook_contract_issue:
-            print(hook_contract_issue)
-            return 1
-        try:
-            rt._validate_mode_toggles(session.runtime_mode, route=session.effective_route)
-        except RuntimeError as exc:
-            print(str(exc))
-            return 1
-
-        budget_started = time.monotonic()
-        if not rt._enforce_runtime_readiness_contract(scope=session.requested_command):
-            self._emit_phase(session, "runtime_readiness_gate", budget_started, status="blocked")
-            print("Startup blocked: strict runtime readiness gate is incomplete.")
-            return 1
-        self._emit_phase(session, "runtime_readiness_gate", budget_started, status="ok")
-        return None
+        return validate_startup_route_contract(self.runtime, session, emit_phase=self._emit_phase)
 
     def _handle_restart_prestop(self, session: StartupSession) -> int | None:
         rt = self.runtime
