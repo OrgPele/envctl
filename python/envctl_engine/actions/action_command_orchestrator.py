@@ -51,6 +51,10 @@ from envctl_engine.actions.action_target_support import (
     projects_for_services as projects_for_services_impl,
     resolve_action_targets as resolve_action_targets_impl,
 )
+from envctl_engine.actions.action_spinner_support import (
+    install_action_spinner_status_bridge as install_action_spinner_status_bridge_impl,
+    noop_restore as noop_restore_impl,
+)
 from envctl_engine.actions.action_test_summary_support import (
     captured_output_blocks as captured_output_blocks_impl,
     collect_failed_test_manifest_entries as collect_failed_test_manifest_entries_impl,
@@ -882,56 +886,12 @@ if result.returncode != 0:
         op_id: str,
         active_spinner: Any,
     ) -> Callable[[], None]:
-        rt = self.runtime.raw_runtime
-
-        def update_spinner(message: object) -> None:
-            text = str(message).strip()
-            if not text:
-                return
-            active_spinner.update(text)
-            self.runtime.emit(
-                "ui.spinner.lifecycle",
-                component="action.command",
-                command=command,
-                op_id=op_id,
-                state="update",
-                message=text,
-            )
-
-        add_listener = getattr(rt, "add_emit_listener", None)
-        if callable(add_listener):
-
-            def listener(event_name: str, payload: Mapping[str, object]) -> None:
-                if event_name != "ui.status":
-                    return
-                update_spinner(payload.get("message", ""))
-
-            remove = add_listener(listener)
-            if callable(remove):
-                return remove
-            return self._noop_restore
-
-        emit = getattr(rt, "_emit", None)
-        if not callable(emit):
-            return self._noop_restore
-
-        def bridged_emit(event_name: str, **payload: object) -> None:
-            emit(event_name, **payload)
-            if event_name == "ui.status":
-                update_spinner(payload.get("message", ""))
-
-        try:
-            setattr(rt, "_emit", bridged_emit)
-        except Exception:
-            return self._noop_restore
-
-        def restore() -> None:
-            try:
-                setattr(rt, "_emit", emit)
-            except Exception:
-                return
-
-        return restore
+        return install_action_spinner_status_bridge_impl(
+            runtime=self.runtime,
+            command=command,
+            op_id=op_id,
+            active_spinner=active_spinner,
+        )
 
     def _project_action_success_handler(
         self,
@@ -1468,7 +1428,7 @@ if result.returncode != 0:
 
     @staticmethod
     def _noop_restore() -> None:
-        return None
+        return noop_restore_impl()
 
     def _print_test_suite_overview(
         self,
