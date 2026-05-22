@@ -61,6 +61,11 @@ from envctl_engine.startup.plan_agent_handoff import (
     should_fail_for_plan_agent_launch_result as should_fail_for_plan_agent_launch_result_impl,
 )
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
+from envctl_engine.startup.restart_prestop_support import (
+    restart_fallback_start_route,
+    restart_prestop_preservation,
+    restart_start_route,
+)
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
 from envctl_engine.startup.startup_progress import (
     ProjectSpinnerGroup,
@@ -215,14 +220,7 @@ class StartupOrchestrator:
             )
             resumed = None
         if resumed is None:
-            session.effective_route = Route(
-                command="start",
-                mode=restart_lookup_mode,
-                raw_args=route.raw_args,
-                passthrough_args=route.passthrough_args,
-                projects=route.projects,
-                flags={**route.flags, "_restart_request": True},
-            )
+            session.effective_route = restart_fallback_start_route(route, restart_lookup_mode=restart_lookup_mode)
             session.runtime_mode = restart_lookup_mode
             return None
         session.restart_state = resumed
@@ -273,14 +271,16 @@ class StartupOrchestrator:
                     selected_services=selected_services,
                     aggressive=True,
                 )
-                for project_name, requirements in resumed.requirements.items():
-                    if include_requirements and (not target_projects or project_name in target_projects):
-                        rt._release_requirement_ports(requirements)
-                    else:
-                        session.preserved_requirements[project_name] = requirements
-                session.preserved_services = {
-                    name: service for name, service in resumed.services.items() if name not in selected_services
-                }
+                preservation = restart_prestop_preservation(
+                    resumed,
+                    selected_services=selected_services,
+                    include_requirements=include_requirements,
+                    target_projects=target_projects,
+                )
+                for requirements in preservation.requirements_to_release.values():
+                    rt._release_requirement_ports(requirements)
+                session.preserved_requirements = dict(preservation.preserved_requirements)
+                session.preserved_services = dict(preservation.preserved_services)
                 if use_prestop_spinner:
                     prestop_spinner.succeed("Restart pre-stop complete")
                     rt._emit(
@@ -309,19 +309,12 @@ class StartupOrchestrator:
                         op_id="restart.prestop",
                         state="stop",
                     )
-        session.effective_route = Route(
-            command="start",
-            mode=restart_lookup_mode,
-            raw_args=route.raw_args,
-            passthrough_args=route.passthrough_args,
-            projects=route.projects,
-            flags={
-                **route.flags,
-                "_restart_request": True,
-                "_restart_selected_services": sorted(selected_services),
-                "_restart_target_projects": sorted(target_projects),
-                "_restart_include_requirements": include_requirements,
-            },
+        session.effective_route = restart_start_route(
+            route,
+            restart_lookup_mode=restart_lookup_mode,
+            selected_services=selected_services,
+            target_projects=target_projects,
+            include_requirements=include_requirements,
         )
         session.runtime_mode = restart_lookup_mode
         return None
