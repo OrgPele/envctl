@@ -158,6 +158,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_orchestrator_does_not_retain_announce_session_identifiers_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_announce_session_identifiers"))
 
+    def test_startup_orchestrator_does_not_retain_create_session_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_create_session"))
+
     def test_requirements_parallel_defaults_to_sequential_on_macos_with_cli_override(self) -> None:
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
         orchestrator = SimpleNamespace(runtime=runtime)

@@ -113,7 +113,7 @@ class StartupOrchestrator:
         self._shared_dependency_progress_reported: bool = False
 
     def execute(self, route: Route) -> int:
-        session = self._create_session(route)
+        session = create_startup_session(self.runtime, route)
         try:
             for phase in (
                 partial(
@@ -149,9 +149,6 @@ class StartupOrchestrator:
             return self._finalize_failure(session, str(exc))
         except Exception as exc:
             return self._finalize_failure(session, str(exc))
-
-    def _create_session(self, route: Route) -> StartupSession:
-        return create_startup_session(self.runtime, route)
 
     def _handle_restart_prestop(self, session: StartupSession) -> int | None:
         return handle_restart_prestop(
