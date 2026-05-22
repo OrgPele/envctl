@@ -8,6 +8,7 @@ from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.startup.finalization import (
     emit_preserved_service_merge,
     failure_context_label,
+    finalize_successful_startup,
     headless_plan_session_summary_lines,
     plan_dry_run_preview_lines,
     plan_agent_degraded_handoff_text,
@@ -17,6 +18,7 @@ from envctl_engine.startup.finalization import (
     restart_port_rebound_summary_lines,
 )
 from envctl_engine.startup.session import LocalStartupFailure, StartupSession
+from envctl_engine.state.models import RunState
 
 
 def _session(*, contexts: list[object], contexts_to_start: list[object] | None = None) -> StartupSession:
@@ -33,6 +35,79 @@ def _session(*, contexts: list[object], contexts_to_start: list[object] | None =
 
 
 class StartupFinalizationTests(unittest.TestCase):
+    def test_finalize_successful_startup_writes_artifacts_summary_snapshot_and_returns_zero(self) -> None:
+        context = SimpleNamespace(name="Main")
+        session = _session(contexts=[context])
+        run_state = RunState(run_id="run-finalization", mode="trees")
+        writes: list[tuple[RunState, list[object], list[str]]] = []
+        events: list[tuple[str, dict[str, object]]] = []
+        snapshots: list[tuple[str, dict[str, object]]] = []
+        restart_summaries: list[StartupSession] = []
+        summaries: list[tuple[RunState, list[object]]] = []
+
+        runtime = SimpleNamespace(
+            _write_artifacts=lambda state, contexts, *, errors: writes.append((state, list(contexts), list(errors))),
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _print_summary=lambda state, contexts: summaries.append((state, list(contexts))),
+            _should_enter_post_start_interactive=lambda route: False,
+        )
+
+        result = finalize_successful_startup(
+            runtime=runtime,
+            session=session,
+            ensure_run_id=lambda session: None,
+            validate_plan_agent_handoff=lambda session, *, phase: None,
+            build_success_run_state=lambda runtime, session: run_state,
+            emit_preserved_service_merge=lambda session: None,
+            emit_phase=lambda session, phase, started_at, **extra: events.append((f"phase:{phase}", dict(extra))),
+            requirements_timing_enabled=lambda route: False,
+            suppress_timing_output=lambda route: False,
+            print_startup_summary=lambda **kwargs: None,
+            startup_breakdown_enabled=lambda route: False,
+            suppress_progress_output=lambda route: False,
+            print_restart_port_rebound_summary=restart_summaries.append,
+            emit_snapshot=lambda session, checkpoint, **payload: snapshots.append((checkpoint, payload)),
+            headless_plan_output_only=lambda session: False,
+            print_headless_plan_session_summary=lambda session: None,
+            maybe_attach_plan_agent_terminal=lambda session: None,
+            finalize_plan_agent_degraded_handoff=lambda session: self.fail("degraded handoff should not run"),
+        )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(writes, [(run_state, [context], [])])
+        self.assertIn(("phase:artifacts_write", {"status": "ok"}), events)
+        self.assertEqual(restart_summaries, [session])
+        self.assertEqual(summaries, [(run_state, [context])])
+        self.assertEqual(snapshots[0][0], "before_dashboard_entry")
+        self.assertEqual(snapshots[0][1]["service_count"], 0)
+
+    def test_finalize_successful_startup_delegates_degraded_plan_agent_handoff(self) -> None:
+        session = _session(contexts=[])
+        session.plan_agent_handoff_degraded = True
+
+        result = finalize_successful_startup(
+            runtime=SimpleNamespace(),
+            session=session,
+            ensure_run_id=lambda session: self.fail("normal finalization should not run"),
+            validate_plan_agent_handoff=lambda session, *, phase: None,
+            build_success_run_state=lambda runtime, session: RunState(run_id="unused", mode="trees"),
+            emit_preserved_service_merge=lambda session: None,
+            emit_phase=lambda *args, **kwargs: None,
+            requirements_timing_enabled=lambda route: False,
+            suppress_timing_output=lambda route: False,
+            print_startup_summary=lambda **kwargs: None,
+            startup_breakdown_enabled=lambda route: False,
+            suppress_progress_output=lambda route: False,
+            print_restart_port_rebound_summary=lambda session: None,
+            emit_snapshot=lambda *args, **kwargs: None,
+            headless_plan_output_only=lambda session: False,
+            print_headless_plan_session_summary=lambda session: None,
+            maybe_attach_plan_agent_terminal=lambda session: None,
+            finalize_plan_agent_degraded_handoff=lambda session: 7,
+        )
+
+        self.assertEqual(result, 7)
+
     def test_failure_context_label_prefers_named_context_from_error(self) -> None:
         alpha = SimpleNamespace(name="alpha", root=Path("/repo/trees/alpha/1"))
         beta = SimpleNamespace(name="beta", root=Path("/repo/beta"))

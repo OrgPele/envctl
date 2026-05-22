@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import shlex
 import sys
+import time
+from collections.abc import Callable
 from typing import cast
 
 from envctl_engine.dashboard_metadata import (
@@ -44,6 +46,105 @@ def emit_preserved_service_merge(runtime: StartupRuntime, session: StartupSessio
         preserved_requirements=sorted(session.preserved_requirements),
         replaced_requirements=sorted(session.requirements_by_project),
     )
+
+
+def finalize_successful_startup(
+    *,
+    runtime: StartupRuntime,
+    session: StartupSession,
+    ensure_run_id: Callable[[StartupSession], None],
+    validate_plan_agent_handoff: Callable[..., None],
+    build_success_run_state: Callable[[StartupRuntime, StartupSession], RunState],
+    emit_preserved_service_merge: Callable[[StartupSession], None],
+    emit_phase: Callable[..., None],
+    requirements_timing_enabled: Callable[[Route], bool],
+    suppress_timing_output: Callable[[Route], bool],
+    print_startup_summary: Callable[..., None],
+    startup_breakdown_enabled: Callable[[Route], bool],
+    suppress_progress_output: Callable[[Route], bool],
+    print_restart_port_rebound_summary: Callable[[StartupSession], None],
+    emit_snapshot: Callable[..., None],
+    headless_plan_output_only: Callable[[StartupSession], bool],
+    print_headless_plan_session_summary: Callable[[StartupSession], None],
+    maybe_attach_plan_agent_terminal: Callable[[StartupSession], int | None],
+    finalize_plan_agent_degraded_handoff: Callable[[StartupSession], int],
+) -> int:
+    if session.plan_agent_handoff_degraded:
+        return finalize_plan_agent_degraded_handoff(session)
+    ensure_run_id(session)
+    validate_plan_agent_handoff(session, phase="success_finalization")
+    run_state = build_success_run_state(runtime, session)
+    emit_preserved_service_merge(session)
+    artifacts_started = time.monotonic()
+    runtime._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
+    emit_phase(session, "artifacts_write", artifacts_started, status="ok")
+    if requirements_timing_enabled(session.effective_route) and not suppress_timing_output(session.effective_route):
+        runtime._emit(
+            "startup.debug_tty_group",
+            component="startup_orchestrator",
+            group="output",
+            action="print_startup_summary",
+            enabled=True,
+            detail="startup_branch",
+        )
+        print_startup_summary(
+            project_contexts=session.selected_contexts,
+            start_event_index=session.startup_event_index,
+            startup_started_at=session.startup_started_at,
+        )
+    else:
+        runtime._emit(
+            "startup.debug_tty_group",
+            component="startup_orchestrator",
+            group="output",
+            action="print_startup_summary",
+            enabled=False,
+            detail="startup_branch",
+        )
+    if startup_breakdown_enabled(session.effective_route):
+        runtime._emit(
+            "startup.breakdown",
+            command=session.requested_command,
+            mode=session.runtime_mode,
+            project_count=len(session.selected_contexts),
+            projects=[context.name for context in session.selected_contexts],
+            total_ms=round((time.monotonic() - session.startup_started_at) * 1000.0, 2),
+        )
+    runtime._emit(
+        "startup.debug_tty_group",
+        component="startup_orchestrator",
+        group="output",
+        action="dashboard_summary_or_status",
+        enabled=True,
+        detail="startup_branch",
+    )
+    if not suppress_progress_output(session.effective_route):
+        if session.used_project_spinner_group:
+            pass
+        else:
+            print_restart_port_rebound_summary(session)
+            runtime._print_summary(run_state, session.selected_contexts)
+    else:
+        print_restart_port_rebound_summary(session)
+        runtime._emit("ui.status", message="Startup complete; refreshing dashboard...")
+    emit_snapshot(
+        session,
+        "before_dashboard_entry",
+        source="startup_branch",
+        command=session.requested_command,
+        mode=session.runtime_mode,
+        service_count=len(run_state.services),
+        requirement_count=len(run_state.requirements),
+    )
+    if headless_plan_output_only(session):
+        print_headless_plan_session_summary(session)
+        return 0
+    attach_code = maybe_attach_plan_agent_terminal(session)
+    if attach_code is not None:
+        return attach_code
+    if runtime._should_enter_post_start_interactive(session.effective_route):
+        return runtime._run_interactive_dashboard_loop(run_state)
+    return 0
 
 
 def plan_dry_run_preview_lines(session: StartupSession, *, created_names: set[str]) -> list[str]:

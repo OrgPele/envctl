@@ -24,6 +24,7 @@ from envctl_engine.startup.finalization import (
     build_success_run_state,
     emit_preserved_service_merge as finalization_emit_preserved_service_merge,
     failure_context_label as finalization_failure_context_label,
+    finalize_successful_startup,
     format_failure_context_label as finalization_format_failure_context_label,
     headless_plan_session_summary_lines,
     plan_agent_degraded_handoff_text,
@@ -541,86 +542,26 @@ class StartupOrchestrator:
         )
 
     def _finalize_success(self, session: StartupSession) -> int:
-        if session.plan_agent_handoff_degraded:
-            return self._finalize_plan_agent_degraded_handoff(session)
-        rt = self.runtime
-        self._ensure_run_id(session)
-        self._validate_plan_agent_handoff(session, phase="success_finalization")
-        run_state = build_success_run_state(rt, session)
-        self._emit_preserved_service_merge(session)
-        artifacts_started = time.monotonic()
-        rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
-        self._emit_phase(session, "artifacts_write", artifacts_started, status="ok")
-        if requirements_timing_enabled_impl(self, session.effective_route) and not self._suppress_timing_output(
-            session.effective_route
-        ):
-            rt._emit(
-                "startup.debug_tty_group",
-                component="startup_orchestrator",
-                group="output",
-                action="print_startup_summary",
-                enabled=True,
-                detail="startup_branch",
-            )
-            print_startup_summary_impl(
-                self,
-                project_contexts=session.selected_contexts,
-                start_event_index=session.startup_event_index,
-                startup_started_at=session.startup_started_at,
-            )
-        else:
-            rt._emit(
-                "startup.debug_tty_group",
-                component="startup_orchestrator",
-                group="output",
-                action="print_startup_summary",
-                enabled=False,
-                detail="startup_branch",
-            )
-        if startup_breakdown_enabled_impl(self, session.effective_route):
-            rt._emit(
-                "startup.breakdown",
-                command=session.requested_command,
-                mode=session.runtime_mode,
-                project_count=len(session.selected_contexts),
-                projects=[context.name for context in session.selected_contexts],
-                total_ms=round((time.monotonic() - session.startup_started_at) * 1000.0, 2),
-            )
-        rt._emit(
-            "startup.debug_tty_group",
-            component="startup_orchestrator",
-            group="output",
-            action="dashboard_summary_or_status",
-            enabled=True,
-            detail="startup_branch",
+        return finalize_successful_startup(
+            runtime=self.runtime,
+            session=session,
+            ensure_run_id=self._ensure_run_id,
+            validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+            build_success_run_state=build_success_run_state,
+            emit_preserved_service_merge=self._emit_preserved_service_merge,
+            emit_phase=self._emit_phase,
+            requirements_timing_enabled=lambda route: requirements_timing_enabled_impl(self, route),
+            suppress_timing_output=self._suppress_timing_output,
+            print_startup_summary=lambda **kwargs: print_startup_summary_impl(self, **kwargs),
+            startup_breakdown_enabled=lambda route: startup_breakdown_enabled_impl(self, route),
+            suppress_progress_output=self._suppress_progress_output,
+            print_restart_port_rebound_summary=self._print_restart_port_rebound_summary,
+            emit_snapshot=self._emit_snapshot,
+            headless_plan_output_only=self._headless_plan_output_only,
+            print_headless_plan_session_summary=self._print_headless_plan_session_summary,
+            maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
+            finalize_plan_agent_degraded_handoff=self._finalize_plan_agent_degraded_handoff,
         )
-        if not self._suppress_progress_output(session.effective_route):
-            if session.used_project_spinner_group:
-                pass
-            else:
-                self._print_restart_port_rebound_summary(session)
-                rt._print_summary(run_state, session.selected_contexts)
-        else:
-            self._print_restart_port_rebound_summary(session)
-            rt._emit("ui.status", message="Startup complete; refreshing dashboard...")
-        self._emit_snapshot(
-            session,
-            "before_dashboard_entry",
-            source="startup_branch",
-            command=session.requested_command,
-            mode=session.runtime_mode,
-            service_count=len(run_state.services),
-            requirement_count=len(run_state.requirements),
-        )
-        if self._headless_plan_output_only(session):
-            self._print_headless_plan_session_summary(session)
-            return 0
-        attach_code = self._maybe_attach_plan_agent_terminal(session)
-        if attach_code is not None:
-            return attach_code
-        if rt._should_enter_post_start_interactive(session.effective_route):
-            return rt._run_interactive_dashboard_loop(run_state)
-        return 0
 
     def _print_restart_port_rebound_summary(self, session: StartupSession) -> None:
         for line in restart_port_rebound_summary_lines(session, self.runtime.events):
