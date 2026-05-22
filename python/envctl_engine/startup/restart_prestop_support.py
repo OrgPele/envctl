@@ -21,6 +21,13 @@ class RestartPrestopPreservation:
 
 
 @dataclass(frozen=True, slots=True)
+class RestartPrestopState:
+    restart_lookup_mode: str
+    state: object | None
+    fallback_route: Route | None
+
+
+@dataclass(frozen=True, slots=True)
 class RestartPrestopSelection:
     selected_services: set[str]
     target_projects: set[str]
@@ -47,6 +54,27 @@ def restart_fallback_start_route(route: Route, *, restart_lookup_mode: str) -> R
         passthrough_args=route.passthrough_args,
         projects=route.projects,
         flags={**route.flags, "_restart_request": True},
+    )
+
+
+def restart_prestop_state(*, route: Route, runtime: Any) -> RestartPrestopState:
+    restart_lookup_mode = runtime._effective_start_mode(route)
+    resumed = runtime._try_load_existing_state(mode=restart_lookup_mode)
+    if resumed is not None and resumed.mode != restart_lookup_mode:
+        runtime._emit(
+            "restart.state_mode_mismatch",
+            requested_mode=restart_lookup_mode,
+            loaded_mode=resumed.mode,
+            run_id=resumed.run_id,
+        )
+        resumed = None
+    fallback_route = None
+    if resumed is None:
+        fallback_route = restart_fallback_start_route(route, restart_lookup_mode=restart_lookup_mode)
+    return RestartPrestopState(
+        restart_lookup_mode=restart_lookup_mode,
+        state=resumed,
+        fallback_route=fallback_route,
     )
 
 

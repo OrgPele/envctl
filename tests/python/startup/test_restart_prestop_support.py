@@ -11,6 +11,7 @@ from envctl_engine.startup.restart_prestop_support import (
     restart_orphan_listener_scan,
     restart_fallback_start_route,
     restart_port_assignments,
+    restart_prestop_state,
     restart_prestop_selection,
     restart_prestop_preservation,
     restart_start_route,
@@ -55,6 +56,33 @@ class RestartPrestopSupportTests(unittest.TestCase):
         self.assertFalse(updated.flags["_restart_include_requirements"])
         self.assertTrue(updated.flags["_restart_request"])
         self.assertTrue(updated.flags["force"])
+
+    def test_restart_prestop_state_rejects_mode_mismatch_and_builds_fallback_route(self) -> None:
+        route = Route(command="restart", mode="trees", raw_args=["restart", "--trees"], flags={})
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(
+            _effective_start_mode=lambda route: "trees",
+            _try_load_existing_state=lambda *, mode: SimpleNamespace(mode="main", run_id="run-main"),
+            _emit=lambda event, **payload: events.append((event, payload)),
+        )
+
+        result = restart_prestop_state(route=route, runtime=runtime)
+
+        self.assertEqual(result.restart_lookup_mode, "trees")
+        self.assertIsNone(result.state)
+        self.assertIsNotNone(result.fallback_route)
+        assert result.fallback_route is not None
+        self.assertEqual(result.fallback_route.command, "start")
+        self.assertTrue(result.fallback_route.flags["_restart_request"])
+        self.assertEqual(
+            events,
+            [
+                (
+                    "restart.state_mode_mismatch",
+                    {"requested_mode": "trees", "loaded_mode": "main", "run_id": "run-main"},
+                )
+            ],
+        )
 
     def test_restart_prestop_preservation_splits_services_and_requirements(self) -> None:
         state = SimpleNamespace(

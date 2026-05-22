@@ -62,12 +62,12 @@ from envctl_engine.startup.plan_agent_handoff import (
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.restart_prestop_support import (
     apply_restart_port_assignments,
-    restart_fallback_start_route,
     restart_matching_orphan_listeners,
     restart_orphan_listener_scan,
     restart_port_assignments,
     restart_prestop_preservation,
     restart_prestop_selection,
+    restart_prestop_state,
     restart_start_route,
 )
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
@@ -210,18 +210,11 @@ class StartupOrchestrator:
         route = session.effective_route
         if route.command != "restart":
             return None
-        restart_lookup_mode = rt._effective_start_mode(route)
-        resumed = rt._try_load_existing_state(mode=restart_lookup_mode)
-        if resumed is not None and resumed.mode != restart_lookup_mode:
-            rt._emit(
-                "restart.state_mode_mismatch",
-                requested_mode=restart_lookup_mode,
-                loaded_mode=resumed.mode,
-                run_id=resumed.run_id,
-            )
-            resumed = None
-        if resumed is None:
-            session.effective_route = restart_fallback_start_route(route, restart_lookup_mode=restart_lookup_mode)
+        prestop_state = restart_prestop_state(route=route, runtime=rt)
+        restart_lookup_mode = prestop_state.restart_lookup_mode
+        resumed = prestop_state.state
+        if prestop_state.fallback_route is not None:
+            session.effective_route = prestop_state.fallback_route
             session.runtime_mode = restart_lookup_mode
             return None
         session.restart_state = resumed
