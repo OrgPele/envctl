@@ -44,6 +44,14 @@ def emit_preserved_service_merge(runtime: StartupRuntime, session: StartupSessio
     )
 
 
+def plan_dry_run_preview_lines(session: StartupSession, *, created_names: set[str]) -> list[str]:
+    lines = ["Dry run: no worktrees, git state, or services were modified."]
+    for context in session.selected_contexts:
+        action = "create" if context.name in created_names else "reuse"
+        lines.append(f"{context.name}: {action}")
+    return lines
+
+
 def render_final_failure_status(
     runtime: StartupRuntime,
     session: StartupSession,

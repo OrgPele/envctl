@@ -36,6 +36,7 @@ from envctl_engine.startup.finalization import (
     format_failure_context_label as finalization_format_failure_context_label,
     headless_plan_session_summary_lines,
     plan_agent_degraded_handoff_text,
+    plan_dry_run_preview_lines,
     plan_session_summary_lines as finalization_plan_session_summary_lines,
     render_final_failure_status as finalization_render_final_failure_status,
 )
@@ -1665,10 +1666,8 @@ class StartupOrchestrator:
             for worktree in getattr(selection_result, "created_worktrees", ())
             if isinstance(worktree, CreatedPlanWorktree)
         }
-        print("Dry run: no worktrees, git state, or services were modified.")
-        for context in session.selected_contexts:
-            action = "create" if context.name in created_names else "reuse"
-            print(f"{context.name}: {action}")
+        for line in plan_dry_run_preview_lines(session, created_names=created_names):
+            print(line)
 
     def _maybe_attach_plan_agent_terminal(self, session: StartupSession) -> int | None:
         self._validate_plan_agent_handoff(session, phase="interactive_attach")

@@ -9,6 +9,7 @@ from envctl_engine.startup.finalization import (
     emit_preserved_service_merge,
     failure_context_label,
     headless_plan_session_summary_lines,
+    plan_dry_run_preview_lines,
     plan_agent_degraded_handoff_text,
     plan_session_summary_lines,
     render_final_failure_status,
@@ -146,6 +147,25 @@ class StartupFinalizationTests(unittest.TestCase):
                         "replaced_requirements": ["alpha", "beta"],
                     },
                 )
+            ],
+        )
+
+    def test_plan_dry_run_preview_lines_render_create_and_reuse_actions(self) -> None:
+        session = _session(
+            contexts=[
+                SimpleNamespace(name="feature-a-1", root=Path("/repo/trees/feature-a/1")),
+                SimpleNamespace(name="feature-b-1", root=Path("/repo/trees/feature-b/1")),
+            ]
+        )
+
+        lines = plan_dry_run_preview_lines(session, created_names={"feature-b-1"})
+
+        self.assertEqual(
+            lines,
+            [
+                "Dry run: no worktrees, git state, or services were modified.",
+                "feature-a-1: reuse",
+                "feature-b-1: create",
             ],
         )
 
