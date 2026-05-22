@@ -14,6 +14,7 @@ from envctl_engine.startup.finalization import (
     finalize_plan_agent_degraded_handoff,
     finalize_plan_agent_degraded_handoff_artifacts,
     finalize_successful_startup,
+    finalize_successful_startup_with_runtime,
     format_degraded_handoff_text_for_terminal,
     headless_plan_output_only,
     headless_plan_session_summary_lines,
@@ -237,6 +238,40 @@ class StartupFinalizationTests(unittest.TestCase):
         )
 
         self.assertEqual(result, 7)
+
+    def test_runtime_bound_success_finalization_writes_artifacts_and_snapshot(self) -> None:
+        context = SimpleNamespace(name="Main")
+        session = _session(contexts=[context])
+        session.debug_plan_snapshot = True
+        writes: list[tuple[RunState, list[object], list[str]]] = []
+        events: list[tuple[str, dict[str, object]]] = []
+        summaries: list[tuple[RunState, list[object]]] = []
+
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(raw={}, runtime_scope_id="scope-finalization"),
+            env={"ENVCTL_DEBUG_PLAN_SNAPSHOT": "1"},
+            events=[],
+            _write_artifacts=lambda state, contexts, *, errors: writes.append((state, list(contexts), list(errors))),
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _print_summary=lambda state, contexts: summaries.append((state, list(contexts))),
+            _should_enter_post_start_interactive=lambda route: False,
+            _run_dir_path=lambda run_id: Path("/tmp") / run_id,
+            _current_session_id=lambda: "session-finalization",
+            _new_run_id=lambda: "run-finalization",
+            _service_enabled_for_mode=lambda mode, service_type: service_type in {"backend", "frontend"},
+        )
+
+        result = finalize_successful_startup_with_runtime(
+            runtime,
+            session,
+            validate_plan_agent_handoff=lambda session, *, phase: events.append(("validate", {"phase": phase})),
+        )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(writes[0][1], [context])
+        self.assertEqual(summaries[0][1], [context])
+        self.assertIn(("validate", {"phase": "success_finalization"}), events)
+        self.assertIn("before_dashboard_entry", [payload.get("checkpoint") for event, payload in events if event == "ui.plan_handoff.snapshot"])
 
     def test_finalize_plan_agent_degraded_handoff_writes_artifacts_and_attach_result(self) -> None:
         session = _session(contexts=[])

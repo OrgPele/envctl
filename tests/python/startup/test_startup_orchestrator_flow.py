@@ -1395,7 +1395,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     side_effect=RuntimeError("missing_service_start_command: autodetect_failed_backend"),
                 ),
                 patch.object(engine, "_write_artifacts"),
-                patch("envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal", return_value=0) as attach_mock,
+                patch("envctl_engine.startup.finalization.attach_plan_agent_terminal", return_value=0) as attach_mock,
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=True),
             ):
                 out = StringIO()

@@ -12,14 +12,20 @@ from envctl_engine.dashboard_metadata import (
     DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
     serialize_dashboard_project_configured_services,
 )
+from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
 from envctl_engine.shared.services import service_display_name
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
+from envctl_engine.startup.requirements_execution import requirements_timing_enabled, startup_breakdown_enabled
 from envctl_engine.startup.run_reuse_support import build_startup_identity_metadata
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
+from envctl_engine.startup.session_lifecycle import emit_startup_phase, ensure_run_id
+from envctl_engine.startup.startup_execution_support import print_startup_summary
+from envctl_engine.startup.startup_progress import suppress_progress_output, suppress_timing_output
 from envctl_engine.state.models import RunState
+from envctl_engine.ui.debug_snapshot import emit_startup_plan_handoff_snapshot
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.path_links import local_paths_in_text, render_paths_in_terminal_text
 from envctl_engine.ui.status_symbols import STATUS_FAILURE
@@ -146,6 +152,100 @@ def finalize_successful_startup(
     if runtime._should_enter_post_start_interactive(session.effective_route):
         return runtime._run_interactive_dashboard_loop(run_state)
     return 0
+
+
+def finalize_successful_startup_with_runtime(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    *,
+    validate_plan_agent_handoff: Callable[..., None],
+    print_fn: Callable[[str], None] = print,
+) -> int:
+    orchestrator_like = type("_StartupFinalizationRuntimeFacade", (), {"runtime": runtime})()
+    return finalize_successful_startup(
+        runtime=runtime,
+        session=session,
+        ensure_run_id=lambda session: ensure_run_id(runtime, session),
+        validate_plan_agent_handoff=validate_plan_agent_handoff,
+        build_success_run_state=build_success_run_state,
+        emit_preserved_service_merge=lambda session: emit_preserved_service_merge(runtime, session),
+        emit_phase=lambda *args, **kwargs: emit_startup_phase(runtime, *args, **kwargs),
+        requirements_timing_enabled=lambda route: requirements_timing_enabled(orchestrator_like, route),
+        suppress_timing_output=suppress_timing_output,
+        print_startup_summary=lambda **kwargs: print_startup_summary(orchestrator_like, **kwargs),
+        startup_breakdown_enabled=lambda route: startup_breakdown_enabled(orchestrator_like, route),
+        suppress_progress_output=suppress_progress_output,
+        print_restart_port_rebound_summary=lambda session: print_restart_port_rebound_summary(
+            runtime,
+            session,
+            print_fn=print_fn,
+        ),
+        emit_snapshot=lambda *args, **kwargs: emit_startup_plan_handoff_snapshot(runtime, *args, **kwargs),
+        headless_plan_output_only=headless_plan_output_only,
+        print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary(
+            session,
+            validate_plan_agent_handoff=validate_plan_agent_handoff,
+            print_fn=print_fn,
+        ),
+        maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal(
+            runtime=runtime,
+            session=session,
+            validate_plan_agent_handoff=validate_plan_agent_handoff,
+            attach_plan_agent_terminal=attach_plan_agent_terminal,
+            print_headless_plan_session_summary=lambda session, *, attach_target: (
+                print_headless_plan_session_summary(
+                    session,
+                    validate_plan_agent_handoff=validate_plan_agent_handoff,
+                    print_fn=print_fn,
+                    attach_target=attach_target,
+                )
+            ),
+        ),
+        finalize_plan_agent_degraded_handoff=lambda session: finalize_plan_agent_degraded_handoff_with_runtime(
+            runtime,
+            session,
+            validate_plan_agent_handoff=validate_plan_agent_handoff,
+            print_fn=print_fn,
+        ),
+    )
+
+
+def finalize_plan_agent_degraded_handoff_with_runtime(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    *,
+    validate_plan_agent_handoff: Callable[..., None],
+    print_fn: Callable[[str], None] = print,
+) -> int:
+    return finalize_plan_agent_degraded_handoff(
+        runtime=runtime,
+        session=session,
+        ensure_run_id=lambda session: ensure_run_id(runtime, session),
+        validate_plan_agent_handoff=validate_plan_agent_handoff,
+        build_success_run_state=build_success_run_state,
+        emit_phase=lambda *args, **kwargs: emit_startup_phase(runtime, *args, **kwargs),
+        render_plan_agent_degraded_handoff=lambda session: render_plan_agent_degraded_handoff_for_terminal(
+            runtime,
+            session,
+            stream=sys.stdout,
+            print_fn=print_fn,
+        ),
+        headless_plan_output_only=headless_plan_output_only,
+        maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal(
+            runtime=runtime,
+            session=session,
+            validate_plan_agent_handoff=validate_plan_agent_handoff,
+            attach_plan_agent_terminal=attach_plan_agent_terminal,
+            print_headless_plan_session_summary=lambda session, *, attach_target: (
+                print_headless_plan_session_summary(
+                    session,
+                    validate_plan_agent_handoff=validate_plan_agent_handoff,
+                    print_fn=print_fn,
+                    attach_target=attach_target,
+                )
+            ),
+        ),
+    )
 
 
 def finalize_plan_agent_degraded_handoff(

@@ -191,6 +191,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_orchestrator_does_not_retain_degraded_handoff_finalization_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_finalize_plan_agent_degraded_handoff"))
 
+    def test_startup_orchestrator_does_not_retain_success_finalization_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_finalize_success"))
+
     def test_requirements_parallel_defaults_to_sequential_on_macos_with_cli_override(self) -> None:
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
         orchestrator = SimpleNamespace(runtime=runtime)
