@@ -15,6 +15,7 @@ from envctl_engine.planning.plan_agent.models import (
     PlanAgentLaunchResult,
 )
 from envctl_engine.planning.plan_agent.recovery import plan_agent_native_recovery_command
+from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
@@ -189,6 +190,65 @@ def prepare_plan_agent_dependencies_for_launch(
         project_count=len(results),
         duration_ms=round((monotonic_fn() - bootstrap_started) * 1000.0, 2),
     )
+
+
+def prepare_and_launch_plan_agent_worktrees(
+    runtime: Any,
+    session: StartupSession,
+    *,
+    resolve_launch_config_fn: Callable[..., object] = resolve_plan_agent_launch_config,
+    ensure_run_id: Callable[[StartupSession], None],
+    report_progress: Callable[..., None],
+    prepare_dependencies_for_launch: Callable[..., None] = prepare_plan_agent_dependencies_for_launch,
+    prepare_fn: Callable[..., object] = prepare_project_dependencies,
+    launch_with_spinner: Callable[..., object] = launch_plan_agent_terminals_with_spinner,
+    launch_fn: Callable[..., object] = launch_plan_agent_terminals,
+    suppress_progress_output: Callable[[Route], bool],
+    validate_attach_target_fn: Callable[..., PlanAgentAttachValidation],
+    emit_launch_state: Callable[..., None] | None = None,
+    should_fail_for_launch_result: Callable[..., bool] | None = None,
+    launch_failure_message: Callable[[object], str] | None = None,
+) -> int | None:
+    emit_launch_state = emit_launch_state or emit_plan_agent_launch_state
+    should_fail_for_launch_result = should_fail_for_launch_result or should_fail_for_plan_agent_launch_result
+    launch_failure_message = launch_failure_message or plan_agent_launch_failure_message
+    route = session.effective_route
+    if route.command != "plan" or bool(route.flags.get("planning_prs")):
+        return None
+    if not session.plan_agent_launch_requested:
+        return None
+    created_worktrees = tuple(session.pending_plan_agent_worktrees)
+    launch_config = resolve_launch_config_fn(runtime.config, getattr(runtime, "env", {}), route=route)
+    if bool(getattr(launch_config, "enabled", False)) and created_worktrees:
+        ensure_run_id(session)
+        prepare_dependencies_for_launch(
+            runtime,
+            session,
+            created_worktrees=created_worktrees,
+            launch_config=launch_config,
+            report_progress=report_progress,
+            prepare_fn=prepare_fn,
+        )
+    launch_result = launch_with_spinner(
+        runtime,
+        route=session.effective_route,
+        created_worktrees=created_worktrees,
+        launch_config=launch_config,
+        suppress_progress_output=suppress_progress_output(session.effective_route),
+        launch_fn=launch_fn,
+    )
+    session.plan_agent_launch_result = launch_result
+    session.plan_agent_attach_target = getattr(launch_result, "attach_target", None)
+    validate_plan_agent_handoff_with_attach_target(
+        runtime,
+        validate_attach_target_fn,
+        session,
+        phase="post_launch",
+    )
+    emit_launch_state(runtime, session, launch_result)
+    if should_fail_for_launch_result(session, launch_result):
+        raise RuntimeError(launch_failure_message(launch_result))
+    return None
 
 
 def emit_plan_agent_launch_state(runtime: Any, session: StartupSession, launch_result: object) -> None:

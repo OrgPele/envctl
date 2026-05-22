@@ -3,12 +3,9 @@ from __future__ import annotations
 import sys
 import threading
 from functools import partial
-from typing import cast
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
-from envctl_engine.planning.plan_agent.config import resolve_plan_agent_launch_config
 from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
-from envctl_engine.planning.plan_agent.models import PlanAgentLaunchResult
 from envctl_engine.planning.plan_agent.omx_transport import validate_plan_agent_attach_target
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
 from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
@@ -41,13 +38,11 @@ from envctl_engine.startup.run_reuse_support import (
 )
 from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse
 from envctl_engine.startup.plan_agent_handoff import (
-    emit_plan_agent_launch_state as emit_plan_agent_launch_state_impl,
+    prepare_and_launch_plan_agent_worktrees as prepare_and_launch_plan_agent_worktrees_impl,
     launch_plan_agent_terminals_with_spinner as launch_plan_agent_terminals_with_spinner_impl,
-    plan_agent_launch_failure_message as plan_agent_launch_failure_message_impl,
     prepare_plan_agent_dependencies_for_launch as prepare_plan_agent_dependencies_for_launch_impl,
     record_plan_agent_handoff_local_startup_failure as record_plan_agent_handoff_local_startup_failure_impl,
     should_degrade_to_validated_plan_agent_handoff,
-    should_fail_for_plan_agent_launch_result as should_fail_for_plan_agent_launch_result_impl,
     validate_plan_agent_handoff_with_attach_target,
 )
 from envctl_engine.startup.post_start_reconcile import reconcile_strict_truth_after_start
@@ -160,7 +155,25 @@ class StartupOrchestrator:
                     emit_snapshot=partial(emit_startup_plan_handoff_snapshot, self.runtime),
                 ),
                 partial(resolve_plan_dry_run_impl, self.runtime, print_fn=print),
-                self._prepare_and_launch_plan_agent_worktrees,
+                lambda _: prepare_and_launch_plan_agent_worktrees_impl(
+                    self.runtime,
+                    session,
+                    ensure_run_id=partial(ensure_run_id, self.runtime),
+                    report_progress=lambda route, message, *, project=None: report_progress(
+                        self.runtime,
+                        route,
+                        progress_lock=self._progress_lock,
+                        last_progress_message_by_project=self._last_progress_message_by_project,
+                        message=message,
+                        project=project,
+                    ),
+                    prepare_dependencies_for_launch=prepare_plan_agent_dependencies_for_launch_impl,
+                    prepare_fn=prepare_project_dependencies,
+                    launch_with_spinner=launch_plan_agent_terminals_with_spinner_impl,
+                    launch_fn=launch_plan_agent_terminals,
+                    suppress_progress_output=suppress_progress_output,
+                    validate_attach_target_fn=validate_plan_agent_attach_target,
+                ),
                 lambda _: self._resolve_run_reuse(session, terminate_restart_orphans=terminate_restart_orphans),
                 self._resolve_disabled_startup_mode,
             ):
@@ -219,60 +232,6 @@ class StartupOrchestrator:
             return finalize_failure(error=str(exc))
         except Exception as exc:
             return finalize_failure(error=str(exc))
-
-    def _prepare_and_launch_plan_agent_worktrees(self, session: StartupSession) -> int | None:
-        route = session.effective_route
-        if route.command != "plan" or bool(route.flags.get("planning_prs")):
-            return None
-        if not session.plan_agent_launch_requested:
-            return None
-        created_worktrees = tuple(session.pending_plan_agent_worktrees)
-        rt = self.runtime
-        launch_config = resolve_plan_agent_launch_config(rt.config, getattr(rt, "env", {}), route=route)
-        if launch_config.enabled and created_worktrees:
-            ensure_run_id(self.runtime, session)
-
-            def report_progress_fn(route: Route, message: str, *, project: str | None = None) -> None:
-                report_progress(
-                    self.runtime,
-                    route,
-                    progress_lock=self._progress_lock,
-                    last_progress_message_by_project=self._last_progress_message_by_project,
-                    message=message,
-                    project=project,
-                )
-
-            prepare_plan_agent_dependencies_for_launch_impl(
-                rt,
-                session,
-                created_worktrees=created_worktrees,
-                launch_config=launch_config,
-                report_progress=report_progress_fn,
-                prepare_fn=prepare_project_dependencies,
-            )
-        launch_result = cast(
-            PlanAgentLaunchResult,
-            launch_plan_agent_terminals_with_spinner_impl(
-                self.runtime,
-                route=session.effective_route,
-                created_worktrees=created_worktrees,
-                launch_config=launch_config,
-                suppress_progress_output=suppress_progress_output(session.effective_route),
-                launch_fn=launch_plan_agent_terminals,
-            ),
-        )
-        session.plan_agent_launch_result = launch_result
-        session.plan_agent_attach_target = launch_result.attach_target
-        validate_plan_agent_handoff_with_attach_target(
-            self.runtime,
-            validate_plan_agent_attach_target,
-            session,
-            phase="post_launch",
-        )
-        emit_plan_agent_launch_state_impl(self.runtime, session, launch_result)
-        if should_fail_for_plan_agent_launch_result_impl(session, launch_result):
-            raise RuntimeError(plan_agent_launch_failure_message_impl(launch_result))
-        return None
 
     def _resolve_disabled_startup_mode(self, session: StartupSession) -> int | None:
         validate_plan_agent_handoff = partial(

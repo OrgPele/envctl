@@ -20,6 +20,7 @@ from envctl_engine.startup.plan_agent_handoff import (
     plan_agent_launch_spinner_success_message,
     plan_agent_launch_failure_message,
     plan_agent_handoff_validation_required,
+    prepare_and_launch_plan_agent_worktrees,
     prepare_plan_agent_dependencies_for_launch,
     record_plan_agent_handoff_local_startup_failure,
     record_stale_plan_agent_handoff,
@@ -407,6 +408,60 @@ class PlanAgentHandoffTests(unittest.TestCase):
         self.assertEqual(events[2][0], "planning.dependency_bootstrap.finish")
         self.assertEqual(events[2][1]["status"], "ok")
         self.assertEqual(events[2][1]["project_count"], 1)
+
+    def test_prepare_and_launch_plan_agent_worktrees_runs_full_launch_lifecycle(self) -> None:
+        session = _session(args=["plan", "--omx"])
+        session.plan_agent_launch_requested = True
+        session.pending_plan_agent_worktrees = (SimpleNamespace(name="feature-a-1"),)
+        runtime = SimpleNamespace(config=SimpleNamespace(), env={}, _emit=lambda event, **payload: None)
+        launch_result = SimpleNamespace(status="launched", reason="ok", attach_target=SimpleNamespace(session_name="s"))
+        calls: list[tuple[str, object]] = []
+
+        result = prepare_and_launch_plan_agent_worktrees(
+            runtime,
+            session,
+            resolve_launch_config_fn=lambda config, env, *, route: SimpleNamespace(enabled=True),
+            ensure_run_id=lambda sess: calls.append(("ensure_run_id", sess)),
+            report_progress=lambda *args, **kwargs: calls.append(("progress", kwargs.get("project"))),
+            prepare_dependencies_for_launch=lambda *args, **kwargs: calls.append(("prepare", kwargs["created_worktrees"])),
+            launch_with_spinner=lambda *args, **kwargs: calls.append(("launch", kwargs["created_worktrees"]))
+            or launch_result,
+            suppress_progress_output=lambda route: False,
+            validate_attach_target_fn=lambda *args, **kwargs: PlanAgentAttachValidation(True, "ok"),
+            emit_launch_state=lambda rt, sess, launch: calls.append(("emit", launch)),
+        )
+
+        self.assertIsNone(result)
+        self.assertIs(session.plan_agent_launch_result, launch_result)
+        self.assertIs(session.plan_agent_attach_target, launch_result.attach_target)
+        self.assertEqual(
+            calls,
+            [
+                ("ensure_run_id", session),
+                ("prepare", session.pending_plan_agent_worktrees),
+                ("launch", session.pending_plan_agent_worktrees),
+                ("emit", launch_result),
+            ],
+        )
+
+    def test_prepare_and_launch_plan_agent_worktrees_raises_failed_launch_message(self) -> None:
+        session = _session(args=["plan", "--tmux"])
+        session.plan_agent_launch_requested = True
+        failed_launch = SimpleNamespace(status="failed", reason="missing cmux", attach_target=None, outcomes=())
+        runtime = SimpleNamespace(config=SimpleNamespace(), env={}, _emit=lambda event, **payload: None)
+
+        with self.assertRaisesRegex(RuntimeError, "Plan agent session failed to start: missing cmux"):
+            prepare_and_launch_plan_agent_worktrees(
+                runtime,
+                session,
+                resolve_launch_config_fn=lambda config, env, *, route: SimpleNamespace(enabled=False),
+                ensure_run_id=lambda session: None,
+                report_progress=lambda *args, **kwargs: None,
+                launch_with_spinner=lambda *args, **kwargs: failed_launch,
+                suppress_progress_output=lambda route: False,
+                validate_attach_target_fn=lambda *args, **kwargs: PlanAgentAttachValidation(True, "ok"),
+                emit_launch_state=lambda *args, **kwargs: None,
+            )
 
     def test_launch_plan_agent_terminals_with_spinner_emits_success_lifecycle(self) -> None:
         route = parse_route(["plan", "--tmux"], env={})

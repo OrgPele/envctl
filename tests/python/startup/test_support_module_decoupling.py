@@ -155,6 +155,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_orchestrator_does_not_retain_plan_agent_launch_spinner_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_launch_plan_agent_terminals_with_spinner"))
 
+    def test_startup_orchestrator_does_not_retain_plan_agent_launch_sequence_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_prepare_and_launch_plan_agent_worktrees"))
+
     def test_startup_orchestrator_does_not_retain_prepare_execution_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_prepare_execution"))
 
