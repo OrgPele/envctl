@@ -1,8 +1,99 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from typing import Any
 
+from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
+from envctl_engine.ui.spinner import spinner, use_spinner_policy
+from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 from envctl_engine.startup.session import LocalStartupFailure, StartupSession
+
+
+def launch_plan_agent_terminals_with_spinner(
+    runtime: Any,
+    *,
+    route: object,
+    created_worktrees: tuple[object, ...],
+    launch_config: object,
+    suppress_progress_output: bool,
+    launch_fn: Callable[..., object] = launch_plan_agent_terminals,
+    resolve_spinner_policy_fn: Callable[[dict[str, object]], object] = resolve_spinner_policy,
+    emit_spinner_policy_fn: Callable[..., None] = emit_spinner_policy,
+    spinner_fn: Callable[..., AbstractContextManager[Any]] = spinner,
+    use_spinner_policy_fn: Callable[[object], AbstractContextManager[object]] = use_spinner_policy,
+) -> object:
+    spinner_policy = resolve_spinner_policy_fn(dict(runtime.env))
+    use_launch_spinner = (
+        bool(getattr(spinner_policy, "enabled", False))
+        and bool(getattr(launch_config, "enabled", False))
+        and bool(created_worktrees)
+        and not suppress_progress_output
+    )
+    emit_spinner_policy_fn(
+        runtime._emit,
+        spinner_policy,
+        context={"component": "startup_orchestrator", "op_id": "plan_agent.launch"},
+    )
+    if not use_launch_spinner:
+        return launch_fn(runtime, route=route, created_worktrees=created_worktrees)
+
+    launch_message = plan_agent_launch_spinner_message(launch_config, count=len(created_worktrees))
+    with use_spinner_policy_fn(spinner_policy), spinner_fn(launch_message, enabled=True) as active_spinner:
+        runtime._emit(
+            "ui.spinner.lifecycle",
+            component="startup_orchestrator",
+            op_id="plan_agent.launch",
+            state="start",
+            message=launch_message,
+        )
+        try:
+            launch_result = launch_fn(runtime, route=route, created_worktrees=created_worktrees)
+        except Exception:
+            failure_message = "AI session launch failed"
+            active_spinner.fail(failure_message)
+            runtime._emit(
+                "ui.spinner.lifecycle",
+                component="startup_orchestrator",
+                op_id="plan_agent.launch",
+                state="fail",
+                message=failure_message,
+            )
+            runtime._emit(
+                "ui.spinner.lifecycle",
+                component="startup_orchestrator",
+                op_id="plan_agent.launch",
+                state="stop",
+            )
+            raise
+        status = str(getattr(launch_result, "status", "")).strip().lower()
+        if status == "failed":
+            failure_message = "AI session launch failed"
+            active_spinner.fail(failure_message)
+            runtime._emit(
+                "ui.spinner.lifecycle",
+                component="startup_orchestrator",
+                op_id="plan_agent.launch",
+                state="fail",
+                message=failure_message,
+            )
+        else:
+            success_message = plan_agent_launch_spinner_success_message(launch_config, count=len(created_worktrees))
+            active_spinner.succeed(success_message)
+            runtime._emit(
+                "ui.spinner.lifecycle",
+                component="startup_orchestrator",
+                op_id="plan_agent.launch",
+                state="success",
+                message=success_message,
+            )
+        runtime._emit(
+            "ui.spinner.lifecycle",
+            component="startup_orchestrator",
+            op_id="plan_agent.launch",
+            state="stop",
+        )
+        return launch_result
 
 
 def emit_plan_agent_launch_state(runtime: Any, session: StartupSession, launch_result: object) -> None:

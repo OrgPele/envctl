@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 import unittest
 
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.startup.plan_agent_handoff import (
     emit_plan_agent_launch_state,
+    launch_plan_agent_terminals_with_spinner,
     local_startup_failure_reason,
     plan_agent_launch_spinner_label,
     plan_agent_launch_spinner_message,
@@ -205,6 +207,82 @@ class PlanAgentHandoffTests(unittest.TestCase):
             plan_agent_launch_spinner_success_message(SimpleNamespace(transport="omx", cli="codex"), count=1),
             "OMX-managed Codex AI session ready",
         )
+
+    def test_launch_plan_agent_terminals_without_spinner_delegates_directly(self) -> None:
+        route = parse_route(["plan", "--tmux"], env={})
+        runtime = SimpleNamespace(env={}, _emit=lambda event, **payload: None)
+        created_worktrees = (SimpleNamespace(name="feature-a-1"),)
+        launch_config = SimpleNamespace(enabled=True, transport="tmux", cli="codex")
+        calls: list[tuple[object, object, tuple[object, ...]]] = []
+        launch_result = SimpleNamespace(status="launched", reason="ok")
+
+        def _launch(rt: object, *, route: object, created_worktrees: tuple[object, ...]) -> object:
+            calls.append((rt, route, created_worktrees))
+            return launch_result
+
+        result = launch_plan_agent_terminals_with_spinner(
+            runtime,
+            route=route,
+            created_worktrees=created_worktrees,
+            launch_config=launch_config,
+            suppress_progress_output=True,
+            launch_fn=_launch,
+        )
+
+        self.assertIs(result, launch_result)
+        self.assertEqual(calls, [(runtime, route, created_worktrees)])
+
+    def test_launch_plan_agent_terminals_with_spinner_emits_success_lifecycle(self) -> None:
+        route = parse_route(["plan", "--tmux"], env={})
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(env={"ENVCTL_SPINNER": "1"}, _emit=lambda event, **payload: events.append((event, payload)))
+        created_worktrees = (SimpleNamespace(name="feature-a-1"), SimpleNamespace(name="feature-a-2"))
+        launch_config = SimpleNamespace(enabled=True, transport="tmux", cli="codex")
+        spinner_actions: list[tuple[str, str]] = []
+        launch_result = SimpleNamespace(status="launched", reason="ok")
+
+        class _FakeSpinner:
+            def __enter__(self) -> "_FakeSpinner":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def succeed(self, message: str) -> None:
+                spinner_actions.append(("success", message))
+
+            def fail(self, message: str) -> None:
+                spinner_actions.append(("fail", message))
+
+        def _spinner(message: str, *, enabled: bool) -> _FakeSpinner:
+            spinner_actions.append(("start", f"{message}:{enabled}"))
+            return _FakeSpinner()
+
+        @contextmanager
+        def _use_policy(policy: object):
+            yield
+
+        def _launch(rt: object, *, route: object, created_worktrees: tuple[object, ...]) -> object:
+            return launch_result
+
+        result = launch_plan_agent_terminals_with_spinner(
+            runtime,
+            route=route,
+            created_worktrees=created_worktrees,
+            launch_config=launch_config,
+            suppress_progress_output=False,
+            launch_fn=_launch,
+            resolve_spinner_policy_fn=lambda env: SimpleNamespace(enabled=True),
+            emit_spinner_policy_fn=lambda emit, policy, context: emit("spinner.policy", **context),
+            spinner_fn=_spinner,
+            use_spinner_policy_fn=_use_policy,
+        )
+
+        self.assertIs(result, launch_result)
+        self.assertIn(("start", "Launching Codex AI sessions...:True"), spinner_actions)
+        self.assertIn(("success", "Codex AI sessions ready"), spinner_actions)
+        lifecycle_events = [event for event in events if event[0] == "ui.spinner.lifecycle"]
+        self.assertEqual([event[1]["state"] for event in lifecycle_events], ["start", "success", "stop"])
 
 
 if __name__ == "__main__":
