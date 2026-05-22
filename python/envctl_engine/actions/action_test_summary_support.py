@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
@@ -18,12 +18,110 @@ from envctl_engine.test_output.failure_summary import extract_failure_summary_ex
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.path_links import render_path_for_terminal
+from envctl_engine.state.runtime_map import build_runtime_map
 
 
 def short_failed_summary_path(*, run_dir: Path, project_name: str) -> Path:
     digest = hashlib.sha1(project_name.encode("utf-8")).hexdigest()[:10]
     run_root = run_dir.parent.parent
     return run_root / f"ft_{digest}.txt"
+
+
+def persist_test_summary_artifacts(
+    *,
+    runtime: object,
+    route: object,
+    targets: list[object],
+    outcomes: list[dict[str, object]],
+    new_test_results_run_dir: Callable[[object, str], Path] | None = None,
+    write_failed_tests_summary_fn: Callable[..., dict[str, object]] | None = None,
+    runtime_map_builder: Callable[..., object] = build_runtime_map,
+) -> dict[str, dict[str, object]]:
+    if not targets:
+        return {}
+
+    project_roots = _project_roots_from_targets(targets)
+    if not project_roots:
+        project_roots = _project_roots_from_outcomes(outcomes)
+    if not project_roots:
+        return {}
+
+    state = runtime.load_existing_state(mode=getattr(route, "mode", None))  # type: ignore[attr-defined]
+    if state is None:
+        return {}
+
+    run_dir_builder = new_test_results_run_dir or new_test_results_run_dir_path
+    run_dir = run_dir_builder(runtime, str(getattr(state, "run_id")))
+    existing = getattr(state, "metadata", {}).get("project_test_summaries")
+    metadata = dict(existing) if isinstance(existing, dict) else {}
+    writer = write_failed_tests_summary_fn or write_failed_tests_summary
+    summaries: dict[str, dict[str, object]] = {}
+    for project_name, project_root in project_roots.items():
+        previous_entry = metadata.get(project_name)
+        summaries[project_name] = writer(
+            run_dir=run_dir,
+            project_name=project_name,
+            project_root=project_root,
+            outcomes=outcomes,
+            previous_entry=previous_entry if isinstance(previous_entry, dict) else None,
+        )
+
+    metadata.update(summaries)
+    state.metadata["project_test_summaries"] = metadata
+    state.metadata["project_test_results_root"] = str(run_dir)
+    state.metadata["project_test_results_updated_at"] = datetime.now(tz=UTC).isoformat()
+
+    runtime.state_repository.save_resume_state(  # type: ignore[attr-defined]
+        state=state,
+        emit=runtime.emit,  # type: ignore[attr-defined]
+        runtime_map_builder=runtime_map_builder,
+    )
+    runtime.emit(  # type: ignore[attr-defined]
+        "test.summary.persisted",
+        mode=getattr(route, "mode", None),
+        projects=sorted(summaries),
+        run_dir=str(run_dir),
+    )
+    return summaries
+
+
+def new_test_results_run_dir_path(runtime: object, run_id: str) -> Path:
+    results_root = runtime.state_repository.test_results_dir_path(run_id)  # type: ignore[attr-defined]
+    results_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(tz=UTC).strftime("run_%Y%m%d_%H%M%S")
+    candidate = results_root / stamp
+    if not candidate.exists():
+        candidate.mkdir(parents=True, exist_ok=True)
+        return candidate
+    suffix = 1
+    while True:
+        suffixed = results_root / f"{stamp}_{suffix}"
+        if not suffixed.exists():
+            suffixed.mkdir(parents=True, exist_ok=True)
+            return suffixed
+        suffix += 1
+
+
+def _project_roots_from_targets(targets: list[object]) -> dict[str, Path]:
+    project_roots: dict[str, Path] = {}
+    for target in targets:
+        name = str(getattr(target, "name", "")).strip()
+        root_raw = str(getattr(target, "root", "")).strip()
+        if not name or not root_raw:
+            continue
+        project_roots[name] = Path(root_raw)
+    return project_roots
+
+
+def _project_roots_from_outcomes(outcomes: list[dict[str, object]]) -> dict[str, Path]:
+    project_roots: dict[str, Path] = {}
+    for outcome in outcomes:
+        name = str(outcome.get("project_name", "")).strip()
+        root_raw = str(outcome.get("project_root", "")).strip()
+        if not name or not root_raw:
+            continue
+        project_roots[name] = Path(root_raw)
+    return project_roots
 
 
 def write_failed_tests_summary(

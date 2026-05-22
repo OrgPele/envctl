@@ -12,6 +12,7 @@ from envctl_engine.actions.action_test_summary_support import (
     collect_failed_test_manifest_entries,
     collect_failed_tests,
     format_summary_error_lines,
+    persist_test_summary_artifacts,
     print_test_suite_overview,
     suite_display_name,
     write_failed_tests_summary,
@@ -101,6 +102,50 @@ class ActionTestSummarySupportTests(unittest.TestCase):
             self.assertIn("AssertionError: boom", summary_path.read_text(encoding="utf-8"))
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["git_state"], {"head": "HEAD", "status_hash": "hash", "status_lines": 2})
+
+    def test_persist_test_summary_artifacts_updates_state_metadata_and_emits_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_dir = root / "runtime" / "runs" / "run-1" / "test-results" / "run-current"
+            saved: list[object] = []
+            events: list[tuple[str, dict[str, object]]] = []
+            state = SimpleNamespace(
+                run_id="run-1",
+                metadata={"project_test_summaries": {"Other": {"status": "passed"}}},
+            )
+            runtime = SimpleNamespace(
+                load_existing_state=lambda mode: state if mode == "main" else None,
+                state_repository=SimpleNamespace(save_resume_state=lambda **kwargs: saved.append(kwargs["state"])),
+                emit=lambda event, **payload: events.append((event, payload)),
+            )
+            route = SimpleNamespace(mode="main")
+            target = SimpleNamespace(name="Main", root=str(root / "repo"))
+
+            summaries = persist_test_summary_artifacts(
+                runtime=runtime,
+                route=route,
+                targets=[target],
+                outcomes=[{"project_name": "Main", "project_root": str(root / "repo"), "returncode": 0}],
+                new_test_results_run_dir=lambda _runtime, run_id: run_dir,
+                write_failed_tests_summary_fn=lambda **kwargs: {
+                    "status": "passed",
+                    "run_dir": str(kwargs["run_dir"]),
+                    "previous": kwargs["previous_entry"],
+                },
+                runtime_map_builder=lambda *_args, **_kwargs: {},
+            )
+
+            self.assertEqual(summaries["Main"]["status"], "passed")
+            self.assertEqual(summaries["Main"]["previous"], None)
+            self.assertEqual(state.metadata["project_test_summaries"]["Other"]["status"], "passed")
+            self.assertEqual(state.metadata["project_test_summaries"]["Main"]["run_dir"], str(run_dir))
+            self.assertEqual(state.metadata["project_test_results_root"], str(run_dir))
+            self.assertIn("project_test_results_updated_at", state.metadata)
+            self.assertEqual(saved, [state])
+            self.assertEqual(
+                events,
+                [("test.summary.persisted", {"mode": "main", "projects": ["Main"], "run_dir": str(run_dir)})],
+            )
 
     def test_suite_display_name_keeps_failed_only_suffix(self) -> None:
         self.assertEqual(suite_display_name("backend_pytest", failed_only=True), "Backend (pytest, failed only)")

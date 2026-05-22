@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import concurrent.futures
 from pathlib import Path
 import sys
@@ -71,6 +70,8 @@ from envctl_engine.actions.action_test_summary_support import (
     is_exception_start as is_exception_start_impl,
     is_user_code_frame as is_user_code_frame_impl,
     looks_like_terminal_chrome as looks_like_terminal_chrome_impl,
+    new_test_results_run_dir_path as new_test_results_run_dir_path_impl,
+    persist_test_summary_artifacts as persist_test_summary_artifacts_impl,
     print_test_suite_overview as print_test_suite_overview_impl,
     resolve_failed_test_error as resolve_failed_test_error_impl,
     short_failed_summary_path as short_failed_summary_path_impl,
@@ -933,77 +934,18 @@ class ActionCommandOrchestrator:
         targets: list[object],
         outcomes: list[dict[str, object]],
     ) -> dict[str, dict[str, object]]:
-        if not targets:
-            return {}
-
-        rt = self.runtime
-        project_roots: dict[str, Path] = {}
-        for target in targets:
-            name = str(getattr(target, "name", "")).strip()
-            root_raw = str(getattr(target, "root", "")).strip()
-            if not name or not root_raw:
-                continue
-            project_roots[name] = Path(root_raw)
-        if not project_roots:
-            for outcome in outcomes:
-                name = str(outcome.get("project_name", "")).strip()
-                root_raw = str(outcome.get("project_root", "")).strip()
-                if not name or not root_raw:
-                    continue
-                project_roots[name] = Path(root_raw)
-        if not project_roots:
-            return {}
-
-        state = rt.load_existing_state(mode=route.mode)
-        if state is None:
-            return {}
-
-        run_dir = self._new_test_results_run_dir(state.run_id)  # type: ignore[attr-defined]
-        existing = state.metadata.get("project_test_summaries")
-        metadata = dict(existing) if isinstance(existing, dict) else {}
-        summaries: dict[str, dict[str, object]] = {}
-        for project_name, project_root in project_roots.items():
-            summaries[project_name] = self._write_failed_tests_summary(
-                run_dir=run_dir,
-                project_name=project_name,
-                project_root=project_root,
-                outcomes=outcomes,
-                previous_entry=metadata.get(project_name) if isinstance(metadata.get(project_name), dict) else None,
-            )
-
-        metadata.update(summaries)
-        state.metadata["project_test_summaries"] = metadata
-        state.metadata["project_test_results_root"] = str(run_dir)
-        state.metadata["project_test_results_updated_at"] = datetime.now(tz=UTC).isoformat()
-
-        rt.state_repository.save_resume_state(
-            state=state,
-            emit=rt.emit,
+        return persist_test_summary_artifacts_impl(
+            runtime=self.runtime,
+            route=route,
+            targets=targets,
+            outcomes=outcomes,
+            new_test_results_run_dir=lambda runtime, run_id: self._new_test_results_run_dir(run_id),
+            write_failed_tests_summary_fn=self._write_failed_tests_summary,
             runtime_map_builder=build_runtime_map,
         )
-        rt.emit(
-            "test.summary.persisted",
-            mode=route.mode,
-            projects=sorted(summaries),
-            run_dir=str(run_dir),
-        )
-        return summaries
 
     def _new_test_results_run_dir(self, run_id: str) -> Path:
-        results_root = self.runtime.state_repository.test_results_dir_path(run_id)
-        results_root.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(tz=UTC).strftime("run_%Y%m%d_%H%M%S")
-        candidate = results_root / stamp
-        if not candidate.exists():
-            candidate.mkdir(parents=True, exist_ok=True)
-            return candidate
-        suffix = 1
-        while True:
-            suffixed = results_root / f"{stamp}_{suffix}"
-            if not suffixed.exists():
-                suffixed.mkdir(parents=True, exist_ok=True)
-                return suffixed
-            suffix += 1
+        return new_test_results_run_dir_path_impl(self.runtime, run_id)
 
     def _write_failed_tests_summary(
         self,
