@@ -12,6 +12,9 @@ from typing import Any, Callable, Mapping, cast
 from envctl_engine.actions.actions_analysis import default_review_command
 from envctl_engine.actions.actions_git import default_commit_command, default_pr_command
 from envctl_engine.actions.action_command_support import service_types_from_route_services
+from envctl_engine.actions.action_command_execution_support import (
+    execute_action_command as execute_action_command_impl,
+)
 from envctl_engine.actions.action_migrate_support import (
     MigrateProjectContext as _MigrateProjectContext,
     MigrateResultRecord as _MigrateResultRecord,
@@ -271,142 +274,14 @@ class ActionCommandOrchestrator:
         return short_failed_summary_path_impl(run_dir=run_dir, project_name=project_name)
 
     def execute(self, route: Route) -> int:
-        rt = self.runtime
-        if route.command == "self-destruct-worktree":
-            code = self.run_self_destruct_worktree_action(route)
-            rt.emit("action.command.finish", command=route.command, code=code)
-            return code
-        if route.command in {"delete-worktree", "blast-worktree"}:
-            code = self.run_delete_worktree_action(route)
-            rt.emit("action.command.finish", command=route.command, code=code)
-            return code
-
-        targets, error = self.resolve_targets(route, trees_only=False)
-        if error is not None:
-            print(error)
-            rt.emit("action.command.finish", command=route.command, code=1, error=error)
-            return 1
-
-        handler_map: dict[str, Callable[[Route, list[object]], int]] = {
-            "test": self.run_test_action,
-            "pr": self.run_pr_action,
-            "commit": self.run_commit_action,
-            "review": self.run_review_action,
-            "migrate": self.run_migrate_action,
-        }
-        handler = handler_map.get(route.command)
-        if handler is None:
-            return rt.unsupported_command(route.command)
-
-        self._deferred_post_action_output = None
-        spinner_policy = resolve_spinner_policy(getattr(rt, "env", {}))
-        op_id = f"action.{route.command}"
-        start_status = self._command_start_status(route.command, targets)
-        suppress_action_spinner = bool(route.flags.get("interactive_command"))
-        action_spinner_enabled = spinner_policy.enabled and not suppress_action_spinner
-        emit_spinner_policy(
-            getattr(rt.raw_runtime, "_emit", None),
-            spinner_policy,
-            context={"component": "action.command", "command": route.command, "op_id": op_id},
+        return execute_action_command_impl(
+            self,
+            route,
+            spinner_factory=spinner,
+            resolve_spinner_policy_fn=resolve_spinner_policy,
+            emit_spinner_policy_fn=emit_spinner_policy,
+            use_spinner_policy_fn=use_spinner_policy,
         )
-        if suppress_action_spinner:
-            rt.emit(
-                "ui.spinner.disabled",
-                component="action.command",
-                command=route.command,
-                op_id=op_id,
-                reason="interactive_command_spinner_suppressed",
-            )
-
-        rt.emit("action.command.start", command=route.command, mode=route.mode)
-        self._emit_status(start_status)
-        with (
-            use_spinner_policy(spinner_policy),
-            spinner(
-                start_status,
-                enabled=action_spinner_enabled,
-                start_immediately=False,
-            ) as active_spinner,
-        ):
-            if action_spinner_enabled:
-                active_spinner.start()
-                rt.emit(
-                    "ui.spinner.lifecycle",
-                    component="action.command",
-                    command=route.command,
-                    op_id=op_id,
-                    state="start",
-                    message=start_status,
-                )
-            restore_spinner_bridge = self._noop_restore
-            if action_spinner_enabled:
-                restore_spinner_bridge = self._install_action_spinner_status_bridge(
-                    command=route.command,
-                    op_id=op_id,
-                    active_spinner=active_spinner,
-                )
-            try:
-                try:
-                    code = handler(route, targets)
-                finally:
-                    restore_spinner_bridge()
-            except KeyboardInterrupt:
-                if action_spinner_enabled:
-                    interrupted = f"{route.command} interrupted"
-                    active_spinner.fail(interrupted)
-                    rt.emit(
-                        "ui.spinner.lifecycle",
-                        component="action.command",
-                        command=route.command,
-                        op_id=op_id,
-                        state="fail",
-                        message=interrupted,
-                    )
-                    rt.emit(
-                        "ui.spinner.lifecycle",
-                        component="action.command",
-                        command=route.command,
-                        op_id=op_id,
-                        state="stop",
-                    )
-                rt.emit("action.command.finish", command=route.command, code=2)
-                raise
-            if action_spinner_enabled:
-                if code == 0:
-                    completion = f"{route.command} completed"
-                    active_spinner.succeed(completion)
-                    rt.emit(
-                        "ui.spinner.lifecycle",
-                        component="action.command",
-                        command=route.command,
-                        op_id=op_id,
-                        state="success",
-                        message=completion,
-                    )
-                else:
-                    failure = f"{route.command} failed"
-                    active_spinner.fail(failure)
-                    rt.emit(
-                        "ui.spinner.lifecycle",
-                        component="action.command",
-                        command=route.command,
-                        op_id=op_id,
-                        state="fail",
-                        message=failure,
-                    )
-                rt.emit(
-                    "ui.spinner.lifecycle",
-                    component="action.command",
-                    command=route.command,
-                    op_id=op_id,
-                    state="stop",
-                )
-        deferred_output = self._deferred_post_action_output
-        self._deferred_post_action_output = None
-        if deferred_output is not None:
-            deferred_output()
-        rt.emit("action.command.finish", command=route.command, code=code)
-        return code
 
     def resolve_targets(self, route: Route, *, trees_only: bool) -> tuple[list[object], str | None]:
         return resolve_action_targets_impl(
