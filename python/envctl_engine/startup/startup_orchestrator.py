@@ -44,6 +44,7 @@ from envctl_engine.startup.run_reuse_support import (
     dashboard_stopped_service_entries as dashboard_stopped_service_entries_impl,
     fresh_start_replacement_services as fresh_start_replacement_services_impl,
     metadata_without_dashboard_stopped_services as metadata_without_dashboard_stopped_services_impl,
+    run_reuse_debug_orch_groups as run_reuse_debug_orch_groups_impl,
 )
 from envctl_engine.startup.plan_agent_handoff import (
     emit_plan_agent_launch_state as emit_plan_agent_launch_state_impl,
@@ -577,13 +578,7 @@ class StartupOrchestrator:
         route = session.effective_route
         runtime_mode = session.runtime_mode
         requested_command = session.requested_command
-        if requested_command == "plan":
-            raw_orch_group = str(rt.env.get("ENVCTL_DEBUG_PLAN_ORCH_GROUP", "")).strip().lower()
-            debug_orch_groups = {
-                token.strip() for token in raw_orch_group.replace("+", ",").split(",") if token.strip()
-            }
-        else:
-            debug_orch_groups = set()
+        debug_orch_groups = run_reuse_debug_orch_groups_impl(rt, requested_command=requested_command)
         if requested_command != "restart":
             reuse_started = time.monotonic()
             decision = cast(

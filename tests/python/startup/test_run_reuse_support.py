@@ -8,10 +8,17 @@ from envctl_engine.startup.run_reuse_support import (
     dashboard_stopped_service_entries,
     fresh_start_replacement_services,
     metadata_without_dashboard_stopped_services,
+    run_reuse_debug_orch_groups,
 )
 
 
 class RunReuseSupportTests(unittest.TestCase):
+    def test_run_reuse_debug_orch_groups_only_apply_to_plan_commands(self) -> None:
+        runtime = SimpleNamespace(env={"ENVCTL_DEBUG_PLAN_ORCH_GROUP": "alpha+ beta,gamma ,,"})
+
+        self.assertEqual(run_reuse_debug_orch_groups(runtime, requested_command="plan"), {"alpha", "beta", "gamma"})
+        self.assertEqual(run_reuse_debug_orch_groups(runtime, requested_command="start"), set())
+
     def test_dashboard_stopped_service_entries_normalizes_valid_backend_frontend_entries(self) -> None:
         state = SimpleNamespace(
             metadata={

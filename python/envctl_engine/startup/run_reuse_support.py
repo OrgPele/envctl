@@ -558,3 +558,8 @@ def _auto_resume_start_enabled(route: Route) -> bool:
     if bool(route.flags.get("setup_worktree")) or bool(route.flags.get("setup_worktrees")):
         return False
     return True
+def run_reuse_debug_orch_groups(runtime: Any, *, requested_command: str) -> set[str]:
+    if requested_command != "plan":
+        return set()
+    raw_orch_group = str(getattr(runtime, "env", {}).get("ENVCTL_DEBUG_PLAN_ORCH_GROUP", "")).strip().lower()
+    return {token.strip() for token in raw_orch_group.replace("+", ",").split(",") if token.strip()}
