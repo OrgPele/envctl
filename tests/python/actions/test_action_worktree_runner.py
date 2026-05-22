@@ -10,7 +10,11 @@ from unittest.mock import patch
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.actions import action_worktree_runner  # noqa: E402
-from envctl_engine.actions.action_worktree_runner import run_delete_worktree_action  # noqa: E402
+from envctl_engine.actions.action_worktree_runner import (  # noqa: E402
+    repo_root_from_worktree_layout,
+    resolve_current_worktree_target,
+    run_delete_worktree_action,
+)
 from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator  # noqa: E402
 from envctl_engine.runtime.command_router import parse_route  # noqa: E402
 
@@ -63,6 +67,36 @@ class _SpinnerContext:
 
 
 class ActionWorktreeRunnerTests(unittest.TestCase):
+    def test_repo_root_from_worktree_layout_detects_nested_and_flat_tree_layouts(self) -> None:
+        repo = Path("/tmp/repo").resolve()
+
+        self.assertEqual(repo_root_from_worktree_layout(repo / "trees" / "feature-a" / "1", "trees"), repo)
+        self.assertEqual(repo_root_from_worktree_layout(repo / "trees-feature-a-1", "trees"), repo)
+        self.assertIsNone(repo_root_from_worktree_layout(Path("/tmp/other"), ""))
+
+    def test_resolve_current_worktree_target_discovers_matching_current_tree(self) -> None:
+        repo = Path("/tmp/repo").resolve()
+        tree_root = repo / "trees" / "feature-a" / "1"
+        runtime = SimpleNamespace(
+            env={"ENVCTL_INVOCATION_CWD": str(tree_root)},
+            raw_runtime=SimpleNamespace(config=SimpleNamespace(base_dir=repo, trees_dir_name="trees")),
+        )
+
+        target = resolve_current_worktree_target(
+            runtime=runtime,
+            require_configured_main_root=True,
+            current_cwd=lambda: Path("/should/not/be/used"),
+            discover_tree_projects_fn=lambda repo_root, trees_dir_name: [("feature-a-1", tree_root)]
+            if repo_root == repo and trees_dir_name == "trees"
+            else [],
+            main_repo_root_for_linked_worktree_fn=lambda _worktree_root: None,
+            git_main_repo_root_for_worktree_fn=lambda _worktree_root, trees_dir_name=None: repo,
+        )
+
+        self.assertIsNotNone(target)
+        self.assertEqual(getattr(target, "name"), "feature-a-1")
+        self.assertEqual(getattr(target, "root"), tree_root)
+
     def test_run_delete_worktree_action_runs_cleanup_and_delete(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
