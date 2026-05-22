@@ -61,8 +61,14 @@ from envctl_engine.actions.action_test_service_support import (
 )
 from envctl_engine.actions.action_test_plan_support import (
     build_test_execution_specs_for_route as build_test_execution_specs_for_route_impl,
+    command_start_status as command_start_status_impl,
     is_legacy_tree_test_script as is_legacy_tree_test_script_impl,
+    parallel_test_worker_count as parallel_test_worker_count_impl,
+    parallel_tests_enabled as parallel_tests_enabled_impl,
+    render_test_execution_status as render_test_execution_status_impl,
+    render_test_scope_status as render_test_scope_status_impl,
     select_test_services as select_test_services_impl,
+    suite_spinner_policy_enabled as suite_spinner_policy_enabled_impl,
 )
 from envctl_engine.actions.project_action_report_support import (
     first_output_line as first_output_line_impl,
@@ -96,7 +102,6 @@ from envctl_engine.actions.action_worktree_runner import (
 from envctl_engine.planning import discover_tree_projects
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.launcher_support import main_repo_root_for_linked_worktree
-from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.service_bootstrap_domain import (
     _resolve_backend_env_contract,
 )
@@ -1177,117 +1182,27 @@ if result.returncode != 0:
 
     @staticmethod
     def _command_start_status(command_name: str, targets: list[object]) -> str:
-        target_names = [str(getattr(target, "name", "")).strip() for target in targets]
-        target_names = [name for name in target_names if name]
-        if not target_names:
-            return f"Running {command_name}..."
-        if len(target_names) == 1:
-            return f"Running {command_name} for {target_names[0]}..."
-        return f"Running {command_name} for {len(target_names)} targets..."
+        return command_start_status_impl(command_name, targets)
 
     @staticmethod
     def _test_scope_status(project_names: list[str], *, run_all: bool, untested: bool, failed: bool) -> str:
-        if run_all:
-            return "Running tests for all discovered projects..."
-        if failed:
-            if len(project_names) == 1:
-                return f"Rerunning failed tests for {project_names[0]}..."
-            if project_names:
-                return f"Rerunning failed tests for {len(project_names)} selected projects..."
-            return "Rerunning failed tests..."
-        if untested and not project_names:
-            return "Running tests for untested projects..."
-        if len(project_names) == 1:
-            return f"Running tests for {project_names[0]}..."
-        if project_names:
-            return f"Running tests for {len(project_names)} selected projects..."
-        return "Running tests..."
+        return render_test_scope_status_impl(project_names, run_all=run_all, untested=untested, failed=failed)
 
     @staticmethod
     def _test_execution_status(command: list[str], *, args: list[str], source: str, cwd: Path) -> str:
-        if source == "configured":
-            snippet = " ".join(command[:3]).strip()
-            if snippet:
-                return f"Executing configured test command: {snippet}..."
-            return "Executing configured test command..."
-
-        if len(command) >= 3 and command[1] == "-m" and command[2] == "pytest":
-            if len(command) > 3 and all("test" in str(part) or "::" in str(part) for part in command[3:]):
-                return f"Rerunning failed pytest cases ({len(command) - 3})..."
-            target = command[3] if len(command) > 3 else "tests"
-            return f"Running pytest suite at {target}..."
-        if len(command) >= 4 and command[1] == "-m" and command[2] == "unittest" and command[3] == "discover":
-            return "Running unittest discovery (test_*.py)..."
-        if len(command) >= 4 and command[1] == "-m" and command[2] == "unittest":
-            return f"Rerunning failed unittest cases ({len(command) - 3})..."
-        if len(command) >= 3 and command[1] == "run" and command[2] == "test":
-            manager = command[0]
-            if "--" in command:
-                try:
-                    file_count = max(0, len(command) - command.index("--") - 1)
-                except ValueError:
-                    file_count = 0
-                if file_count > 0:
-                    return f"Rerunning failed {manager} test files ({file_count}) in {cwd}..."
-            return f"Running {manager} test script in {cwd}..."
-        if len(command) >= 2 and command[0] == "bash" and command[1].endswith("test-all-trees.sh"):
-            projects_arg = next((value for value in args if value.startswith("projects=")), "")
-            if projects_arg:
-                selected = projects_arg.split("=", 1)[1]
-                count = len([name for name in selected.split(",") if name])
-                return f"Running tree test matrix for {count} selected project(s)..."
-            if "untested=true" in args:
-                return "Running tree test matrix for untested projects..."
-            return "Running tree test matrix for all projects..."
-        return "Executing detected test command..."
+        return render_test_execution_status_impl(command, args=args, source=source, cwd=cwd)
 
     def _test_parallel_enabled(self, route: Route, specs: list["_TestExecutionSpec"]) -> bool:
         rt = self.runtime
-        if len(specs) <= 1:
-            return False
-        if any(self._is_legacy_tree_test_script(spec.spec.command) for spec in specs):
-            return False
-        forced = route.flags.get("test_parallel")
-        if isinstance(forced, bool):
-            return forced
-        configured = rt.env.get("ENVCTL_ACTION_TEST_PARALLEL") or rt.config.raw.get("ENVCTL_ACTION_TEST_PARALLEL")  # type: ignore[attr-defined]
-        return parse_bool(configured, True)
+        return parallel_tests_enabled_impl(route, specs=specs, env=rt.env, config_raw=rt.config.raw)  # type: ignore[attr-defined]
 
     def _test_parallel_max_workers(self, route: Route, specs: list["_TestExecutionSpec"]) -> int:
         rt = self.runtime
-        total = max(len(specs), 1)
-        configured_values: list[object] = [
-            route.flags.get("test_parallel_max"),
-            rt.env.get("ENVCTL_ACTION_TEST_PARALLEL_MAX"),  # type: ignore[attr-defined]
-            rt.config.raw.get("ENVCTL_ACTION_TEST_PARALLEL_MAX"),  # type: ignore[attr-defined]
-        ]
-        limit = 4
-        for raw in configured_values:
-            parsed = parse_int(raw, 0)
-            if parsed > 0:
-                limit = parsed
-                break
-        return max(1, min(total, limit))
+        return parallel_test_worker_count_impl(route, specs=specs, env=rt.env, config_raw=rt.config.raw)  # type: ignore[attr-defined]
 
     def _test_suite_spinner_policy_enabled(self, policy: Any) -> tuple[bool, str]:
         rt = self.runtime
-        env = getattr(rt, "env", {})
-        mode = str(env.get("ENVCTL_UI_SPINNER_MODE", "")).strip().lower()
-        if mode == "off":
-            return False, "spinner_mode_off"
-        if not parse_bool(env.get("ENVCTL_UI_SPINNER"), True):
-            return False, "spinner_env_off"
-        if not parse_bool(env.get("ENVCTL_UI_RICH"), True):
-            return False, "rich_env_off"
-        reason = str(getattr(policy, "reason", "")).strip().lower()
-        if reason == "spinner_backend_missing":
-            return False, "spinner_backend_missing"
-        if reason == "ci_mode":
-            return False, "ci_mode"
-        # Intentionally ignore policy reason=non_tty for test suite rows in
-        # interactive dashboard mode; nested launcher/PTY stacks can report
-        # non-tty here while rich rendering still works.
-        return True, "enabled"
+        return suite_spinner_policy_enabled_impl(policy, env=getattr(rt, "env", {}))
 
     def _persist_test_summary_artifacts(
         self,
