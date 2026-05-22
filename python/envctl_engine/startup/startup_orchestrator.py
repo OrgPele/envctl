@@ -423,7 +423,7 @@ class StartupOrchestrator:
     def _prepare_execution(self, session: StartupSession) -> None:
         prepare_startup_execution(
             session=session,
-            maybe_prewarm_docker=self._maybe_prewarm_docker,
+            maybe_prewarm_docker=lambda *, route, mode: maybe_prewarm_docker_impl(self, route=route, mode=mode),
             emit_phase=self._emit_phase,
         )
 
@@ -664,9 +664,6 @@ class StartupOrchestrator:
 
     def _requirements_timing_enabled(self, route: Route | None) -> bool:
         return requirements_timing_enabled_impl(self, route)
-
-    def _maybe_prewarm_docker(self, *, route: Route | None, mode: str) -> None:
-        return maybe_prewarm_docker_impl(self, route=route, mode=mode)
 
     def start_project_services(
         self,

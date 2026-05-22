@@ -7,7 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
+from envctl_engine.startup.requirements_execution import maybe_prewarm_docker
 
 
 class _Runner:
@@ -47,9 +47,8 @@ class _Runtime:
 class StartupOrchestratorPrewarmTests(unittest.TestCase):
     def test_prewarm_runs_when_enabled_and_requirements_are_enabled(self) -> None:
         runtime = _Runtime()
-        orchestrator = StartupOrchestrator(runtime)
 
-        orchestrator._maybe_prewarm_docker(route=None, mode="main")
+        maybe_prewarm_docker(SimpleNamespace(runtime=runtime), route=None, mode="main")
 
         self.assertEqual(len(runtime.process_runner.calls), 1)
         self.assertEqual(runtime.process_runner.calls[0]["cmd"], ["docker", "ps"])
@@ -60,9 +59,8 @@ class StartupOrchestratorPrewarmTests(unittest.TestCase):
 
     def test_prewarm_skips_when_disabled(self) -> None:
         runtime = _Runtime(enabled_env={"ENVCTL_DOCKER_PREWARM": "0"})
-        orchestrator = StartupOrchestrator(runtime)
 
-        orchestrator._maybe_prewarm_docker(route=None, mode="main")
+        maybe_prewarm_docker(SimpleNamespace(runtime=runtime), route=None, mode="main")
 
         self.assertEqual(len(runtime.process_runner.calls), 0)
         events = [item for item in runtime.events if item.get("event") == "requirements.docker_prewarm"]
@@ -72,9 +70,8 @@ class StartupOrchestratorPrewarmTests(unittest.TestCase):
 
     def test_prewarm_skips_when_no_requirements_enabled(self) -> None:
         runtime = _Runtime(requirement_enabled=False)
-        orchestrator = StartupOrchestrator(runtime)
 
-        orchestrator._maybe_prewarm_docker(route=None, mode="main")
+        maybe_prewarm_docker(SimpleNamespace(runtime=runtime), route=None, mode="main")
 
         self.assertEqual(len(runtime.process_runner.calls), 0)
         events = [item for item in runtime.events if item.get("event") == "requirements.docker_prewarm"]
