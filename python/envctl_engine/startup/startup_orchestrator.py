@@ -161,7 +161,7 @@ class StartupOrchestrator:
         announce_session_identifiers_impl(
             self.runtime,
             session,
-            headless_plan_output_only=self._headless_plan_output_only,
+            headless_plan_output_only=finalization_headless_plan_output_only,
         )
 
     def _validate_route_contract(self, session: StartupSession) -> int | None:
@@ -330,7 +330,7 @@ class StartupOrchestrator:
             emit_phase=self._emit_phase,
             validate_plan_agent_handoff=self._validate_plan_agent_handoff,
             print_plan_dry_run_preview=self._print_plan_dry_run_preview,
-            headless_plan_output_only=self._headless_plan_output_only,
+            headless_plan_output_only=finalization_headless_plan_output_only,
             print_headless_plan_session_summary=self._print_headless_plan_session_summary,
             maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
         )
@@ -343,7 +343,7 @@ class StartupOrchestrator:
             prepare_dashboard_stopped_service_restore=self._prepare_dashboard_stopped_service_restore,
             announce_session_identifiers=self._announce_session_identifiers,
             emit_phase=self._emit_phase,
-            headless_plan_output_only=self._headless_plan_output_only,
+            headless_plan_output_only=finalization_headless_plan_output_only,
             maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
             print_headless_plan_session_summary=self._print_headless_plan_session_summary,
             print_plan_dry_run_preview=self._print_plan_dry_run_preview,
@@ -464,7 +464,7 @@ class StartupOrchestrator:
             suppress_progress_output=self._suppress_progress_output,
             print_restart_port_rebound_summary=self._print_restart_port_rebound_summary,
             emit_snapshot=self._emit_snapshot,
-            headless_plan_output_only=self._headless_plan_output_only,
+            headless_plan_output_only=finalization_headless_plan_output_only,
             print_headless_plan_session_summary=self._print_headless_plan_session_summary,
             maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
             finalize_plan_agent_degraded_handoff=self._finalize_plan_agent_degraded_handoff,
@@ -472,9 +472,6 @@ class StartupOrchestrator:
 
     def _print_restart_port_rebound_summary(self, session: StartupSession) -> None:
         print_restart_port_rebound_summary_impl(self.runtime, session, print_fn=print)
-
-    def _headless_plan_output_only(self, session: StartupSession) -> bool:
-        return finalization_headless_plan_output_only(session)
 
     def _print_plan_dry_run_preview(self, session: StartupSession) -> None:
         print_plan_dry_run_preview_impl(self.runtime, session, print_fn=print)
@@ -497,7 +494,7 @@ class StartupOrchestrator:
             build_success_run_state=build_success_run_state,
             emit_phase=self._emit_phase,
             render_plan_agent_degraded_handoff=self._render_plan_agent_degraded_handoff,
-            headless_plan_output_only=self._headless_plan_output_only,
+            headless_plan_output_only=finalization_headless_plan_output_only,
             maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
         )
 
