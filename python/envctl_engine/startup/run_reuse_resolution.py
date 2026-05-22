@@ -83,10 +83,21 @@ def resolve_startup_run_reuse(
                 replace_existing_project_services_for_fresh_start=replace_existing_project_services_for_fresh_start,
             )
         if decision.decision_kind == "reuse_expand" and candidate_state is not None:
-            session.run_id = candidate_state.run_id
+            session.run_id = None
             session.preserved_services = dict(candidate_state.services)
             session.preserved_requirements = dict(candidate_state.requirements)
             session.base_metadata = mark_run_reused(candidate_state.metadata, reason="reuse_expand")
+            state_project_names = {
+                str(project.get("name", "")).strip().casefold()
+                for project in decision.state_projects
+                if str(project.get("name", "")).strip()
+            }
+            if state_project_names:
+                session.contexts_to_start = [
+                    context
+                    for context in session.selected_contexts
+                    if str(getattr(context, "name", "")).strip().casefold() not in state_project_names
+                ]
             emit_phase(
                 session,
                 "auto_resume_evaluate",

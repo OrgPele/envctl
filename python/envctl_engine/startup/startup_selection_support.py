@@ -86,8 +86,7 @@ def _route_explicit_trees_mode(route: Route) -> bool:
     return False
 
 
-def trees_start_selection_required(orchestrator: object, *, route: Route, runtime_mode: str) -> bool:
-    _ = orchestrator
+def trees_start_selection_required(*, route: Route, runtime_mode: str) -> bool:
     if runtime_mode != "trees" or route.command != "start":
         return False
     if route.projects or route.passthrough_args:
@@ -100,9 +99,8 @@ def trees_start_selection_required(orchestrator: object, *, route: Route, runtim
 
 
 def tree_preselected_projects_from_state(
-    orchestrator: object, *, runtime: StartupRuntime, project_contexts: list[ProjectContextLike]
+    *, runtime: StartupRuntime, project_contexts: list[ProjectContextLike]
 ) -> list[str]:
-    _ = orchestrator
     state = runtime._try_load_existing_state(mode="trees", strict_mode_match=True)
     available = {str(context.name).strip().lower(): str(context.name).strip() for context in project_contexts}
     if state is None:
@@ -158,9 +156,8 @@ def _tree_preselected_projects_from_plans(
 
 
 def select_start_tree_projects(
-    orchestrator: _RuntimeOwner, *, route: Route, project_contexts: list[ProjectContextLike]
+    *, runtime: StartupRuntime, route: Route, project_contexts: list[ProjectContextLike]
 ) -> list[ProjectContextLike]:
-    runtime = orchestrator.runtime
     if not project_contexts:
         return project_contexts
     can_tty = runtime._can_interactive_tty()
@@ -177,7 +174,6 @@ def select_start_tree_projects(
         return []
 
     preselected = tree_preselected_projects_from_state(
-        orchestrator,
         runtime=runtime,
         project_contexts=project_contexts,
     )

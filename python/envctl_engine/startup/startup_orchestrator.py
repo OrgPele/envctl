@@ -85,8 +85,8 @@ from envctl_engine.startup.startup_selection_support import (
     process_runtime as process_runtime_impl,
     _restart_include_requirements as _restart_include_requirements_impl,
     _restart_service_types_for_project as _restart_service_types_for_project_impl,
-    select_start_tree_projects as select_start_tree_projects_impl,
-    trees_start_selection_required as trees_start_selection_required_impl,
+    select_start_tree_projects,
+    trees_start_selection_required,
 )
 from envctl_engine.startup.service_bootstrap_domain import (
     configured_service_types_for_mode as configured_service_types_for_mode_impl,
@@ -180,14 +180,8 @@ class StartupOrchestrator:
         return select_startup_contexts(
             runtime=self.runtime,
             session=session,
-            trees_start_selection_required=lambda route, runtime_mode: self._trees_start_selection_required(
-                route=route,
-                runtime_mode=runtime_mode,
-            ),
-            select_start_tree_projects=lambda *, route, project_contexts: self._select_start_tree_projects(
-                route=route,
-                project_contexts=project_contexts,
-            ),
+            trees_start_selection_required=trees_start_selection_required,
+            select_start_tree_projects=select_start_tree_projects,
             apply_restart_ports=self._apply_restart_ports,
             emit_phase=self._emit_phase,
             emit_snapshot=self._emit_snapshot,
@@ -623,14 +617,6 @@ class StartupOrchestrator:
             project_spinner_group=project_spinner_group,
             suppress_progress_output=self._suppress_progress_output,
         )
-
-    def _trees_start_selection_required(self, *, route: Route, runtime_mode: str) -> bool:
-        return trees_start_selection_required_impl(self, route=route, runtime_mode=runtime_mode)
-
-    def _select_start_tree_projects(
-        self, *, route: Route, project_contexts: list[ProjectContextLike]
-    ) -> list[ProjectContextLike]:
-        return select_start_tree_projects_impl(self, route=route, project_contexts=project_contexts)
 
     @staticmethod
     def _restart_include_requirements(route: Route) -> bool:

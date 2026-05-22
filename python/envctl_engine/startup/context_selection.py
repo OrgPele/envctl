@@ -12,14 +12,16 @@ from envctl_engine.startup.session import StartupSession
 
 
 class SelectStartTreeProjects(Protocol):
-    def __call__(self, *, route: Route, project_contexts: list[ProjectContextLike]) -> list[ProjectContextLike]: ...
+    def __call__(
+        self, *, runtime: StartupRuntime, route: Route, project_contexts: list[ProjectContextLike]
+    ) -> list[ProjectContextLike]: ...
 
 
 def select_startup_contexts(
     *,
     runtime: StartupRuntime,
     session: StartupSession,
-    trees_start_selection_required: Callable[[Route, str], bool],
+    trees_start_selection_required: Callable[..., bool],
     select_start_tree_projects: SelectStartTreeProjects,
     apply_restart_ports: Callable[[StartupSession, list[ProjectContextLike]], None],
     emit_phase: Callable[..., None],
@@ -31,8 +33,8 @@ def select_startup_contexts(
     project_contexts = runtime._discover_projects(mode=runtime_mode)
     if route.command == "plan":
         project_contexts = runtime._select_plan_projects(route, project_contexts)
-    elif trees_start_selection_required(route, runtime_mode):
-        project_contexts = select_start_tree_projects(route=route, project_contexts=project_contexts)
+    elif trees_start_selection_required(route=route, runtime_mode=runtime_mode):
+        project_contexts = select_start_tree_projects(runtime=runtime, route=route, project_contexts=project_contexts)
     else:
         try:
             project_contexts = runtime._apply_setup_worktree_selection(route, project_contexts)
@@ -65,7 +67,7 @@ def select_startup_contexts(
         projects=[context.name for context in project_contexts],
     )
     if not project_contexts:
-        if trees_start_selection_required(route, runtime_mode):
+        if trees_start_selection_required(route=route, runtime_mode=runtime_mode):
             print("No worktrees selected.")
         else:
             print("No projects discovered for selected mode.")

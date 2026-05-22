@@ -74,6 +74,10 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         self.assertFalse(hasattr(StartupOrchestrator, "_record_project_startup"))
         self.assertFalse(hasattr(StartupOrchestrator, "_record_plan_agent_handoff_local_startup_failure"))
 
+    def test_startup_orchestrator_does_not_retain_tree_selection_pass_through_wrappers(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_trees_start_selection_required"))
+        self.assertFalse(hasattr(StartupOrchestrator, "_select_start_tree_projects"))
+
     def test_requirements_parallel_defaults_to_sequential_on_macos_with_cli_override(self) -> None:
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
         orchestrator = SimpleNamespace(runtime=runtime)
@@ -386,7 +390,6 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         ]
 
         result = _tree_preselected_projects_from_state(
-            SimpleNamespace(runtime=runtime),
             runtime=runtime,
             project_contexts=project_contexts,
         )
