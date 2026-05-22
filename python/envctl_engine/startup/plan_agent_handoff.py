@@ -9,7 +9,11 @@ from typing import Any
 
 from envctl_engine.planning.plan_agent.config import resolve_plan_agent_launch_config
 from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
-from envctl_engine.planning.plan_agent.models import PlanAgentLaunchOutcome, PlanAgentLaunchResult
+from envctl_engine.planning.plan_agent.models import (
+    PlanAgentAttachValidation,
+    PlanAgentLaunchOutcome,
+    PlanAgentLaunchResult,
+)
 from envctl_engine.planning.plan_agent.recovery import plan_agent_native_recovery_command
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
@@ -310,6 +314,55 @@ def should_degrade_to_plan_agent_handoff(session: StartupSession, *, error: str)
     if bool(route.flags.get("batch")):
         return True
     return session.plan_agent_attach_target is not None
+
+
+def validate_plan_agent_handoff(
+    runtime: Any,
+    session: StartupSession,
+    *,
+    phase: str,
+    validate_attach_target_fn: Callable[..., PlanAgentAttachValidation],
+    record_stale_handoff_fn: Callable[..., None] = record_stale_plan_agent_handoff,
+) -> None:
+    if not plan_agent_handoff_validation_required(session):
+        return
+    attach_target = session.plan_agent_attach_target
+    if attach_target is None:
+        return
+    created_worktrees = tuple(session.pending_plan_agent_worktrees)
+    worktree = created_worktrees[0] if created_worktrees else None
+    validation = validate_attach_target_fn(
+        runtime,
+        attach_target,
+        worktree=worktree,
+        transport="omx",
+        phase=phase,
+    )
+    if validation.ok:
+        return
+    record_stale_handoff_fn(
+        runtime,
+        session,
+        validation_reason="attach_target_stale_after_launch",
+    )
+
+
+def should_degrade_to_validated_plan_agent_handoff(
+    runtime: Any,
+    session: StartupSession,
+    *,
+    error: str,
+    validate_attach_target_fn: Callable[..., PlanAgentAttachValidation],
+    record_stale_handoff_fn: Callable[..., None] = record_stale_plan_agent_handoff,
+) -> bool:
+    validate_plan_agent_handoff(
+        runtime,
+        session,
+        phase="local_startup_failure",
+        validate_attach_target_fn=validate_attach_target_fn,
+        record_stale_handoff_fn=record_stale_handoff_fn,
+    )
+    return should_degrade_to_plan_agent_handoff(session, error=error)
 
 
 def plan_agent_launch_failure_message(launch_result: object) -> str:

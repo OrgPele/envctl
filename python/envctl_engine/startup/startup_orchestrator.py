@@ -45,12 +45,11 @@ from envctl_engine.startup.plan_agent_handoff import (
     emit_plan_agent_launch_state as emit_plan_agent_launch_state_impl,
     launch_plan_agent_terminals_with_spinner as launch_plan_agent_terminals_with_spinner_impl,
     plan_agent_launch_failure_message as plan_agent_launch_failure_message_impl,
-    plan_agent_handoff_validation_required as plan_agent_handoff_validation_required_impl,
     prepare_plan_agent_dependencies_for_launch as prepare_plan_agent_dependencies_for_launch_impl,
     record_plan_agent_handoff_local_startup_failure as record_plan_agent_handoff_local_startup_failure_impl,
-    record_stale_plan_agent_handoff as record_stale_plan_agent_handoff_impl,
-    should_degrade_to_plan_agent_handoff as should_degrade_to_plan_agent_handoff_impl,
+    should_degrade_to_validated_plan_agent_handoff,
     should_fail_for_plan_agent_launch_result as should_fail_for_plan_agent_launch_result_impl,
+    validate_plan_agent_handoff as validate_plan_agent_handoff_impl,
 )
 from envctl_engine.startup.post_start_reconcile import reconcile_strict_truth_after_start
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
@@ -434,9 +433,11 @@ class StartupOrchestrator:
                 self.runtime,
                 suppress_progress_output=suppress_progress_output,
             ),
-            should_degrade_to_plan_agent_handoff=lambda session, error: self._should_degrade_to_plan_agent_handoff(
+            should_degrade_to_plan_agent_handoff=lambda session, error: should_degrade_to_validated_plan_agent_handoff(
+                self.runtime,
                 session,
                 error=error,
+                validate_attach_target_fn=validate_plan_agent_attach_target,
             ),
             record_plan_agent_handoff_local_startup_failure=partial(
                 record_plan_agent_handoff_local_startup_failure_impl,
@@ -548,31 +549,12 @@ class StartupOrchestrator:
             render_final_failure_status=finalization_render_final_failure_status,
         )
 
-    def _should_degrade_to_plan_agent_handoff(self, session: StartupSession, *, error: str) -> bool:
-        self._validate_plan_agent_handoff(session, phase="local_startup_failure")
-        return should_degrade_to_plan_agent_handoff_impl(session, error=error)
-
     def _validate_plan_agent_handoff(self, session: StartupSession, *, phase: str) -> None:
-        if not plan_agent_handoff_validation_required_impl(session):
-            return
-        attach_target = session.plan_agent_attach_target
-        if attach_target is None:
-            return
-        created_worktrees = tuple(session.pending_plan_agent_worktrees)
-        worktree = created_worktrees[0] if created_worktrees else None
-        validation = validate_plan_agent_attach_target(
-            self.runtime,
-            attach_target,
-            worktree=worktree,
-            transport="omx",
-            phase=phase,
-        )
-        if validation.ok:
-            return
-        record_stale_plan_agent_handoff_impl(
+        validate_plan_agent_handoff_impl(
             self.runtime,
             session,
-            validation_reason="attach_target_stale_after_launch",
+            phase=phase,
+            validate_attach_target_fn=validate_plan_agent_attach_target,
         )
 
     def start_project_context(

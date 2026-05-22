@@ -5,7 +5,11 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
-from envctl_engine.planning.plan_agent.models import PlanAgentLaunchOutcome, PlanAgentLaunchResult
+from envctl_engine.planning.plan_agent.models import (
+    PlanAgentAttachValidation,
+    PlanAgentLaunchOutcome,
+    PlanAgentLaunchResult,
+)
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.startup.plan_agent_handoff import (
     emit_plan_agent_launch_state,
@@ -21,6 +25,8 @@ from envctl_engine.startup.plan_agent_handoff import (
     record_stale_plan_agent_handoff,
     should_fail_for_plan_agent_launch_result,
     should_degrade_to_plan_agent_handoff,
+    should_degrade_to_validated_plan_agent_handoff,
+    validate_plan_agent_handoff,
 )
 from envctl_engine.startup.session import StartupSession
 
@@ -209,6 +215,80 @@ class PlanAgentHandoffTests(unittest.TestCase):
                 error="missing_service_start_command: backend",
             )
         )
+
+    def test_validate_plan_agent_handoff_skips_non_omx_routes_and_missing_targets(self) -> None:
+        runtime = SimpleNamespace(config=SimpleNamespace(), env={}, _emit=lambda event, **payload: None)
+        calls: list[object] = []
+        session = _session(args=["plan", "--tmux"])
+        session.plan_agent_attach_target = SimpleNamespace(session_name="tmux-session")
+
+        validate_plan_agent_handoff(
+            runtime,
+            session,
+            phase="post_launch",
+            validate_attach_target_fn=lambda *args, **kwargs: calls.append((args, kwargs))
+            or PlanAgentAttachValidation(True, "ok"),
+        )
+
+        self.assertEqual(calls, [])
+
+        omx_session = _session(args=["plan", "--omx"])
+        validate_plan_agent_handoff(
+            runtime,
+            omx_session,
+            phase="post_launch",
+            validate_attach_target_fn=lambda *args, **kwargs: calls.append((args, kwargs))
+            or PlanAgentAttachValidation(True, "ok"),
+        )
+
+        self.assertEqual(calls, [])
+
+    def test_should_degrade_to_validated_plan_agent_handoff_degrades_stale_omx_target(self) -> None:
+        session = _session(args=["plan", "--omx", "--headless"])
+        session.pending_plan_agent_worktrees = (SimpleNamespace(name="feature-a-1"),)
+        session.plan_agent_attach_target = SimpleNamespace(
+            session_name="stale-session",
+            attach_command=("tmux", "attach", "-t", "stale-session"),
+        )
+        session.plan_agent_launch_result = PlanAgentLaunchResult(
+            status="launched",
+            reason="launched",
+            outcomes=(
+                PlanAgentLaunchOutcome(
+                    worktree_name="feature-a-1",
+                    worktree_root=Path("/tmp/feature-a-1"),
+                    surface_id="surface-1",
+                    status="launched",
+                ),
+            ),
+            attach_target=session.plan_agent_attach_target,
+        )
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(),
+            env={},
+            _emit=lambda event, **payload: events.append((event, payload)),
+        )
+
+        result = should_degrade_to_validated_plan_agent_handoff(
+            runtime,
+            session,
+            error="missing_service_start_command: backend",
+            validate_attach_target_fn=lambda *args, **kwargs: PlanAgentAttachValidation(False, "omx_attach_target_stale"),
+            record_stale_handoff_fn=lambda rt, sess, *, validation_reason: record_stale_plan_agent_handoff(
+                rt,
+                sess,
+                validation_reason=validation_reason,
+                resolve_launch_config_fn=lambda config, env, *, route: SimpleNamespace(transport="omx", cli="codex"),
+                recovery_command_fn=lambda rt, *, route, launch_config, created_worktrees: ("envctl", "--plan"),
+            ),
+        )
+
+        self.assertFalse(result)
+        self.assertTrue(session.plan_agent_handoff_degraded)
+        self.assertIsNone(session.plan_agent_attach_target)
+        self.assertEqual(session.plan_agent_handoff_validation_reason, "attach_target_stale_after_launch")
+        self.assertEqual(events[-1][0], "startup.plan_agent_handoff.validation_failed")
 
     def test_plan_agent_launch_failure_message_prefers_outcome_details(self) -> None:
         launch_result = SimpleNamespace(
