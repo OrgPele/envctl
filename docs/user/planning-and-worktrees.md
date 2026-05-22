@@ -258,11 +258,13 @@ envctl ship --project features_demo-1 --json
 `ship` reuses `envctl commit` and `envctl pr`, so `.envctl-commit-message.md`
 continues to drive the default commit message and envctl-local artifacts such as
 `.envctl-state/`, `MAIN_TASK.md`, `OLD_TASK_*.md`, `trees/`, and `trees-*` stay
-local. The command returns the PR URL plus GitHub check status in a structured
-payload. It returns the current state immediately and does not block on pending
-CI; agents can run it in a background/subagent lane, propagate commit/push/PR,
-merge-conflict, failed-check, or review-comment problems immediately, and keep
-the main implementation lane working until final check confirmation is needed.
+local. The command commits, pushes, opens or reuses the PR, predicts merge
+conflicts, and returns the PR URL plus GitHub check status with `failing_checks`
+and `pending_checks` in a structured payload. It returns the current state
+immediately and does not block on pending CI; agents can run it in a
+background/subagent lane, propagate commit/push/PR, merge-conflict,
+failed-check, or review-comment problems immediately, and keep the main
+implementation lane working until final check confirmation is needed.
 
 Use `--plan` when:
 

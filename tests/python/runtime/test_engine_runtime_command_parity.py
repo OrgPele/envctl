@@ -968,6 +968,19 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIn("runs the focused commands by default", output)
         self.assertIn("test-focused", output)
 
+    def test_ship_help_mentions_pr_conflicts_and_check_payloads(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["ship", "--help"], env={}))
+
+        output = buffer.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("opens a PR when needed and reuses an existing PR", output)
+        self.assertIn("predicts merge conflicts", output)
+        self.assertIn("conflicting files, messages, and resolution steps", output)
+        self.assertIn("failing_checks and pending_checks", output)
+
     def test_workflow_command_help_explains_when_headless_is_optional(self) -> None:
         runtime = self._runtime()
         buffer = StringIO()

@@ -609,8 +609,10 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         usage=("envctl ship --project <name> [--json]",),
         what_it_does=(
             "reuses envctl commit behavior, including .envctl-commit-message.md and protected local artifacts",
-            "reuses envctl PR detection/creation so an existing PR is not recreated",
-            "queries GitHub PR checks and returns passed, failed, pending-timeout, or gh-unavailable status",
+            "opens a PR when needed and reuses an existing PR when one already exists",
+            "predicts merge conflicts and returns conflicting files, messages, and resolution steps",
+            "queries GitHub PR checks and returns passed, failed, pending-timeout, or gh-unavailable status "
+            "with failing_checks and pending_checks",
         ),
         flags=(
             "--project <name>        ship one worktree/project",

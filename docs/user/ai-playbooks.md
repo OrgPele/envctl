@@ -210,12 +210,14 @@ envctl ship --project api --json
 ```
 
 This commits with the same `.envctl-commit-message.md` behavior as
-`envctl commit`, creates a PR only when needed, and reports GitHub check status.
-`ship` returns the current PR/check state instead of blocking on pending CI. In
-agent workflows, run it in a background/subagent lane when available; the
-shipping lane should surface commit, push, PR, merge-conflict, failed-check, or
-review-comment problems immediately while the main implementation lane continues
-non-overlapping work. Before final handoff, wait for required checks to finish.
+`envctl commit`, pushes the branch, opens or reuses the PR, predicts merge
+conflicts, and reports GitHub check status with `failing_checks` and
+`pending_checks`. `ship` returns the current PR/check state instead of blocking
+on pending CI. In agent workflows, run it in a background/subagent lane when
+available; the shipping lane should surface commit, push, PR, merge-conflict,
+failed-check, or review-comment problems immediately while the main
+implementation lane continues non-overlapping work. Before final handoff, wait
+for required checks to finish.
 For generated worktrees, the project selector is the branch name.
 
 ## Multi-Repo Control
