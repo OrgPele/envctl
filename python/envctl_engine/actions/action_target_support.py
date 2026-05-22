@@ -109,7 +109,8 @@ def resolve_action_targets(
         if current is not None:
             return [current], None
         return [], "self-destruct-worktree must be run from inside a discovered worktree."
-    if not trees_only and route.mode == "main" and route.command in {"commit", "pr", "test"}:
+    current_worktree_commands = {"commit", "pr", "ship", "test", "test-focused"}
+    if not trees_only and route.mode == "main" and route.command in current_worktree_commands:
         current = resolve_current_worktree_target(require_configured_main_root=True)
         if current is not None:
             return [current], None

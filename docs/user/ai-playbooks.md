@@ -37,41 +37,36 @@ Notes:
 
 Current built-in presets:
 
-- `implement_plan`
 - `implement_task`
-- `review_task_imp`
 - `review_worktree_imp`
 - `continue_task`
 - `finalize_task`
-- `merge_trees_into_dev`
+- `merge_implementation_branches`
 - `create_plan`
 - `create_plan_auto_codex`
 - `create_plan_auto_opencode`
 - `create_plan_auto_omx`
-- `ship_release`
 
-`implement_task` is the default preset used by the optional post-`--plan` launch flow. For Codex, envctl resolves the shipped preset body and submits it directly; the installed `SKILL.md` files are for direct manual Codex use. `implement_plan` remains available as a backward-compatible preset.
+`implement_task` is the default preset used by the optional post-`--plan` launch flow. For Codex, envctl resolves the shipped preset body and submits it directly; the installed `SKILL.md` files are for direct manual Codex use.
 
 All Codex presets now install as explicit-only skills. Run `envctl install-prompts --cli codex`, then edit the generated `SKILL.md` files under `~/.codex/skills/envctl-*` if you want to customize them for manual Codex use. The installed skills are explicit-only and use names such as:
 
 - `$envctl-implement-task`
 - `$envctl-continue-task`
 - `$envctl-finalize-task`
-- `$envctl-review-task`
 - `$envctl-review-worktree`
 - `$envctl-create-plan`
 - `$envctl-create-plan-auto-codex`
 - `$envctl-create-plan-auto-opencode`
 - `$envctl-create-plan-auto-omx`
-- `$envctl-ship-release`
 
 Create-plan skill behavior:
 
 - `$envctl-create-plan` is plan-only and approval-first. It writes `todo/plans/<category>/<slug>.md` and asks before running envctl.
 - `$envctl-create-plan` records a recommended Codex cycle count from `0` through `3` in the plan and uses that recommendation in Codex follow-up command examples.
-- `$envctl-create-plan-auto-codex` writes the same kind of plan, derives `<category>/<slug>` from the plan file path, chooses a recommended Codex cycle count from `0` through `3`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --cmux --entire-system --headless --new-session`.
+- `$envctl-create-plan-auto-codex` writes the same kind of plan, derives `<category>/<slug>` from the plan file path, chooses a recommended Codex cycle count from `0` through `3`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --cmux --preset implement_task --entire-system --headless --new-session`.
 - `$envctl-create-plan-auto-opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --cmux --opencode --entire-system --headless --new-session`. OpenCode ignores Codex cycle settings and prepends `/ulw-loop` by default.
-- `$envctl-create-plan-auto-omx` writes the plan, records the same `0` through `3` recommendation for visibility, derives `<selector>`, then runs `envctl --plan <selector> --omx --ultragoal --entire-system --headless --new-session`. OMX-managed launches are Codex-only: optional `/goal` framing is submitted first, Ultragoal wraps the initial prompt, and envctl may queue Codex follow-up cycles using the current cycle configuration. Use `--ralph` explicitly when you need the Ralph compatibility workflow.
+- `$envctl-create-plan-auto-omx` writes the plan, records the same `0` through `3` recommendation for visibility, derives `<selector>`, then runs `envctl --plan <selector> --omx --ultragoal --preset implement_task --entire-system --headless --new-session`. OMX-managed launches are Codex-only: optional `/goal` framing is submitted first, Ultragoal wraps the initial prompt, and envctl may queue Codex follow-up cycles using the current cycle configuration. Use `--ralph` explicitly when you need the Ralph compatibility workflow.
 - Keep the auto variants explicit-only; do not configure them for implicit invocation from generic planning language.
 - Rerun `envctl install-prompts --cli codex --yes`, `envctl install-prompts --cli opencode --yes`, or `envctl install-prompts --cli all --yes` to refresh installed prompt files.
 
@@ -140,12 +135,12 @@ Superset project or workspace config selects the Superset transport unless `ENVC
 
 Codex TUI cycle mode:
 
-- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, which queues a commit/push/PR/status-check follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, which queues an `envctl ship` handoff follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 - `CYCLES=<n>` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` submits the single implementation prompt and queues enabled browser-E2E and PR review-comments follow-ups for Codex/OMX surfaces
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues a commit/push/PR/status-check follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` is the maximum: it keeps that first commit/push/PR/status-check follow-up, uses a commit/push-only follow-up in the middle, and reserves `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues an `envctl ship` handoff after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` is the maximum: it keeps that first `ship` handoff, uses `ship`-first follow-ups in the middle, and reserves `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
 - OpenCode keeps the existing one-shot flow even when the cycle count is set
 - Superset keeps a one-shot Codex prompt even when the cycle count is set
 - create-plan prompts and lower-level runtime parsing use the same `0` through `3` scale; values above `3` are bounded to `3`, and `3` is reserved for genuinely complex work
@@ -153,7 +148,7 @@ Codex TUI cycle mode:
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false` disables the final PR review-comments follow-up when comment handling is manual
 - canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set
 - `CYCLES` does not enable plan-agent launch by itself; use `--cmux`, `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or a cmux workspace override to enable launch
-- envctl only appends messages in this mode; Codex still performs the actual commit, push, and PR work itself
+- envctl only appends messages in this mode; Codex still runs `envctl ship` or the fallback commit, push, and PR flow itself
 
 Then run:
 

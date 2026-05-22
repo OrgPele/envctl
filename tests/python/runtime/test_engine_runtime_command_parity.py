@@ -812,6 +812,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "dashboard",
             "doctor",
             "test",
+            "test-focused",
             "logs",
             "clear-logs",
             "health",
@@ -821,6 +822,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "self-destruct-worktree",
             "pr",
             "commit",
+            "ship",
             "review",
             "migrate",
             "migrate-hooks",
@@ -845,7 +847,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "debug-last",
         }
         self.assertEqual(set(lines), expected_commands)
-        self.assertEqual(len(lines), 42, "Should have exactly 42 commands")
+        self.assertEqual(len(lines), 44, "Should have exactly 44 commands")
 
     def test_public_command_inventory_matches_supported_commands(self) -> None:
         self.assertEqual(
@@ -877,8 +879,10 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
                 "explain-startup",
                 "preflight",
                 "test",
+                "test-focused",
                 "pr",
                 "commit",
+                "ship",
                 "review",
                 "migrate",
                 "logs",
@@ -951,6 +955,31 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIn("headless by default", output)
         self.assertIn("--interactive", output)
         self.assertIn("--pr-base", output)
+
+    def test_test_focused_help_mentions_default_run_and_dry_run_mode(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["test-focused", "--help"], env={}))
+
+        output = buffer.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("--dry-run", output)
+        self.assertIn("runs the focused commands by default", output)
+        self.assertIn("test-focused", output)
+
+    def test_ship_help_mentions_pr_conflicts_and_check_payloads(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["ship", "--help"], env={}))
+
+        output = buffer.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("opens a PR when needed and reuses an existing PR", output)
+        self.assertIn("predicts merge conflicts", output)
+        self.assertIn("conflicting files, messages, and resolution steps", output)
+        self.assertIn("failing_checks and pending_checks", output)
 
     def test_workflow_command_help_explains_when_headless_is_optional(self) -> None:
         runtime = self._runtime()

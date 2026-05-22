@@ -32,8 +32,10 @@ def execute_action_command(
 
     handler_name = {
         "test": "run_test_action",
+        "test-focused": "run_test_plan_action",
         "pr": "run_pr_action",
         "commit": "run_commit_action",
+        "ship": "run_ship_action",
         "review": "run_review_action",
         "migrate": "run_migrate_action",
     }.get(route.command)
@@ -45,7 +47,7 @@ def execute_action_command(
     spinner_policy = resolve_spinner_policy_fn(getattr(runtime, "env", {}))
     op_id = f"action.{route.command}"
     start_status = orchestrator._command_start_status(route.command, targets)
-    suppress_action_spinner = bool(route.flags.get("interactive_command"))
+    suppress_action_spinner = bool(route.flags.get("interactive_command")) or bool(route.flags.get("json"))
     action_spinner_enabled = bool(getattr(spinner_policy, "enabled", False)) and not suppress_action_spinner
     emit_spinner_policy_fn(
         getattr(runtime.raw_runtime, "_emit", None),
@@ -148,5 +150,6 @@ def execute_action_command(
     orchestrator._deferred_post_action_output = None
     if deferred_output is not None:
         deferred_output()
-    runtime.emit("action.command.finish", command=route.command, code=code)
+    if not bool(route.flags.get("json")):
+        runtime.emit("action.command.finish", command=route.command, code=code)
     return code

@@ -47,8 +47,6 @@ class PromptInstallSupportTests(unittest.TestCase):
 
     def _skill_target(self, *, home: Path, preset: str) -> Path:
         skill_name = f"envctl-{preset.replace('_', '-')}"
-        if preset == "review_task_imp":
-            skill_name = "envctl-review-task"
         if preset == "review_worktree_imp":
             skill_name = "envctl-review-worktree"
         return home / ".codex" / "skills" / skill_name / "SKILL.md"
@@ -147,11 +145,13 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertEqual(code, 0)
             rendered = buffer.getvalue()
             self.assertIn("Would install envctl-implement-task for codex from preset implement_task", rendered)
-            self.assertIn("Would install envctl-review-task for codex from preset review_task_imp", rendered)
             self.assertIn("Would install envctl-review-worktree for codex from preset review_worktree_imp", rendered)
             self.assertIn("Would install envctl-continue-task for codex from preset continue_task", rendered)
             self.assertIn("Would install envctl-finalize-task for codex from preset finalize_task", rendered)
-            self.assertIn("Would install envctl-merge-trees-into-dev for codex from preset merge_trees_into_dev", rendered)
+            self.assertIn(
+                "Would install envctl-merge-implementation-branches for codex from preset merge_implementation_branches",
+                rendered,
+            )
             self.assertIn("Would install envctl-create-plan for codex from preset create_plan", rendered)
             self.assertIn("Would install envctl-create-plan-auto-codex for codex from preset create_plan_auto_codex", rendered)
             self.assertIn(
@@ -159,9 +159,10 @@ class PromptInstallSupportTests(unittest.TestCase):
                 rendered,
             )
             self.assertIn("Would install envctl-create-plan-auto-omx for codex from preset create_plan_auto_omx", rendered)
-            self.assertIn("Would install envctl-implement-plan for codex from preset implement_plan", rendered)
-            self.assertIn("Would install envctl-ship-release for codex from preset ship_release", rendered)
-            self.assertEqual(rendered.count("codex: planned "), 12)
+            self.assertNotIn("implement_plan", rendered)
+            self.assertNotIn("review_task_imp", rendered)
+            self.assertNotIn("ship_release", rendered)
+            self.assertEqual(rendered.count("codex: planned "), 9)
 
     def test_install_prompts_flag_all_installs_every_preset_for_selected_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -289,7 +290,7 @@ class PromptInstallSupportTests(unittest.TestCase):
             by_path = {item["path"]: item for item in payload["skill_results"]}
             self.assertEqual(by_path[str(target)]["status"], "overwritten")
             self.assertIsNone(by_path[str(target)]["backup_path"])
-            self.assertTrue((target.parent.parent / "envctl-review-task" / "SKILL.md").exists())
+            self.assertTrue((target.parent.parent / "envctl-review-worktree" / "SKILL.md").exists())
             self.assertIn("<!-- ENVCTL_DIRECT_PROMPT_BODY_START -->", target.read_text(encoding="utf-8"))
 
     def test_install_prompts_force_bypasses_prompt_for_existing_targets(self) -> None:
@@ -553,54 +554,54 @@ class PromptInstallSupportTests(unittest.TestCase):
 
     def test_template_registry_discovers_built_in_templates_by_filename(self) -> None:
         self.assertIn("implement_task", _available_presets())
-        self.assertIn("review_task_imp", _available_presets())
         self.assertIn("review_worktree_imp", _available_presets())
         self.assertIn("continue_task", _available_presets())
         self.assertIn("finalize_task", _available_presets())
-        self.assertIn("merge_trees_into_dev", _available_presets())
+        self.assertIn("merge_implementation_branches", _available_presets())
         self.assertIn("create_plan", _available_presets())
         self.assertIn("create_plan_auto_codex", _available_presets())
         self.assertIn("create_plan_auto_opencode", _available_presets())
         self.assertIn("create_plan_auto_omx", _available_presets())
-        self.assertIn("implement_plan", _available_presets())
-        self.assertIn("ship_release", _available_presets())
-        self.assertEqual(len(_available_presets()), 12)
+        self.assertNotIn("implement_plan", _available_presets())
+        self.assertNotIn("review_task_imp", _available_presets())
+        self.assertNotIn("ship_release", _available_presets())
+        self.assertEqual(len(_available_presets()), 9)
 
     def test_create_plan_auto_templates_lock_launch_commands(self) -> None:
         expected = {
             "create_plan_auto_codex": {
                 "command": (
                     "ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> "
-                    "envctl --plan <category>/<slug> --cmux --entire-system --headless --new-session"
+                    "envctl --plan <category>/<slug> --cmux --preset implement_task --entire-system "
+                    "--headless --new-session"
                 ),
                 "phrases": (
-                    "recommended_codex_cycles=<n>",
-                    "exactly one integer from `0` through `3`",
-                    "uses the `implement_task` preset through the current plan-agent default",
-                    "envctl queues the rendered follow-up prompts/messages",
-                    "envctl itself does not run `git`, `gh`, `envctl commit`, or `envctl pr`",
+                    "Use the normal `create_plan` workflow",
+                    "shared `implement_task` prompt",
+                    "must be run from Codex",
                 ),
             },
             "create_plan_auto_opencode": {
                 "command": (
-                    "envctl --plan <category>/<slug> --cmux --opencode --entire-system "
+                    "envctl --plan <category>/<slug> --cmux --opencode --preset implement_task --entire-system "
                     "--headless --new-session"
                 ),
                 "phrases": (
+                    "Use the normal `create_plan` workflow",
+                    "shared `implement_task` prompt",
                     "OpenCode plan-agent launches use the `/ulw-loop` prefix by default",
-                    "Codex cycle settings are intentionally ignored for this surface",
-                    "do not silently fall back to Codex",
                 ),
             },
             "create_plan_auto_omx": {
-                "command": "envctl --plan <category>/<slug> --omx --ultragoal --entire-system --headless --new-session",
+                "command": (
+                    "envctl --plan <category>/<slug> --omx --ultragoal --preset implement_task "
+                    "--entire-system --headless --new-session"
+                ),
                 "phrases": (
-                    "Recommended Codex-equivalent cycles: <n>",
-                    "informational",
+                    "Use the normal `create_plan` workflow",
+                    "shared `implement_task` prompt",
                     "OMX-managed launches are Codex-only",
-                    "`--ultragoal` is the default persistence workflow for this surface",
-                    "use `--ralph` explicitly when you need the Ralph compatibility workflow",
-                    "envctl can queue the same Codex follow-up cycle workflow",
+                    "Use `--ralph` explicitly only when the Ralph compatibility workflow is required",
                 ),
             },
         }
@@ -609,47 +610,27 @@ class PromptInstallSupportTests(unittest.TestCase):
             with self.subTest(preset=preset):
                 template = _load_template(preset)
                 body = template.body
-                self.assertIn("This is the auto-launch variant of `create_plan.md`", body)
-                self.assertIn(
-                    "if the base research/planning contract changes, update this file in the same commit",
-                    body,
-                )
-                self.assertIn("Do not implement code. Only research and write the plan file.", body)
-                self.assertIn("Automatic envctl follow-up", body)
+                self.assertIn("Use the normal `create_plan` workflow", body)
+                self.assertIn("Do not implement in the planning session after launch.", body)
                 self.assertIn("todo/plans/<category>/<slug>.md", body)
-                self.assertIn("remove the `todo/plans/` prefix and the `.md` suffix", body)
-                self.assertIn("Confirm `<category>` is one of `broken`, `features`, `refactoring`, or `implementations`", body)
-                self.assertIn("Confirm the file exists on disk", body)
-                self.assertIn("Run the launch command from the repo root", body)
-                self.assertIn("If selector derivation fails", body)
-                self.assertIn("If the envctl launch command exits non-zero", body)
+                self.assertIn("removing `todo/plans/` and `.md`", body)
                 self.assertIn("attach/reconnect guidance", body)
-                self.assertIn("must not begin implementing in the original planning session", body)
                 self.assertIn(contract["command"], body)
                 for phrase in contract["phrases"]:
                     self.assertIn(phrase, body)
                 self.assertIn("--headless", body)
                 self.assertIn("--new-session", body)
-                self.assertIn("Launch scope default", body)
                 self.assertIn("--entire-system", body)
-                self.assertIn("backend-only", body)
-                self.assertIn("--only-backend", body)
-                self.assertIn("frontend-only", body)
-                self.assertIn("--only-frontend", body)
-                self.assertIn("no runtime infrastructure", body)
-                self.assertIn("--no-infra", body)
-                self.assertNotIn("Do not run `envctl` unless the user explicitly says yes", body)
+                self.assertIn("Use a narrower runtime scope only when the plan explicitly records why full-stack E2E does not apply.", body)
 
-    def test_create_plan_templates_require_bounded_codex_cycle_recommendation(self) -> None:
-        for preset in ("create_plan", "create_plan_auto_codex", "create_plan_auto_omx"):
-            with self.subTest(preset=preset):
-                body = _load_template(preset).body
+    def test_create_plan_template_requires_bounded_codex_cycle_recommendation(self) -> None:
+        body = _load_template("create_plan").body
 
-                self.assertIn("Codex cycle recommendation", body)
-                self.assertIn("exactly one integer from `0` through `3`", body)
-                self.assertNotIn("exactly one integer from `0` through `8`", body)
-                self.assertIn("Prefer the smallest number", body)
-                self.assertIn("Rollout / verification", body)
+        self.assertIn("Codex cycle recommendation", body)
+        self.assertIn("exactly one integer from `0` through `3`", body)
+        self.assertNotIn("exactly one integer from `0` through `8`", body)
+        self.assertIn("Prefer the smallest number", body)
+        self.assertIn("Rollout / verification", body)
 
     def test_create_plan_templates_do_not_embed_fixed_auto_codex_cycle_command(self) -> None:
         fixed_command = "ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <category>/<slug>"
@@ -657,24 +638,6 @@ class PromptInstallSupportTests(unittest.TestCase):
         for preset in ("create_plan", "create_plan_auto_codex", "create_plan_auto_omx"):
             with self.subTest(preset=preset):
                 self.assertNotIn(fixed_command, _load_template(preset).body)
-
-    def test_install_prompts_can_install_implement_plan_alias(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            runtime = SimpleNamespace(env={"HOME": tmpdir})
-            route = parse_route(
-                ["install-prompts", "--cli", "codex", "--preset", "implement_plan", "--dry-run", "--json"],
-                env={},
-            )
-
-            buffer = StringIO()
-            with redirect_stdout(buffer):
-                code = run_install_prompts_command(runtime, route)
-
-            self.assertEqual(code, 0)
-            payload = json.loads(buffer.getvalue())
-            self.assertEqual(payload["preset"], "implement_plan")
-            self.assertEqual(payload["results"], [])
-            self.assertEqual(payload["skill_results"][0]["message"], "Would install envctl-implement-plan for codex from preset implement_plan")
 
     def test_renderers_produce_expected_target_shapes(self) -> None:
         template = _load_template("implement_task")
@@ -690,12 +653,19 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("### Envctl pointer ###", codex)
         self.assertIn("boundary after the last successful commit", codex)
         self.assertIn("one complete next commit message", codex)
-        self.assertIn("Prefer `envctl commit --headless --main` first", codex)
-        self.assertIn("fall back to the git CLI", codex)
-        self.assertIn("wait for GitHub status checks to complete", codex)
-        self.assertIn("all required checks have passed", codex)
-        self.assertIn("Inspect all unresolved PR review comments", codex)
-        self.assertIn("address ALL actionable comments", codex)
+        self.assertIn("use `envctl test-focused` from inside the current generated worktree", codex)
+        self.assertIn("use `envctl test-focused --project <current-worktree-name>`", codex)
+        self.assertNotIn("envctl test-focused --project <current-worktree-name> --dry-run --json", codex)
+        self.assertIn("prefer `envctl ship --json` from inside the current generated worktree", codex)
+        self.assertIn("fall back to `envctl commit`, `envctl pr`, and `gh pr checks`", codex)
+        self.assertIn("opens or reuses the PR", codex)
+        self.assertIn("returns the PR URL, current GitHub check state, `failing_checks`, `pending_checks`", codex)
+        self.assertIn("does not wait for pending checks by itself", codex)
+        self.assertIn("When subagents are available, delegate `envctl ship --json`", codex)
+        self.assertIn("Only return to the shipping lane when the subagent reports a bad result", codex)
+        self.assertIn("keep the main implementation thread moving on non-overlapping work", codex)
+        self.assertIn("Inspect unresolved PR review comments", codex)
+        self.assertIn("address all actionable comments", codex)
         self.assertIn("wait for final PR confirmation", codex)
         self.assertIn("PR status and URL", codex)
         self.assertIn("full cumulative set of changes between commits", codex)
@@ -708,11 +678,9 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("Codex skills and envctl validation helpers", codex)
         self.assertIn("$browser", codex)
         self.assertNotIn("$browser-use", codex)
-        self.assertIn("envctl list-targets --json", codex)
         self.assertIn("envctl endpoints --project <actual-project-name> --json", codex)
         self.assertIn("envctl qa-user ensure --project <actual-project-name>", codex)
         self.assertIn("envctl playwright --project <actual-project-name> -- <executable> [args...]", codex)
-        self.assertIn("Use `envctl playwright --help` for wrapper help", codex)
         self.assertIn("Default to `envctl --entire-system --headless`", codex)
         self.assertIn("Use `envctl --fullstack --headless` only", codex)
         self.assertIn("Use backend only", codex)
@@ -737,33 +705,30 @@ class PromptInstallSupportTests(unittest.TestCase):
 
         finalize_prompt = _load_template("finalize_task")
         self.assertEqual(finalize_prompt.name, "finalize_task")
-        self.assertIn("run `envctl test --project <actual-project-name>`", finalize_prompt.body)
-        self.assertIn("envctl list-targets --json", finalize_prompt.body)
-        self.assertIn("envctl endpoints --project <actual-project-name> --json", finalize_prompt.body)
-        self.assertIn("envctl qa-user ensure --project <actual-project-name>", finalize_prompt.body)
-        self.assertIn(
-            "envctl playwright --project <actual-project-name> -- <executable> [args...]",
-            finalize_prompt.body,
-        )
-        self.assertIn("Use `envctl playwright --help` for wrapper help", finalize_prompt.body)
+        self.assertIn("Run `envctl test-focused` from inside the current generated worktree", finalize_prompt.body)
+        self.assertIn("use `envctl test-focused --project <current-worktree-name>`", finalize_prompt.body)
+        self.assertNotIn("envctl test-focused --project <current-worktree-name> --dry-run --json", finalize_prompt.body)
+        self.assertIn("envctl endpoints --project <current-worktree-name> --json", finalize_prompt.body)
+        self.assertIn("envctl qa-user ensure --project <current-worktree-name>", finalize_prompt.body)
+        self.assertIn("envctl playwright --project <current-worktree-name> -- <command>", finalize_prompt.body)
         self.assertIn("$browser", finalize_prompt.body)
         self.assertNotIn("$browser-use", finalize_prompt.body)
-        self.assertIn("Commit the work.", finalize_prompt.body)
-        self.assertIn("Push the branch.", finalize_prompt.body)
-        self.assertIn("Open the PR if none exists yet, or update the existing PR.", finalize_prompt.body)
-        self.assertIn("PR title and body/message are finalized to a high standard", finalize_prompt.body)
-        self.assertIn("wait for GitHub status checks to complete", finalize_prompt.body)
-        self.assertIn("all required checks pass", finalize_prompt.body)
-        self.assertIn("Inspect all unresolved PR review comments", finalize_prompt.body)
-        self.assertIn("address ALL actionable comments", finalize_prompt.body)
+        self.assertIn("Run `envctl ship --json` from inside the current generated worktree", finalize_prompt.body)
+        self.assertIn("use `envctl ship --project <current-worktree-name> --json`", finalize_prompt.body)
+        self.assertIn("Fall back to `envctl commit`, `envctl pr`, and GitHub CLI checks", finalize_prompt.body)
+        self.assertIn("opens or reuses the PR", finalize_prompt.body)
+        self.assertIn("returns current status, `failing_checks`, `pending_checks`, and merge-conflict details", finalize_prompt.body)
+        self.assertIn("When subagents are available, delegate this `ship` run to a background subagent", finalize_prompt.body)
+        self.assertIn("Only return to the shipping lane when the subagent surfaces merge conflicts", finalize_prompt.body)
+        self.assertIn("Inspect unresolved PR review comments", finalize_prompt.body)
+        self.assertIn("address all actionable comments", finalize_prompt.body)
 
-        review_prompt = _load_template("review_task_imp")
-        self.assertIn(".envctl-commit-message.md", review_prompt.body)
-        self.assertIn("### Envctl pointer ###", review_prompt.body)
-        self.assertIn("original plan file", review_prompt.body)
-        self.assertIn(".envctl-state/worktree-provenance.json", review_prompt.body)
-        self.assertNotIn("Authoritative source of truth: `MAIN_TASK.md`", review_prompt.body)
-        self.assertNotIn("Verify functionality matches MAIN_TASK.md exactly", review_prompt.body)
+        intermediate_prompt = _load_template("_plan_agent_intermediate_cycle_completion").body
+        self.assertIn("then prefer `envctl ship --json`", intermediate_prompt)
+        self.assertIn("instead of a separate commit/push flow", intermediate_prompt)
+        self.assertIn("opens or reuses the PR", intermediate_prompt)
+        self.assertIn("`failing_checks` and `pending_checks`", intermediate_prompt)
+        self.assertIn("only return to the shipping lane if the subagent reports an issue", intermediate_prompt)
 
         review_worktree_prompt = _load_template("review_worktree_imp")
         self.assertEqual(review_worktree_prompt.name, "review_worktree_imp")
@@ -780,17 +745,12 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("read-only", review_worktree_prompt.body)
         self.assertIn("findings-first", review_worktree_prompt.body)
 
-        merge_prompt = _load_template("merge_trees_into_dev")
-        self.assertEqual(merge_prompt.name, "merge_trees_into_dev")
+        merge_prompt = _load_template("merge_implementation_branches")
+        self.assertEqual(merge_prompt.name, "merge_implementation_branches")
         self.assertIn("Read `MAIN_TASK.md` from branch A and branch B separately.", merge_prompt.body)
-        self.assertIn("first merge branch A into `dev`", merge_prompt.body)
+        self.assertIn("first merge branch A into the integration branch", merge_prompt.body)
+        self.assertIn("Merge target: `integration/<branch-a>-plus-<branch-b>`", merge_prompt.body)
         self.assertIn(".envctl-commit-message.md", merge_prompt.body)
-
-        ship_release_prompt = _load_template("ship_release")
-        self.assertEqual(ship_release_prompt.name, "ship_release")
-        self.assertIn("shipping a production release end-to-end", ship_release_prompt.body)
-        self.assertIn("Create and publish the GitHub release", ship_release_prompt.body)
-        self.assertIn("Final output must include", ship_release_prompt.body)
 
         plan_prompt = _load_template("create_plan")
         self.assertNotIn("Changelog entry appended.", plan_prompt.body)
@@ -927,25 +887,6 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("no runtime infrastructure", plan_prompt.body)
         self.assertIn("--no-infra", plan_prompt.body)
 
-    def test_install_prompts_writes_ship_release_to_envctl_codex_prompt_root(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            runtime = SimpleNamespace(env={"HOME": tmpdir})
-            route = parse_route(
-                ["install-prompts", "--cli", "codex", "--preset", "ship_release", "--json"],
-                env={},
-            )
-
-            buffer = StringIO()
-            with redirect_stdout(buffer):
-                code = run_install_prompts_command(runtime, route)
-
-            self.assertEqual(code, 0)
-            payload = json.loads(buffer.getvalue())
-            expected = self._skill_target(home=Path(tmpdir), preset="ship_release")
-            self.assertEqual(payload["skill_results"][0]["path"], str(expected))
-            self.assertTrue(expected.exists())
-            self.assertIn("shipping a production release end-to-end", expected.read_text(encoding="utf-8"))
-
     def test_install_prompts_writes_create_plan_auto_codex_skills_with_markers(self) -> None:
         for preset in _CREATE_PLAN_AUTO_PRESETS:
             with self.subTest(preset=preset), tempfile.TemporaryDirectory() as tmpdir:
@@ -970,7 +911,8 @@ class PromptInstallSupportTests(unittest.TestCase):
                 self.assertIn(f"Use this skill explicitly with `${skill_name}`.", written)
                 self.assertIn("<!-- ENVCTL_DIRECT_PROMPT_BODY_START -->", written)
                 self.assertIn("<!-- ENVCTL_DIRECT_PROMPT_BODY_END -->", written)
-                self.assertIn("Automatic envctl follow-up", written)
+                self.assertIn("Use the normal `create_plan` workflow", written)
+                self.assertIn("--preset implement_task", written)
                 openai_yaml = expected.parent / "agents" / "openai.yaml"
                 self.assertTrue(openai_yaml.exists())
                 self.assertIn("allow_implicit_invocation: false", openai_yaml.read_text(encoding="utf-8"))
@@ -994,47 +936,11 @@ class PromptInstallSupportTests(unittest.TestCase):
             self.assertTrue(expected.exists())
             written = expected.read_text(encoding="utf-8")
             self.assertIn(
-                "envctl --plan <category>/<slug> --cmux --opencode --entire-system "
+                "envctl --plan <category>/<slug> --cmux --opencode --preset implement_task --entire-system "
                 "--headless --new-session",
                 written,
             )
-            self.assertIn("Codex cycle settings are intentionally ignored for this surface", written)
-
-    def test_resolve_codex_direct_prompt_body_prefers_user_installed_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            home = Path(tmpdir)
-            target = self._target(cli="codex", preset="ship_release", home=home)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text("Custom release instructions\n", encoding="utf-8")
-
-            resolved = resolve_codex_direct_prompt_body(preset="ship_release", env={"HOME": tmpdir})
-
-            self.assertEqual(resolved, "Custom release instructions\n")
-
-    def test_resolve_codex_direct_prompt_body_uses_legacy_codex_prompt_when_new_target_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            home = Path(tmpdir)
-            legacy_target = home / ".codex" / "prompts" / "ship_release.md"
-            legacy_target.parent.mkdir(parents=True, exist_ok=True)
-            legacy_target.write_text("Legacy release instructions\n", encoding="utf-8")
-
-            resolved = resolve_codex_direct_prompt_body(preset="ship_release", env={"HOME": tmpdir})
-
-            self.assertEqual(resolved, "Legacy release instructions\n")
-
-    def test_resolve_codex_direct_prompt_body_prefers_new_target_over_legacy_prompt(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            home = Path(tmpdir)
-            target = self._target(cli="codex", preset="ship_release", home=home)
-            legacy_target = home / ".codex" / "prompts" / "ship_release.md"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            legacy_target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text("New envctl prompt\n", encoding="utf-8")
-            legacy_target.write_text("Legacy release instructions\n", encoding="utf-8")
-
-            resolved = resolve_codex_direct_prompt_body(preset="ship_release", env={"HOME": tmpdir})
-
-            self.assertEqual(resolved, "New envctl prompt\n")
+            self.assertIn("OpenCode plan-agent launches use the `/ulw-loop` prefix by default", written)
 
     def test_resolve_codex_direct_prompt_body_replaces_installed_skill_argument_sentinel(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1089,11 +995,9 @@ class PromptInstallSupportTests(unittest.TestCase):
                 arguments="Auto launch Codex after planning",
             )
 
-        self.assertIn("Automatic envctl follow-up", resolved)
-        self.assertIn("recommended_codex_cycles=<n>", resolved)
+        self.assertIn("Use the normal `create_plan` workflow", resolved)
         self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles>", resolved)
-        self.assertIn("exactly one integer from `0` through `3`", resolved)
-        self.assertNotIn("exactly one integer from `0` through `8`", resolved)
+        self.assertIn("--preset implement_task", resolved)
         self.assertIn("Auto launch Codex after planning", resolved)
 
     def test_resolve_opencode_direct_prompt_body_supports_create_plan_auto_opencode(self) -> None:
@@ -1104,8 +1008,8 @@ class PromptInstallSupportTests(unittest.TestCase):
                 arguments="Auto launch OpenCode ULW after planning",
             )
 
-        self.assertIn("Automatic envctl follow-up", resolved)
-        self.assertIn("--cmux --opencode --entire-system --headless --new-session", resolved)
+        self.assertIn("Use the normal `create_plan` workflow", resolved)
+        self.assertIn("--cmux --opencode --preset implement_task --entire-system --headless --new-session", resolved)
         self.assertIn("Auto launch OpenCode ULW after planning", resolved)
 
     def test_resolve_opencode_direct_prompt_body_keeps_browser_use_skill_name(self) -> None:
@@ -1179,10 +1083,9 @@ class PromptInstallSupportTests(unittest.TestCase):
     def test_prompt_templates_no_longer_reference_changelog_backed_commit_defaults(self) -> None:
         implement_prompt = _load_template("implement_task")
         continue_prompt = _load_template("continue_task")
-        review_prompt = _load_template("review_task_imp")
-        merge_prompt = _load_template("merge_trees_into_dev")
+        merge_prompt = _load_template("merge_implementation_branches")
 
-        for prompt in (implement_prompt, continue_prompt, review_prompt, merge_prompt):
+        for prompt in (implement_prompt, continue_prompt, merge_prompt):
             with self.subTest(prompt=prompt.name):
                 self.assertNotIn("docs/changelog/{tree_name}_changelog.md", prompt.body)
                 self.assertIn("keep `.envctl-commit-message.md` focused on one complete next commit message", prompt.body)

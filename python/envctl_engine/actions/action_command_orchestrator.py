@@ -6,7 +6,7 @@ import sys
 from typing import Any, Callable, Mapping
 
 from envctl_engine.actions.actions_analysis import default_review_command
-from envctl_engine.actions.actions_git import default_commit_command, default_pr_command
+from envctl_engine.actions.actions_git import default_commit_command, default_pr_command, default_ship_command
 from envctl_engine.actions.action_command_support import service_types_from_route_services
 from envctl_engine.actions.action_command_execution_support import (
     execute_action_command as execute_action_command_impl,
@@ -126,6 +126,7 @@ from envctl_engine.actions.action_test_support import (
     rich_progress_available as _rich_progress_available,
 )
 from envctl_engine.actions.action_test_runner import run_test_action as run_test_action_impl
+from envctl_engine.actions.test_plan_action import run_test_plan_action as run_test_plan_action_impl
 from envctl_engine.actions.action_worktree_runner import (
     main_repo_root_for_worktree as main_repo_root_for_worktree_impl,
     repo_root_from_worktree_layout as repo_root_from_worktree_layout_impl,
@@ -269,6 +270,37 @@ class ActionCommandOrchestrator:
             default_append_project_path=False,
             extra_env=self.action_extra_env(route),
         )
+
+    def run_ship_action(self, route: Route, targets: list[object]) -> int:
+        rt = self.runtime
+        return self.run_project_action(
+            route,
+            targets,
+            command_name="ship",
+            env_key="ENVCTL_ACTION_SHIP_CMD",
+            default_command=default_ship_command(rt.config.base_dir),  # type: ignore[attr-defined]
+            default_cwd=rt.config.base_dir,  # type: ignore[attr-defined]
+            default_append_project_path=False,
+            extra_env=self.action_extra_env(route),
+        )
+
+    def run_test_plan_action(self, route: Route, targets: list[object]) -> int:
+        json_output = bool(route.flags.get("json"))
+        dry_run = bool(route.flags.get("dry_run"))
+        for target in targets:
+            context = type(
+                "TestPlanActionContext",
+                (),
+                {
+                    "repo_root": self.runtime.config.base_dir,
+                    "project_root": Path(str(getattr(target, "root"))).resolve(),
+                    "project_name": str(getattr(target, "name")),
+                },
+            )()
+            code = run_test_plan_action_impl(context, json_output=json_output, dry_run=dry_run)
+            if code != 0:
+                return code
+        return 0
 
     def run_review_action(self, route: Route, targets: list[object]) -> int:
         rt = self.runtime

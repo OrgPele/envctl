@@ -1609,8 +1609,8 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             self.assertIsNone(error)
             self.assertEqual(send_text_mock.call_count, 0)
-            self.assertEqual(send_prompt_mock.call_count, 6)
-            self.assertEqual(queue_mock.call_count, 6)
+            self.assertEqual(send_prompt_mock.call_count, 12)
+            self.assertEqual(queue_mock.call_count, 12)
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queued"),
                 [
@@ -1682,7 +1682,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 "cli": "codex",
                 "workflow_mode": "codex_cycles",
                 "codex_cycles": 1,
-                "reason": "queue_not_ready",
+                "reason": "queue_goal_not_ready",
                 "transport": "tmux",
                 "queue_failed_step_index": 0,
                 "queue_failed_step_kind": "queue_direct_prompt",
@@ -3786,15 +3786,15 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             "_plan_agent_pr_review_comments_followup.md",
         )
 
-    def test_build_plan_agent_workflow_uses_direct_submission_for_ship_release(self) -> None:
+    def test_build_plan_agent_workflow_uses_direct_submission_for_implement_task(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
-        workflow = _build_plan_agent_workflow(cli="codex", preset="ship_release", codex_cycles=0)
+        workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=0)
 
         self.assertEqual(workflow.mode, "single_prompt")
         self.assertEqual(
             [(step.kind, step.text) for step in workflow.steps],
             [
-                ("submit_direct_prompt", "ship_release"),
+                ("submit_direct_prompt", "implement_task"),
                 ("queue_message", _browser_e2e_instruction_text()),
                 ("queue_message", _pr_review_comments_instruction_text()),
             ],
@@ -3890,9 +3890,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
     def test_workflow_step_prompt_text_loads_direct_codex_prompt_body(self) -> None:
         self.assertIsNotNone(_workflow_step_prompt_text)
         with tempfile.TemporaryDirectory() as tmpdir:
-            prompt_path = Path(tmpdir) / ".config" / "envctl" / "codex" / "prompts" / "ship_release.md"
+            prompt_path = Path(tmpdir) / ".config" / "envctl" / "codex" / "prompts" / "implement_task.md"
             prompt_path.parent.mkdir(parents=True, exist_ok=True)
-            prompt_path.write_text("Ship this release carefully.\n", encoding="utf-8")
+            prompt_path.write_text("Implement this task carefully.\n", encoding="utf-8")
             runtime = _RuntimeHarness(
                 config=load_config(
                     {
@@ -3903,7 +3903,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={"HOME": tmpdir},
                 process_runner=_RecordingRunner(),
             )
-            step = workflow._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="ship_release")
+            step = workflow._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")
 
             prompt_text, error = _workflow_step_prompt_text(
                 runtime,
@@ -3913,7 +3913,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
         self.assertIsNone(error)
-        self.assertEqual(prompt_text, "Ship this release carefully.\n")
+        self.assertEqual(prompt_text, "Implement this task carefully.\n")
 
     def test_workflow_step_prompt_text_preserves_literal_arguments_mentions_in_review_prompt(self) -> None:
         self.assertIsNotNone(_workflow_step_prompt_text)
@@ -4323,7 +4323,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             runtime,
             launch_config=_launch_config_for_tests(cli="codex"),
             cli="codex",
-            preset="ship_release",
+            preset="review_worktree_imp",
         )
 
         self.assertIsNone(error)
@@ -4693,19 +4693,23 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             "│ directory: ~/repo                                 │\n"
             "• Working (32s • esc to interrupt)\n"
         )
-        typed_screen = (
-            "╭───────────────────────────────────────────────────╮\n"
-            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
-            "│ model:     gpt-5.4 high   fast   /model to change │\n"
-            "│ directory: ~/repo                                 │\n"
-            "  You are finalizing an implementation that should already be substantially complete in the current worktree.\n"
-            "  tab to queue message\n"
-        )
-        state = {"typed": False}
+        state = {"typed": False, "text": ""}
+
+        def typed_screen() -> str:
+            first_line = next((line for line in state["text"].splitlines() if line.strip()), "")
+            return (
+                "╭───────────────────────────────────────────────────╮\n"
+                "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                "│ directory: ~/repo                                 │\n"
+                f"  {first_line}\n"
+                "  tab to queue message\n"
+            )
 
         def fake_paste_text(*_args, text, **_kwargs):  # noqa: ANN202, ANN001
             pasted_texts.append(text)
             state["typed"] = True
+            state["text"] = text
             return None
 
         def fake_send_key(*_args, key, **_kwargs):  # noqa: ANN202, ANN001
@@ -4729,7 +4733,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", side_effect=fake_send_key),
             patch(
                 "envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen",
-                side_effect=lambda *_args, **_kwargs: typed_screen if state["typed"] else busy_screen,
+                side_effect=lambda *_args, **_kwargs: typed_screen() if state["typed"] else busy_screen,
             ),
             patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
             patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
@@ -4743,12 +4747,13 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 queued_steps=queued_steps,
                 launch_config=_launch_config_for_tests(cli="codex"),
                 cli="codex",
-            )
+        )
 
         self.assertIsNone(reason)
-        self.assertEqual(len(pasted_texts), 1)
-        self.assertIn("You are finalizing an implementation", pasted_texts[0])
-        self.assertEqual(sent_keys, ["tab"])
+        self.assertEqual(len(pasted_texts), 2)
+        self.assertTrue(pasted_texts[0].startswith("/goal "))
+        self.assertIn("You are finalizing an implementation", pasted_texts[1])
+        self.assertEqual(sent_keys, ["tab", "tab"])
 
     def test_codex_cycle_queue_direct_prompt_tabs_without_picker_resolution(self) -> None:
         sent_keys: list[str] = []

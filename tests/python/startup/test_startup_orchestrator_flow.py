@@ -892,17 +892,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             dashboard_mock.assert_not_called()
             self.assertEqual(len(resumed_routes), 1)
             self.assertTrue(getattr(resumed_routes[0], "flags", {}).get("batch"))
-            self.assertIn(("start", "Launching OpenCode AI session...", True), spinner_calls)
-            self.assertIn(("succeed", "OpenCode AI session ready", None), spinner_calls)
-            lifecycle_events = [event for event in engine.events if event.get("event") == "ui.spinner.lifecycle"]
-            self.assertTrue(
-                any(
-                    event.get("op_id") == "plan_agent.launch"
-                    and event.get("state") == "start"
-                    and event.get("message") == "Launching OpenCode AI session..."
-                    for event in lifecycle_events
-                )
-            )
+            self.assertEqual(spinner_calls, [])
 
     def test_headless_plan_agent_handoff_prints_attach_when_local_startup_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

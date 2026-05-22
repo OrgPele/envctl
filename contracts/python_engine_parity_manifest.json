@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-14T08:11:41+00:00",
+  "generated_at": "2026-05-22T14:38:40+00:00",
   "engine_default": "python",
   "modes": {
     "main": {
@@ -25,6 +25,7 @@
     "dashboard": "python_complete",
     "doctor": "python_complete",
     "test": "python_complete",
+    "test-focused": "python_complete",
     "logs": "python_complete",
     "health": "python_complete",
     "errors": "python_complete",
@@ -32,6 +33,7 @@
     "blast-worktree": "python_complete",
     "pr": "python_complete",
     "commit": "python_complete",
+    "ship": "python_complete",
     "review": "python_complete",
     "migrate": "python_complete",
     "install-prompts": "python_complete",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import subprocess
 import unittest
 from collections import OrderedDict
 from pathlib import Path
@@ -8,6 +9,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.planning import (
+    discover_tree_projects,
+    generated_worktree_identity,
     list_planning_files,
     predict_plan_projects,
     planning_existing_counts,
@@ -18,6 +21,36 @@ from envctl_engine.planning import (
 
 
 class PlanningSelectionTests(unittest.TestCase):
+    def test_generated_worktree_identity_keeps_project_branch_and_selector_identical(self) -> None:
+        identity = generated_worktree_identity(feature="features_demo_task", iteration="2")
+
+        self.assertEqual(identity.project_name, "features_demo_task-2")
+        self.assertEqual(identity.branch_name, identity.project_name)
+        self.assertEqual(identity.selector, identity.project_name)
+        self.assertEqual(identity.path_segments, ("features_demo_task", "2"))
+
+    def test_discover_tree_projects_prefers_git_branch_for_generated_worktree_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "features_demo" / "1"
+            repo.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+            (repo / "README.md").write_text("# repo\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+            subprocess.run(
+                ["git", "worktree", "add", "-q", "-b", "features_demo_custom-7", str(worktree)],
+                cwd=repo,
+                check=True,
+            )
+
+            projects = discover_tree_projects(repo, "trees")
+
+        self.assertIn(("features_demo_custom-7", worktree), projects)
+        self.assertNotIn(("features_demo-1", worktree), projects)
+
     def test_list_planning_files_excludes_done_readme_and_plan_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             planning_dir = Path(tmpdir) / "todo" / "plans"
