@@ -35,6 +35,10 @@ from envctl_engine.actions.action_migrate_support import (
 from envctl_engine.actions.action_migrate_execution_support import (
     run_migrate_action as run_migrate_action_impl,
 )
+from envctl_engine.actions.action_failed_rerun_support import (
+    build_failed_test_execution_specs_from_state as build_failed_test_execution_specs_from_state_impl,
+    summary_indicates_extraction_failure as summary_indicates_extraction_failure_impl,
+)
 from envctl_engine.actions.action_target_support import (
     ActionTargetContext,
     execute_targeted_action,
@@ -73,15 +77,12 @@ from envctl_engine.actions.project_action_execution_support import (
     run_project_action as run_project_action_impl,
 )
 from envctl_engine.actions.action_test_support import (
-    FailedTestManifest,
     TestExecutionSpec as _TestExecutionSpec,
-    build_failed_test_execution_specs,
     TestSuiteSpinnerGroup as _TestSuiteSpinnerGroup,
     TestTargetContext,
     build_test_execution_specs,
     build_test_target_contexts,
     is_backend_only_selection,
-    load_failed_test_manifest,
     rich_progress_available as _rich_progress_available,
 )
 from envctl_engine.actions.action_test_runner import run_test_action as run_test_action_impl
@@ -767,103 +768,19 @@ if result.returncode != 0:
             or None
         )
         state = rt.load_existing_state(mode=route.mode)
-        if state is None:
-            raise RuntimeError("No saved failed-test data is available yet. Run the full test suite first.")
-        summaries_raw = getattr(state, "metadata", {}).get("project_test_summaries")
-        summaries = summaries_raw if isinstance(summaries_raw, dict) else {}
-        manifests_by_project: dict[str, FailedTestManifest] = {}
-        invalid_selector_counts: dict[str, int] = {}
-        non_rerunnable_projects: list[str] = []
-        extraction_failed_projects: list[str] = []
-        for target in target_contexts:
-            entry = summaries.get(target.project_name)
-            if not isinstance(entry, dict):
-                continue
-            manifest_path_raw = str(entry.get("manifest_path", "") or "").strip()
-            if not manifest_path_raw:
-                if str(entry.get("status", "") or "").strip().lower() == "failed":
-                    non_rerunnable_projects.append(target.project_name)
-                    if self._summary_indicates_extraction_failure(entry):
-                        extraction_failed_projects.append(target.project_name)
-                continue
-            manifest = load_failed_test_manifest(Path(manifest_path_raw))
-            if manifest is None:
-                if str(entry.get("status", "") or "").strip().lower() == "failed":
-                    non_rerunnable_projects.append(target.project_name)
-                    if self._summary_indicates_extraction_failure(entry):
-                        extraction_failed_projects.append(target.project_name)
-                continue
-            if not manifest.entries:
-                if str(entry.get("status", "") or "").strip().lower() == "failed":
-                    non_rerunnable_projects.append(target.project_name)
-                    if self._summary_indicates_extraction_failure(entry):
-                        extraction_failed_projects.append(target.project_name)
-                continue
-            invalid_count = sum(item.invalid_failed_tests for item in manifest.entries)
-            if invalid_count > 0:
-                invalid_selector_counts[target.project_name] = invalid_count
-            manifests_by_project[target.project_name] = manifest
-        for project_name, invalid_count in sorted(invalid_selector_counts.items()):
-            noun = "selector" if invalid_count == 1 else "selectors"
-            message = (
-                f"Skipping {invalid_count} invalid saved pytest {noun} for {project_name}; "
-                "rerunning the remaining failed tests."
-            )
-            self._emit_status(message)
-            print(message)
-        if non_rerunnable_projects:
-            projects = ", ".join(sorted(non_rerunnable_projects))
-            if extraction_failed_projects and sorted(extraction_failed_projects) == sorted(non_rerunnable_projects):
-                print(f"No rerunnable failed tests were extracted for: {projects}")
-            else:
-                print(f"No rerunnable failed tests remain for: {projects}")
-        if not manifests_by_project:
-            if extraction_failed_projects and sorted(extraction_failed_projects) == sorted(non_rerunnable_projects):
-                raise RuntimeError(
-                    "No rerunnable failed tests were found for the selected target(s). "
-                    "The last full run failed before envctl could derive rerunnable test selectors. "
-                    "See the saved failure summary."
-                )
-            if non_rerunnable_projects:
-                raise RuntimeError(
-                    "No rerunnable failed tests were found for the selected target(s). "
-                    "Saved failures could not be converted into rerunnable selectors. Run the full suite first."
-                )
-            raise RuntimeError("No saved failed tests were found for the selected target(s). Run the full suite first.")
-        execution_specs = build_failed_test_execution_specs(
+        return build_failed_test_execution_specs_from_state_impl(
+            state=state,
             target_contexts=target_contexts,
             repo_root=rt.config.base_dir,  # type: ignore[attr-defined]
-            manifests_by_project=manifests_by_project,
             shared_raw_command=shared_raw,
             backend_raw_command=backend_raw,
             frontend_raw_command=frontend_raw,
+            emit_status=self._emit_status,
         )
-        if execution_specs:
-            return execution_specs
-        if manifests_by_project:
-            projects = ", ".join(sorted(manifests_by_project))
-            print(f"No rerunnable failed tests remain for: {projects}")
-        if non_rerunnable_projects:
-            raise RuntimeError(
-                "No rerunnable failed tests were found for the selected target(s). "
-                "Saved failures could not be converted into rerunnable selectors. See the saved failure summary."
-            )
-        raise RuntimeError("No rerunnable failed tests were found for the selected target(s).")
 
     @staticmethod
     def _summary_indicates_extraction_failure(entry: Mapping[str, object]) -> bool:
-        for key in ("short_summary_path", "summary_path"):
-            raw = str(entry.get(key, "") or "").strip()
-            if not raw:
-                continue
-            path = Path(raw).expanduser()
-            try:
-                text = path.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            if "suite failed before envctl could extract failed tests" in text:
-                return True
-        return False
+        return summary_indicates_extraction_failure_impl(entry)
 
     def run_project_action(
         self,
