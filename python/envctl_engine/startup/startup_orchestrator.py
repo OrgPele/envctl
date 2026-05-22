@@ -114,6 +114,15 @@ class StartupOrchestrator:
 
     def execute(self, route: Route) -> int:
         session = create_startup_session(self.runtime, route)
+        finalize_failure = partial(
+            finalize_failed_startup,
+            runtime=self.runtime,
+            session=session,
+            ensure_run_id=partial(ensure_run_id, self.runtime),
+            port_allocator=port_allocator_impl,
+            emit_phase=partial(emit_startup_phase, self.runtime),
+            render_final_failure_status=finalization_render_final_failure_status,
+        )
         try:
             for phase in (
                 partial(
@@ -152,9 +161,9 @@ class StartupOrchestrator:
             )
             return self._finalize_success(session)
         except RuntimeError as exc:
-            return self._finalize_failure(session, str(exc))
+            return finalize_failure(error=str(exc))
         except Exception as exc:
-            return self._finalize_failure(session, str(exc))
+            return finalize_failure(error=str(exc))
 
     def _handle_restart_prestop(self, session: StartupSession) -> int | None:
         return handle_restart_prestop(
@@ -511,17 +520,6 @@ class StartupOrchestrator:
                     )
                 ),
             ),
-        )
-
-    def _finalize_failure(self, session: StartupSession, error: str) -> int:
-        return finalize_failed_startup(
-            runtime=self.runtime,
-            session=session,
-            error=error,
-            ensure_run_id=partial(ensure_run_id, self.runtime),
-            port_allocator=port_allocator_impl,
-            emit_phase=partial(emit_startup_phase, self.runtime),
-            render_final_failure_status=finalization_render_final_failure_status,
         )
 
     def start_project_context(
