@@ -46,11 +46,7 @@ from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse
 from envctl_engine.startup.plan_agent_handoff import (
     emit_plan_agent_launch_state as emit_plan_agent_launch_state_impl,
     launch_plan_agent_terminals_with_spinner as launch_plan_agent_terminals_with_spinner_impl,
-    local_startup_failure_reason as plan_agent_local_startup_failure_reason,
     plan_agent_launch_failure_message as plan_agent_launch_failure_message_impl,
-    plan_agent_launch_spinner_label as plan_agent_launch_spinner_label_impl,
-    plan_agent_launch_spinner_message as plan_agent_launch_spinner_message_impl,
-    plan_agent_launch_spinner_success_message as plan_agent_launch_spinner_success_message_impl,
     plan_agent_handoff_validation_required as plan_agent_handoff_validation_required_impl,
     prepare_plan_agent_dependencies_for_launch as prepare_plan_agent_dependencies_for_launch_impl,
     record_plan_agent_handoff_local_startup_failure as record_plan_agent_handoff_local_startup_failure_impl,
@@ -293,18 +289,6 @@ class StartupOrchestrator:
                 launch_fn=launch_plan_agent_terminals,
             ),
         )
-
-    @staticmethod
-    def _plan_agent_launch_spinner_label(launch_config: PlanAgentLaunchConfig) -> str:
-        return plan_agent_launch_spinner_label_impl(launch_config)
-
-    @classmethod
-    def _plan_agent_launch_spinner_message(cls, launch_config: PlanAgentLaunchConfig, *, count: int) -> str:
-        return plan_agent_launch_spinner_message_impl(launch_config, count=count)
-
-    @classmethod
-    def _plan_agent_launch_spinner_success_message(cls, launch_config: PlanAgentLaunchConfig, *, count: int) -> str:
-        return plan_agent_launch_spinner_success_message_impl(launch_config, count=count)
 
     def _resolve_disabled_startup_mode(self, session: StartupSession) -> int | None:
         return resolve_disabled_startup_mode(
@@ -605,10 +589,6 @@ class StartupOrchestrator:
 
     def _record_stale_plan_agent_handoff(self, session: StartupSession, *, validation_reason: str) -> None:
         record_stale_plan_agent_handoff_impl(self.runtime, session, validation_reason=validation_reason)
-
-    @staticmethod
-    def _local_startup_failure_reason(error: str) -> str | None:
-        return plan_agent_local_startup_failure_reason(error)
 
     def _record_plan_agent_handoff_local_startup_failure(
         self,
