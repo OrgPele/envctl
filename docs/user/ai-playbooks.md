@@ -137,12 +137,12 @@ Superset project or workspace config selects the Superset transport unless `ENVC
 
 Codex TUI cycle mode:
 
-- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, which queues a commit/push/PR/status-check follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, which queues an `envctl ship` handoff follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 - `CYCLES=<n>` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` submits the single implementation prompt and queues enabled browser-E2E and PR review-comments follow-ups for Codex/OMX surfaces
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues a commit/push/PR/status-check follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` or more keep that first commit/push/PR/status-check follow-up, use commit/push-only follow-ups in the middle, and reserve `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues an `envctl ship` handoff follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` or more keep that first `ship` handoff follow-up, use `ship`-first follow-ups in the middle, and reserve `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
 - OpenCode keeps the existing one-shot flow even when the cycle count is set
 - Superset keeps a one-shot Codex prompt even when the cycle count is set
 - create-plan prompts use a stricter recommendation policy of `0` through `8`; lower-level runtime parsing still applies the runtime implementation cap to direct env/config values
@@ -150,7 +150,7 @@ Codex TUI cycle mode:
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false` disables the final PR review-comments follow-up when comment handling is manual
 - canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set
 - `CYCLES` does not enable plan-agent launch by itself; use `--cmux`, `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or a cmux workspace override to enable launch
-- envctl only appends messages in this mode; Codex still performs the actual commit, push, and PR work itself
+- envctl only appends messages in this mode; Codex still runs the actual `envctl ship` or fallback commit, push, and PR work itself
 
 Then run:
 
@@ -201,9 +201,8 @@ envctl restart --project api
 ```
 
 Use `test-focused` to run the focused checks selected from the current changed
-files, or add `--dry-run` to preview the commands without executing them. The
-older `test-plan` command name remains available as an alias. At final handoff,
-prefer the narrow ship flow:
+files, or add `--dry-run` to preview the commands without executing them. At
+final handoff, prefer the narrow ship flow:
 
 ```bash
 envctl ship --project api --json

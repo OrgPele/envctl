@@ -812,7 +812,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
             "dashboard",
             "doctor",
             "test",
-            "test-plan",
+            "test-focused",
             "logs",
             "clear-logs",
             "health",
@@ -879,7 +879,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
                 "explain-startup",
                 "preflight",
                 "test",
-                "test-plan",
+                "test-focused",
                 "pr",
                 "commit",
                 "ship",
@@ -956,11 +956,11 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIn("--interactive", output)
         self.assertIn("--pr-base", output)
 
-    def test_test_plan_help_mentions_default_run_and_dry_run_mode(self) -> None:
+    def test_test_focused_help_mentions_default_run_and_dry_run_mode(self) -> None:
         runtime = self._runtime()
         buffer = StringIO()
         with redirect_stdout(buffer):
-            code = runtime.dispatch(parse_route(["test-plan", "--help"], env={}))
+            code = runtime.dispatch(parse_route(["test-focused", "--help"], env={}))
 
         output = buffer.getvalue()
         self.assertEqual(code, 0)

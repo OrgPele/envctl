@@ -22,7 +22,7 @@ class CliRouterParityTests(unittest.TestCase):
             "--health": "health",
             "--errors": "errors",
             "--test": "test",
-            "--test-plan": "test-plan",
+            "--test-focused": "test-focused",
             "--pr": "pr",
             "--commit": "commit",
             "--ship": "ship",
@@ -228,25 +228,30 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertTrue(route.flags.get("skip_startup"))
         self.assertTrue(route.flags.get("load_state"))
 
-        route = parse_route(["test-plan", "--project=feature-a-1", "--json"], env={})
-        self.assertEqual(route.command, "test-plan")
+        route = parse_route(["test-focused", "--project=feature-a-1", "--json"], env={})
+        self.assertEqual(route.command, "test-focused")
         self.assertEqual(route.projects, ["feature-a-1"])
         self.assertTrue(route.flags.get("json"))
         self.assertTrue(route.flags.get("skip_startup"))
         self.assertTrue(route.flags.get("load_state"))
 
-        route = parse_route(["test-plan", "--project=feature-a-1", "--dry-run"], env={})
-        self.assertEqual(route.command, "test-plan")
+        route = parse_route(["test-focused", "--project=feature-a-1", "--dry-run"], env={})
+        self.assertEqual(route.command, "test-focused")
         self.assertEqual(route.projects, ["feature-a-1"])
         self.assertTrue(route.flags.get("dry_run"))
         self.assertTrue(route.flags.get("skip_startup"))
         self.assertTrue(route.flags.get("load_state"))
 
         route = parse_route(["test-focused", "--project=feature-a-1"], env={})
-        self.assertEqual(route.command, "test-plan")
+        self.assertEqual(route.command, "test-focused")
         self.assertEqual(route.projects, ["feature-a-1"])
         self.assertTrue(route.flags.get("skip_startup"))
         self.assertTrue(route.flags.get("load_state"))
+
+        with self.assertRaisesRegex(RouteError, "Unsupported command"):
+            parse_route(["test-plan", "--project=feature-a-1"], env={})
+        with self.assertRaisesRegex(RouteError, "Unknown option"):
+            parse_route(["--test-plan", "--project=feature-a-1"], env={})
 
         route = parse_route(["review", "--review-mode=grouped"], env={})
         self.assertEqual(route.command, "review")

@@ -9,7 +9,7 @@ LOAD_STATE_COMMANDS: Final[frozenset[str]] = frozenset(
         "blast-all",
         "restart",
         "test",
-        "test-plan",
+        "test-focused",
         "logs",
         "clear-logs",
         "health",
@@ -51,7 +51,7 @@ STATE_ACTION_COMMANDS: Final[frozenset[str]] = frozenset({"logs", "clear-logs", 
 ACTION_COMMANDS: Final[frozenset[str]] = frozenset(
     {
         "test",
-        "test-plan",
+        "test-focused",
         "delete-worktree",
         "blast-worktree",
         "self-destruct-worktree",

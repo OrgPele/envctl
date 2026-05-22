@@ -36,7 +36,7 @@ def build_manifest(*, generated_at: str) -> dict[str, object]:
             "dashboard": "python_complete",
             "doctor": "python_complete",
             "test": "python_complete",
-            "test-plan": "python_complete",
+            "test-focused": "python_complete",
             "logs": "python_complete",
             "health": "python_complete",
             "errors": "python_complete",

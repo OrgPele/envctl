@@ -496,7 +496,7 @@ Optional plan-agent launch config for `--plan`:
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `CYCLES` only changes the Codex cycle count and does not enable plan-agent launch by itself
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and alias forms are set
-- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`), envctl first queues a plain commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`), envctl first queues an `envctl ship` handoff follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` submits the single implementation prompt and queues enabled browser-E2E and PR review-comments follow-ups for Codex/OMX surfaces
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 
@@ -513,11 +513,11 @@ Optional dashboard review-tab launch:
 - reuses `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
 - does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`; the explicit yes/no dashboard prompt is the opt-in
 - when no explicit workspace override is set, the review tab targets a sibling workspace named `"<current workspace> reviews"`
-- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues a plain commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
-- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first commit/push/PR/status-check follow-up, uses commit/push-only follow-ups for intermediate rounds, and reserves `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
+- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues an `envctl ship` handoff follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first `ship` handoff follow-up, uses `ship`-first intermediate follow-ups, and reserves `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the one-shot preset workflow
 - Superset still stays on a one-shot implementation prompt in this slice; local Codex `/goal` framing is handled by the envctl wrapper before that prompt is submitted, while Codex cycles, screen polling, tab renames, and dashboard review tabs remain cmux/tmux/OMX concerns
-- envctl only appends queued messages; it does not type `envctl test`, `git`, `gh`, `envctl commit`, or `envctl pr` commands into the shell
+- envctl only appends queued messages; it does not type `envctl test`, `git`, `gh`, `envctl ship`, `envctl commit`, or `envctl pr` commands into the shell
 
 Debug and diagnostics:
 

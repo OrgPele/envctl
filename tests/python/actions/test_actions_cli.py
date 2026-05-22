@@ -34,6 +34,7 @@ class ActionsCliTests(unittest.TestCase):
             "?? .envctl-commit-message.md\n"
             " M .envctl-state/run.json\n"
             "?? OLD_TASK_1.md\n"
+            "A  docs/OLD_TASK_archived.md\n"
             "?? trees/feature/1/file.py\n"
             "?? trees-feature/file.py\n"
             "M  app.py\n"
@@ -41,7 +42,7 @@ class ActionsCliTests(unittest.TestCase):
             "R  old_name.py -> new_name.py\n"
         )
 
-        self.assertEqual(partition.protected_staged_paths, ["MAIN_TASK.md"])
+        self.assertEqual(partition.protected_staged_paths, ["MAIN_TASK.md", "docs/OLD_TASK_archived.md"])
         self.assertEqual(
             partition.protected_skipped_paths,
             [
@@ -69,7 +70,15 @@ class ActionsCliTests(unittest.TestCase):
             git_outputs = {
                 ("rev-parse", "--abbrev-ref", "HEAD"): "feature/demo\n",
                 ("rev-parse", "HEAD"): "abc123\n",
-                ("status", "--porcelain", "--untracked-files=all"): "?? app.py\n?? .envctl-commit-message.md\n",
+                ("status", "--porcelain", "--untracked-files=all"): (
+                    "?? app.py\n"
+                    "?? .envctl-commit-message.md\n"
+                    "?? MAIN_TASK.md\n"
+                    "?? OLD_TASK_1.md\n"
+                    "?? .envctl-state/run.json\n"
+                    "?? trees/feature/1/file.py\n"
+                    "?? trees-feature/file.py\n"
+                ),
             }
 
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
@@ -105,7 +114,17 @@ class ActionsCliTests(unittest.TestCase):
         self.assertTrue(payload["committed"])
         self.assertTrue(payload["pr_created"])
         self.assertEqual(payload["step_statuses"], ["committed_pushed", "pr_created", "checks_passed"])
-        self.assertIn(".envctl-commit-message.md", payload["protected_local_artifacts_skipped"])
+        self.assertEqual(
+            payload["protected_local_artifacts_skipped"],
+            [
+                ".envctl-commit-message.md",
+                "MAIN_TASK.md",
+                "OLD_TASK_1.md",
+                ".envctl-state/run.json",
+                "trees/feature/1/file.py",
+                "trees-feature/file.py",
+            ],
+        )
         commit_action.assert_called_once_with(context)
         pr_action.assert_called_once_with(context)
 

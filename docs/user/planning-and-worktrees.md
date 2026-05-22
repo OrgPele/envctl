@@ -117,14 +117,14 @@ Each launched surface stays interactive. Envctl creates the tab, renames it to a
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
 
-- default/unset is `2`, so Codex launches first queue a commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- default/unset is `2`, so Codex launches first queue an `envctl ship` handoff follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 - `CYCLES=<n>` resolves to the same effective value as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `0` submits the single implementation prompt and queues enabled browser-E2E and PR review-comments follow-ups for Codex/OMX surfaces
-- `2` queues a plain follow-up asking Codex to commit, push, open or update the PR, and wait for GitHub status checks after the first pass, then queues `continue_task`, `implement_task`, `finalize_task`, `$browser` E2E, and the PR review-comments follow-up
-- `3` or more keep that first commit/push/PR/status-check follow-up, then use commit/push-only follow-ups for intermediate rounds, and reserve `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the final round
+- `2` queues a plain follow-up asking Codex to run focused validation, prefer `envctl ship`, and wait for GitHub status checks before final handoff, then queues `continue_task`, `implement_task`, `finalize_task`, `$browser` E2E, and the PR review-comments follow-up
+- `3` or more keep that first `ship` handoff follow-up, then use `ship`-first intermediate follow-ups, and reserve `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the final round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the existing one-shot preset flow
 - `CYCLES` does not enable the plan-agent launcher on its own; you still need enablement such as `--cmux`, `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
-- envctl only appends Codex messages in this mode; it does not type `git`, `gh`, `envctl commit`, or `envctl pr` shell commands itself
+- envctl only appends Codex messages in this mode; it does not type `git`, `gh`, `envctl ship`, `envctl commit`, or `envctl pr` shell commands itself
 - queue injection failures fall back to the initial `implement_task` launch and leave the surface open for manual continuation
 
 ## Optional Superset Agent Launch
@@ -248,8 +248,7 @@ envctl test-focused --project features_demo-1 --dry-run
 
 Add `--json` to either form for the structured `envctl.test_plan.v1` payload,
 including exact commands, confidence, reasons, changed files, and full-gate
-guidance. The older `test-plan` command name remains available as an alias. For
-final handoff, use:
+guidance. For final handoff, use:
 
 ```bash
 envctl ship --project features_demo-1 --json

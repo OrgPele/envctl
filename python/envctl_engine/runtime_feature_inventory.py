@@ -230,9 +230,9 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         rollout_risk="Users could see confusing test selection or incomplete error propagation in interactive flows.",
         wave="Wave D",
     ),
-    "test-plan": FeatureDefinition(
+    "test-focused": FeatureDefinition(
         area="actions",
-        feature="Command: plan focused validation commands from changed files",
+        feature="Command: run focused validation commands from changed files",
         user_visible=True,
         shell_source_of_truth=(),
         python_source_of_truth=(

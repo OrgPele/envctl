@@ -69,7 +69,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "playwright",
             "supabase-user",
             "test",
-            "test-plan",
+            "test-focused",
             "logs",
             "clear-logs",
             "health",
@@ -136,7 +136,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "errors": "state_action_orchestrator",
             # Action command orchestrator
             "test": "action_command_orchestrator",
-            "test-plan": "action_command_orchestrator",
+            "test-focused": "action_command_orchestrator",
             "delete-worktree": "action_command_orchestrator",
             "blast-worktree": "action_command_orchestrator",
             "self-destruct-worktree": "action_command_orchestrator",

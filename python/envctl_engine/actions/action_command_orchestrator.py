@@ -235,7 +235,7 @@ class ActionCommandOrchestrator:
 
         handler_map: dict[str, Callable[[Route, list[object]], int]] = {
             "test": self.run_test_action,
-            "test-plan": self.run_test_plan_action,
+            "test-focused": self.run_test_plan_action,
             "pr": self.run_pr_action,
             "commit": self.run_commit_action,
             "ship": self.run_ship_action,
@@ -367,7 +367,8 @@ class ActionCommandOrchestrator:
             if current is not None:
                 return [current], None
             return [], "self-destruct-worktree must be run from inside a discovered worktree."
-        if not trees_only and route.mode == "main" and route.command in {"commit", "pr", "ship", "test", "test-plan"}:
+        current_worktree_commands = {"commit", "pr", "ship", "test", "test-focused"}
+        if not trees_only and route.mode == "main" and route.command in current_worktree_commands:
             current = self._resolve_current_worktree_target(require_configured_main_root=True)
             if current is not None:
                 return [current], None

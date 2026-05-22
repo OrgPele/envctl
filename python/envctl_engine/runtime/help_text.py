@@ -41,7 +41,7 @@ GENERAL_ACTION_ORDER = (
     "health",
     "errors",
     "test",
-    "test-plan",
+    "test-focused",
     "commit",
     "pr",
     "ship",
@@ -545,8 +545,8 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         aliases=("tests", "t", "--test", "--tests"),
         related=("health", "logs", "review"),
     ),
-    "test-plan": CommandHelpTopic(
-        command="test-plan",
+    "test-focused": CommandHelpTopic(
+        command="test-focused",
         summary="run focused validation commands for the selected project",
         usage=("envctl test-focused --project <name> [--dry-run] [--json]",),
         what_it_does=(
@@ -563,7 +563,7 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "envctl test-focused --project feature-a-1",
             "envctl test-focused --project feature-a-1 --dry-run --json",
         ),
-        aliases=("test-plan", "focused-test", "--test-plan", "--test-focused"),
+        aliases=("--test-focused",),
         related=("test", "ship", "commit"),
     ),
     "pr": CommandHelpTopic(
@@ -620,7 +620,7 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         ),
         examples=("envctl ship --project feature-a-1 --json",),
         aliases=("--ship",),
-        related=("test-plan", "commit", "pr"),
+        related=("test-focused", "commit", "pr"),
     ),
     "review": CommandHelpTopic(
         command="review",
