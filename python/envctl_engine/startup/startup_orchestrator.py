@@ -90,7 +90,6 @@ from envctl_engine.startup.service_bootstrap_domain import (
 from envctl_engine.startup.startup_execution_support import (
     maybe_prewarm_docker as maybe_prewarm_docker_impl,
     print_startup_summary as print_startup_summary_impl,
-    requirements_for_restart_context as requirements_for_restart_context_impl,
     requirements_timing_enabled as requirements_timing_enabled_impl,
     start_project_context as start_project_context_impl,
     start_project_services as start_project_services_impl,
@@ -597,15 +596,6 @@ class StartupOrchestrator:
         run_id: str,
     ) -> ProjectStartupResult:
         return start_project_context_impl(self, context=context, mode=mode, route=route, run_id=run_id)
-
-    def _requirements_for_restart_context(
-        self,
-        *,
-        context: ProjectContextLike,
-        mode: str,
-        route: Route | None,
-    ) -> RequirementsResult:
-        return requirements_for_restart_context_impl(self, context=context, mode=mode, route=route)
 
     @staticmethod
     def _suppress_progress_output(route: Route) -> bool:
