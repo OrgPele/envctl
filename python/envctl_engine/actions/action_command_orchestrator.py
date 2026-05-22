@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import tempfile
 import re
-import subprocess
 import sys
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, cast
@@ -64,6 +63,9 @@ from envctl_engine.actions.project_action_env_support import (
     action_replacements as action_replacements_impl,
     migrate_action_env as migrate_action_env_impl,
     test_action_extra_env as test_action_extra_env_impl,
+)
+from envctl_engine.actions.project_action_execution_support import (
+    run_project_action as run_project_action_impl,
 )
 from envctl_engine.actions.action_test_support import (
     FailedTestManifest,
@@ -974,84 +976,24 @@ if result.returncode != 0:
         extra_env: Mapping[str, str],
     ) -> int:
         rt = self.runtime
-        raw = rt.env.get(env_key)  # type: ignore[attr-defined]
         interactive_command = bool(route.flags.get("interactive_command"))
-        command_extra_env = dict(extra_env)
-        stream_review_output = bool(
-            command_name == "review"
-            and not interactive_command
-            and _stdout_is_live_terminal()
-            and hasattr(rt.process_runner, "run_streaming")  # type: ignore[attr-defined]
-        )
-        if stream_review_output:
-            command_extra_env["ENVCTL_ACTION_FORCE_RICH"] = "1"
-        if raw is None and default_command is None:
-            print(f"No {command_name} command configured. Set {env_key} or add repo utility script.")
-            return 1
-
-        def resolve_command(context: object) -> ActionCommandResolution:
-            target = getattr(context, "target_obj")
-            target_root = Path(str(getattr(context, "root")))
-            if raw is not None:
-                replacements = self.action_replacements(targets, target=target)
-                try:
-                    command = rt.split_command(raw, replacements=replacements)
-                except RuntimeError as exc:
-                    return ActionCommandResolution(command=None, cwd=None, error=str(exc))
-                return ActionCommandResolution(command=command, cwd=target_root)
-
-            command: list[str] = []
-            replacements = self.action_replacements(targets, target=target)
-            for token in list(default_command or []):
-                value = str(token)
-                for key, replacement in replacements.items():
-                    value = value.replace(f"{{{key}}}", replacement)
-                command.append(value)
-            if default_append_project_path:
-                command.append(str(target_root))
-            return ActionCommandResolution(command=command, cwd=default_cwd)
-
-        return execute_targeted_action(
+        return run_project_action_impl(
+            runtime=rt,
+            route=route,
             targets=targets,
             command_name=command_name,
-            interactive_command=interactive_command,
-            resolve_command=resolve_command,
-            build_env=lambda context: self.action_env(
-                command_name,
-                targets,
-                route=route,
-                target=getattr(context, "target_obj"),
-                extra=command_extra_env,
-            ),
-            process_run=lambda command, cwd, env: (
-                subprocess.CompletedProcess(
-                    args=command,
-                    returncode=(
-                        completed := rt.process_runner.run_streaming(  # type: ignore[attr-defined]
-                            command,
-                            cwd=cwd,
-                            env=dict(env),
-                            timeout=300.0,
-                            show_spinner=False,
-                            echo_output=True,
-                        )
-                    ).returncode,
-                    stdout="" if completed.returncode == 0 else str(completed.stdout or ""),
-                    stderr=str(getattr(completed, "stderr", "") or ""),
-                )
-                if stream_review_output
-                else rt.process_runner.run(  # type: ignore[attr-defined]
-                    command,
-                    cwd=cwd,
-                    env=dict(env),
-                    timeout=300.0,
-                )
-            ),
+            env_key=env_key,
+            default_command=default_command,
+            default_cwd=default_cwd,
+            default_append_project_path=default_append_project_path,
+            extra_env=extra_env,
+            action_replacements_builder=self.action_replacements,
+            action_env_builder=self.action_env,
             emit_status=self._emit_status,
-            interactive_print_failures=(not interactive_command) or command_name in {"pr", "review"},
-            emit_success_output=not stream_review_output,
-            on_success=self._project_action_success_handler(command_name, route.mode, interactive_command),
-            on_failure=self._project_action_failure_handler(command_name, route.mode),
+            success_handler=self._project_action_success_handler(command_name, route.mode, interactive_command),
+            failure_handler=self._project_action_failure_handler(command_name, route.mode),
+            stdout_is_live_terminal=_stdout_is_live_terminal,
+            execute_targeted_action_fn=execute_targeted_action,
         )
 
     def action_replacements(
