@@ -928,6 +928,8 @@ class ActionsParityTests(unittest.TestCase):
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             target.mkdir(parents=True, exist_ok=True)
             (target / "MAIN_TASK.md").write_text("# Feature A\n", encoding="utf-8")
+            invocation_cwd = target / "backend" / "src"
+            invocation_cwd.mkdir(parents=True, exist_ok=True)
 
             engine = PythonEngineRuntime(
                 load_config(
@@ -937,7 +939,7 @@ class ActionsParityTests(unittest.TestCase):
                         "ENVCTL_DEFAULT_MODE": "main",
                     }
                 ),
-                env={"ENVCTL_INVOCATION_CWD": str(target)},
+                env={"ENVCTL_INVOCATION_CWD": str(invocation_cwd)},
             )
             observed_contexts: list[tuple[str, Path]] = []
 
@@ -966,6 +968,9 @@ class ActionsParityTests(unittest.TestCase):
             target.mkdir(parents=True, exist_ok=True)
             (target / "MAIN_TASK.md").write_text("# Feature A\n", encoding="utf-8")
 
+            invocation_cwd = target / "backend" / "src"
+            invocation_cwd.mkdir(parents=True, exist_ok=True)
+
             engine = PythonEngineRuntime(
                 load_config(
                     {
@@ -975,7 +980,7 @@ class ActionsParityTests(unittest.TestCase):
                     }
                 ),
                 env={
-                    "ENVCTL_INVOCATION_CWD": str(target),
+                    "ENVCTL_INVOCATION_CWD": str(invocation_cwd),
                     "ENVCTL_ACTION_SHIP_CMD": "sh -lc 'exit 0'",
                 },
             )

@@ -499,10 +499,18 @@ class ActionCommandOrchestrator:
             SimpleNamespace(name=name, root=root)
             for name, root in discover_tree_projects(repo_root, trees_dir_name)
         ]
-        matches = [candidate for candidate in candidates if Path(str(getattr(candidate, "root"))).resolve() == cwd]
+        matches = [
+            candidate
+            for candidate in candidates
+            if self._path_is_at_or_under(cwd, Path(str(getattr(candidate, "root"))).resolve())
+        ]
         if len(matches) != 1:
             return None
         return matches[0]
+
+    @staticmethod
+    def _path_is_at_or_under(path: Path, root: Path) -> bool:
+        return path == root or root in path.parents
 
     def _main_repo_root_for_worktree(self, worktree_root: Path, *, trees_dir_name: str | None = None) -> Path | None:
         configured_trees_dir = trees_dir_name or getattr(self.runtime.raw_runtime.config, "trees_dir_name", "trees")
