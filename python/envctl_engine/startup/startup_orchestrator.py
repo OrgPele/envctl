@@ -26,13 +26,13 @@ from envctl_engine.startup.finalization import (
     finalize_failed_startup,
     finalize_plan_agent_degraded_handoff,
     finalize_successful_startup,
-    format_degraded_handoff_text_for_terminal,
     format_failure_context_label as finalization_format_failure_context_label,
     maybe_attach_plan_agent_terminal as maybe_attach_plan_agent_terminal_impl,
     print_headless_plan_session_summary as print_headless_plan_session_summary_impl,
     print_plan_dry_run_preview as print_plan_dry_run_preview_impl,
     print_restart_port_rebound_summary as print_restart_port_rebound_summary_impl,
     plan_session_summary_lines as finalization_plan_session_summary_lines,
+    render_plan_agent_degraded_handoff_for_terminal as finalization_render_plan_agent_degraded_handoff_for_terminal,
     render_final_failure_status as finalization_render_final_failure_status,
     render_project_startup_warnings_for_route as finalization_render_project_startup_warnings_for_route,
 )
@@ -529,7 +529,12 @@ class StartupOrchestrator:
         return finalization_plan_session_summary_lines(session, attach_target=attach_target)
 
     def _render_plan_agent_degraded_handoff(self, session: StartupSession) -> None:
-        print(format_degraded_handoff_text_for_terminal(self.runtime, session, stream=sys.stdout))
+        finalization_render_plan_agent_degraded_handoff_for_terminal(
+            self.runtime,
+            session,
+            stream=sys.stdout,
+            print_fn=print,
+        )
 
     def _finalize_failure(self, session: StartupSession, error: str) -> int:
         return finalize_failed_startup(

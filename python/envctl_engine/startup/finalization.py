@@ -438,6 +438,16 @@ def print_headless_plan_session_summary(
         print_fn(line)
 
 
+def render_plan_agent_degraded_handoff_for_terminal(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    *,
+    stream: object,
+    print_fn: Callable[[str], None],
+) -> None:
+    print_fn(format_degraded_handoff_text_for_terminal(runtime, session, stream=stream))
+
+
 def maybe_attach_plan_agent_terminal(
     *,
     runtime: StartupRuntime,

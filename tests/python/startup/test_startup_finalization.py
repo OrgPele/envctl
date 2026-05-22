@@ -25,6 +25,7 @@ from envctl_engine.startup.finalization import (
     render_final_failure_status,
     render_project_startup_warnings_for_route,
     render_project_startup_warnings,
+    render_plan_agent_degraded_handoff_for_terminal,
     restart_port_rebound_summary_lines,
 )
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
@@ -342,6 +343,27 @@ class StartupFinalizationTests(unittest.TestCase):
         self.assertIn("  project: feature-a-1", text)
         self.assertIn("  error: missing_service_start_command: backend", text)
         self.assertIn("  next: configure ENVCTL_BACKEND_START_CMD / ENVCTL_FRONTEND_START_CMD", text)
+
+    def test_render_plan_agent_degraded_handoff_for_terminal_prints_rendered_text(self) -> None:
+        session = _session(contexts=[])
+        session.plan_agent_attach_target = SimpleNamespace(
+            attach_command=("tmux", "attach", "-t", "envctl-plan"),
+            new_session_command=(),
+            session_name="envctl-plan",
+        )
+        runtime = SimpleNamespace(env={})
+        printed: list[str] = []
+
+        render_plan_agent_degraded_handoff_for_terminal(
+            runtime,
+            session,
+            stream=None,
+            print_fn=printed.append,
+        )
+
+        self.assertEqual(len(printed), 1)
+        self.assertIn("Implementation session is running, but local app startup failed.", printed[0])
+        self.assertIn("  attach: tmux attach -t envctl-plan", printed[0])
 
     def test_headless_plan_session_summary_lines_include_validation_failure_guidance(self) -> None:
         session = _session(contexts=[])
