@@ -14,12 +14,7 @@ from typing import Any, Callable, Mapping, cast
 
 from envctl_engine.actions.actions_analysis import default_review_command, default_migrate_command
 from envctl_engine.actions.actions_git import default_commit_command, default_pr_command
-from envctl_engine.actions.action_command_support import (
-    build_action_env,
-    build_action_extra_env,
-    build_action_replacements,
-    service_types_from_route_services,
-)
+from envctl_engine.actions.action_command_support import service_types_from_route_services
 from envctl_engine.actions.action_migrate_support import (
     MigrateResultRecord as _MigrateResultRecord,
     is_migrate_env_source_hint as is_migrate_env_source_hint_impl,
@@ -62,6 +57,13 @@ from envctl_engine.actions.project_action_report_support import (
     project_action_success_status as project_action_success_status_impl,
     review_success_artifact_paths as review_success_artifact_paths_impl,
     write_project_action_failure_report as write_project_action_failure_report_impl,
+)
+from envctl_engine.actions.project_action_env_support import (
+    action_env as action_env_impl,
+    action_extra_env as action_extra_env_impl,
+    action_replacements as action_replacements_impl,
+    migrate_action_env as migrate_action_env_impl,
+    test_action_extra_env as test_action_extra_env_impl,
 )
 from envctl_engine.actions.action_test_support import (
     FailedTestManifest,
@@ -1058,9 +1060,8 @@ if result.returncode != 0:
         *,
         target: object | None,
     ) -> dict[str, str]:
-        rt = self.runtime
-        return build_action_replacements(
-            repo_root=rt.config.base_dir,  # type: ignore[attr-defined]
+        return action_replacements_impl(
+            runtime=self.runtime,
             targets=targets,
             target=target,
         )
@@ -1074,18 +1075,8 @@ if result.returncode != 0:
         target: object | None,
         extra: Mapping[str, str] | None = None,
     ) -> dict[str, str]:
-        rt = self.runtime
-        route_mode = getattr(route, "mode", None)
-        state = rt.load_existing_state(mode=route_mode) if isinstance(route_mode, str) else None
-        run_id = getattr(state, "run_id", None)
-        tree_diffs_root = rt.state_repository.tree_diffs_dir_path(run_id)  # type: ignore[attr-defined]
-        return build_action_env(
-            process_env=os.environ,
-            runtime_env=rt.env,  # type: ignore[arg-type,attr-defined]
-            repo_root=rt.config.base_dir,  # type: ignore[attr-defined]
-            runtime_root=rt.state_repository.runtime_root,  # type: ignore[attr-defined]
-            run_id=run_id,
-            tree_diffs_root=tree_diffs_root,
+        return action_env_impl(
+            runtime=self.runtime,
             command_name=command_name,
             targets=targets,
             route=route,
@@ -1100,39 +1091,17 @@ if result.returncode != 0:
         target: object | None,
         suite_source: str,
     ) -> dict[str, str]:
-        normalized_source = str(suite_source or "").strip().lower()
-        if normalized_source not in {"backend_pytest", "root_unittest"}:
-            return {}
-        if target is None:
-            return {}
-        project_name = str(getattr(target, "name", "") or "").strip()
-        target_root_raw = str(getattr(target, "root", "") or "").strip()
-        if not project_name or not target_root_raw:
-            return {}
-        rt = self.runtime
-        state = rt.load_existing_state(mode=getattr(route, "mode", None))
-        if state is None:
-            return {}
-        requirements = state.requirements.get(project_name)
-        if requirements is None:
-            return {}
-        target_root = Path(target_root_raw)
-        context = self._migrate_project_context(
-            project_name=project_name,
-            project_root=target_root,
-            requirements=requirements,
+        return test_action_extra_env_impl(
+            runtime=self.runtime,
+            route=route,
+            target=target,
+            suite_source=suite_source,
+            project_context_builder=self._migrate_project_context,
         )
-        projector = getattr(rt.raw_runtime, "_project_service_env", None)
-        if not callable(projector):
-            return {}
-        projected = projector(context, requirements=requirements, route=route, service_name="backend")
-        if not isinstance(projected, dict):
-            return {}
-        return {str(key): str(value) for key, value in projected.items() if isinstance(key, str) and value is not None}
 
     @staticmethod
     def action_extra_env(route: Route) -> dict[str, str]:
-        return build_action_extra_env(route)
+        return action_extra_env_impl(route)
 
     def migrate_action_env(
         self,
@@ -1142,58 +1111,24 @@ if result.returncode != 0:
         target: object | None,
         extra: Mapping[str, str] | None = None,
     ) -> dict[str, str]:
-        env = self.action_env(
-            "migrate",
-            targets,
+        return migrate_action_env_impl(
+            runtime=self.runtime,
+            targets=targets,
             route=route,
             target=target,
             extra=extra,
+            migrate_env_contracts=self._migrate_env_contracts,
+            base_env_builder=self.action_env,
+            backend_cwd=self._migrate_backend_cwd,
+            requirements_for_target=self._migrate_requirements_for_target,
+            project_context_builder=self._migrate_project_context,
+            contract_context_builder=lambda project_name, target_root: _MigrateProjectContext(
+                name=project_name,
+                root=target_root,
+                ports={},
+            ),
+            resolve_backend_env_contract=_resolve_backend_env_contract,
         )
-        if target is None:
-            return env
-
-        project_name = str(getattr(target, "name", "")).strip()
-        target_root = Path(str(getattr(target, "root")))
-        backend_cwd = self._migrate_backend_cwd(target_root)
-
-        runtime_raw = self.runtime.raw_runtime
-        context = _MigrateProjectContext(name=project_name, root=target_root, ports={})
-
-        projected_env: dict[str, str] = {}
-        requirements = self._migrate_requirements_for_target(route=route, project_name=project_name)
-        if requirements is not None:
-            project_context = self._migrate_project_context(
-                project_name=project_name,
-                project_root=target_root,
-                requirements=requirements,
-            )
-            projector = getattr(runtime_raw, "_project_service_env_internal", None)
-            if callable(projector):
-                projected_candidate = projector(project_context, requirements=requirements, route=route)
-                if isinstance(projected_candidate, dict):
-                    projected_env = {
-                        str(key): str(value)
-                        for key, value in projected_candidate.items()
-                        if isinstance(key, str) and isinstance(value, str)
-                    }
-
-        contract = _resolve_backend_env_contract(
-            runtime_raw,
-            context=context,
-            backend_cwd=backend_cwd,
-            base_env=env,
-            projected_env=projected_env,
-        )
-        self._migrate_env_contracts[project_name] = {
-            "env_file_path": str(contract.env_file_path) if contract.env_file_path is not None else None,
-            "env_file_source": contract.env_file_source,
-            "override_requested": contract.override_requested,
-            "override_resolution": contract.override_resolution,
-            "override_authoritative": contract.override_authoritative,
-            "scrubbed_keys": list(contract.scrubbed_keys),
-            "projected_keys": list(contract.projected_keys),
-        }
-        return contract.env
 
     def run_delete_worktree_action(self, route: Route) -> int:
         return run_delete_worktree_action_impl(self, route)
