@@ -36,7 +36,7 @@ from envctl_engine.startup.finalization import (
 )
 from envctl_engine.startup.execution_preparation import prepare_startup_execution
 from envctl_engine.startup.run_reuse_support import (
-    prepare_dashboard_stopped_service_restore as prepare_dashboard_stopped_service_restore_impl,
+    prepare_dashboard_stopped_service_restore_with_runtime,
     replace_existing_project_services_for_fresh_start_with_defaults,
 )
 from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse
@@ -327,7 +327,11 @@ class StartupOrchestrator:
             runtime=self.runtime,
             session=session,
             evaluate_run_reuse_fn=evaluate_run_reuse,
-            prepare_dashboard_stopped_service_restore=self._prepare_dashboard_stopped_service_restore,
+            prepare_dashboard_stopped_service_restore=partial(
+                prepare_dashboard_stopped_service_restore_with_runtime,
+                self.runtime,
+                partial(emit_startup_phase, self.runtime),
+            ),
             announce_session_identifiers=self._announce_session_identifiers,
             emit_phase=partial(emit_startup_phase, self.runtime),
             headless_plan_output_only=finalization_headless_plan_output_only,
@@ -381,23 +385,6 @@ class StartupOrchestrator:
                     terminate_restart_orphan_listeners=self._terminate_restart_orphan_listeners,
                 )
             ),
-        )
-
-    def _prepare_dashboard_stopped_service_restore(
-        self,
-        session: StartupSession,
-        *,
-        candidate_state,
-        reuse_started: float,
-        decision_kind: str,
-    ) -> bool:
-        return prepare_dashboard_stopped_service_restore_impl(
-            runtime=self.runtime,
-            session=session,
-            candidate_state=candidate_state,
-            reuse_started=reuse_started,
-            decision_kind=decision_kind,
-            emit_phase=partial(emit_startup_phase, self.runtime),
         )
 
     def _prepare_execution(self, session: StartupSession) -> None:

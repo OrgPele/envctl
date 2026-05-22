@@ -217,6 +217,25 @@ def prepare_dashboard_stopped_service_restore(
     return True
 
 
+def prepare_dashboard_stopped_service_restore_with_runtime(
+    runtime: Any,
+    emit_phase: Callable[..., None],
+    session: Any,
+    *,
+    candidate_state: Any,
+    reuse_started: float,
+    decision_kind: str,
+) -> bool:
+    return prepare_dashboard_stopped_service_restore(
+        runtime=runtime,
+        session=session,
+        candidate_state=candidate_state,
+        reuse_started=reuse_started,
+        decision_kind=decision_kind,
+        emit_phase=emit_phase,
+    )
+
+
 def fresh_start_replacement_services(
     *,
     route: Route,
