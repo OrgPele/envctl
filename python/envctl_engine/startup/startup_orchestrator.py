@@ -8,7 +8,7 @@ from typing import Callable, cast, Iterable
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent.config import resolve_plan_agent_launch_config
 from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
-from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanAgentLaunchConfig, PlanAgentLaunchResult
+from envctl_engine.planning.plan_agent.models import PlanAgentLaunchResult
 from envctl_engine.planning.plan_agent.omx_transport import validate_plan_agent_attach_target
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
 from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
@@ -248,10 +248,16 @@ class StartupOrchestrator:
                 report_progress=report_progress_fn,
                 prepare_fn=prepare_project_dependencies,
             )
-        launch_result = self._launch_plan_agent_terminals_with_spinner(
-            session,
-            created_worktrees=created_worktrees,
-            launch_config=launch_config,
+        launch_result = cast(
+            PlanAgentLaunchResult,
+            launch_plan_agent_terminals_with_spinner_impl(
+                self.runtime,
+                route=session.effective_route,
+                created_worktrees=created_worktrees,
+                launch_config=launch_config,
+                suppress_progress_output=suppress_progress_output(session.effective_route),
+                launch_fn=launch_plan_agent_terminals,
+            ),
         )
         session.plan_agent_launch_result = launch_result
         session.plan_agent_attach_target = launch_result.attach_target
@@ -265,25 +271,6 @@ class StartupOrchestrator:
         if should_fail_for_plan_agent_launch_result_impl(session, launch_result):
             raise RuntimeError(plan_agent_launch_failure_message_impl(launch_result))
         return None
-
-    def _launch_plan_agent_terminals_with_spinner(
-        self,
-        session: StartupSession,
-        *,
-        created_worktrees: tuple[CreatedPlanWorktree, ...],
-        launch_config: PlanAgentLaunchConfig,
-    ) -> PlanAgentLaunchResult:
-        return cast(
-            PlanAgentLaunchResult,
-            launch_plan_agent_terminals_with_spinner_impl(
-                self.runtime,
-                route=session.effective_route,
-                created_worktrees=created_worktrees,
-                launch_config=launch_config,
-                suppress_progress_output=suppress_progress_output(session.effective_route),
-                launch_fn=launch_plan_agent_terminals,
-            ),
-        )
 
     def _resolve_disabled_startup_mode(self, session: StartupSession) -> int | None:
         validate_plan_agent_handoff = partial(
