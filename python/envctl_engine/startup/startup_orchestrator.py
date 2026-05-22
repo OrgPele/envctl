@@ -20,7 +20,7 @@ from envctl_engine.startup.finalization import (
     render_final_failure_status as finalization_render_final_failure_status,
     render_project_startup_warnings_for_route as finalization_render_project_startup_warnings_for_route,
 )
-from envctl_engine.startup.execution_preparation import prepare_startup_execution
+from envctl_engine.startup.execution_preparation import prepare_startup_execution_with_runtime
 from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse_with_runtime
 from envctl_engine.startup.plan_agent_handoff import (
     prepare_and_launch_plan_agent_worktrees as prepare_and_launch_plan_agent_worktrees_impl,
@@ -46,10 +46,7 @@ from envctl_engine.startup.session_lifecycle import (
     resolved_run_id,
     validate_startup_route_contract,
 )
-from envctl_engine.startup.selected_context_startup import (
-    record_project_startup as record_project_startup_impl,
-    start_selected_contexts,
-)
+from envctl_engine.startup.selected_context_startup import start_selected_contexts_with_runtime
 from envctl_engine.startup.startup_progress import (
     ProjectSpinnerGroup,
     report_progress,
@@ -62,7 +59,6 @@ from envctl_engine.startup.startup_selection_support import (
     trees_start_selection_required,
 )
 from envctl_engine.startup.startup_execution_support import (
-    maybe_prewarm_docker as maybe_prewarm_docker_impl,
     start_project_context as start_project_context_impl,
     start_project_services as start_project_services_impl,
     start_requirements_for_project as start_requirements_for_project_impl,
@@ -178,17 +174,12 @@ class StartupOrchestrator:
                 session,
                 headless_plan_output_only=finalization_headless_plan_output_only,
             )
-            prepare_startup_execution(
-                session=session,
-                maybe_prewarm_docker=lambda *, route, mode: maybe_prewarm_docker_impl(self, route=route, mode=mode),
-                emit_phase=partial(emit_startup_phase, self.runtime),
-            )
-            start_selected_contexts(
-                runtime=self.runtime,
+            prepare_startup_execution_with_runtime(self.runtime, session)
+            start_selected_contexts_with_runtime(
+                self.runtime,
                 session=session,
                 suppress_progress_output=suppress_progress_output,
                 resolved_run_id=resolved_run_id,
-                record_project_startup=record_project_startup_impl,
                 render_project_startup_warnings=partial(
                     finalization_render_project_startup_warnings_for_route,
                     self.runtime,

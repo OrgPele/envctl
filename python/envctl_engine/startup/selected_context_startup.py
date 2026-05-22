@@ -8,6 +8,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
+from envctl_engine.startup.startup_progress import suppress_progress_output as default_suppress_progress_output
 
 
 def project_spinner_success_message(session: StartupSession, context: ProjectContextLike) -> str:
@@ -143,6 +144,38 @@ def start_selected_contexts(
             active_spinner=active_spinner,
             enabled=use_single_spinner,
         )
+
+
+def start_selected_contexts_with_runtime(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    *,
+    resolved_run_id: Callable[[StartupSession], str],
+    render_project_startup_warnings: Callable[..., None],
+    should_degrade_to_plan_agent_handoff: Callable[[StartupSession, str], bool],
+    record_plan_agent_handoff_local_startup_failure: Callable[..., None],
+    spinner_factory: Callable[..., Any],
+    use_spinner_policy_fn: Callable[[Any], Any],
+    resolve_spinner_policy_fn: Callable[[dict[str, str]], Any],
+    emit_spinner_policy_fn: Callable[..., None],
+    project_spinner_group_factory: Callable[..., Any],
+    suppress_progress_output: Callable[[Route], bool] = default_suppress_progress_output,
+) -> None:
+    start_selected_contexts(
+        runtime=runtime,
+        session=session,
+        suppress_progress_output=suppress_progress_output,
+        resolved_run_id=resolved_run_id,
+        record_project_startup=record_project_startup,
+        render_project_startup_warnings=render_project_startup_warnings,
+        should_degrade_to_plan_agent_handoff=should_degrade_to_plan_agent_handoff,
+        record_plan_agent_handoff_local_startup_failure=record_plan_agent_handoff_local_startup_failure,
+        spinner_factory=spinner_factory,
+        use_spinner_policy_fn=use_spinner_policy_fn,
+        resolve_spinner_policy_fn=resolve_spinner_policy_fn,
+        emit_spinner_policy_fn=emit_spinner_policy_fn,
+        project_spinner_group_factory=project_spinner_group_factory,
+    )
 
 
 def _execution_route(*, runtime: StartupRuntime, session: StartupSession) -> Route:

@@ -77,6 +77,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_orchestrator_does_not_retain_selected_context_startup_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_start_selected_contexts"))
 
+    def test_startup_orchestrator_does_not_retain_selected_context_startup_runtime_binding(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_selected_context_startup_runtime"))
+
     def test_startup_orchestrator_does_not_retain_context_selection_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_select_contexts"))
 

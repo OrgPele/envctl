@@ -6,7 +6,11 @@ from types import SimpleNamespace
 import unittest
 
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.startup.selected_context_startup import record_project_startup, start_selected_contexts
+from envctl_engine.startup.selected_context_startup import (
+    record_project_startup,
+    start_selected_contexts,
+    start_selected_contexts_with_runtime,
+)
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
 from envctl_engine.state.models import RequirementsResult
 
@@ -175,6 +179,51 @@ class SelectedContextStartupTests(unittest.TestCase):
 
         self.assertEqual(degraded, [("Alpha", "backend failed")])
         self.assertEqual(session.started_context_names, [])
+
+    def test_runtime_bound_selected_context_startup_records_results_and_uses_owner_dependencies(self) -> None:
+        runtime = _RuntimeStub()
+        route = Route(command="start", mode="trees", raw_args=["start"], passthrough_args=[], projects=[], flags={})
+        context = self._context("Alpha")
+        session = self._session(route=route, contexts=[context])
+        rendered_warnings: list[tuple[str, list[str]]] = []
+        degradation_checks: list[tuple[str, str]] = []
+        local_failures: list[tuple[str, str]] = []
+        spinner_policies: list[dict[str, object]] = []
+
+        start_selected_contexts_with_runtime(
+            runtime,
+            session,
+            resolved_run_id=lambda session: "run-1",
+            render_project_startup_warnings=lambda *, context, warnings, route, project_spinner_group: rendered_warnings.append(
+                (context.name, list(warnings))
+            ),
+            should_degrade_to_plan_agent_handoff=lambda session, error: degradation_checks.append(
+                (session.requested_command, error)
+            )
+            or False,
+            record_plan_agent_handoff_local_startup_failure=lambda session, project_name, error: local_failures.append(
+                (project_name, error)
+            ),
+            spinner_factory=_SpinnerFactory(),
+            use_spinner_policy_fn=lambda policy: nullcontext(),
+            resolve_spinner_policy_fn=lambda env: SimpleNamespace(enabled=False, backend="rich"),
+            emit_spinner_policy_fn=lambda emit, policy, context: spinner_policies.append(dict(context)),
+            project_spinner_group_factory=lambda **kwargs: SimpleNamespace(
+                __enter__=lambda self: self,
+                __exit__=lambda self, exc_type, exc, tb: False,
+                update_project=lambda project, message: None,
+                mark_success=lambda project, message: None,
+                mark_failure=lambda project, message: None,
+            ),
+        )
+
+        self.assertEqual(session.started_context_names, ["Alpha"])
+        self.assertIn("Alpha", session.requirements_by_project)
+        self.assertEqual(session.services_by_project, {"Alpha": {}})
+        self.assertEqual(rendered_warnings, [("Alpha", ["Alpha warning"])])
+        self.assertEqual(degradation_checks, [])
+        self.assertEqual(local_failures, [])
+        self.assertEqual(spinner_policies, [{"component": "startup_orchestrator", "op_id": "startup.execute"}])
 
 
 if __name__ == "__main__":
