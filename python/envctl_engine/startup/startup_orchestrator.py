@@ -270,21 +270,10 @@ class StartupOrchestrator:
         session.plan_agent_launch_result = launch_result
         session.plan_agent_attach_target = launch_result.attach_target
         self._validate_plan_agent_handoff(session, phase="post_launch")
-        self._emit_plan_agent_launch_state(session, launch_result)
-        if self._should_fail_for_plan_agent_launch_result(session, launch_result):
-            raise RuntimeError(self._plan_agent_launch_failure_message(launch_result))
+        emit_plan_agent_launch_state_impl(self.runtime, session, launch_result)
+        if should_fail_for_plan_agent_launch_result_impl(session, launch_result):
+            raise RuntimeError(plan_agent_launch_failure_message_impl(launch_result))
         return None
-
-    def _should_fail_for_plan_agent_launch_result(
-        self,
-        session: StartupSession,
-        launch_result: PlanAgentLaunchResult,
-    ) -> bool:
-        return should_fail_for_plan_agent_launch_result_impl(session, launch_result)
-
-    @staticmethod
-    def _plan_agent_launch_failure_message(launch_result: PlanAgentLaunchResult) -> str:
-        return plan_agent_launch_failure_message_impl(launch_result)
 
     def _launch_plan_agent_terminals_with_spinner(
         self,
@@ -634,9 +623,6 @@ class StartupOrchestrator:
             project_name=project_name,
             error=error,
         )
-
-    def _emit_plan_agent_launch_state(self, session: StartupSession, launch_result: object) -> None:
-        emit_plan_agent_launch_state_impl(self.runtime, session, launch_result)
 
     def _emit_phase(self, session: StartupSession, phase: str, started_at: float, **extra: object) -> None:
         self.runtime._emit(
