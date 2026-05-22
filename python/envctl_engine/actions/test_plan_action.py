@@ -115,19 +115,19 @@ def build_test_plan(
     }
 
 
-def run_test_plan_action(context: object, *, json_output: bool = False, run_commands: bool = False) -> int:
+def run_test_plan_action(context: object, *, json_output: bool = False, dry_run: bool = False) -> int:
     repo_root = Path(getattr(context, "repo_root")).resolve()
     project_root = Path(getattr(context, "project_root")).resolve()
     project_name = str(getattr(context, "project_name", project_root.name))
     payload = build_test_plan(repo_root=repo_root, project_root=project_root, project_name=project_name)
     exit_code = 0
-    if run_commands:
+    if not dry_run:
         run_payload, exit_code = _run_plan_commands(payload, cwd=project_root)
         payload["run"] = run_payload
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        if run_commands:
+        if not dry_run:
             for result in payload.get("run", {}).get("results", []):
                 if isinstance(result, Mapping):
                     print(f"{result.get('status', 'unknown')}: {result.get('command', '')}")

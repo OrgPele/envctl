@@ -235,20 +235,21 @@ During implementation, ask envctl for focused validation commands before running
 large suites:
 
 ```bash
-envctl test-plan --project features_demo-1 --json
+envctl test-focused --project features_demo-1
 ```
 
-The JSON result lists exact commands, confidence, reasons, changed files, and
-whether a broad full-gate run is recommended. To run the focused commands
-directly, use:
+This runs the focused commands in order and stops at the first failure, so the
+local loop fails fast instead of spending time on checks that depend on an
+earlier failure. To preview the commands without running them, use:
 
 ```bash
-envctl test-plan --project features_demo-1 --run
+envctl test-focused --project features_demo-1 --dry-run
 ```
 
-Run mode executes the planned focused commands in order and stops at the first
-failure, so the local loop fails fast instead of spending time on checks that
-depend on an earlier failure. For final handoff, use:
+Add `--json` to either form for the structured `envctl.test_plan.v1` payload,
+including exact commands, confidence, reasons, changed files, and full-gate
+guidance. The older `test-plan` command name remains available as an alias. For
+final handoff, use:
 
 ```bash
 envctl ship --project features_demo-1 --json

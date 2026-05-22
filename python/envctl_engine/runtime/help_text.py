@@ -547,20 +547,23 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
     ),
     "test-plan": CommandHelpTopic(
         command="test-plan",
-        summary="print or run focused validation commands for the selected project",
-        usage=("envctl test-plan --project <name> [--run] [--json]",),
+        summary="run focused validation commands for the selected project",
+        usage=("envctl test-focused --project <name> [--dry-run] [--json]",),
         what_it_does=(
             "collects changed files from git and maps common envctl code areas to focused test commands",
             "includes reasons, confidence, ruff suggestions for touched Python paths, and full-gate guidance",
-            "with --run, executes the focused commands in order and stops at the first failure",
+            "runs the focused commands by default in order and stops at the first failure",
         ),
         flags=(
             "--project <name>        plan validation for one project/worktree",
-            "--run                   execute the focused commands instead of only printing them",
+            "--dry-run               print the focused commands without executing them",
             "--json                  print the envctl.test_plan.v1 payload",
         ),
-        examples=("envctl test-plan --project feature-a-1 --json", "envctl test-plan --project feature-a-1 --run"),
-        aliases=("--test-plan",),
+        examples=(
+            "envctl test-focused --project feature-a-1",
+            "envctl test-focused --project feature-a-1 --dry-run --json",
+        ),
+        aliases=("test-plan", "focused-test", "--test-plan", "--test-focused"),
         related=("test", "ship", "commit"),
     ),
     "pr": CommandHelpTopic(

@@ -956,7 +956,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIn("--interactive", output)
         self.assertIn("--pr-base", output)
 
-    def test_test_plan_help_mentions_run_mode(self) -> None:
+    def test_test_plan_help_mentions_default_run_and_dry_run_mode(self) -> None:
         runtime = self._runtime()
         buffer = StringIO()
         with redirect_stdout(buffer):
@@ -964,8 +964,9 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
 
         output = buffer.getvalue()
         self.assertEqual(code, 0)
-        self.assertIn("--run", output)
-        self.assertIn("execute the focused commands", output)
+        self.assertIn("--dry-run", output)
+        self.assertIn("runs the focused commands by default", output)
+        self.assertIn("test-focused", output)
 
     def test_workflow_command_help_explains_when_headless_is_optional(self) -> None:
         runtime = self._runtime()

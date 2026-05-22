@@ -77,7 +77,7 @@ class TestPlanActionTests(unittest.TestCase):
         self.assertEqual(result["changed_files"], ["new_tool.py", "python/envctl_engine/config/__init__.py"])
         self.assertTrue(is_envctl_local_artifact_path(".envctl-commit-message.md"))
 
-    def test_run_mode_executes_focused_commands_until_first_failure(self) -> None:
+    def test_default_mode_executes_focused_commands_until_first_failure(self) -> None:
         class Context:
             repo_root = Path("/repo")
             project_root = Path("/repo")
@@ -107,7 +107,7 @@ class TestPlanActionTests(unittest.TestCase):
             patch("envctl_engine.actions.test_plan_action.subprocess.run", side_effect=fake_run),
             redirect_stdout(StringIO()) as stdout,
         ):
-            code = run_test_plan_action(Context(), run_commands=True, json_output=True)
+            code = run_test_plan_action(Context(), json_output=True)
 
         self.assertEqual(code, 1)
         self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python/actions"]])
@@ -116,7 +116,7 @@ class TestPlanActionTests(unittest.TestCase):
         self.assertEqual(payload["run"]["results"][0]["returncode"], 1)
         self.assertEqual(payload["run"]["skipped_commands"], ["uv run --extra dev ruff check python/envctl_engine/actions/test_plan_action.py"])
 
-    def test_run_mode_reports_success_after_all_focused_commands_pass(self) -> None:
+    def test_default_mode_reports_success_after_all_focused_commands_pass(self) -> None:
         class Context:
             repo_root = Path("/repo")
             project_root = Path("/repo")
@@ -145,7 +145,7 @@ class TestPlanActionTests(unittest.TestCase):
             patch("envctl_engine.actions.test_plan_action.subprocess.run", side_effect=fake_run),
             redirect_stdout(StringIO()) as stdout,
         ):
-            code = run_test_plan_action(Context(), run_commands=True, json_output=True)
+            code = run_test_plan_action(Context(), json_output=True)
 
         self.assertEqual(code, 0)
         self.assertEqual(len(calls), 2)
@@ -153,6 +153,42 @@ class TestPlanActionTests(unittest.TestCase):
         self.assertEqual(payload["run"]["status"], "passed")
         self.assertEqual([item["status"] for item in payload["run"]["results"]], ["passed", "passed"])
         self.assertEqual(payload["run"]["skipped_commands"], [])
+
+    def test_dry_run_mode_prints_focused_commands_without_running_them(self) -> None:
+        class Context:
+            repo_root = Path("/repo")
+            project_root = Path("/repo")
+            project_name = "Main"
+
+        plan = {
+            "contract_version": "envctl.test_plan.v1",
+            "project": "Main",
+            "repo_root": "/repo",
+            "project_root": "/repo",
+            "changed_files": ["python/envctl_engine/actions/test_plan_action.py"],
+            "commands": [
+                {"command": "uv run --extra dev pytest -q tests/python/actions"},
+                {"command": "uv run --extra dev ruff check python/envctl_engine/actions/test_plan_action.py"},
+            ],
+            "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+        }
+
+        with (
+            patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+            patch("envctl_engine.actions.test_plan_action.subprocess.run") as run,
+            redirect_stdout(StringIO()) as stdout,
+        ):
+            code = run_test_plan_action(Context(), dry_run=True)
+
+        self.assertEqual(code, 0)
+        run.assert_not_called()
+        self.assertEqual(
+            stdout.getvalue().splitlines(),
+            [
+                "uv run --extra dev pytest -q tests/python/actions",
+                "uv run --extra dev ruff check python/envctl_engine/actions/test_plan_action.py",
+            ],
+        )
 
 
 if __name__ == "__main__":

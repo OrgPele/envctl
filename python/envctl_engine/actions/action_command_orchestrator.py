@@ -689,7 +689,7 @@ if result.returncode != 0:
                 run_test_plan_action_impl(
                     context,
                     json_output=bool(route.flags.get("json")),
-                    run_commands=bool(route.flags.get("run")),
+                    dry_run=bool(route.flags.get("dry_run")),
                 )
             )
         return 0 if all(code == 0 for code in codes) else 1
