@@ -566,7 +566,7 @@ class StartupOrchestrator:
         return should_degrade_to_plan_agent_handoff_impl(session, error=error)
 
     def _validate_plan_agent_handoff(self, session: StartupSession, *, phase: str) -> None:
-        if not self._plan_agent_handoff_validation_required(session):
+        if not plan_agent_handoff_validation_required_impl(session):
             return
         attach_target = session.plan_agent_attach_target
         if attach_target is None:
@@ -582,13 +582,11 @@ class StartupOrchestrator:
         )
         if validation.ok:
             return
-        self._record_stale_plan_agent_handoff(session, validation_reason="attach_target_stale_after_launch")
-
-    def _plan_agent_handoff_validation_required(self, session: StartupSession) -> bool:
-        return plan_agent_handoff_validation_required_impl(session)
-
-    def _record_stale_plan_agent_handoff(self, session: StartupSession, *, validation_reason: str) -> None:
-        record_stale_plan_agent_handoff_impl(self.runtime, session, validation_reason=validation_reason)
+        record_stale_plan_agent_handoff_impl(
+            self.runtime,
+            session,
+            validation_reason="attach_target_stale_after_launch",
+        )
 
     def _record_plan_agent_handoff_local_startup_failure(
         self,
