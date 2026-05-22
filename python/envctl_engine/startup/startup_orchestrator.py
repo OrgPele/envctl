@@ -76,6 +76,9 @@ from envctl_engine.startup.startup_selection_support import (
     select_start_tree_projects as select_start_tree_projects_impl,
     trees_start_selection_required as trees_start_selection_required_impl,
 )
+from envctl_engine.startup.service_bootstrap_domain import (
+    configured_service_types_for_mode as configured_service_types_for_mode_impl,
+)
 from envctl_engine.startup.startup_execution_support import (
     maybe_prewarm_docker as maybe_prewarm_docker_impl,
     print_startup_summary as print_startup_summary_impl,
@@ -1777,23 +1780,7 @@ class StartupOrchestrator:
         )
 
     def _configured_service_types_for_mode(self, runtime_mode: str) -> list[str]:
-        rt = self.runtime
-        if hasattr(rt.config, "profile_for_mode"):
-            profile = rt.config.profile_for_mode(runtime_mode)
-            configured: list[str] = []
-            if bool(getattr(profile, "backend_enable", False)):
-                configured.append("backend")
-            if bool(getattr(profile, "frontend_enable", False)):
-                configured.append("frontend")
-            return configured
-        return [
-            service_name
-            for service_name, enabled in (
-                ("backend", rt.config.service_enabled_for_mode(runtime_mode, "backend")),
-                ("frontend", rt.config.service_enabled_for_mode(runtime_mode, "frontend")),
-            )
-            if enabled
-        ]
+        return configured_service_types_for_mode_impl(self.runtime.config, runtime_mode)
 
     def _render_project_startup_warnings(
         self,

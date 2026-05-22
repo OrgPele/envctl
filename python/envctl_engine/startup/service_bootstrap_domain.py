@@ -36,6 +36,25 @@ class ProjectContextLike(Protocol):
     root: Path
 
 
+def configured_service_types_for_mode(config: Any, runtime_mode: str) -> list[str]:
+    if hasattr(config, "profile_for_mode"):
+        profile = config.profile_for_mode(runtime_mode)
+        configured: list[str] = []
+        if bool(getattr(profile, "backend_enable", False)):
+            configured.append("backend")
+        if bool(getattr(profile, "frontend_enable", False)):
+            configured.append("frontend")
+        return configured
+    return [
+        service_name
+        for service_name, enabled in (
+            ("backend", config.service_enabled_for_mode(runtime_mode, "backend")),
+            ("frontend", config.service_enabled_for_mode(runtime_mode, "frontend")),
+        )
+        if enabled
+    ]
+
+
 @dataclass(frozen=True)
 class _EnvFileResolution:
     path: Path | None

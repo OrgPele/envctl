@@ -15,6 +15,7 @@ from envctl_engine.startup.service_bootstrap_domain import (
     _backend_dependency_install_required,
     _backend_migrations_enabled,
     _backend_runtime_prep_required,
+    configured_service_types_for_mode,
     _frontend_missing_direct_dependency,
     _prepare_frontend_runtime,
     _prepare_backend_runtime,
@@ -64,6 +65,29 @@ class _FakeRuntime:
 
 
 class ServiceBootstrapDomainTests(unittest.TestCase):
+    def test_configured_service_types_for_mode_uses_profile_when_available(self) -> None:
+        config = SimpleNamespace(
+            profile_for_mode=lambda mode: SimpleNamespace(
+                backend_enable=mode == "trees",
+                frontend_enable=True,
+            )
+        )
+
+        self.assertEqual(configured_service_types_for_mode(config, "trees"), ["backend", "frontend"])
+        self.assertEqual(configured_service_types_for_mode(config, "main"), ["frontend"])
+
+    def test_configured_service_types_for_mode_falls_back_to_service_lookup(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def _enabled(mode: str, service: str) -> bool:
+            calls.append((mode, service))
+            return service == "backend"
+
+        config = SimpleNamespace(service_enabled_for_mode=_enabled)
+
+        self.assertEqual(configured_service_types_for_mode(config, "main"), ["backend"])
+        self.assertEqual(calls, [("main", "backend"), ("main", "frontend")])
+
     def test_frontend_missing_direct_dependency_detects_declared_package_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             frontend = Path(tmpdir)
