@@ -95,6 +95,8 @@ from envctl_engine.actions.action_test_plan_support import (
     suite_spinner_policy_enabled as suite_spinner_policy_enabled_impl,
 )
 from envctl_engine.actions.project_action_report_support import (
+    build_project_action_failure_handler as build_project_action_failure_handler_impl,
+    build_project_action_success_handler as build_project_action_success_handler_impl,
     first_output_line as first_output_line_impl,
     persist_project_action_result as persist_project_action_result_impl,
     project_action_success_status as project_action_success_status_impl,
@@ -653,46 +655,28 @@ class ActionCommandOrchestrator:
         mode: str,
         interactive_command: bool,
     ) -> Callable[[ActionTargetContext, Any], None] | None:
-        def handle_success(context: ActionTargetContext, completed: Any) -> None:
-            self._clear_dashboard_pr_cache()
-            status = self._project_action_success_status(command_name=command_name, completed=completed)
-            extra_entry: dict[str, object] | None = None
-            if command_name == "review" and status == "success":
-                extra_entry = self._review_success_artifact_paths(
-                    stdout=getattr(completed, "stdout", ""),
-                    stderr=getattr(completed, "stderr", ""),
-                )
-            self._persist_project_action_result(
-                command_name=command_name,
-                mode=mode,
-                project_name=context.name,
-                status=status,
-                error_output="",
-                extra_entry=extra_entry,
-            )
-            if command_name != "pr" or not interactive_command or status != "success":
-                return
-            url = self._first_output_line(getattr(completed, "stdout", ""))
-            if url:
-                self._emit_status(f"PR created: {url}")
-
-        return handle_success
+        return build_project_action_success_handler_impl(
+            command_name=command_name,
+            mode=mode,
+            interactive_command=interactive_command,
+            clear_dashboard_pr_cache=self._clear_dashboard_pr_cache,
+            project_action_success_status_fn=self._project_action_success_status,
+            review_success_artifact_paths_fn=self._review_success_artifact_paths,
+            persist_project_action_result_fn=self._persist_project_action_result,
+            first_output_line_fn=self._first_output_line,
+            emit_status=self._emit_status,
+        )
 
     def _project_action_failure_handler(
         self,
         command_name: str,
         mode: str,
     ) -> Callable[[ActionTargetContext, str], None]:
-        def handle_failure(context: ActionTargetContext, error_output: str) -> None:
-            self._persist_project_action_result(
-                command_name=command_name,
-                mode=mode,
-                project_name=context.name,
-                status="failed",
-                error_output=error_output,
-            )
-
-        return handle_failure
+        return build_project_action_failure_handler_impl(
+            command_name=command_name,
+            mode=mode,
+            persist_project_action_result_fn=self._persist_project_action_result,
+        )
 
     def _persist_project_action_result(
         self,

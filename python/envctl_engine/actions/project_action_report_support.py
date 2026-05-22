@@ -7,6 +7,62 @@ from typing import Any, Callable, Mapping
 from envctl_engine.test_output.parser_base import strip_ansi
 
 
+def build_project_action_success_handler(
+    *,
+    command_name: str,
+    mode: str,
+    interactive_command: bool,
+    clear_dashboard_pr_cache: Callable[[], None],
+    project_action_success_status_fn: Callable[..., str],
+    review_success_artifact_paths_fn: Callable[..., dict[str, object]],
+    persist_project_action_result_fn: Callable[..., None],
+    first_output_line_fn: Callable[[object], str],
+    emit_status: Callable[[str], None],
+) -> Callable[[object, Any], None]:
+    def handle_success(context: object, completed: Any) -> None:
+        clear_dashboard_pr_cache()
+        status = project_action_success_status_fn(command_name=command_name, completed=completed)
+        extra_entry: dict[str, object] | None = None
+        if command_name == "review" and status == "success":
+            extra_entry = review_success_artifact_paths_fn(
+                stdout=getattr(completed, "stdout", ""),
+                stderr=getattr(completed, "stderr", ""),
+            )
+        persist_project_action_result_fn(
+            command_name=command_name,
+            mode=mode,
+            project_name=str(getattr(context, "name")),
+            status=status,
+            error_output="",
+            extra_entry=extra_entry,
+        )
+        if command_name != "pr" or not interactive_command or status != "success":
+            return
+        url = first_output_line_fn(getattr(completed, "stdout", ""))
+        if url:
+            emit_status(f"PR created: {url}")
+
+    return handle_success
+
+
+def build_project_action_failure_handler(
+    *,
+    command_name: str,
+    mode: str,
+    persist_project_action_result_fn: Callable[..., None],
+) -> Callable[[object, str], None]:
+    def handle_failure(context: object, error_output: str) -> None:
+        persist_project_action_result_fn(
+            command_name=command_name,
+            mode=mode,
+            project_name=str(getattr(context, "name")),
+            status="failed",
+            error_output=error_output,
+        )
+
+    return handle_failure
+
+
 def review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str, object]:
     output_parts = [str(stdout or ""), str(stderr or "")]
     cleaned = strip_ansi("\n".join(part for part in output_parts if str(part or "").strip()))
