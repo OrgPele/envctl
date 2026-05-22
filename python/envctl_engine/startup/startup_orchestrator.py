@@ -31,6 +31,7 @@ from envctl_engine.startup.finalization import (
     build_failure_run_state,
     build_planning_dashboard_state,
     build_success_run_state,
+    emit_preserved_service_merge as finalization_emit_preserved_service_merge,
     failure_context_label as finalization_failure_context_label,
     format_failure_context_label as finalization_format_failure_context_label,
     headless_plan_session_summary_lines,
@@ -1698,18 +1699,7 @@ class StartupOrchestrator:
         return 0
 
     def _emit_preserved_service_merge(self, session: StartupSession) -> None:
-        if not session.preserved_services:
-            return
-        replaced = sorted(
-            name for project_services in session.services_by_project.values() for name in project_services
-        )
-        self.runtime._emit(
-            "runtime.state.merge_preserved_services",
-            preserved_services=sorted(session.preserved_services),
-            replaced_services=replaced,
-            preserved_requirements=sorted(session.preserved_requirements),
-            replaced_requirements=sorted(session.requirements_by_project),
-        )
+        finalization_emit_preserved_service_merge(self.runtime, session)
 
     def _print_headless_plan_session_summary(
         self,

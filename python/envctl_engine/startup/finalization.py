@@ -31,6 +31,19 @@ def build_failure_run_state(runtime: StartupRuntime, session: StartupSession, er
     return run_state
 
 
+def emit_preserved_service_merge(runtime: StartupRuntime, session: StartupSession) -> None:
+    if not session.preserved_services:
+        return
+    replaced = sorted(name for project_services in session.services_by_project.values() for name in project_services)
+    runtime._emit(
+        "runtime.state.merge_preserved_services",
+        preserved_services=sorted(session.preserved_services),
+        replaced_services=replaced,
+        preserved_requirements=sorted(session.preserved_requirements),
+        replaced_requirements=sorted(session.requirements_by_project),
+    )
+
+
 def render_final_failure_status(
     runtime: StartupRuntime,
     session: StartupSession,

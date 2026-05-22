@@ -6,6 +6,7 @@ import unittest
 
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.startup.finalization import (
+    emit_preserved_service_merge,
     failure_context_label,
     headless_plan_session_summary_lines,
     plan_agent_degraded_handoff_text,
@@ -119,6 +120,32 @@ class StartupFinalizationTests(unittest.TestCase):
                 "reason: attach_target_stale_after_launch",
                 "stale_session: envctl-stale",
                 "recovery: envctl plan --omx --new-session",
+            ],
+        )
+
+    def test_emit_preserved_service_merge_reports_preserved_and_replaced_state(self) -> None:
+        session = _session(contexts=[])
+        session.preserved_services = {"alpha Backend": object(), "alpha Frontend": object()}
+        session.preserved_requirements = {"alpha": object()}
+        session.services_by_project = {"alpha": {"alpha Backend": object()}, "beta": {"beta Frontend": object()}}
+        session.requirements_by_project = {"alpha": object(), "beta": object()}
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(_emit=lambda event, **payload: events.append((event, payload)))
+
+        emit_preserved_service_merge(runtime, session)
+
+        self.assertEqual(
+            events,
+            [
+                (
+                    "runtime.state.merge_preserved_services",
+                    {
+                        "preserved_services": ["alpha Backend", "alpha Frontend"],
+                        "replaced_services": ["alpha Backend", "beta Frontend"],
+                        "preserved_requirements": ["alpha"],
+                        "replaced_requirements": ["alpha", "beta"],
+                    },
+                )
             ],
         )
 
