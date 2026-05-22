@@ -455,7 +455,10 @@ class StartupOrchestrator:
             ensure_run_id=self._ensure_run_id,
             validate_plan_agent_handoff=self._validate_plan_agent_handoff,
             build_success_run_state=build_success_run_state,
-            emit_preserved_service_merge=self._emit_preserved_service_merge,
+            emit_preserved_service_merge=lambda session: finalization_emit_preserved_service_merge(
+                self.runtime,
+                session,
+            ),
             emit_phase=self._emit_phase,
             requirements_timing_enabled=lambda route: requirements_timing_enabled_impl(self, route),
             suppress_timing_output=self._suppress_timing_output,
@@ -498,9 +501,6 @@ class StartupOrchestrator:
             headless_plan_output_only=finalization_headless_plan_output_only,
             maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
         )
-
-    def _emit_preserved_service_merge(self, session: StartupSession) -> None:
-        finalization_emit_preserved_service_merge(self.runtime, session)
 
     def _print_headless_plan_session_summary(
         self,
