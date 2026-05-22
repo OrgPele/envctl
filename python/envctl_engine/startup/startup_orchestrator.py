@@ -47,7 +47,9 @@ from envctl_engine.startup.run_reuse_support import RunReuseDecision
 from envctl_engine.startup.plan_agent_handoff import (
     emit_plan_agent_launch_state as emit_plan_agent_launch_state_impl,
     local_startup_failure_reason as plan_agent_local_startup_failure_reason,
+    plan_agent_launch_failure_message as plan_agent_launch_failure_message_impl,
     record_plan_agent_handoff_local_startup_failure as record_plan_agent_handoff_local_startup_failure_impl,
+    should_fail_for_plan_agent_launch_result as should_fail_for_plan_agent_launch_result_impl,
 )
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
@@ -584,27 +586,11 @@ class StartupOrchestrator:
         session: StartupSession,
         launch_result: PlanAgentLaunchResult,
     ) -> bool:
-        if session.effective_route.command != "plan":
-            return False
-        if not session.plan_agent_launch_requested:
-            return False
-        launch_failed = str(getattr(launch_result, "status", "")).strip().lower() == "failed"
-        return launch_failed and not session.plan_agent_attach_target
+        return should_fail_for_plan_agent_launch_result_impl(session, launch_result)
 
     @staticmethod
     def _plan_agent_launch_failure_message(launch_result: PlanAgentLaunchResult) -> str:
-        details = []
-        for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
-            reason = str(getattr(outcome, "reason", "") or "").strip()
-            worktree_name = str(getattr(outcome, "worktree_name", "") or "").strip()
-            if reason:
-                details.append(f"{worktree_name}: {reason}" if worktree_name else reason)
-        if not details:
-            reason = str(getattr(launch_result, "reason", "") or "").strip()
-            if reason:
-                details.append(reason)
-        suffix = f": {'; '.join(details[:3])}" if details else ""
-        return f"Plan agent session failed to start{suffix}"
+        return plan_agent_launch_failure_message_impl(launch_result)
 
     def _launch_plan_agent_terminals_with_spinner(
         self,

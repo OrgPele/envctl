@@ -7,7 +7,9 @@ from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.startup.plan_agent_handoff import (
     emit_plan_agent_launch_state,
     local_startup_failure_reason,
+    plan_agent_launch_failure_message,
     record_plan_agent_handoff_local_startup_failure,
+    should_fail_for_plan_agent_launch_result,
 )
 from envctl_engine.startup.session import StartupSession
 
@@ -137,6 +139,49 @@ class PlanAgentHandoffTests(unittest.TestCase):
                     },
                 )
             ],
+        )
+
+    def test_should_fail_for_plan_agent_launch_result_requires_plan_request_and_no_attach(self) -> None:
+        failed_result = SimpleNamespace(status="failed", attach_target=None, outcomes=())
+
+        session = _session(args=["plan", "--tmux"])
+        session.plan_agent_launch_requested = True
+        self.assertTrue(should_fail_for_plan_agent_launch_result(session, failed_result))
+
+        session.plan_agent_attach_target = SimpleNamespace(session_name="envctl-plan")
+        self.assertFalse(should_fail_for_plan_agent_launch_result(session, failed_result))
+
+        no_launch_session = _session(args=["plan", "--tmux"])
+        self.assertFalse(should_fail_for_plan_agent_launch_result(no_launch_session, failed_result))
+
+        start_session = _session(args=["--trees"])
+        start_session.plan_agent_launch_requested = True
+        self.assertFalse(should_fail_for_plan_agent_launch_result(start_session, failed_result))
+
+    def test_plan_agent_launch_failure_message_prefers_outcome_details(self) -> None:
+        launch_result = SimpleNamespace(
+            status="failed",
+            reason="transport_failed",
+            outcomes=(
+                SimpleNamespace(worktree_name="feature-a-1", reason="missing cmux"),
+                SimpleNamespace(worktree_name="feature-a-2", reason=""),
+                SimpleNamespace(worktree_name="", reason="timeout"),
+                SimpleNamespace(worktree_name="feature-a-3", reason="bad env"),
+                SimpleNamespace(worktree_name="feature-a-4", reason="hidden fourth"),
+            ),
+        )
+
+        self.assertEqual(
+            plan_agent_launch_failure_message(launch_result),
+            "Plan agent session failed to start: feature-a-1: missing cmux; timeout; feature-a-3: bad env",
+        )
+
+    def test_plan_agent_launch_failure_message_falls_back_to_result_reason(self) -> None:
+        launch_result = SimpleNamespace(status="failed", reason="missing_executables", outcomes=())
+
+        self.assertEqual(
+            plan_agent_launch_failure_message(launch_result),
+            "Plan agent session failed to start: missing_executables",
         )
 
 

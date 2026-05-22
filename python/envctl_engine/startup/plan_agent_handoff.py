@@ -30,6 +30,30 @@ def emit_plan_agent_launch_state(runtime: Any, session: StartupSession, launch_r
     )
 
 
+def should_fail_for_plan_agent_launch_result(session: StartupSession, launch_result: object) -> bool:
+    if session.effective_route.command != "plan":
+        return False
+    if not session.plan_agent_launch_requested:
+        return False
+    launch_failed = str(getattr(launch_result, "status", "")).strip().lower() == "failed"
+    return launch_failed and not session.plan_agent_attach_target
+
+
+def plan_agent_launch_failure_message(launch_result: object) -> str:
+    details = []
+    for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
+        reason = str(getattr(outcome, "reason", "") or "").strip()
+        worktree_name = str(getattr(outcome, "worktree_name", "") or "").strip()
+        if reason:
+            details.append(f"{worktree_name}: {reason}" if worktree_name else reason)
+    if not details:
+        reason = str(getattr(launch_result, "reason", "") or "").strip()
+        if reason:
+            details.append(reason)
+    suffix = f": {'; '.join(details[:3])}" if details else ""
+    return f"Plan agent session failed to start{suffix}"
+
+
 def local_startup_failure_reason(error: str) -> str | None:
     if "missing_service_start_command" in error:
         return "missing_service_start_command"
