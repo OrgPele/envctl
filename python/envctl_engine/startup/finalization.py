@@ -147,6 +147,65 @@ def finalize_successful_startup(
     return 0
 
 
+def finalize_failed_startup(
+    *,
+    runtime: StartupRuntime,
+    session: StartupSession,
+    error: str,
+    ensure_run_id: Callable[[StartupSession], None],
+    port_allocator: Callable[[StartupRuntime], object],
+    emit_phase: Callable[..., None],
+    render_final_failure_status: Callable[..., str],
+) -> int:
+    ensure_run_id(session)
+    allocator = port_allocator(runtime)
+    if "no free port found" in error.lower():
+        final_error = f"Port reservation failed: {error}"
+    elif error.startswith("Startup failed:"):
+        final_error = error
+    else:
+        final_error = f"Startup failed: {error}"
+    session.failure_message = final_error
+    session.errors.append(final_error)
+    failure_payload: dict[str, object] = {
+        "mode": session.runtime_mode,
+        "command": session.effective_route.command,
+        "error": final_error,
+    }
+    if session.strict_truth_failed:
+        failure_payload["services"] = sorted(session.merged_services)
+    runtime._emit("startup.failed", **failure_payload)
+    started_services = {
+        service_name: service
+        for project_name in session.started_context_names
+        for service_name, service in session.services_by_project.get(project_name, {}).items()
+    }
+    if started_services:
+        runtime._terminate_started_services(started_services)
+    allocator.release_session()
+    run_state = build_failure_run_state(runtime, session, final_error)
+    artifacts_started = time.monotonic()
+    runtime._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
+    emit_phase(session, "artifacts_write", artifacts_started, status="error")
+    link_mode = str(runtime.env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
+    rendered_error = render_final_failure_status(
+        runtime,
+        session,
+        final_error,
+        interactive_tty=(True if link_mode == "on" else None),
+    )
+    print(
+        render_paths_in_terminal_text(
+            rendered_error,
+            paths=local_paths_in_text(rendered_error),
+            env=runtime.env,
+            stream=sys.stdout,
+            interactive_tty=(True if link_mode == "on" else None),
+        )
+    )
+    return 1
+
+
 def plan_dry_run_preview_lines(session: StartupSession, *, created_names: set[str]) -> list[str]:
     lines = ["Dry run: no worktrees, git state, or services were modified."]
     for context in session.selected_contexts:

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import tempfile
 import unittest
 
+from envctl_engine.config import load_config
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.startup.finalization import (
     emit_preserved_service_merge,
     failure_context_label,
+    finalize_failed_startup,
     finalize_successful_startup,
     headless_plan_session_summary_lines,
     plan_dry_run_preview_lines,
@@ -34,7 +37,123 @@ def _session(*, contexts: list[object], contexts_to_start: list[object] | None =
     )
 
 
+def _runtime_stub(**overrides: object) -> SimpleNamespace:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = load_config(
+            {
+                "RUN_REPO_ROOT": str(Path(tmpdir) / "repo"),
+                "RUN_SH_RUNTIME_DIR": str(Path(tmpdir) / "runtime"),
+            }
+        )
+    values: dict[str, object] = {
+        "config": config,
+        "env": {},
+        "events": [],
+        "runtime_root": Path("/tmp/envctl-runtime"),
+        "_requirement_enabled": lambda requirement_name, *, mode, route=None: False,
+        "_run_dir_path": lambda run_id: Path("/tmp/envctl-runtime") / "runs" / str(run_id),
+        "_service_enabled_for_mode": lambda mode, service_name: False,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
 class StartupFinalizationTests(unittest.TestCase):
+    def test_finalize_failed_startup_writes_error_artifacts_and_releases_ports(self) -> None:
+        context = SimpleNamespace(name="Main")
+        session = _session(contexts=[context])
+        session.started_context_names.append("Main")
+        service = SimpleNamespace(name="Main Backend")
+        session.services_by_project["Main"] = {"Main Backend": service}
+        events: list[tuple[str, dict[str, object]]] = []
+        writes: list[tuple[RunState, list[object], list[str]]] = []
+        terminated: list[dict[str, object]] = []
+        released = {"value": False}
+        rendered_statuses: list[str] = []
+
+        runtime = _runtime_stub(
+            env={},
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _write_artifacts=lambda state, contexts, *, errors: writes.append((state, list(contexts), list(errors))),
+            _terminate_started_services=lambda services: terminated.append(dict(services)),
+        )
+
+        result = finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error="no free port found for owner=Main",
+            ensure_run_id=lambda session: None,
+            port_allocator=lambda runtime: SimpleNamespace(release_session=lambda: released.__setitem__("value", True)),
+            emit_phase=lambda session, phase, started_at, **extra: events.append((f"phase:{phase}", dict(extra))),
+            render_final_failure_status=lambda runtime, session, error, *, interactive_tty: rendered_statuses.append(error)
+            or error,
+        )
+
+        self.assertEqual(result, 1)
+        self.assertTrue(released["value"])
+        self.assertEqual(terminated, [{"Main Backend": service}])
+        self.assertEqual(session.failure_message, "Port reservation failed: no free port found for owner=Main")
+        self.assertEqual(session.errors, ["Port reservation failed: no free port found for owner=Main"])
+        self.assertIn(
+            (
+                "startup.failed",
+                {
+                    "mode": "trees",
+                    "command": "start",
+                    "error": "Port reservation failed: no free port found for owner=Main",
+                },
+            ),
+            events,
+        )
+        self.assertEqual(
+            writes[0][0].metadata["failure_message"],
+            "Port reservation failed: no free port found for owner=Main",
+        )
+        self.assertEqual(writes[0][1], [context])
+        self.assertEqual(writes[0][2], ["Port reservation failed: no free port found for owner=Main"])
+        self.assertIn(("phase:artifacts_write", {"status": "error"}), events)
+        self.assertEqual(rendered_statuses, ["Port reservation failed: no free port found for owner=Main"])
+
+    def test_finalize_failed_startup_preserves_existing_startup_failure_prefix_and_strict_truth_services(
+        self,
+    ) -> None:
+        session = _session(contexts=[])
+        session.strict_truth_failed = True
+        session.preserved_services = {"zeta": object(), "alpha": object()}
+        events: list[tuple[str, dict[str, object]]] = []
+
+        runtime = _runtime_stub(
+            env={"ENVCTL_UI_HYPERLINK_MODE": "on"},
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _write_artifacts=lambda *args, **kwargs: None,
+            _terminate_started_services=lambda services: None,
+        )
+
+        result = finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error="Startup failed: backend crashed",
+            ensure_run_id=lambda session: None,
+            port_allocator=lambda runtime: SimpleNamespace(release_session=lambda: None),
+            emit_phase=lambda *args, **kwargs: None,
+            render_final_failure_status=lambda runtime, session, error, *, interactive_tty: error,
+        )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(session.errors, ["Startup failed: backend crashed"])
+        self.assertIn(
+            (
+                "startup.failed",
+                {
+                    "mode": "trees",
+                    "command": "start",
+                    "error": "Startup failed: backend crashed",
+                    "services": ["alpha", "zeta"],
+                },
+            ),
+            events,
+        )
+
     def test_finalize_successful_startup_writes_artifacts_summary_snapshot_and_returns_zero(self) -> None:
         context = SimpleNamespace(name="Main")
         session = _session(contexts=[context])

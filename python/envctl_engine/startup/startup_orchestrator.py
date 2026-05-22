@@ -19,11 +19,11 @@ from envctl_engine.startup.dependency_bootstrap import prepare_project_dependenc
 from envctl_engine.startup.disabled_startup_resolution import resolve_disabled_startup_mode
 from envctl_engine.startup.context_selection import select_startup_contexts
 from envctl_engine.startup.finalization import (
-    build_failure_run_state,
     build_planning_dashboard_state,
     build_success_run_state,
     emit_preserved_service_merge as finalization_emit_preserved_service_merge,
     failure_context_label as finalization_failure_context_label,
+    finalize_failed_startup,
     finalize_successful_startup,
     format_failure_context_label as finalization_format_failure_context_label,
     headless_plan_session_summary_lines,
@@ -650,52 +650,25 @@ class StartupOrchestrator:
         )
 
     def _finalize_failure(self, session: StartupSession, error: str) -> int:
-        rt = self.runtime
-        self._ensure_run_id(session)
-        port_allocator = port_allocator_impl(rt)
-        if "no free port found" in error.lower():
-            final_error = f"Port reservation failed: {error}"
-        elif error.startswith("Startup failed:"):
-            final_error = error
-        else:
-            final_error = f"Startup failed: {error}"
-        session.failure_message = final_error
-        session.errors.append(final_error)
-        failure_payload: dict[str, object] = {
-            "mode": session.runtime_mode,
-            "command": session.effective_route.command,
-            "error": final_error,
-        }
-        if session.strict_truth_failed:
-            failure_payload["services"] = sorted(session.merged_services)
-        rt._emit("startup.failed", **failure_payload)
-        started_services: dict[str, ServiceRecord] = {}
-        for project_name in session.started_context_names:
-            project_services = session.services_by_project.get(project_name, {})
-            started_services.update(project_services)
-        if started_services:
-            rt._terminate_started_services(started_services)
-        port_allocator.release_session()
-        run_state = build_failure_run_state(rt, session, final_error)
-        artifacts_started = time.monotonic()
-        rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
-        self._emit_phase(session, "artifacts_write", artifacts_started, status="error")
-        link_mode = str(rt.env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
-        rendered_error = self._render_final_failure_status(
-            session,
-            final_error,
-            interactive_tty=(True if link_mode == "on" else None),
+        return finalize_failed_startup(
+            runtime=self.runtime,
+            session=session,
+            error=error,
+            ensure_run_id=self._ensure_run_id,
+            port_allocator=port_allocator_impl,
+            emit_phase=self._emit_phase,
+            render_final_failure_status=self._render_final_failure_status_for_helper,
         )
-        print(
-            render_paths_in_terminal_text(
-                rendered_error,
-                paths=local_paths_in_text(rendered_error),
-                env=rt.env,
-                stream=sys.stdout,
-                interactive_tty=(True if link_mode == "on" else None),
-            )
-        )
-        return 1
+
+    def _render_final_failure_status_for_helper(
+        self,
+        runtime: StartupRuntime,
+        session: StartupSession,
+        error: str,
+        *,
+        interactive_tty: bool | None = None,
+    ) -> str:
+        return finalization_render_final_failure_status(runtime, session, error, interactive_tty=interactive_tty)
 
     def _render_final_failure_status(
         self,
