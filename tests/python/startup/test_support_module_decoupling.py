@@ -74,6 +74,15 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         self.assertFalse(hasattr(StartupOrchestrator, "_record_project_startup"))
         self.assertFalse(hasattr(StartupOrchestrator, "_record_plan_agent_handoff_local_startup_failure"))
 
+    def test_startup_orchestrator_does_not_retain_selected_context_startup_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_start_selected_contexts"))
+
+    def test_startup_orchestrator_does_not_retain_context_selection_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_select_contexts"))
+
+    def test_startup_orchestrator_does_not_retain_restart_port_application_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_apply_restart_ports"))
+
     def test_startup_orchestrator_does_not_retain_tree_selection_pass_through_wrappers(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_trees_start_selection_required"))
         self.assertFalse(hasattr(StartupOrchestrator, "_select_start_tree_projects"))

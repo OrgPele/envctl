@@ -124,6 +124,14 @@ class StartupOrchestrator:
             render_final_failure_status=finalization_render_final_failure_status,
         )
         try:
+            def apply_restart_ports(session: StartupSession, contexts: list[ProjectContextLike]) -> None:
+                apply_restart_ports_to_contexts(
+                    session.restart_state,
+                    route=session.effective_route,
+                    contexts=contexts,
+                    project_name_from_service=self.runtime._project_name_from_service,
+                    set_plan_port=self.runtime._set_plan_port,
+                )
             for phase in (
                 partial(
                     validate_startup_route_contract,
@@ -131,7 +139,15 @@ class StartupOrchestrator:
                     emit_phase=partial(emit_startup_phase, self.runtime),
                 ),
                 self._handle_restart_prestop,
-                self._select_contexts,
+                lambda _: select_startup_contexts(
+                    runtime=self.runtime,
+                    session=session,
+                    trees_start_selection_required=trees_start_selection_required,
+                    select_start_tree_projects=select_start_tree_projects,
+                    apply_restart_ports=apply_restart_ports,
+                    emit_phase=partial(emit_startup_phase, self.runtime),
+                    emit_snapshot=partial(emit_startup_plan_handoff_snapshot, self.runtime),
+                ),
                 partial(resolve_plan_dry_run_impl, self.runtime, print_fn=print),
                 self._prepare_and_launch_plan_agent_worktrees,
                 self._resolve_run_reuse,
@@ -151,7 +167,35 @@ class StartupOrchestrator:
                 maybe_prewarm_docker=lambda *, route, mode: maybe_prewarm_docker_impl(self, route=route, mode=mode),
                 emit_phase=partial(emit_startup_phase, self.runtime),
             )
-            self._start_selected_contexts(session)
+            start_selected_contexts(
+                runtime=self.runtime,
+                session=session,
+                suppress_progress_output=suppress_progress_output,
+                resolved_run_id=resolved_run_id,
+                record_project_startup=record_project_startup_impl,
+                render_project_startup_warnings=partial(
+                    finalization_render_project_startup_warnings_for_route,
+                    self.runtime,
+                    suppress_progress_output=suppress_progress_output,
+                ),
+                should_degrade_to_plan_agent_handoff=lambda session, error: (
+                    should_degrade_to_validated_plan_agent_handoff(
+                        self.runtime,
+                        session,
+                        error=error,
+                        validate_attach_target_fn=validate_plan_agent_attach_target,
+                    )
+                ),
+                record_plan_agent_handoff_local_startup_failure=partial(
+                    record_plan_agent_handoff_local_startup_failure_impl,
+                    self.runtime,
+                ),
+                spinner_factory=spinner,
+                use_spinner_policy_fn=use_spinner_policy,
+                resolve_spinner_policy_fn=resolve_spinner_policy,
+                emit_spinner_policy_fn=emit_spinner_policy,
+                project_spinner_group_factory=_ProjectSpinnerGroup,
+            )
             reconcile_strict_truth_after_start(
                 runtime=self.runtime,
                 session=session,
@@ -175,26 +219,6 @@ class StartupOrchestrator:
             use_spinner_policy_fn=use_spinner_policy,
             resolve_spinner_policy_fn=resolve_spinner_policy,
             emit_spinner_policy_fn=emit_spinner_policy,
-        )
-
-    def _select_contexts(self, session: StartupSession) -> int | None:
-        return select_startup_contexts(
-            runtime=self.runtime,
-            session=session,
-            trees_start_selection_required=trees_start_selection_required,
-            select_start_tree_projects=select_start_tree_projects,
-            apply_restart_ports=self._apply_restart_ports,
-            emit_phase=partial(emit_startup_phase, self.runtime),
-            emit_snapshot=partial(emit_startup_plan_handoff_snapshot, self.runtime),
-        )
-
-    def _apply_restart_ports(self, session: StartupSession, contexts: list[ProjectContextLike]) -> None:
-        apply_restart_ports_to_contexts(
-            session.restart_state,
-            route=session.effective_route,
-            contexts=contexts,
-            project_name_from_service=self.runtime._project_name_from_service,
-            set_plan_port=self.runtime._set_plan_port,
         )
 
     def _terminate_restart_orphan_listeners(
@@ -402,35 +426,6 @@ class StartupOrchestrator:
                     terminate_restart_orphan_listeners=self._terminate_restart_orphan_listeners,
                 )
             ),
-        )
-
-    def _start_selected_contexts(self, session: StartupSession) -> None:
-        start_selected_contexts(
-            runtime=self.runtime,
-            session=session,
-            suppress_progress_output=suppress_progress_output,
-            resolved_run_id=resolved_run_id,
-            record_project_startup=record_project_startup_impl,
-            render_project_startup_warnings=partial(
-                finalization_render_project_startup_warnings_for_route,
-                self.runtime,
-                suppress_progress_output=suppress_progress_output,
-            ),
-            should_degrade_to_plan_agent_handoff=lambda session, error: should_degrade_to_validated_plan_agent_handoff(
-                self.runtime,
-                session,
-                error=error,
-                validate_attach_target_fn=validate_plan_agent_attach_target,
-            ),
-            record_plan_agent_handoff_local_startup_failure=partial(
-                record_plan_agent_handoff_local_startup_failure_impl,
-                self.runtime,
-            ),
-            spinner_factory=spinner,
-            use_spinner_policy_fn=use_spinner_policy,
-            resolve_spinner_policy_fn=resolve_spinner_policy,
-            emit_spinner_policy_fn=emit_spinner_policy,
-            project_spinner_group_factory=_ProjectSpinnerGroup,
         )
 
     def _finalize_success(self, session: StartupSession) -> int:
