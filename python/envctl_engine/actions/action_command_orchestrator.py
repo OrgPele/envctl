@@ -51,6 +51,7 @@ from envctl_engine.actions.action_test_summary_support import (
     collect_generic_suite_failures as collect_generic_suite_failures_impl,
     collect_suite_failure_contexts as collect_suite_failure_contexts_impl,
     default_git_state_components as git_state_components_impl,
+    print_test_suite_overview as print_test_suite_overview_impl,
     resolve_failed_test_error as resolve_failed_test_error_impl,
     short_failed_summary_path as short_failed_summary_path_impl,
     suite_display_name as suite_display_name_impl,
@@ -109,10 +110,8 @@ from envctl_engine.state.models import PortPlan, RequirementsResult
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.test_output.test_runner import TestRunner
 from envctl_engine.test_output.parser_base import strip_ansi
-from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
-from envctl_engine.ui.path_links import render_path_for_terminal
 from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
@@ -1702,113 +1701,12 @@ if result.returncode != 0:
         *,
         summary_metadata: dict[str, dict[str, object]] | None = None,
     ) -> None:
-        if not outcomes:
-            return
-        print("")
-        print(self._colorize("======================================================================", fg="cyan"))
-        print(self._colorize("Test Suite Summary", fg="cyan", bold=True))
-        print(self._colorize("======================================================================", fg="cyan"))
-        project_labels = {
-            str(item.get("project_name", "")).strip() for item in outcomes if str(item.get("project_name", "")).strip()
-        }
-        multi_project = len(project_labels) > 1
-        total_passed = 0
-        total_failed = 0
-        total_skipped = 0
-        total_known = 0
-        total_duration = 0.0
-        grouped_outcomes: dict[str, list[dict[str, object]]] = {}
-        for item in sorted(
+        print_test_suite_overview_impl(
             outcomes,
-            key=lambda value: (
-                str(value.get("project_name", "")).lower(),
-                int(value.get("index", 0)),
-            ),
-        ):
-            project_name = str(item.get("project_name", "")).strip() or "Main"
-            grouped_outcomes.setdefault(project_name, []).append(item)
-
-        for project_name, project_items in grouped_outcomes.items():
-            if multi_project:
-                print(self._colorize(project_name, fg="blue", bold=True))
-            for item in project_items:
-                source = str(item.get("suite", "suite"))
-                label = self._suite_display_name(source, failed_only=bool(item.get("failed_only", False)))
-                label_rendered = self._colorize(label, fg="cyan", bold=True)
-                if multi_project:
-                    label_rendered = f"  {label_rendered}"
-                returncode = int(item.get("returncode", 1))
-                parsed = item.get("parsed")
-                parsed_total = int(getattr(parsed, "total", 0) or 0) if parsed is not None else 0
-                counts_detected = bool(getattr(parsed, "counts_detected", False)) if parsed is not None else False
-                passed = int(getattr(parsed, "passed", 0) or 0) if parsed is not None else 0
-                failed = int(getattr(parsed, "failed", 0) or 0) if parsed is not None else 0
-                skipped = int(getattr(parsed, "skipped", 0) or 0) if parsed is not None else 0
-                duration_ms = float(item.get("duration_ms", 0.0) or 0.0)
-                duration_text = format_duration(max(duration_ms / 1000.0, 0.0))
-
-                icon = (
-                    self._colorize("✓", fg="green", bold=True)
-                    if returncode == 0
-                    else self._colorize("✗", fg="red", bold=True)
-                )
-                if counts_detected:
-                    total_passed += passed
-                    total_failed += failed
-                    total_skipped += skipped
-                    total_known += parsed_total
-                    total_duration += max(duration_ms / 1000.0, 0.0)
-                    passed_text = self._colorize(f"{passed} passed", fg="green")
-                    failed_text = self._colorize(f"{failed} failed", fg="red")
-                    skipped_text = self._colorize(f"{skipped} skipped", fg="yellow")
-                    print(
-                        f"{icon} {label_rendered}: {passed_text}, {failed_text}, {skipped_text}"
-                        f" (total {parsed_total}, duration {duration_text})"
-                    )
-                else:
-                    total_duration += max(duration_ms / 1000.0, 0.0)
-                    if returncode == 0:
-                        print(
-                            f"{icon} {label_rendered}: "
-                            f"{self._colorize('completed', fg='green', bold=True)} "
-                            f"(no parsed test counts, duration {duration_text})"
-                        )
-                    else:
-                        print(
-                            f"{icon} {label_rendered}: "
-                            f"{self._colorize('failed', fg='red', bold=True)} "
-                            f"(no parsed test counts, duration {duration_text})"
-                        )
-            summary_entry = summary_metadata.get(project_name) if isinstance(summary_metadata, dict) else None
-            if isinstance(summary_entry, dict) and str(summary_entry.get("status", "")).strip().lower() == "failed":
-                summary_path = str(
-                    summary_entry.get("short_summary_path") or summary_entry.get("summary_path") or ""
-                ).strip()
-                if summary_path:
-                    prefix = "  " if multi_project else ""
-                    label = self._colorize("failure summary:", fg="gray")
-                    print(f"{prefix}{label}")
-                    summary_env = dict(getattr(self.runtime, "env", {}))
-                    hyperlink_mode = str(summary_env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
-                    if hyperlink_mode not in {"off", "false", "no", "0"}:
-                        summary_env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
-                    rendered_path = render_path_for_terminal(
-                        summary_path, env=summary_env, stream=sys.stdout
-                    )
-                    print(f"{prefix}{rendered_path}")
-            if multi_project:
-                print("")
-
-        if total_known > 0:
-            overall_prefix = self._colorize("Overall:", fg="cyan", bold=True)
-            overall_passed = self._colorize(f"{total_passed} passed", fg="green")
-            overall_failed = self._colorize(f"{total_failed} failed", fg="red")
-            overall_skipped = self._colorize(f"{total_skipped} skipped", fg="yellow")
-            print(
-                f"{overall_prefix} {overall_passed}, {overall_failed}, {overall_skipped}"
-                f" (total {total_known}, duration {format_duration(total_duration)})"
-            )
-        print(self._colorize("======================================================================", fg="cyan"))
+            summary_metadata=summary_metadata,
+            env=dict(getattr(self.runtime, "env", {})),
+            colorize=self._colorize,
+        )
 
     @staticmethod
     def _is_legacy_tree_test_script(command: list[str]) -> bool:

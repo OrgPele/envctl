@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +11,7 @@ import unittest
 from envctl_engine.actions.action_test_summary_support import (
     collect_failed_test_manifest_entries,
     collect_failed_tests,
+    print_test_suite_overview,
     suite_display_name,
     write_failed_tests_summary,
 )
@@ -100,6 +103,56 @@ class ActionTestSummarySupportTests(unittest.TestCase):
 
     def test_suite_display_name_keeps_failed_only_suffix(self) -> None:
         self.assertEqual(suite_display_name("backend_pytest", failed_only=True), "Backend (pytest, failed only)")
+
+    def test_print_test_suite_overview_groups_projects_and_renders_summary_link(self) -> None:
+        outcomes = [
+            {
+                "index": 2,
+                "project_name": "Web",
+                "suite": "frontend_package_test",
+                "returncode": 1,
+                "duration_ms": 1500,
+                "parsed": SimpleNamespace(
+                    counts_detected=True,
+                    total=3,
+                    passed=1,
+                    failed=1,
+                    skipped=1,
+                ),
+            },
+            {
+                "index": 1,
+                "project_name": "Api",
+                "suite": "backend_pytest",
+                "returncode": 0,
+                "duration_ms": 500,
+                "parsed": SimpleNamespace(
+                    counts_detected=True,
+                    total=2,
+                    passed=2,
+                    failed=0,
+                    skipped=0,
+                ),
+            },
+        ]
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            print_test_suite_overview(
+                outcomes,
+                summary_metadata={"Web": {"status": "failed", "short_summary_path": "/tmp/ft_web.txt"}},
+                env={"ENVCTL_UI_HYPERLINK_MODE": "off"},
+                colorize=lambda text, **_kwargs: text,
+            )
+
+        rendered = output.getvalue()
+        self.assertIn("Test Suite Summary", rendered)
+        self.assertLess(rendered.index("Api"), rendered.index("Web"))
+        self.assertIn("Backend (pytest): 2 passed, 0 failed, 0 skipped", rendered)
+        self.assertIn("Frontend (package test): 1 passed, 1 failed, 1 skipped", rendered)
+        self.assertIn("failure summary:", rendered)
+        self.assertIn("/tmp/ft_web.txt", rendered)
+        self.assertIn("Overall: 3 passed, 1 failed, 1 skipped", rendered)
 
 
 if __name__ == "__main__":

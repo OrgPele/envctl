@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 from typing import Callable
 
 from envctl_engine.actions.action_test_support import (
@@ -14,6 +15,8 @@ from envctl_engine.actions.action_test_support import (
 )
 from envctl_engine.test_output.failure_summary import extract_failure_summary_excerpt
 from envctl_engine.test_output.parser_base import strip_ansi
+from envctl_engine.test_output.symbols import format_duration
+from envctl_engine.ui.path_links import render_path_for_terminal
 
 
 def short_failed_summary_path(*, run_dir: Path, project_name: str) -> Path:
@@ -168,6 +171,116 @@ def collect_failed_tests(
             error_text = resolve_failed_test_error(error_details, test_name)
             collected.append((suite_name, test_name, error_text))
     return collected
+
+
+def print_test_suite_overview(
+    outcomes: list[dict[str, object]],
+    *,
+    summary_metadata: dict[str, dict[str, object]] | None = None,
+    env: dict[str, str] | None = None,
+    colorize: Callable[..., str],
+) -> None:
+    if not outcomes:
+        return
+    print("")
+    print(colorize("======================================================================", fg="cyan"))
+    print(colorize("Test Suite Summary", fg="cyan", bold=True))
+    print(colorize("======================================================================", fg="cyan"))
+    project_labels = {
+        str(item.get("project_name", "")).strip() for item in outcomes if str(item.get("project_name", "")).strip()
+    }
+    multi_project = len(project_labels) > 1
+    total_passed = 0
+    total_failed = 0
+    total_skipped = 0
+    total_known = 0
+    total_duration = 0.0
+    grouped_outcomes: dict[str, list[dict[str, object]]] = {}
+    for item in sorted(
+        outcomes,
+        key=lambda value: (
+            str(value.get("project_name", "")).lower(),
+            int(value.get("index", 0)),
+        ),
+    ):
+        project_name = str(item.get("project_name", "")).strip() or "Main"
+        grouped_outcomes.setdefault(project_name, []).append(item)
+
+    for project_name, project_items in grouped_outcomes.items():
+        if multi_project:
+            print(colorize(project_name, fg="blue", bold=True))
+        for item in project_items:
+            source = str(item.get("suite", "suite"))
+            label = suite_display_name(source, failed_only=bool(item.get("failed_only", False)))
+            label_rendered = colorize(label, fg="cyan", bold=True)
+            if multi_project:
+                label_rendered = f"  {label_rendered}"
+            returncode = int(item.get("returncode", 1))
+            parsed = item.get("parsed")
+            parsed_total = int(getattr(parsed, "total", 0) or 0) if parsed is not None else 0
+            counts_detected = bool(getattr(parsed, "counts_detected", False)) if parsed is not None else False
+            passed = int(getattr(parsed, "passed", 0) or 0) if parsed is not None else 0
+            failed = int(getattr(parsed, "failed", 0) or 0) if parsed is not None else 0
+            skipped = int(getattr(parsed, "skipped", 0) or 0) if parsed is not None else 0
+            duration_ms = float(item.get("duration_ms", 0.0) or 0.0)
+            duration_text = format_duration(max(duration_ms / 1000.0, 0.0))
+
+            icon = colorize("✓", fg="green", bold=True) if returncode == 0 else colorize("✗", fg="red", bold=True)
+            if counts_detected:
+                total_passed += passed
+                total_failed += failed
+                total_skipped += skipped
+                total_known += parsed_total
+                total_duration += max(duration_ms / 1000.0, 0.0)
+                passed_text = colorize(f"{passed} passed", fg="green")
+                failed_text = colorize(f"{failed} failed", fg="red")
+                skipped_text = colorize(f"{skipped} skipped", fg="yellow")
+                print(
+                    f"{icon} {label_rendered}: {passed_text}, {failed_text}, {skipped_text}"
+                    f" (total {parsed_total}, duration {duration_text})"
+                )
+            else:
+                total_duration += max(duration_ms / 1000.0, 0.0)
+                if returncode == 0:
+                    print(
+                        f"{icon} {label_rendered}: "
+                        f"{colorize('completed', fg='green', bold=True)} "
+                        f"(no parsed test counts, duration {duration_text})"
+                    )
+                else:
+                    print(
+                        f"{icon} {label_rendered}: "
+                        f"{colorize('failed', fg='red', bold=True)} "
+                        f"(no parsed test counts, duration {duration_text})"
+                    )
+        summary_entry = summary_metadata.get(project_name) if isinstance(summary_metadata, dict) else None
+        if isinstance(summary_entry, dict) and str(summary_entry.get("status", "")).strip().lower() == "failed":
+            summary_path = str(
+                summary_entry.get("short_summary_path") or summary_entry.get("summary_path") or ""
+            ).strip()
+            if summary_path:
+                prefix = "  " if multi_project else ""
+                label = colorize("failure summary:", fg="gray")
+                print(f"{prefix}{label}")
+                summary_env = dict(env or {})
+                hyperlink_mode = str(summary_env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
+                if hyperlink_mode not in {"off", "false", "no", "0"}:
+                    summary_env["ENVCTL_UI_HYPERLINK_MODE"] = "on"
+                rendered_path = render_path_for_terminal(summary_path, env=summary_env, stream=sys.stdout)
+                print(f"{prefix}{rendered_path}")
+        if multi_project:
+            print("")
+
+    if total_known > 0:
+        overall_prefix = colorize("Overall:", fg="cyan", bold=True)
+        overall_passed = colorize(f"{total_passed} passed", fg="green")
+        overall_failed = colorize(f"{total_failed} failed", fg="red")
+        overall_skipped = colorize(f"{total_skipped} skipped", fg="yellow")
+        print(
+            f"{overall_prefix} {overall_passed}, {overall_failed}, {overall_skipped}"
+            f" (total {total_known}, duration {format_duration(total_duration)})"
+        )
+    print(colorize("======================================================================", fg="cyan"))
 
 
 def collect_failed_test_manifest_entries(
