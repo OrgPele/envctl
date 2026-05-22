@@ -16,6 +16,7 @@ from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
+from envctl_engine.startup.disabled_startup_resolution import resolve_disabled_startup_mode
 from envctl_engine.startup.context_selection import select_startup_contexts
 from envctl_engine.startup.finalization import (
     build_failure_run_state,
@@ -405,50 +406,22 @@ class StartupOrchestrator:
         return plan_agent_launch_spinner_success_message_impl(launch_config, count=count)
 
     def _resolve_disabled_startup_mode(self, session: StartupSession) -> int | None:
-        rt = self.runtime
-        route = session.effective_route
-        mode_runs_enabled = (
-            rt.config.startup_enabled_for_mode(session.runtime_mode)
-            if hasattr(rt.config, "startup_enabled_for_mode")
-            else True
+        return resolve_disabled_startup_mode(
+            runtime=self.runtime,
+            session=session,
+            route_is_implicit_start=route_is_implicit_start,
+            ensure_run_id=self._ensure_run_id,
+            announce_session_identifiers=self._announce_session_identifiers,
+            resolved_run_id=self._resolved_run_id,
+            build_planning_dashboard_state=build_planning_dashboard_state,
+            configured_service_types_for_mode=self._configured_service_types_for_mode,
+            emit_phase=self._emit_phase,
+            validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+            print_plan_dry_run_preview=self._print_plan_dry_run_preview,
+            headless_plan_output_only=self._headless_plan_output_only,
+            print_headless_plan_session_summary=self._print_headless_plan_session_summary,
+            maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
         )
-        allow_disabled_dashboard = not mode_runs_enabled and (route.command == "plan" or route_is_implicit_start(route))
-        session.disabled_startup_mode = allow_disabled_dashboard
-        if not allow_disabled_dashboard:
-            return None
-        self._ensure_run_id(session)
-        self._announce_session_identifiers(session)
-        run_state = build_planning_dashboard_state(
-            rt,
-            route=route,
-            runtime_mode=session.runtime_mode,
-            run_id=self._resolved_run_id(session),
-            project_contexts=session.selected_contexts,
-            configured_service_types=self._configured_service_types_for_mode(session.runtime_mode),
-            base_metadata=session.base_metadata,
-        )
-        artifacts_started = time.monotonic()
-        rt._write_artifacts(run_state, session.selected_contexts, errors=[])
-        self._emit_phase(session, "artifacts_write", artifacts_started, status="ok")
-        if route.command == "plan":
-            self._validate_plan_agent_handoff(session, phase="disabled_startup_finalization")
-            self._print_plan_dry_run_preview(session)
-            print(
-                "Planning mode complete; skipping service startup because "
-                f"envctl runs are disabled for {session.runtime_mode}."
-            )
-        if self._headless_plan_output_only(session):
-            self._print_headless_plan_session_summary(session)
-            return 0
-        enter_interactive_dashboard = rt._should_enter_post_start_interactive(route)
-        attach_code = self._maybe_attach_plan_agent_terminal(session)
-        if attach_code is not None:
-            return attach_code
-        elif not enter_interactive_dashboard:
-            print(f"envctl runs are disabled for {session.runtime_mode}; opening dashboard without starting services.")
-        if enter_interactive_dashboard:
-            return rt._run_interactive_dashboard_loop(run_state)
-        return 0
 
     def _resolve_run_reuse(self, session: StartupSession) -> int | None:
         return resolve_startup_run_reuse(
