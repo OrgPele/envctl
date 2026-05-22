@@ -506,7 +506,14 @@ class StartupOrchestrator:
             validate_plan_agent_handoff=self._validate_plan_agent_handoff,
             build_success_run_state=build_success_run_state,
             emit_phase=self._emit_phase,
-            render_plan_agent_degraded_handoff=self._render_plan_agent_degraded_handoff,
+            render_plan_agent_degraded_handoff=lambda session: (
+                finalization_render_plan_agent_degraded_handoff_for_terminal(
+                    self.runtime,
+                    session,
+                    stream=sys.stdout,
+                    print_fn=print,
+                )
+            ),
             headless_plan_output_only=finalization_headless_plan_output_only,
             maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
         )
@@ -522,14 +529,6 @@ class StartupOrchestrator:
             validate_plan_agent_handoff=self._validate_plan_agent_handoff,
             print_fn=print,
             attach_target=attach_target,
-        )
-
-    def _render_plan_agent_degraded_handoff(self, session: StartupSession) -> None:
-        finalization_render_plan_agent_degraded_handoff_for_terminal(
-            self.runtime,
-            session,
-            stream=sys.stdout,
-            print_fn=print,
         )
 
     def _finalize_failure(self, session: StartupSession, error: str) -> int:
