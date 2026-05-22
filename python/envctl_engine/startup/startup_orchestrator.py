@@ -463,7 +463,7 @@ class StartupOrchestrator:
             ),
             emit_phase=self._emit_phase,
             requirements_timing_enabled=lambda route: requirements_timing_enabled_impl(self, route),
-            suppress_timing_output=self._suppress_timing_output,
+            suppress_timing_output=suppress_timing_output,
             print_startup_summary=lambda **kwargs: print_startup_summary_impl(self, **kwargs),
             startup_breakdown_enabled=lambda route: startup_breakdown_enabled_impl(self, route),
             suppress_progress_output=self._suppress_progress_output,
@@ -600,10 +600,6 @@ class StartupOrchestrator:
     @staticmethod
     def _suppress_progress_output(route: Route) -> bool:
         return suppress_progress_output(route)
-
-    @staticmethod
-    def _suppress_timing_output(route: Route | None) -> bool:
-        return suppress_timing_output(route)
 
     def _report_progress(self, route: Route, message: str, *, project: str | None = None) -> None:
         report_progress(
