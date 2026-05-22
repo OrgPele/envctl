@@ -685,7 +685,13 @@ if result.returncode != 0:
                 project_root=Path(str(getattr(target, "root"))),
                 project_name=str(getattr(target, "name", "")),
             )
-            codes.append(run_test_plan_action_impl(context, json_output=bool(route.flags.get("json"))))
+            codes.append(
+                run_test_plan_action_impl(
+                    context,
+                    json_output=bool(route.flags.get("json")),
+                    run_commands=bool(route.flags.get("run")),
+                )
+            )
         return 0 if all(code == 0 for code in codes) else 1
 
     def run_pr_action(self, route: Route, targets: list[object]) -> int:

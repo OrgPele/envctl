@@ -239,7 +239,16 @@ envctl test-plan --project features_demo-1 --json
 ```
 
 The JSON result lists exact commands, confidence, reasons, changed files, and
-whether a broad full-gate run is recommended. For final handoff, use:
+whether a broad full-gate run is recommended. To run the focused commands
+directly, use:
+
+```bash
+envctl test-plan --project features_demo-1 --run
+```
+
+Run mode executes the planned focused commands in order and stops at the first
+failure, so the local loop fails fast instead of spending time on checks that
+depend on an earlier failure. For final handoff, use:
 
 ```bash
 envctl ship --project features_demo-1 --json

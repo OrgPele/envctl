@@ -3,10 +3,13 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
+import json
 from pathlib import Path
 from unittest.mock import patch
 
-from envctl_engine.actions.test_plan_action import build_test_plan
+from envctl_engine.actions.test_plan_action import build_test_plan, run_test_plan_action
 from envctl_engine.config.local_artifacts import is_envctl_local_artifact_path
 
 
@@ -73,6 +76,83 @@ class TestPlanActionTests(unittest.TestCase):
 
         self.assertEqual(result["changed_files"], ["new_tool.py", "python/envctl_engine/config/__init__.py"])
         self.assertTrue(is_envctl_local_artifact_path(".envctl-commit-message.md"))
+
+    def test_run_mode_executes_focused_commands_until_first_failure(self) -> None:
+        class Context:
+            repo_root = Path("/repo")
+            project_root = Path("/repo")
+            project_name = "Main"
+
+        plan = {
+            "contract_version": "envctl.test_plan.v1",
+            "project": "Main",
+            "repo_root": "/repo",
+            "project_root": "/repo",
+            "changed_files": ["python/envctl_engine/actions/test_plan_action.py"],
+            "commands": [
+                {"command": "uv run --extra dev pytest -q tests/python/actions"},
+                {"command": "uv run --extra dev ruff check python/envctl_engine/actions/test_plan_action.py"},
+            ],
+            "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+        }
+        calls: list[list[str]] = []
+
+        def fake_run(args: list[str], **kwargs):  # noqa: ANN001
+            calls.append(args)
+            self.assertEqual(kwargs["cwd"], "/repo")
+            return subprocess.CompletedProcess(args=args, returncode=1 if len(calls) == 1 else 0)
+
+        with (
+            patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+            patch("envctl_engine.actions.test_plan_action.subprocess.run", side_effect=fake_run),
+            redirect_stdout(StringIO()) as stdout,
+        ):
+            code = run_test_plan_action(Context(), run_commands=True, json_output=True)
+
+        self.assertEqual(code, 1)
+        self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python/actions"]])
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["run"]["status"], "failed")
+        self.assertEqual(payload["run"]["results"][0]["returncode"], 1)
+        self.assertEqual(payload["run"]["skipped_commands"], ["uv run --extra dev ruff check python/envctl_engine/actions/test_plan_action.py"])
+
+    def test_run_mode_reports_success_after_all_focused_commands_pass(self) -> None:
+        class Context:
+            repo_root = Path("/repo")
+            project_root = Path("/repo")
+            project_name = "Main"
+
+        plan = {
+            "contract_version": "envctl.test_plan.v1",
+            "project": "Main",
+            "repo_root": "/repo",
+            "project_root": "/repo",
+            "changed_files": ["python/envctl_engine/actions/test_plan_action.py"],
+            "commands": [
+                {"command": "uv run --extra dev pytest -q tests/python/actions"},
+                {"command": "uv run --extra dev ruff check python/envctl_engine/actions/test_plan_action.py"},
+            ],
+            "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+        }
+        calls: list[list[str]] = []
+
+        def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+            calls.append(args)
+            return subprocess.CompletedProcess(args=args, returncode=0)
+
+        with (
+            patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+            patch("envctl_engine.actions.test_plan_action.subprocess.run", side_effect=fake_run),
+            redirect_stdout(StringIO()) as stdout,
+        ):
+            code = run_test_plan_action(Context(), run_commands=True, json_output=True)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 2)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["run"]["status"], "passed")
+        self.assertEqual([item["status"] for item in payload["run"]["results"]], ["passed", "passed"])
+        self.assertEqual(payload["run"]["skipped_commands"], [])
 
 
 if __name__ == "__main__":

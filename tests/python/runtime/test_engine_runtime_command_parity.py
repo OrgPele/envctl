@@ -956,6 +956,17 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
         self.assertIn("--interactive", output)
         self.assertIn("--pr-base", output)
 
+    def test_test_plan_help_mentions_run_mode(self) -> None:
+        runtime = self._runtime()
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["test-plan", "--help"], env={}))
+
+        output = buffer.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("--run", output)
+        self.assertIn("execute the focused commands", output)
+
     def test_workflow_command_help_explains_when_headless_is_optional(self) -> None:
         runtime = self._runtime()
         buffer = StringIO()

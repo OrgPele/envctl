@@ -197,13 +197,15 @@ envctl errors --all
 
 ```bash
 envctl test-plan --project api --json
+envctl test-plan --project api --run
 envctl test --project api
 envctl logs --project api --logs-follow
 envctl restart --project api
 ```
 
-Use the `test-plan` output to choose focused checks while coding. At final
-handoff, prefer the narrow ship flow:
+Use the `test-plan` output to choose focused checks while coding, or add
+`--run` to execute the focused commands directly and stop at the first failure.
+At final handoff, prefer the narrow ship flow:
 
 ```bash
 envctl ship --project api --json

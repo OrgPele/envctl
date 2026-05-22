@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
+import time
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -114,18 +115,65 @@ def build_test_plan(
     }
 
 
-def run_test_plan_action(context: object, *, json_output: bool = False) -> int:
+def run_test_plan_action(context: object, *, json_output: bool = False, run_commands: bool = False) -> int:
     repo_root = Path(getattr(context, "repo_root")).resolve()
     project_root = Path(getattr(context, "project_root")).resolve()
     project_name = str(getattr(context, "project_name", project_root.name))
     payload = build_test_plan(repo_root=repo_root, project_root=project_root, project_name=project_name)
+    exit_code = 0
+    if run_commands:
+        run_payload, exit_code = _run_plan_commands(payload, cwd=project_root)
+        payload["run"] = run_payload
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        for command in payload["commands"]:
-            if isinstance(command, Mapping):
-                print(command.get("command", ""))
-    return 0
+        if run_commands:
+            for result in payload.get("run", {}).get("results", []):
+                if isinstance(result, Mapping):
+                    print(f"{result.get('status', 'unknown')}: {result.get('command', '')}")
+        else:
+            for command in payload["commands"]:
+                if isinstance(command, Mapping):
+                    print(command.get("command", ""))
+    return exit_code
+
+
+def _run_plan_commands(payload: Mapping[str, object], *, cwd: Path) -> tuple[dict[str, object], int]:
+    commands = [
+        str(item.get("command") or "").strip()
+        for item in payload.get("commands", [])
+        if isinstance(item, Mapping)
+    ]
+    results: list[dict[str, object]] = []
+    exit_code = 0
+    for index, command in enumerate(commands):
+        if not command:
+            continue
+        started = time.monotonic()
+        completed = subprocess.run(shlex.split(command), cwd=str(cwd), check=False)
+        duration = round(time.monotonic() - started, 3)
+        status = "passed" if completed.returncode == 0 else "failed"
+        results.append(
+            {
+                "command": command,
+                "returncode": completed.returncode,
+                "status": status,
+                "duration_seconds": duration,
+            }
+        )
+        if completed.returncode != 0:
+            exit_code = completed.returncode
+            skipped = commands[index + 1 :]
+            return {
+                "status": "failed",
+                "results": results,
+                "skipped_commands": skipped,
+            }, exit_code
+    return {
+        "status": "passed",
+        "results": results,
+        "skipped_commands": [],
+    }, exit_code
 
 
 def _collect_changed_files(project_root: Path) -> tuple[str, ...]:
