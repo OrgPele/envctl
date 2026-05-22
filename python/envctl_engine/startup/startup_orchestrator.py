@@ -62,6 +62,7 @@ from envctl_engine.startup.plan_agent_handoff import (
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.restart_prestop_support import (
     restart_fallback_start_route,
+    restart_matching_orphan_listeners,
     restart_orphan_listener_scan,
     restart_port_assignments,
     restart_prestop_preservation,
@@ -449,18 +450,14 @@ class StartupOrchestrator:
         terminate_pid = getattr(process_runtime, "terminate", None)
         if not callable(listener_pids_for_port) or not callable(terminate_pid):
             return
-        seen_pids: set[int] = set()
-        for cwd, service_types in scan.selected_by_cwd.items():
-            for service_type in service_types:
-                for port in sorted(scan.ports_by_type[service_type]):
-                    for pid in listener_pids_for_port(port):
-                        if pid in seen_pids or pid <= 0:
-                            continue
-                        if self._process_cwd(pid) != cwd:
-                            continue
-                        seen_pids.add(pid)
-                        if terminate_pid(pid, term_timeout=0.5 if aggressive else 2.0, kill_timeout=1.0):
-                            port_allocator.release(port)
+        matches = restart_matching_orphan_listeners(
+            scan,
+            listener_pids_for_port=listener_pids_for_port,
+            process_cwd=self._process_cwd,
+        )
+        for match in matches:
+            if terminate_pid(match.pid, term_timeout=0.5 if aggressive else 2.0, kill_timeout=1.0):
+                port_allocator.release(match.port)
 
     @staticmethod
     def _process_cwd(pid: int) -> str | None:

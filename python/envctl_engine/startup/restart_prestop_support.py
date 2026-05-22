@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.services import service_project_name, service_slug_from_record
@@ -18,6 +18,12 @@ class RestartPrestopPreservation:
 class RestartOrphanListenerScan:
     ports_by_type: dict[str, set[int]]
     selected_by_cwd: dict[str, set[str]]
+
+
+@dataclass(frozen=True, slots=True)
+class RestartOrphanListenerMatch:
+    pid: int
+    port: int
 
 
 def restart_fallback_start_route(route: Route, *, restart_lookup_mode: str) -> Route:
@@ -131,3 +137,24 @@ def restart_orphan_listener_scan(
         ports_by_type=ports_by_type,
         selected_by_cwd=selected_by_cwd,
     )
+
+
+def restart_matching_orphan_listeners(
+    scan: RestartOrphanListenerScan,
+    *,
+    listener_pids_for_port: Callable[[int], Iterable[int]],
+    process_cwd: Callable[[int], str | None],
+) -> list[RestartOrphanListenerMatch]:
+    matches: list[RestartOrphanListenerMatch] = []
+    seen_pids: set[int] = set()
+    for cwd, service_types in scan.selected_by_cwd.items():
+        for service_type in service_types:
+            for port in sorted(scan.ports_by_type.get(service_type, set())):
+                for pid in listener_pids_for_port(port):
+                    if pid in seen_pids or pid <= 0:
+                        continue
+                    if process_cwd(pid) != cwd:
+                        continue
+                    seen_pids.add(pid)
+                    matches.append(RestartOrphanListenerMatch(pid=pid, port=port))
+    return matches

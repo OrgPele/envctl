@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.restart_prestop_support import (
+    RestartOrphanListenerScan,
+    restart_matching_orphan_listeners,
     restart_orphan_listener_scan,
     restart_fallback_start_route,
     restart_port_assignments,
@@ -212,6 +214,22 @@ class RestartPrestopSupportTests(unittest.TestCase):
         )
 
         self.assertEqual(scan.selected_by_cwd, {})
+
+    def test_restart_matching_orphan_listeners_filters_by_pid_cwd_and_dedupes(self) -> None:
+        scan = RestartOrphanListenerScan(
+            ports_by_type={"backend": {8000, 8001}, "frontend": set()},
+            selected_by_cwd={"/repo/backend": {"backend"}},
+        )
+        listeners = {8000: [0, 10, 11], 8001: [10, 12]}
+        cwd_by_pid = {10: "/repo/backend", 11: "/other", 12: "/repo/backend"}
+
+        matches = restart_matching_orphan_listeners(
+            scan,
+            listener_pids_for_port=lambda port: listeners.get(port, []),
+            process_cwd=lambda pid: cwd_by_pid.get(pid),
+        )
+
+        self.assertEqual([(match.pid, match.port) for match in matches], [(10, 8000), (12, 8001)])
 
 
 if __name__ == "__main__":
