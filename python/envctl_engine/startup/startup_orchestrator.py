@@ -97,7 +97,7 @@ from envctl_engine.startup.startup_execution_support import (
     start_requirements_for_project as start_requirements_for_project_impl,
     startup_breakdown_enabled as startup_breakdown_enabled_impl,
 )
-from envctl_engine.ui.debug_snapshot import emit_plan_handoff_snapshot
+from envctl_engine.ui.debug_snapshot import emit_startup_plan_handoff_snapshot
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
@@ -180,7 +180,7 @@ class StartupOrchestrator:
             select_start_tree_projects=select_start_tree_projects,
             apply_restart_ports=self._apply_restart_ports,
             emit_phase=self._emit_phase,
-            emit_snapshot=self._emit_snapshot,
+            emit_snapshot=partial(emit_startup_plan_handoff_snapshot, self.runtime),
         )
 
     def _apply_restart_ports(self, session: StartupSession, contexts: list[ProjectContextLike]) -> None:
@@ -357,7 +357,7 @@ class StartupOrchestrator:
                 self.runtime.config,
                 runtime_mode,
             ),
-            emit_snapshot=self._emit_snapshot,
+            emit_snapshot=partial(emit_startup_plan_handoff_snapshot, self.runtime),
             replace_existing_project_services_for_fresh_start=self._replace_existing_project_services_for_fresh_start,
         )
 
@@ -476,7 +476,7 @@ class StartupOrchestrator:
                 session,
                 print_fn=print,
             ),
-            emit_snapshot=self._emit_snapshot,
+            emit_snapshot=partial(emit_startup_plan_handoff_snapshot, self.runtime),
             headless_plan_output_only=finalization_headless_plan_output_only,
             print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary_impl(
                 session,
@@ -579,16 +579,6 @@ class StartupOrchestrator:
             phase=phase,
             duration_ms=round((time.monotonic() - started_at) * 1000.0, 2),
             **extra,
-        )
-
-    def _emit_snapshot(self, session: StartupSession, checkpoint: str, **extra: object) -> None:
-        if not session.debug_plan_snapshot:
-            return
-        emit_plan_handoff_snapshot(
-            self.runtime._emit,
-            env=dict(self.runtime.env),
-            checkpoint=checkpoint,
-            extra=extra or None,
         )
 
     def start_project_context(

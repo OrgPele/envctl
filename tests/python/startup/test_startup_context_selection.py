@@ -73,7 +73,7 @@ class StartupContextSelectionTests(unittest.TestCase):
         result = select_startup_contexts(
             runtime=runtime,
             session=session,
-            trees_start_selection_required=lambda _route, _mode: False,
+            trees_start_selection_required=lambda *, route, runtime_mode: False,
             select_start_tree_projects=lambda *, route, project_contexts: project_contexts,
             apply_restart_ports=lambda _session, project_contexts: None,
             emit_phase=lambda _session, phase, started_at, **extra: phases.append((phase, dict(extra))),
@@ -98,7 +98,7 @@ class StartupContextSelectionTests(unittest.TestCase):
         result = select_startup_contexts(
             runtime=runtime,
             session=session,
-            trees_start_selection_required=lambda _route, _mode: False,
+            trees_start_selection_required=lambda *, route, runtime_mode: False,
             select_start_tree_projects=lambda *, route, project_contexts: project_contexts,
             apply_restart_ports=lambda _session, project_contexts: None,
             emit_phase=lambda _session, phase, started_at, **extra: phases.append((phase, dict(extra))),

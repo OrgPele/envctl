@@ -38,6 +38,22 @@ def emit_plan_handoff_snapshot(
     emit("ui.plan_handoff.snapshot", **payload)
 
 
+def emit_startup_plan_handoff_snapshot(
+    runtime: Any,
+    session: Any,
+    checkpoint: str,
+    **extra: object,
+) -> None:
+    if not bool(getattr(session, "debug_plan_snapshot", False)):
+        return
+    emit_plan_handoff_snapshot(
+        getattr(runtime, "_emit", None),
+        env=dict(getattr(runtime, "env", {}) or {}),
+        checkpoint=checkpoint,
+        extra=extra or None,
+    )
+
+
 def _fd_snapshot(fd: int) -> dict[str, object]:
     snapshot: dict[str, object] = {
         "fd": fd,
