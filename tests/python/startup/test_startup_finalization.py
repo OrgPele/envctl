@@ -14,6 +14,7 @@ from envctl_engine.startup.finalization import (
     finalize_plan_agent_degraded_handoff,
     finalize_successful_startup,
     format_degraded_handoff_text_for_terminal,
+    headless_plan_output_only,
     headless_plan_session_summary_lines,
     maybe_attach_plan_agent_terminal,
     plan_dry_run_preview_lines,
@@ -659,6 +660,18 @@ class StartupFinalizationTests(unittest.TestCase):
         print_restart_port_rebound_summary(runtime, session, print_fn=lines.append)
 
         self.assertEqual(lines, ["Port changed: feature-a-1 Frontend 3000 -> 3100 (previous port still in use)"])
+
+    def test_headless_plan_output_only_detects_batch_plan_routes(self) -> None:
+        session = _session(contexts=[])
+        session.effective_route = parse_route(["plan", "--batch"], env={})
+
+        self.assertTrue(headless_plan_output_only(session))
+
+        session.effective_route = parse_route(["plan"], env={})
+        self.assertFalse(headless_plan_output_only(session))
+
+        session.effective_route = parse_route(["start", "--headless"], env={})
+        self.assertFalse(headless_plan_output_only(session))
 
     def test_render_project_startup_warnings_prefers_spinner_detail(self) -> None:
         details: list[tuple[str, str]] = []

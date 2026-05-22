@@ -306,6 +306,11 @@ def print_restart_port_rebound_summary(
         print_fn(line)
 
 
+def headless_plan_output_only(session: StartupSession) -> bool:
+    route = session.effective_route
+    return route.command == "plan" and bool(route.flags.get("batch"))
+
+
 def render_project_startup_warnings(
     runtime: StartupRuntime,
     *,

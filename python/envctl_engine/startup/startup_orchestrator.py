@@ -27,6 +27,7 @@ from envctl_engine.startup.finalization import (
     finalize_plan_agent_degraded_handoff,
     finalize_successful_startup,
     format_failure_context_label as finalization_format_failure_context_label,
+    headless_plan_output_only as finalization_headless_plan_output_only,
     maybe_attach_plan_agent_terminal as maybe_attach_plan_agent_terminal_impl,
     print_headless_plan_session_summary as print_headless_plan_session_summary_impl,
     print_plan_dry_run_preview as print_plan_dry_run_preview_impl,
@@ -476,8 +477,7 @@ class StartupOrchestrator:
         print_restart_port_rebound_summary_impl(self.runtime, session, print_fn=print)
 
     def _headless_plan_output_only(self, session: StartupSession) -> bool:
-        route = session.effective_route
-        return route.command == "plan" and bool(route.flags.get("batch"))
+        return finalization_headless_plan_output_only(session)
 
     def _print_plan_dry_run_preview(self, session: StartupSession) -> None:
         print_plan_dry_run_preview_impl(self.runtime, session, print_fn=print)
