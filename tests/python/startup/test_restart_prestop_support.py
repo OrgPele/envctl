@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.restart_prestop_support import (
     restart_fallback_start_route,
+    restart_port_assignments,
     restart_prestop_preservation,
     restart_start_route,
 )
@@ -90,6 +91,71 @@ class RestartPrestopSupportTests(unittest.TestCase):
         self.assertEqual(result.preserved_services, {})
         self.assertEqual(result.requirements_to_release, {})
         self.assertEqual(set(result.preserved_requirements), {"Main"})
+
+    def test_restart_port_assignments_use_actual_port_then_requested_port_for_selected_services(self) -> None:
+        state = SimpleNamespace(
+            services={
+                "Main Backend": SimpleNamespace(
+                    name="Main Backend",
+                    project="Main",
+                    type="backend",
+                    actual_port=8001,
+                    requested_port=8000,
+                ),
+                "Main Frontend": SimpleNamespace(
+                    name="Main Frontend",
+                    project="Main",
+                    type="frontend",
+                    actual_port=None,
+                    requested_port=3000,
+                ),
+                "Other Backend": SimpleNamespace(
+                    name="Other Backend",
+                    project="Other",
+                    type="backend",
+                    actual_port=8100,
+                    requested_port=8100,
+                ),
+            }
+        )
+
+        self.assertEqual(
+            restart_port_assignments(
+                state,
+                selected_services={"Main Backend", "Main Frontend"},
+                project_name_from_service=lambda name: str(name).removesuffix(" Backend").removesuffix(" Frontend"),
+            ),
+            {"main": {"backend": 8001, "frontend": 3000}},
+        )
+
+    def test_restart_port_assignments_uses_project_name_fallback_and_ignores_invalid_ports(self) -> None:
+        state = SimpleNamespace(
+            services={
+                "Fallback Backend": SimpleNamespace(
+                    name="Fallback Backend",
+                    project="",
+                    type="backend",
+                    actual_port=0,
+                    requested_port=8000,
+                ),
+                "Fallback Frontend": SimpleNamespace(
+                    name="Fallback Frontend",
+                    project="",
+                    type="frontend",
+                    actual_port=-1,
+                    requested_port=None,
+                ),
+            }
+        )
+
+        self.assertEqual(
+            restart_port_assignments(
+                state,
+                selected_services={"Fallback Backend", "Fallback Frontend"},
+                project_name_from_service=lambda name: str(name).removesuffix(" Backend").removesuffix(" Frontend"),
+            ),
+            {"fallback": {"backend": 8000}},
+        )
 
 
 if __name__ == "__main__":

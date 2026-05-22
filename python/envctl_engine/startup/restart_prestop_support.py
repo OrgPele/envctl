@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.shared.services import service_project_name, service_slug_from_record
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,3 +71,25 @@ def restart_prestop_preservation(
         preserved_requirements=preserved_requirements,
         requirements_to_release=requirements_to_release,
     )
+
+
+def restart_port_assignments(
+    state: Any,
+    *,
+    selected_services: set[str],
+    project_name_from_service: Callable[[str], str],
+) -> dict[str, dict[str, int]]:
+    by_project: dict[str, dict[str, int]] = {}
+    for service_name, service in getattr(state, "services", {}).items():
+        if service_name not in selected_services:
+            continue
+        project_name = service_project_name(service) or project_name_from_service(service_name)
+        service_type = service_slug_from_record(service)
+        if not project_name or not service_type:
+            continue
+        port = getattr(service, "actual_port", None)
+        if not isinstance(port, int) or port <= 0:
+            port = getattr(service, "requested_port", None)
+        if isinstance(port, int) and port > 0:
+            by_project.setdefault(project_name.lower(), {})[service_type] = port
+    return by_project

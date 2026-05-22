@@ -21,7 +21,6 @@ from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_t
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope, route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
 from envctl_engine.runtime.runtime_context import resolve_state_repository
-from envctl_engine.shared.services import service_project_name, service_slug_from_record
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.startup.finalization import (
@@ -63,6 +62,7 @@ from envctl_engine.startup.plan_agent_handoff import (
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.restart_prestop_support import (
     restart_fallback_start_route,
+    restart_port_assignments,
     restart_prestop_preservation,
     restart_start_route,
 )
@@ -409,19 +409,11 @@ class StartupOrchestrator:
         selected_services = set(selected_services_raw) if isinstance(selected_services_raw, list) else set()
         if not selected_services:
             return
-        by_project: dict[str, dict[str, int]] = {}
-        for service_name, service in state.services.items():
-            if service_name not in selected_services:
-                continue
-            project_name = service_project_name(service) or self.runtime._project_name_from_service(service_name)
-            service_type = service_slug_from_record(service)
-            if not project_name or not service_type:
-                continue
-            port = getattr(service, "actual_port", None)
-            if not isinstance(port, int) or port <= 0:
-                port = getattr(service, "requested_port", None)
-            if isinstance(port, int) and port > 0:
-                by_project.setdefault(project_name.lower(), {})[service_type] = port
+        by_project = restart_port_assignments(
+            state,
+            selected_services=selected_services,
+            project_name_from_service=self.runtime._project_name_from_service,
+        )
         for context in contexts:
             ports = by_project.get(str(context.name).strip().lower())
             if not ports:
