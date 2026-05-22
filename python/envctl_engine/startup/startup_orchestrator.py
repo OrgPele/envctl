@@ -132,7 +132,11 @@ class StartupOrchestrator:
                 if code is not None:
                     return code
             ensure_run_id(self.runtime, session)
-            self._announce_session_identifiers(session)
+            announce_session_identifiers_impl(
+                self.runtime,
+                session,
+                headless_plan_output_only=finalization_headless_plan_output_only,
+            )
             prepare_startup_execution(
                 session=session,
                 maybe_prewarm_docker=lambda *, route, mode: maybe_prewarm_docker_impl(self, route=route, mode=mode),
@@ -148,13 +152,6 @@ class StartupOrchestrator:
 
     def _create_session(self, route: Route) -> StartupSession:
         return create_startup_session(self.runtime, route)
-
-    def _announce_session_identifiers(self, session: StartupSession) -> None:
-        announce_session_identifiers_impl(
-            self.runtime,
-            session,
-            headless_plan_output_only=finalization_headless_plan_output_only,
-        )
 
     def _handle_restart_prestop(self, session: StartupSession) -> int | None:
         return handle_restart_prestop(
@@ -277,7 +274,11 @@ class StartupOrchestrator:
             session=session,
             route_is_implicit_start=route_is_implicit_start,
             ensure_run_id=partial(ensure_run_id, self.runtime),
-            announce_session_identifiers=self._announce_session_identifiers,
+            announce_session_identifiers=partial(
+                announce_session_identifiers_impl,
+                self.runtime,
+                headless_plan_output_only=finalization_headless_plan_output_only,
+            ),
             resolved_run_id=resolved_run_id,
             build_planning_dashboard_state=build_planning_dashboard_state,
             configured_service_types_for_mode=lambda runtime_mode: configured_service_types_for_mode_impl(
@@ -328,7 +329,11 @@ class StartupOrchestrator:
                 self.runtime,
                 partial(emit_startup_phase, self.runtime),
             ),
-            announce_session_identifiers=self._announce_session_identifiers,
+            announce_session_identifiers=partial(
+                announce_session_identifiers_impl,
+                self.runtime,
+                headless_plan_output_only=finalization_headless_plan_output_only,
+            ),
             emit_phase=partial(emit_startup_phase, self.runtime),
             headless_plan_output_only=finalization_headless_plan_output_only,
             maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
@@ -370,7 +375,11 @@ class StartupOrchestrator:
                         configured_service_types_for_mode_impl(self.runtime.config, session.runtime_mode)
                     ),
                     additional_services=tuple(getattr(self.runtime.config, "additional_services", ()) or ()),
-                    announce_session_identifiers=self._announce_session_identifiers,
+                    announce_session_identifiers=partial(
+                        announce_session_identifiers_impl,
+                        self.runtime,
+                        headless_plan_output_only=finalization_headless_plan_output_only,
+                    ),
                     report_progress=lambda route, message: report_progress(
                         self.runtime,
                         route,
