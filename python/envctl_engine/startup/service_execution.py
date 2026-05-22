@@ -8,6 +8,7 @@ import time
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_process_runtime
+from envctl_engine.startup.startup_selection_support import _restart_service_types_for_project
 from envctl_engine.runtime.browser_diagnostics import launch_diagnostics_payload
 from envctl_engine.runtime.service_manager import ServiceStartDescriptor
 from envctl_engine.runtime.runtime_context import resolve_port_allocator
@@ -334,21 +335,12 @@ def start_project_services(
     if route is not None:
         route.flags.setdefault("emit_service_dependency", emit_service_dependency)
     backend_listener_expected = backend_listener_expected_for_mode(rt.config, effective_mode)
-    try:
-        selected_service_types = orchestrator._restart_service_types_for_project(
-            route=route,
-            project_name=context.name,
-            default_service_types=configured_service_types,
-            additional_services=configured_additional_services,
-        )
-    except TypeError as exc:
-        if "additional_services" not in str(exc):
-            raise
-        selected_service_types = orchestrator._restart_service_types_for_project(
-            route=route,
-            project_name=context.name,
-            default_service_types=configured_service_types,
-        )
+    selected_service_types = _restart_service_types_for_project(
+        route=route,
+        project_name=context.name,
+        default_service_types=configured_service_types,
+        additional_services=configured_additional_services,
+    )
     if not selected_service_types:
         rt._emit(
             "service.attach.skipped",

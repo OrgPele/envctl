@@ -83,8 +83,6 @@ from envctl_engine.startup.startup_progress import (
 from envctl_engine.startup.startup_selection_support import (
     port_allocator as port_allocator_impl,
     process_runtime as process_runtime_impl,
-    _restart_include_requirements as _restart_include_requirements_impl,
-    _restart_service_types_for_project as _restart_service_types_for_project_impl,
     select_start_tree_projects,
     trees_start_selection_required,
 )
@@ -618,10 +616,6 @@ class StartupOrchestrator:
             suppress_progress_output=self._suppress_progress_output,
         )
 
-    @staticmethod
-    def _restart_include_requirements(route: Route) -> bool:
-        return _restart_include_requirements_impl(route)
-
     def start_project_context(
         self,
         *,
@@ -683,18 +677,3 @@ class StartupOrchestrator:
         route: Route | None = None,
     ) -> dict[str, ServiceRecord]:
         return start_project_services_impl(self, context, requirements=requirements, run_id=run_id, route=route)
-
-    @staticmethod
-    def _restart_service_types_for_project(
-        *,
-        route: Route | None,
-        project_name: str,
-        default_service_types: set[str] | None = None,
-        additional_services: tuple[object, ...] = (),
-    ) -> set[str]:
-        return _restart_service_types_for_project_impl(
-            route=route,
-            project_name=project_name,
-            default_service_types=default_service_types,
-            additional_services=additional_services,
-        )

@@ -192,13 +192,4 @@ class StartupOrchestratorLike(Protocol):
         route: Route,
         run_id: str,
     ) -> ProjectStartupResultLike: ...
-    def _restart_include_requirements(self, route: Route) -> bool: ...
-    def _restart_service_types_for_project(
-        self,
-        *,
-        route: Route | None,
-        project_name: str,
-        default_service_types: set[str] | None = None,
-        additional_services: tuple[object, ...] = (),
-    ) -> set[str]: ...
     def _suppress_timing_output(self, route: Route | None) -> bool: ...

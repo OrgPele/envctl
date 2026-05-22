@@ -18,6 +18,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_port_allocator
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
+from envctl_engine.startup.startup_selection_support import restart_include_requirements
 from envctl_engine.state.models import RequirementsResult
 
 _DOCKER_SOCKET_PATTERNS = (
@@ -90,7 +91,7 @@ def requirements_for_restart_context(
         return orchestrator.start_requirements_for_project(context, mode=mode, route=route)
     if not bool(route.flags.get("_restart_request")):
         return orchestrator.start_requirements_for_project(context, mode=mode, route=route)
-    if orchestrator._restart_include_requirements(route):
+    if restart_include_requirements(route):
         return orchestrator.start_requirements_for_project(context, mode=mode, route=route)
 
     previous = rt._try_load_existing_state(mode=mode, strict_mode_match=True)
