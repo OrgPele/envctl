@@ -29,6 +29,7 @@ from envctl_engine.startup.startup_execution_support import (  # noqa: E402
     start_project_services,
     start_project_context,
 )
+from envctl_engine.startup.startup_orchestrator import StartupOrchestrator  # noqa: E402
 from envctl_engine.startup.startup_selection_support import _tree_preselected_projects_from_state  # noqa: E402
 from envctl_engine.config import AppServiceConfig  # noqa: E402
 from envctl_engine.runtime.command_router import parse_route  # noqa: E402
@@ -68,6 +69,10 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_execution_support_reexports_new_owner_modules(self) -> None:
         self.assertIs(start_requirements_for_project, requirements_start_impl)
         self.assertIs(start_project_services, service_start_impl)
+
+    def test_startup_orchestrator_does_not_retain_selected_context_pass_through_wrappers(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_record_project_startup"))
+        self.assertFalse(hasattr(StartupOrchestrator, "_record_plan_agent_handoff_local_startup_failure"))
 
     def test_requirements_parallel_defaults_to_sequential_on_macos_with_cli_override(self) -> None:
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))

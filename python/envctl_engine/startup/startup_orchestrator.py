@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 from typing import Callable, Mapping, cast, Iterable
+from functools import partial
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent.config import resolve_plan_agent_launch_config
@@ -440,13 +441,16 @@ class StartupOrchestrator:
             session=session,
             suppress_progress_output=self._suppress_progress_output,
             resolved_run_id=self._resolved_run_id,
-            record_project_startup=self._record_project_startup,
+            record_project_startup=record_project_startup_impl,
             render_project_startup_warnings=self._render_project_startup_warnings,
             should_degrade_to_plan_agent_handoff=lambda session, error: self._should_degrade_to_plan_agent_handoff(
                 session,
                 error=error,
             ),
-            record_plan_agent_handoff_local_startup_failure=self._record_plan_agent_handoff_local_startup_failure,
+            record_plan_agent_handoff_local_startup_failure=partial(
+                record_plan_agent_handoff_local_startup_failure_impl,
+                self.runtime,
+            ),
             spinner_factory=spinner,
             use_spinner_policy_fn=use_spinner_policy,
             resolve_spinner_policy_fn=resolve_spinner_policy,
@@ -553,14 +557,6 @@ class StartupOrchestrator:
             render_final_failure_status=finalization_render_final_failure_status,
         )
 
-    def _record_project_startup(
-        self,
-        session: StartupSession,
-        context: ProjectContextLike,
-        result: ProjectStartupResult,
-    ) -> None:
-        record_project_startup_impl(session, context, result)
-
     def _should_degrade_to_plan_agent_handoff(self, session: StartupSession, *, error: str) -> bool:
         self._validate_plan_agent_handoff(session, phase="local_startup_failure")
         return should_degrade_to_plan_agent_handoff_impl(session, error=error)
@@ -586,20 +582,6 @@ class StartupOrchestrator:
             self.runtime,
             session,
             validation_reason="attach_target_stale_after_launch",
-        )
-
-    def _record_plan_agent_handoff_local_startup_failure(
-        self,
-        session: StartupSession,
-        *,
-        project_name: str,
-        error: str,
-    ) -> None:
-        record_plan_agent_handoff_local_startup_failure_impl(
-            self.runtime,
-            session,
-            project_name=project_name,
-            error=error,
         )
 
     def _emit_phase(self, session: StartupSession, phase: str, started_at: float, **extra: object) -> None:
