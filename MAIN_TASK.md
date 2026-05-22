@@ -1,161 +1,159 @@
-# Envctl Worktree CGC Backend Default Hardening
+# Envctl Codex Cycle Range Completion Audit
 
 ## Context and objective
 
-The prior task, archived as `OLD_TASK_2.md`, implemented most of the envctl worktree code-intelligence isolation feature:
-generated worktrees get unique Serena project names, deterministic CGC contexts, explicit `cgc index <worktree>
---context <context>` commands, `.envctl-state/code-intelligence.json` metadata, docs, and targeted test coverage.
+The prior task, archived as `OLD_TASK_2.md`, requested a compact Codex
+plan-agent cycle scale from `0` through `3`, with runtime clamping, workflow
+expansion, prompt guidance, installed skill text, docs, and tests all aligned to
+that same scale.
 
-The remaining issue is real CodeGraphContext backend reliability. The implementation currently leaves
-`ENVCTL_WORKTREE_CGC_DATABASE` empty by default, so generated worktrees create CGC contexts without `--database`.
-On this machine, a real generated-context index used CGC's FalkorDB-backed default path, failed to start FalkorDB
-cleanly, fell back, and indexing sat without progress until manually killed. Because this branch also commits
-`.cgcignore`, `ENVCTL_WORKTREE_CGC_INDEX=auto` can now trigger CGC indexing for generated envctl worktrees and hit that
-flaky default backend path.
+Current repo evidence shows that the implementation is complete in commit
+`95bce36` (`Limit Codex plan cycles to three`) on top of provenance base
+`origin/codex/reuse-cgc-worktree-context` at merge-base
+`dc131e8461c70657c63e8faaea72f12a357de62e`. There is no remaining product
+implementation work for the prior task.
 
-Objective: make the default generated-worktree CGC backend robust by defaulting worktree CGC context creation to
-`kuzudb` when no explicit database is configured, while preserving explicit user/config overrides and the best-effort
-non-fatal behavior from the prior task.
-
-This is a follow-up hardening task, not a rewrite of the prior implementation.
+Objective: preserve the completed task history and keep this worktree ready for
+handoff by documenting that the prior implementation is complete. Do not invent
+new feature scope. Any subsequent work should be driven by a new user task,
+review finding, failing check, or explicit product requirement.
 
 ## Remaining requirements (complete and exhaustive)
 
-1. Fully implement a default CGC database backend for envctl-generated worktree contexts.
-   - When `ENVCTL_WORKTREE_CGC_DATABASE` is unset or absent from config, `_worktree_cgc_database()` must return
-     `kuzudb`.
-   - `cgc context create <context>` must therefore include `--database kuzudb` by default for generated worktree CGC
-     indexing.
-   - Explicit env values must continue to win over config raw values.
-   - Explicit config raw values must continue to win over the default.
-   - Empty or whitespace-only env/config values must be treated as absent and must fall back to `kuzudb`.
+No remaining implementation requirements are carried forward from
+`OLD_TASK_2.md`.
 
-2. Preserve opt-out and override behavior.
-   - `ENVCTL_WORKTREE_CGC_INDEX=false` must still skip indexing.
-   - `ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` must still skip all code-intelligence bootstrap behavior.
-   - A non-empty `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` must still pass that backend to `cgc context create`.
-   - Existing context handling must continue to treat "already exists" output as success and proceed to indexing.
-   - Missing `cgc`, context creation failure, and index failure must remain non-fatal for worktree creation.
+The prior task's requirements are complete:
 
-3. Persist and emit the selected default database clearly.
-   - `.envctl-state/code-intelligence.json` must record `"cgc_database": "kuzudb"` when the default is used.
-   - The `setup.worktree.code_intelligence.cgc_context` event must include `database="kuzudb"` when the default is used.
-   - Attempted command metadata must show `["cgc", "context", "create", <context>, "--database", "kuzudb"]` by default.
+1. Runtime source of truth:
+   - `_PLAN_AGENT_CODEX_CYCLE_CAP` is `3` in
+     `python/envctl_engine/planning/plan_agent/constants.py`.
+   - `_parse_codex_cycles` still preserves invalid and negative handling as
+     `invalid_codex_cycles`.
+   - Values above `3` still produce `bounded_codex_cycles` and return `3`.
+   - The global default remains `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`.
 
-4. Update docs and repo guidance.
-   - `docs/user/planning-and-worktrees.md` must state that generated worktree CGC contexts default to `kuzudb`.
-   - The docs must explain that `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` overrides the default.
-   - The docs must explain why the default exists: to avoid relying on CGC's global/default backend selection for
-     generated worktrees.
-   - Do not reintroduce references to the old `codegraph` CLI.
+2. Workflow expansion:
+   - `_build_plan_agent_workflow` still uses `_PLAN_AGENT_CODEX_CYCLE_CAP`.
+   - Direct workflow construction with `codex_cycles=999` is bounded to
+     `workflow.codex_cycles == 3`.
+   - Existing queued workflow shape is preserved.
 
-5. Do not retrofit existing worktrees as part of this task.
-   - Existing already-created implementation worktrees may still have `.serena/project.yml` with `project_name:
-     "envctl"` and may lack `.envctl-state/code-intelligence.json` because they were created before the prior fix.
-   - This task must harden behavior for newly generated or regenerated worktrees.
-   - Do not mutate sibling worktrees or paths outside the current repo root.
+3. Prompt recommendation rubric:
+   - `create_plan.md`, `create_plan_auto_codex.md`, and
+     `create_plan_auto_omx.md` require exactly one integer from `0` through `3`.
+   - The rubric documents `3` as genuinely complex, high-risk, cross-module,
+     runtime-sensitive, or architecture-sensitive work.
+   - The prompt wording preserves the "prefer the smallest number" behavior and
+     makes `3` exceptional.
+
+4. Docs and installed skill contracts:
+   - User and reference docs describe the same `0` through `3` scale.
+   - Docs remove the old split between create-plan recommendations and a
+     separate runtime cap.
+   - OpenCode notes continue to state that OpenCode ignores Codex cycle
+     settings.
+   - Auto-plan examples touched by the prior iteration use current `--cmux`
+     wording where appropriate.
+
+5. Tests:
+   - Planning tests cover canonical `3`, canonical `4` bounded to `3`, alias
+     `999` bounded to `3`, and workflow construction with `codex_cycles=999`.
+   - Runtime prompt/install tests assert `0` through `3` and assert the old
+     `0` through `8` phrase is absent from rendered prompt bodies and installed
+     skill text.
 
 ## Gaps from prior iteration (mapped to evidence)
 
-Fully implemented in commits `2cad2a5` and `916789d`:
+No product gaps remain.
 
-- Deterministic generated worktree identity exists in
-  `python/envctl_engine/planning/worktree_domain.py::_worktree_code_intelligence_identity`.
-- Copied Serena project config is rewritten by `_copy_worktree_serena_project_file` and
-  `_rewrite_serena_project_name`.
-- CGC indexing now calls `cgc context create <context>` before `cgc index <worktree> --context <context>`.
-- Metadata is written to `.envctl-state/code-intelligence.json`.
-- Docs describe generated Serena project names, CGC contexts, templates, and metadata.
-- Targeted validation passed:
-  - `uv run --extra dev pytest -q tests/python/planning/test_planning_worktree_setup.py` -> `44 passed`
-  - `uv run --extra dev ruff check python/envctl_engine/planning/worktree_domain.py tests/python/planning/test_planning_worktree_setup.py` -> passed
-- PR #232 checks passed for `ruff`, `build & shipability`, and `pytest`.
+Evidence reviewed:
 
-Remaining/partial:
-
-- `_worktree_cgc_database()` currently returns `""` when no env/config value is present, so the default command is
-  `cgc context create <context>` with no `--database`.
-- Docs currently say users can set `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb`, but they do not say `kuzudb` is the default.
-- Existing tests cover explicit `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb`, but not the default-unset path requiring
-  `--database kuzudb`.
-- Real machine evidence shows the empty default can select a flaky FalkorDB-backed path, fail to start FalkorDB cleanly,
-  fall back, and then stall indexing.
-
-Not implemented and not required:
-
-- No retroactive migration for the current implementation worktree's `.serena/project.yml` or missing
-  `.envctl-state/code-intelligence.json`.
-- No CGC MCP server, no CGC backend implementation, and no old `codegraph` CLI behavior.
+- `git status --short` returned no unstaged or staged changes before this
+  archival task.
+- `git diff --name-status` returned no unstaged paths.
+- `git diff --cached --name-status` returned no staged paths.
+- Provenance file `.envctl-state/worktree-provenance.json` points to
+  `source_ref: origin/codex/reuse-cgc-worktree-context` and
+  `source_branch: codex/reuse-cgc-worktree-context`.
+- `git merge-base HEAD origin/codex/reuse-cgc-worktree-context` returned
+  `dc131e8461c70657c63e8faaea72f12a357de62e`.
+- `git log --oneline --decorate <merge-base>..HEAD` showed exactly one
+  implementation commit:
+  `95bce36 Limit Codex plan cycles to three`.
+- `git diff --name-status <merge-base>..HEAD` showed the runtime constant,
+  prompt templates, docs, tests, worktree provenance, and previous task file as
+  the only changed paths.
+- Search evidence found no remaining old range descriptions in `python`,
+  `tests`, or `docs` outside `docs/changelog/**`; the only `0` through `8` hits
+  in active paths are negative assertions that verify the phrase is absent.
+- Historical changelog text under `docs/changelog/**` remains intentionally
+  unchanged, matching the archived task's risk register.
 
 ## Acceptance criteria (requirement-by-requirement)
 
-- A generated worktree with `ENVCTL_WORKTREE_CGC_INDEX=true` and no `ENVCTL_WORKTREE_CGC_DATABASE` runs:
-  - `cgc context create <generated-context> --database kuzudb`
-  - `cgc index <worktree> --context <generated-context>`
-- A generated worktree with `ENVCTL_WORKTREE_CGC_INDEX=true` and `ENVCTL_WORKTREE_CGC_DATABASE=<backend>` runs:
-  - `cgc context create <generated-context> --database <backend>`
-  - `cgc index <worktree> --context <generated-context>`
-- Metadata for the default path records `"cgc_database": "kuzudb"` and includes the default database in the attempted
-  context-create command.
-- Metadata for the override path records the override backend.
-- Existing tests for missing `cgc`, CGC launch failure, existing context, context failure, and index behavior remain
-  green.
-- Docs state the default backend and override behavior accurately.
-- GitHub PR checks pass after the follow-up commit.
+This archival/audit task is complete when all of the following are true:
+
+1. `OLD_TASK_2.md` exists and contains the prior `MAIN_TASK.md` content for
+   "Envctl Codex Cycle Range Three-Point Scale".
+2. `MAIN_TASK.md` states that no implementation work remains from the archived
+   task and records the evidence supporting that conclusion.
+3. `.envctl-commit-message.md` contains one focused next commit message for this
+   archival/audit change after the `### Envctl pointer ###` marker.
+4. No files outside the current worktree are modified.
 
 ## Required implementation scope (frontend/backend/data/integration)
 
-- Backend/Python engine:
-  - Update `python/envctl_engine/planning/worktree_domain.py`.
-  - Prefer the narrowest possible change around `_worktree_cgc_database()` and any helper needed to keep env/config
-    precedence clear.
-- Tests:
-  - Update `tests/python/planning/test_planning_worktree_setup.py`.
-- Docs:
-  - Update `docs/user/planning-and-worktrees.md`.
+- Task bookkeeping:
+  - Rename the prior `MAIN_TASK.md` to `OLD_TASK_2.md`.
+  - Create this new `MAIN_TASK.md`.
+  - Update `.envctl-commit-message.md` for the next commit.
+
 - Frontend:
   - None.
+
+- Backend:
+  - None.
+
 - Data/migrations:
   - None.
-- Runtime services:
+
+- Runtime/integration:
   - None.
 
 ## Required tests and quality gates
 
-Run all of the following after implementation:
+No product test rerun is required for this task-file-only archival change. The
+prior implementation was already validated with:
 
-- `uv run --extra dev pytest -q tests/python/planning/test_planning_worktree_setup.py`
-- `uv run --extra dev ruff check python/envctl_engine/planning/worktree_domain.py tests/python/planning/test_planning_worktree_setup.py`
-- A focused Python 3.12 smoke for the real-git fake-`cgc` test if available locally:
-  - `python3.12 -m pytest -q tests/python/planning/test_planning_worktree_setup.py::PlanningWorktreeSetupTests::test_setup_worktree_real_git_smoke_writes_isolated_code_intelligence`
+- `uv run --extra dev pytest -q tests/python/planning/test_plan_agent_launch_support.py -k 'codex_cycles or build_plan_agent_workflow_bounds_large_cycle_counts'`
+- `uv run --extra dev pytest -q tests/python/runtime/test_prompt_install_support.py -k 'cycle or auto_codex or auto_opencode'`
+- `uv run --extra dev pytest -q tests/python/runtime/test_command_exit_codes.py -k 'create_plan_auto_codex or create_plan_auto_opencode'`
+- `uv run --extra dev ruff check python tests scripts`
+- `uv tool run ruff check python tests scripts`
 
-Recommended test additions or adjustments:
+For final handoff of this archival task, run:
 
-- Add or update a test proving the unset database path includes `--database kuzudb`.
-- Keep the existing explicit database test proving `ENVCTL_WORKTREE_CGC_DATABASE=kuzudb` or another non-empty backend is
-  respected.
-- Add a test for whitespace-only `ENVCTL_WORKTREE_CGC_DATABASE` falling back to `kuzudb` if that can be done without
-  duplicating excessive setup.
-- Ensure metadata assertions cover the selected database for default and override paths.
+- `git status --short`
+- `git diff --name-status`
+- `git diff --cached --name-status`
 
 ## Edge cases and failure handling
 
-- Empty or whitespace-only database env/config values fall back to `kuzudb`.
-- Non-empty database values are sanitized using existing identity sanitization before being passed to CGC.
-- If `cgc` is missing, no context-create or index command runs, and metadata still records the selected database and
-  `cgc_available=false`.
-- If `cgc context create` fails, worktree creation still succeeds, indexing is skipped, and metadata/events include the
-  database, return code, and short stdout/stderr summaries.
-- If `cgc context create` reports that the context already exists, indexing still runs with the generated context.
-- If `cgc index` fails or hangs in real usage, envctl must still treat the subprocess result/failure as non-fatal within
-  the current timeout/error behavior; this task only changes backend selection, not CGC internals.
+- Do not create a new implementation requirement solely because the invoking
+  prompt says the prior delivery was incomplete; rely on current task, code,
+  tests, docs, and git evidence.
+- Do not rewrite historical changelog entries that intentionally preserve past
+  release notes.
+- Do not modify sibling worktrees or paths outside this repo root.
+- If future GitHub checks appear and fail, treat their logs as new evidence and
+  create a new task only for the concrete failing requirement.
 
 ## Definition of done
 
-- New generated envctl worktrees default to `kuzudb` for CGC context creation when no database override is configured.
-- User/config overrides for `ENVCTL_WORKTREE_CGC_DATABASE` still work.
-- Metadata and events clearly record the selected database.
-- Docs describe the default, override, and rationale.
-- Targeted tests and Ruff pass locally.
-- Follow-up commit is pushed to PR #232 or its successor.
-- GitHub required checks pass.
+- The previous task is archived as `OLD_TASK_2.md`.
+- This `MAIN_TASK.md` clearly states that the prior task has no remaining
+  implementation scope.
+- `.envctl-commit-message.md` is updated for the archival/audit commit.
+- Git evidence confirms the only uncommitted changes are the task archival,
+  replacement task file, and commit-message bookkeeping.
