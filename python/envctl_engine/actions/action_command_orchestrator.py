@@ -11,7 +11,7 @@ import sys
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, cast
 
-from envctl_engine.actions.actions_analysis import default_review_command, default_migrate_command
+from envctl_engine.actions.actions_analysis import default_review_command
 from envctl_engine.actions.actions_git import default_commit_command, default_pr_command
 from envctl_engine.actions.action_command_support import service_types_from_route_services
 from envctl_engine.actions.action_migrate_support import (
@@ -32,8 +32,10 @@ from envctl_engine.actions.action_migrate_support import (
     shared_report_parent as shared_report_parent_impl,
     visible_migrate_hint_lines as visible_migrate_hint_lines_impl,
 )
+from envctl_engine.actions.action_migrate_execution_support import (
+    run_migrate_action as run_migrate_action_impl,
+)
 from envctl_engine.actions.action_target_support import (
-    ActionCommandResolution,
     ActionTargetContext,
     execute_targeted_action,
     projects_for_services as projects_for_services_impl,
@@ -606,93 +608,24 @@ if result.returncode != 0:
         )
 
     def run_migrate_action(self, route: Route, targets: list[object]) -> int:
-        rt = self.runtime
-        raw = rt.env.get("ENVCTL_ACTION_MIGRATE_CMD")  # type: ignore[attr-defined]
         interactive_command = bool(route.flags.get("interactive_command"))
-        extra_env = self.action_extra_env(route)
-        observed_outcomes: dict[str, dict[str, object]] = {}
-        persist_success = self._project_action_success_handler("migrate", route.mode, interactive_command)
-        persist_failure = self._project_action_failure_handler("migrate", route.mode)
-
-        def resolve_command(context: object) -> ActionCommandResolution:
-            target = getattr(context, "target_obj")
-            target_root = Path(str(getattr(context, "root")))
-            if raw is not None:
-                replacements = self.action_replacements(targets, target=target)
-                try:
-                    command = rt.split_command(raw, replacements=replacements)
-                except RuntimeError as exc:
-                    return ActionCommandResolution(command=None, cwd=None, error=str(exc))
-                return ActionCommandResolution(command=command, cwd=target_root)
-            resolution = default_migrate_command(target_root)
-            return ActionCommandResolution(
-                command=resolution.command,
-                cwd=resolution.cwd,
-                error=resolution.error,
-            )
-
-        def handle_success(context: ActionTargetContext, completed: Any) -> None:
-            observed_outcomes[context.name] = {"status": "success"}
-            if persist_success is not None:
-                persist_success(context, completed)
-
-        def handle_failure(context: ActionTargetContext, error_output: str) -> None:
-            clean_output = strip_ansi(str(error_output or "")).strip()
-            migrate_env_metadata = dict(self._migrate_env_contracts.get(context.name, {}))
-            summary_lines = self._project_action_failure_summary_lines(
-                command_name="migrate",
-                error_output=clean_output,
-                migrate_env_metadata=migrate_env_metadata if migrate_env_metadata else None,
-            )
-            observed_outcomes[context.name] = {
-                "status": "failed",
-                "headline": self._migrate_failure_headline(clean_output),
-                "summary": "\n".join(summary_lines).strip(),
-            }
-            if migrate_env_metadata:
-                observed_outcomes[context.name]["backend_env"] = migrate_env_metadata
-            if persist_failure is not None:
-                persist_failure(context, error_output)
-
-        code = execute_targeted_action(
+        return run_migrate_action_impl(
+            runtime=self.runtime,
+            route=route,
             targets=targets,
-            command_name="migrate",
-            interactive_command=interactive_command,
-            resolve_command=resolve_command,
-            build_env=lambda context: self.migrate_action_env(
-                targets=targets,
-                route=route,
-                target=getattr(context, "target_obj"),
-                extra=extra_env,
-            ),
-            process_run=lambda command, cwd, env: rt.process_runner.run(  # type: ignore[attr-defined]
-                command,
-                cwd=cwd,
-                env=dict(env),
-                timeout=300.0,
-            ),
+            extra_env=self.action_extra_env(route),
+            action_replacements_builder=self.action_replacements,
+            migrate_action_env_builder=self.migrate_action_env,
+            success_handler=self._project_action_success_handler("migrate", route.mode, interactive_command),
+            failure_handler=self._project_action_failure_handler("migrate", route.mode),
             emit_status=self._emit_status,
-            interactive_print_failures=False,
-            on_success=handle_success,
-            on_failure=handle_failure,
-            failure_status_formatter=lambda context, error: (
-                f"migrate failed for {context.name}: {self._migrate_failure_headline(error)}"
-            ),
-            print_noninteractive_failures=False,
-            print_noninteractive_successes=False,
+            failure_summary_lines=self._project_action_failure_summary_lines,
+            failure_headline=self._migrate_failure_headline,
+            print_result_summary=self._print_migrate_result_summary,
+            set_deferred_output=lambda callback: setattr(self, "_deferred_post_action_output", callback),
+            execute_targeted_action_fn=execute_targeted_action,
+            migrate_env_contracts=self._migrate_env_contracts,
         )
-        if not interactive_command:
-            target_names = [
-                str(getattr(target, "name", "")).strip()
-                for target in targets
-                if str(getattr(target, "name", "")).strip()
-            ]
-            self._deferred_post_action_output = lambda: self._print_migrate_result_summary(
-                mode=route.mode,
-                project_names=target_names,
-                fallback_entries=observed_outcomes,
-            )
-        return code
 
     def _no_target_selected_message(self, route: Route) -> str:
         interactive_allowed = self._interactive_selection_allowed(route)
