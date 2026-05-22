@@ -36,9 +36,8 @@ from envctl_engine.startup.finalization import (
 )
 from envctl_engine.startup.execution_preparation import prepare_startup_execution
 from envctl_engine.startup.run_reuse_support import (
-    fresh_start_replacement_services as fresh_start_replacement_services_impl,
     prepare_dashboard_stopped_service_restore as prepare_dashboard_stopped_service_restore_impl,
-    replace_existing_project_services_for_fresh_start as replace_existing_project_services_for_fresh_start_impl,
+    replace_existing_project_services_for_fresh_start_with_defaults,
 )
 from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse
 from envctl_engine.startup.plan_agent_handoff import (
@@ -361,40 +360,27 @@ class StartupOrchestrator:
                 runtime_mode,
             ),
             emit_snapshot=partial(emit_startup_plan_handoff_snapshot, self.runtime),
-            replace_existing_project_services_for_fresh_start=self._replace_existing_project_services_for_fresh_start,
-        )
-
-    def _replace_existing_project_services_for_fresh_start(
-        self,
-        session: StartupSession,
-        *,
-        candidate_state,
-        reason: str,
-    ) -> None:
-        replace_existing_project_services_for_fresh_start_impl(
-            runtime=self.runtime,
-            session=session,
-            candidate_state=candidate_state,
-            reason=reason,
-            fresh_start_replacement_services=lambda _, *, candidate_state: fresh_start_replacement_services_impl(
-                route=session.effective_route,
-                selected_contexts=list(session.selected_contexts),
-                candidate_state=candidate_state,
-                configured_service_types=set(
-                    configured_service_types_for_mode_impl(self.runtime.config, session.runtime_mode)
-                ),
-                additional_services=tuple(getattr(self.runtime.config, "additional_services", ()) or ()),
-                project_name_from_service=self.runtime._project_name_from_service,
+            replace_existing_project_services_for_fresh_start=lambda session, *, candidate_state, reason: (
+                replace_existing_project_services_for_fresh_start_with_defaults(
+                    runtime=self.runtime,
+                    session=session,
+                    candidate_state=candidate_state,
+                    reason=reason,
+                    configured_service_types=set(
+                        configured_service_types_for_mode_impl(self.runtime.config, session.runtime_mode)
+                    ),
+                    additional_services=tuple(getattr(self.runtime.config, "additional_services", ()) or ()),
+                    announce_session_identifiers=self._announce_session_identifiers,
+                    report_progress=lambda route, message: report_progress(
+                        self.runtime,
+                        route,
+                        progress_lock=self._progress_lock,
+                        last_progress_message_by_project=self._last_progress_message_by_project,
+                        message=message,
+                    ),
+                    terminate_restart_orphan_listeners=self._terminate_restart_orphan_listeners,
+                )
             ),
-            announce_session_identifiers=self._announce_session_identifiers,
-            report_progress=lambda route, message: report_progress(
-                self.runtime,
-                route,
-                progress_lock=self._progress_lock,
-                last_progress_message_by_project=self._last_progress_message_by_project,
-                message=message,
-            ),
-            terminate_restart_orphan_listeners=self._terminate_restart_orphan_listeners,
         )
 
     def _prepare_dashboard_stopped_service_restore(

@@ -296,6 +296,37 @@ def replace_existing_project_services_for_fresh_start(
     )
 
 
+def replace_existing_project_services_for_fresh_start_with_defaults(
+    *,
+    runtime: Any,
+    session: Any,
+    candidate_state: Any,
+    reason: str,
+    configured_service_types: set[str],
+    additional_services: tuple[object, ...],
+    announce_session_identifiers: Callable[[Any], None],
+    report_progress: Callable[[Route, str], None],
+    terminate_restart_orphan_listeners: Callable[..., None],
+) -> None:
+    replace_existing_project_services_for_fresh_start(
+        runtime=runtime,
+        session=session,
+        candidate_state=candidate_state,
+        reason=reason,
+        fresh_start_replacement_services=lambda _, *, candidate_state: fresh_start_replacement_services(
+            route=session.effective_route,
+            selected_contexts=list(session.selected_contexts),
+            candidate_state=candidate_state,
+            configured_service_types=configured_service_types,
+            additional_services=additional_services,
+            project_name_from_service=runtime._project_name_from_service,
+        ),
+        announce_session_identifiers=announce_session_identifiers,
+        report_progress=report_progress,
+        terminate_restart_orphan_listeners=terminate_restart_orphan_listeners,
+    )
+
+
 def evaluate_run_reuse(
     runtime: Any,
     *,
