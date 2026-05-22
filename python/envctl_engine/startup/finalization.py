@@ -420,6 +420,26 @@ def print_headless_plan_session_summary(
         print_fn(line)
 
 
+def maybe_attach_plan_agent_terminal(
+    *,
+    runtime: StartupRuntime,
+    session: StartupSession,
+    validate_plan_agent_handoff: Callable[..., None],
+    attach_plan_agent_terminal: Callable[[StartupRuntime, object], int],
+    print_headless_plan_session_summary: Callable[..., None],
+) -> int | None:
+    validate_plan_agent_handoff(session, phase="interactive_attach")
+    attach_target = session.plan_agent_attach_target
+    if attach_target is None:
+        return None
+    session.plan_agent_attach_target = None
+    attach_code = attach_plan_agent_terminal(runtime, attach_target)
+    if attach_code != 0:
+        print_headless_plan_session_summary(session, attach_target=attach_target)
+        return 0
+    return attach_code
+
+
 def plan_agent_degraded_handoff_text(session: StartupSession) -> str:
     lines = [
         "Implementation session is running, but local app startup failed.",

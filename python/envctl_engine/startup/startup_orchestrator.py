@@ -28,6 +28,7 @@ from envctl_engine.startup.finalization import (
     finalize_successful_startup,
     format_degraded_handoff_text_for_terminal,
     format_failure_context_label as finalization_format_failure_context_label,
+    maybe_attach_plan_agent_terminal as maybe_attach_plan_agent_terminal_impl,
     print_headless_plan_session_summary as print_headless_plan_session_summary_impl,
     print_plan_dry_run_preview as print_plan_dry_run_preview_impl,
     print_restart_port_rebound_summary as print_restart_port_rebound_summary_impl,
@@ -482,16 +483,13 @@ class StartupOrchestrator:
         print_plan_dry_run_preview_impl(self.runtime, session, print_fn=print)
 
     def _maybe_attach_plan_agent_terminal(self, session: StartupSession) -> int | None:
-        self._validate_plan_agent_handoff(session, phase="interactive_attach")
-        attach_target = session.plan_agent_attach_target
-        if attach_target is None:
-            return None
-        session.plan_agent_attach_target = None
-        attach_code = attach_plan_agent_terminal(self.runtime, attach_target)
-        if attach_code != 0:
-            self._print_headless_plan_session_summary(session, attach_target=attach_target)
-            return 0
-        return attach_code
+        return maybe_attach_plan_agent_terminal_impl(
+            runtime=self.runtime,
+            session=session,
+            validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+            attach_plan_agent_terminal=attach_plan_agent_terminal,
+            print_headless_plan_session_summary=self._print_headless_plan_session_summary,
+        )
 
     def _finalize_plan_agent_degraded_handoff(self, session: StartupSession) -> int:
         return finalize_plan_agent_degraded_handoff(

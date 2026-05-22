@@ -15,6 +15,7 @@ from envctl_engine.startup.finalization import (
     finalize_successful_startup,
     format_degraded_handoff_text_for_terminal,
     headless_plan_session_summary_lines,
+    maybe_attach_plan_agent_terminal,
     plan_dry_run_preview_lines,
     plan_agent_degraded_handoff_text,
     plan_session_summary_lines,
@@ -401,6 +402,63 @@ class StartupFinalizationTests(unittest.TestCase):
         )
 
         self.assertEqual(lines, ["attach: tmux attach -t envctl-plan", "kill: tmux kill-session -t envctl-plan"])
+
+    def test_maybe_attach_plan_agent_terminal_clears_target_and_returns_attach_code(self) -> None:
+        session = _session(contexts=[])
+        attach_target = SimpleNamespace(attach_command=("tmux", "attach", "-t", "envctl-plan"))
+        session.plan_agent_attach_target = attach_target
+        validations: list[tuple[StartupSession, str]] = []
+        attach_calls: list[object] = []
+
+        result = maybe_attach_plan_agent_terminal(
+            runtime=SimpleNamespace(),
+            session=session,
+            validate_plan_agent_handoff=lambda session, *, phase: validations.append((session, phase)),
+            attach_plan_agent_terminal=lambda runtime, target: attach_calls.append(target) or 0,
+            print_headless_plan_session_summary=lambda session, *, attach_target: self.fail(
+                "successful attach should not print fallback summary"
+            ),
+        )
+
+        self.assertEqual(result, 0)
+        self.assertIsNone(session.plan_agent_attach_target)
+        self.assertEqual(validations, [(session, "interactive_attach")])
+        self.assertEqual(attach_calls, [attach_target])
+
+    def test_maybe_attach_plan_agent_terminal_prints_summary_when_attach_fails(self) -> None:
+        session = _session(contexts=[])
+        attach_target = SimpleNamespace(attach_command=("tmux", "attach", "-t", "envctl-plan"))
+        session.plan_agent_attach_target = attach_target
+        printed: list[object] = []
+
+        result = maybe_attach_plan_agent_terminal(
+            runtime=SimpleNamespace(),
+            session=session,
+            validate_plan_agent_handoff=lambda session, *, phase: None,
+            attach_plan_agent_terminal=lambda runtime, target: 42,
+            print_headless_plan_session_summary=lambda session, *, attach_target: printed.append(attach_target),
+        )
+
+        self.assertEqual(result, 0)
+        self.assertIsNone(session.plan_agent_attach_target)
+        self.assertEqual(printed, [attach_target])
+
+    def test_maybe_attach_plan_agent_terminal_returns_none_without_attach_target(self) -> None:
+        session = _session(contexts=[])
+        validations: list[tuple[StartupSession, str]] = []
+
+        result = maybe_attach_plan_agent_terminal(
+            runtime=SimpleNamespace(),
+            session=session,
+            validate_plan_agent_handoff=lambda session, *, phase: validations.append((session, phase)),
+            attach_plan_agent_terminal=lambda runtime, target: self.fail("missing attach target should not attach"),
+            print_headless_plan_session_summary=lambda session, *, attach_target: self.fail(
+                "missing attach target should not print fallback summary"
+            ),
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(validations, [(session, "interactive_attach")])
 
     def test_format_degraded_handoff_text_for_terminal_applies_path_links(self) -> None:
         session = _session(contexts=[])
