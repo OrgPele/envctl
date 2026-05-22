@@ -143,7 +143,13 @@ class StartupOrchestrator:
                 emit_phase=partial(emit_startup_phase, self.runtime),
             )
             self._start_selected_contexts(session)
-            self._reconcile_strict_truth(session)
+            reconcile_strict_truth_after_start(
+                runtime=self.runtime,
+                session=session,
+                build_run_state=build_success_run_state,
+                reconcile_state_truth=self.runtime._reconcile_state_truth,
+                emit_phase=partial(emit_startup_phase, self.runtime),
+            )
             return self._finalize_success(session)
         except RuntimeError as exc:
             return self._finalize_failure(session, str(exc))
@@ -416,15 +422,6 @@ class StartupOrchestrator:
             resolve_spinner_policy_fn=resolve_spinner_policy,
             emit_spinner_policy_fn=emit_spinner_policy,
             project_spinner_group_factory=_ProjectSpinnerGroup,
-        )
-
-    def _reconcile_strict_truth(self, session: StartupSession) -> None:
-        reconcile_strict_truth_after_start(
-            runtime=self.runtime,
-            session=session,
-            build_run_state=build_success_run_state,
-            reconcile_state_truth=self.runtime._reconcile_state_truth,
-            emit_phase=partial(emit_startup_phase, self.runtime),
         )
 
     def _finalize_success(self, session: StartupSession) -> int:
