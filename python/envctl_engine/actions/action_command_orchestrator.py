@@ -56,6 +56,13 @@ from envctl_engine.actions.action_test_summary_support import (
     suite_display_name as suite_display_name_impl,
     write_failed_tests_summary as write_failed_tests_summary_impl,
 )
+from envctl_engine.actions.project_action_report_support import (
+    first_output_line as first_output_line_impl,
+    persist_project_action_result as persist_project_action_result_impl,
+    project_action_success_status as project_action_success_status_impl,
+    review_success_artifact_paths as review_success_artifact_paths_impl,
+    write_project_action_failure_report as write_project_action_failure_report_impl,
+)
 from envctl_engine.actions.action_test_support import (
     FailedTestManifest,
     TestExecutionSpec as _TestExecutionSpec,
@@ -1313,52 +1320,18 @@ if result.returncode != 0:
         error_output: str,
         extra_entry: Mapping[str, object] | None = None,
     ) -> None:
-        rt = self.runtime
-        state = rt.load_existing_state(mode=mode)
-        if state is None:
-            return
-        metadata_raw = state.metadata.get("project_action_reports")
-        metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
-        project_raw = metadata.get(project_name)
-        project_metadata = dict(project_raw) if isinstance(project_raw, dict) else {}
-        entry: dict[str, object] = {
-            "status": status,
-            "updated_at": datetime.now(tz=UTC).isoformat(),
-        }
-        migrate_env_metadata = (
-            dict(self._migrate_env_contracts.get(project_name, {})) if command_name == "migrate" else None
-        )
-        if migrate_env_metadata:
-            entry["backend_env"] = migrate_env_metadata
-        if isinstance(extra_entry, Mapping):
-            entry.update({str(key): value for key, value in extra_entry.items()})
-        if status == "failed":
-            clean_output = strip_ansi(str(error_output or "")).strip()
-            summary_lines = self._project_action_failure_summary_lines(
-                command_name=command_name,
-                error_output=clean_output,
-                migrate_env_metadata=migrate_env_metadata,
-            )
-            summary_text = "\n".join(summary_lines).strip() or "Command failed."
-            report_path = self._write_project_action_failure_report(
-                run_id=state.run_id,
-                project_name=project_name,
-                command_name=command_name,
-                output=clean_output,
-            )
-            if command_name == "migrate":
-                headline = self._migrate_failure_headline(clean_output)
-                if headline:
-                    entry["headline"] = headline
-            entry["summary"] = summary_text
-            entry["report_path"] = str(report_path)
-        project_metadata[command_name] = entry
-        metadata[project_name] = project_metadata
-        state.metadata["project_action_reports"] = metadata
-        rt.state_repository.save_resume_state(
-            state=state,
-            emit=rt.emit,
+        persist_project_action_result_impl(
+            runtime=self.runtime,
+            command_name=command_name,
+            mode=mode,
+            project_name=project_name,
+            status=status,
+            error_output=error_output,
+            migrate_env_contracts=self._migrate_env_contracts,
+            failure_summary_lines=self._project_action_failure_summary_lines,
+            failure_headline=self._migrate_failure_headline,
             runtime_map_builder=build_runtime_map,
+            extra_entry=extra_entry,
         )
 
     def _print_migrate_result_summary(
@@ -1478,27 +1451,7 @@ if result.returncode != 0:
 
     @staticmethod
     def _review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str, object]:
-        output_parts = [str(stdout or ""), str(stderr or "")]
-        cleaned = strip_ansi("\n".join(part for part in output_parts if str(part or "").strip()))
-        lines = [line.rstrip() for line in cleaned.splitlines()]
-        label_map = {
-            "output directory": "output_dir",
-            "summary file": "summary_path",
-            "full review bundle": "bundle_path",
-        }
-        parsed: dict[str, object] = {}
-        for index, raw_line in enumerate(lines):
-            label = raw_line.strip().lower()
-            key = label_map.get(label)
-            if not key:
-                continue
-            for follow_line in lines[index + 1 :]:
-                candidate = follow_line.strip()
-                if not candidate:
-                    continue
-                parsed[key] = candidate
-                break
-        return parsed
+        return review_success_artifact_paths_impl(stdout=stdout, stderr=stderr)
 
     def _write_project_action_failure_report(
         self,
@@ -1508,12 +1461,13 @@ if result.returncode != 0:
         command_name: str,
         output: str,
     ) -> Path:
-        results_root = self.runtime.state_repository.run_dir_path(run_id)
-        results_root.mkdir(parents=True, exist_ok=True)
-        safe_project = project_name.replace(" ", "_")
-        report_path = results_root / f"{safe_project}_{command_name}.txt"
-        report_path.write_text((output or "Command failed.").rstrip() + "\n", encoding="utf-8")
-        return report_path
+        return write_project_action_failure_report_impl(
+            self.runtime,
+            run_id=run_id,
+            project_name=project_name,
+            command_name=command_name,
+            output=output,
+        )
 
     def _clear_dashboard_pr_cache(self) -> None:
         runtime_raw = self.runtime.raw_runtime
@@ -1523,21 +1477,11 @@ if result.returncode != 0:
 
     @staticmethod
     def _first_output_line(output: object) -> str:
-        for raw in str(output or "").splitlines():
-            text = raw.strip()
-            if text:
-                return text
-        return ""
+        return first_output_line_impl(output)
 
     @classmethod
     def _project_action_success_status(cls, *, command_name: str, completed: Any) -> str:
-        if command_name != "pr":
-            return "success"
-        output = strip_ansi(str(getattr(completed, "stdout", "") or ""))
-        first_line = cls._first_output_line(output)
-        if first_line.startswith("Skipping ") and "detached HEAD" in output:
-            return "skipped"
-        return "success"
+        return project_action_success_status_impl(command_name=command_name, completed=completed)
 
     def _colors_enabled(self) -> bool:
         rt_env = getattr(self.runtime, "env", {})
