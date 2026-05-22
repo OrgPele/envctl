@@ -340,7 +340,20 @@ class StartupOrchestrator:
                 validate_plan_agent_handoff=self._validate_plan_agent_handoff,
                 print_fn=print,
             ),
-            maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
+            maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
+                runtime=self.runtime,
+                session=session,
+                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                attach_plan_agent_terminal=attach_plan_agent_terminal,
+                print_headless_plan_session_summary=lambda session, *, attach_target: (
+                    print_headless_plan_session_summary_impl(
+                        session,
+                        validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                        print_fn=print,
+                        attach_target=attach_target,
+                    )
+                ),
+            ),
         )
 
     def _resolve_run_reuse(self, session: StartupSession) -> int | None:
@@ -352,7 +365,20 @@ class StartupOrchestrator:
             announce_session_identifiers=self._announce_session_identifiers,
             emit_phase=self._emit_phase,
             headless_plan_output_only=finalization_headless_plan_output_only,
-            maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
+            maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
+                runtime=self.runtime,
+                session=session,
+                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                attach_plan_agent_terminal=attach_plan_agent_terminal,
+                print_headless_plan_session_summary=lambda session, *, attach_target: (
+                    print_headless_plan_session_summary_impl(
+                        session,
+                        validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                        print_fn=print,
+                        attach_target=attach_target,
+                    )
+                ),
+            ),
             print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary_impl(
                 session,
                 validate_plan_agent_handoff=self._validate_plan_agent_handoff,
@@ -493,17 +519,21 @@ class StartupOrchestrator:
                 validate_plan_agent_handoff=self._validate_plan_agent_handoff,
                 print_fn=print,
             ),
-            maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
+            maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
+                runtime=self.runtime,
+                session=session,
+                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                attach_plan_agent_terminal=attach_plan_agent_terminal,
+                print_headless_plan_session_summary=lambda session, *, attach_target: (
+                    print_headless_plan_session_summary_impl(
+                        session,
+                        validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                        print_fn=print,
+                        attach_target=attach_target,
+                    )
+                ),
+            ),
             finalize_plan_agent_degraded_handoff=self._finalize_plan_agent_degraded_handoff,
-        )
-
-    def _maybe_attach_plan_agent_terminal(self, session: StartupSession) -> int | None:
-        return maybe_attach_plan_agent_terminal_impl(
-            runtime=self.runtime,
-            session=session,
-            validate_plan_agent_handoff=self._validate_plan_agent_handoff,
-            attach_plan_agent_terminal=attach_plan_agent_terminal,
-            print_headless_plan_session_summary=self._print_headless_plan_session_summary,
         )
 
     def _finalize_plan_agent_degraded_handoff(self, session: StartupSession) -> int:
@@ -523,20 +553,20 @@ class StartupOrchestrator:
                 )
             ),
             headless_plan_output_only=finalization_headless_plan_output_only,
-            maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
-        )
-
-    def _print_headless_plan_session_summary(
-        self,
-        session: StartupSession,
-        *,
-        attach_target: object | None = None,
-    ) -> None:
-        print_headless_plan_session_summary_impl(
-            session,
-            validate_plan_agent_handoff=self._validate_plan_agent_handoff,
-            print_fn=print,
-            attach_target=attach_target,
+            maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
+                runtime=self.runtime,
+                session=session,
+                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                attach_plan_agent_terminal=attach_plan_agent_terminal,
+                print_headless_plan_session_summary=lambda session, *, attach_target: (
+                    print_headless_plan_session_summary_impl(
+                        session,
+                        validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                        print_fn=print,
+                        attach_target=attach_target,
+                    )
+                ),
+            ),
         )
 
     def _finalize_failure(self, session: StartupSession, error: str) -> int:
