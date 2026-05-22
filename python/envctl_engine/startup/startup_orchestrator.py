@@ -129,7 +129,11 @@ class StartupOrchestrator:
                     return code
             self._ensure_run_id(session)
             self._announce_session_identifiers(session)
-            self._prepare_execution(session)
+            prepare_startup_execution(
+                session=session,
+                maybe_prewarm_docker=lambda *, route, mode: maybe_prewarm_docker_impl(self, route=route, mode=mode),
+                emit_phase=partial(emit_startup_phase, self.runtime),
+            )
             self._start_selected_contexts(session)
             self._reconcile_strict_truth(session)
             return self._finalize_success(session)
@@ -387,13 +391,6 @@ class StartupOrchestrator:
                     terminate_restart_orphan_listeners=self._terminate_restart_orphan_listeners,
                 )
             ),
-        )
-
-    def _prepare_execution(self, session: StartupSession) -> None:
-        prepare_startup_execution(
-            session=session,
-            maybe_prewarm_docker=lambda *, route, mode: maybe_prewarm_docker_impl(self, route=route, mode=mode),
-            emit_phase=partial(emit_startup_phase, self.runtime),
         )
 
     def _start_selected_contexts(self, session: StartupSession) -> None:
