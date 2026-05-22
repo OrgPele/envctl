@@ -442,7 +442,11 @@ class StartupOrchestrator:
             suppress_progress_output=self._suppress_progress_output,
             resolved_run_id=self._resolved_run_id,
             record_project_startup=record_project_startup_impl,
-            render_project_startup_warnings=self._render_project_startup_warnings,
+            render_project_startup_warnings=partial(
+                finalization_render_project_startup_warnings_for_route,
+                self.runtime,
+                suppress_progress_output=self._suppress_progress_output,
+            ),
             should_degrade_to_plan_agent_handoff=lambda session, error: self._should_degrade_to_plan_agent_handoff(
                 session,
                 error=error,
@@ -602,23 +606,6 @@ class StartupOrchestrator:
             env=dict(self.runtime.env),
             checkpoint=checkpoint,
             extra=extra or None,
-        )
-
-    def _render_project_startup_warnings(
-        self,
-        *,
-        context: ProjectContextLike,
-        warnings: list[str],
-        route: Route,
-        project_spinner_group: object | None,
-    ) -> None:
-        finalization_render_project_startup_warnings_for_route(
-            self.runtime,
-            context=context,
-            warnings=warnings,
-            route=route,
-            project_spinner_group=project_spinner_group,
-            suppress_progress_output=self._suppress_progress_output,
         )
 
     def start_project_context(
