@@ -23,6 +23,7 @@ from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_re
 from envctl_engine.runtime.runtime_context import resolve_state_repository
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
 from envctl_engine.startup.finalization import (
     build_failure_run_state,
     build_planning_dashboard_state,
@@ -38,7 +39,6 @@ from envctl_engine.startup.finalization import (
     render_project_startup_warnings as finalization_render_project_startup_warnings,
     restart_port_rebound_summary_lines,
 )
-from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
 from envctl_engine.startup.run_reuse_support import (
     RunReuseDecision,
     dashboard_stopped_service_entries as dashboard_stopped_service_entries_impl,
@@ -54,6 +54,7 @@ from envctl_engine.startup.plan_agent_handoff import (
     plan_agent_launch_spinner_message as plan_agent_launch_spinner_message_impl,
     plan_agent_launch_spinner_success_message as plan_agent_launch_spinner_success_message_impl,
     plan_agent_handoff_validation_required as plan_agent_handoff_validation_required_impl,
+    prepare_plan_agent_dependencies_for_launch as prepare_plan_agent_dependencies_for_launch_impl,
     record_plan_agent_handoff_local_startup_failure as record_plan_agent_handoff_local_startup_failure_impl,
     record_stale_plan_agent_handoff as record_stale_plan_agent_handoff_impl,
     should_degrade_to_plan_agent_handoff as should_degrade_to_plan_agent_handoff_impl,
@@ -462,75 +463,14 @@ class StartupOrchestrator:
         launch_config = resolve_plan_agent_launch_config(rt.config, getattr(rt, "env", {}), route=route)
         if launch_config.enabled and created_worktrees:
             self._ensure_run_id(session)
-            context_by_name = {context.name: context for context in session.selected_contexts}
-            if route.flags.get("launch_dependencies") is False:
-                rt._emit(
-                    "planning.dependency_bootstrap.finish",
-                    status="skipped",
-                    reason="disabled_by_flag",
-                    project_count=0,
-                    duration_ms=0.0,
-                )
-            else:
-                bootstrap_started = time.monotonic()
-                rt._emit(
-                    "planning.dependency_bootstrap.start",
-                    project_count=len(created_worktrees),
-                    projects=[worktree.name for worktree in created_worktrees],
-                    cli=launch_config.cli,
-                    transport=launch_config.transport,
-                )
-                results: list[object] = []
-                try:
-                    for worktree in created_worktrees:
-                        context = context_by_name.get(worktree.name)
-                        if context is None:
-                            continue
-                        self._report_progress(
-                            route,
-                            f"Preparing dependencies for {worktree.name}...",
-                            project=worktree.name,
-                        )
-                        project_started = time.monotonic()
-                        result = prepare_project_dependencies(
-                            rt,
-                            context=context,
-                            route=route,
-                            run_id=self._resolved_run_id(session),
-                        )
-                        results.append(result)
-                        rt._emit(
-                            "planning.dependency_bootstrap.project",
-                            project=worktree.name,
-                            status="ok",
-                            backend_manager=result.backend.manager,
-                            frontend_manager=result.frontend.manager,
-                            skipped=list(result.skipped),
-                            duration_ms=round((time.monotonic() - project_started) * 1000.0, 2),
-                        )
-                        self._report_progress(
-                            route,
-                            (
-                                f"Dependencies ready for {worktree.name}: "
-                                f"backend={result.backend.manager} frontend={result.frontend.manager}"
-                            ),
-                            project=worktree.name,
-                        )
-                except Exception as exc:
-                    rt._emit(
-                        "planning.dependency_bootstrap.finish",
-                        status="failed",
-                        error=str(exc),
-                        duration_ms=round((time.monotonic() - bootstrap_started) * 1000.0, 2),
-                    )
-                    raise
-                session.plan_agent_dependency_bootstrap_results = tuple(results)
-                rt._emit(
-                    "planning.dependency_bootstrap.finish",
-                    status="ok",
-                    project_count=len(results),
-                    duration_ms=round((time.monotonic() - bootstrap_started) * 1000.0, 2),
-                )
+            prepare_plan_agent_dependencies_for_launch_impl(
+                rt,
+                session,
+                created_worktrees=created_worktrees,
+                launch_config=launch_config,
+                report_progress=self._report_progress,
+                prepare_fn=prepare_project_dependencies,
+            )
         launch_result = self._launch_plan_agent_terminals_with_spinner(
             session,
             created_worktrees=created_worktrees,

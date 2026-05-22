@@ -16,6 +16,7 @@ from envctl_engine.startup.plan_agent_handoff import (
     plan_agent_launch_spinner_success_message,
     plan_agent_launch_failure_message,
     plan_agent_handoff_validation_required,
+    prepare_plan_agent_dependencies_for_launch,
     record_plan_agent_handoff_local_startup_failure,
     record_stale_plan_agent_handoff,
     should_fail_for_plan_agent_launch_result,
@@ -277,6 +278,55 @@ class PlanAgentHandoffTests(unittest.TestCase):
 
         self.assertIs(result, launch_result)
         self.assertEqual(calls, [(runtime, route, created_worktrees)])
+
+    def test_prepare_plan_agent_dependencies_for_launch_prepares_matching_worktrees(self) -> None:
+        session = _session(args=["plan", "--tmux"])
+        session.run_id = "run-123"
+        context = SimpleNamespace(name="feature-a-1")
+        session.selected_contexts = [context]
+        created_worktrees = (SimpleNamespace(name="feature-a-1"), SimpleNamespace(name="missing"))
+        events: list[tuple[str, dict[str, object]]] = []
+        progress: list[tuple[str, str | None]] = []
+        runtime = SimpleNamespace(
+            env={},
+            _emit=lambda event, **payload: events.append((event, payload)),
+        )
+        prepared = SimpleNamespace(
+            backend=SimpleNamespace(manager="uv"),
+            frontend=SimpleNamespace(manager="npm"),
+            skipped=("db",),
+        )
+        prepare_calls: list[tuple[object, object, str]] = []
+
+        prepare_plan_agent_dependencies_for_launch(
+            runtime,
+            session,
+            created_worktrees=created_worktrees,
+            launch_config=SimpleNamespace(enabled=True, cli="codex", transport="tmux"),
+            report_progress=lambda route, message, project=None: progress.append((message, project)),
+            prepare_fn=lambda rt, *, context, route, run_id: (
+                prepare_calls.append((rt, context, run_id)) or prepared
+            ),
+            monotonic_fn=iter([1.0, 1.25, 2.0, 2.5]).__next__,
+        )
+
+        self.assertEqual(session.plan_agent_dependency_bootstrap_results, (prepared,))
+        self.assertEqual(prepare_calls, [(runtime, context, "run-123")])
+        self.assertEqual(
+            progress,
+            [
+                ("Preparing dependencies for feature-a-1...", "feature-a-1"),
+                ("Dependencies ready for feature-a-1: backend=uv frontend=npm", "feature-a-1"),
+            ],
+        )
+        self.assertEqual(events[0][0], "planning.dependency_bootstrap.start")
+        self.assertEqual(events[0][1]["projects"], ["feature-a-1", "missing"])
+        self.assertEqual(events[1][0], "planning.dependency_bootstrap.project")
+        self.assertEqual(events[1][1]["project"], "feature-a-1")
+        self.assertEqual(events[1][1]["skipped"], ["db"])
+        self.assertEqual(events[2][0], "planning.dependency_bootstrap.finish")
+        self.assertEqual(events[2][1]["status"], "ok")
+        self.assertEqual(events[2][1]["project_count"], 1)
 
     def test_launch_plan_agent_terminals_with_spinner_emits_success_lifecycle(self) -> None:
         route = parse_route(["plan", "--tmux"], env={})

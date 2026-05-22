@@ -4,12 +4,14 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from pathlib import Path
 import shlex
+import time
 from typing import Any
 
 from envctl_engine.planning.plan_agent.config import resolve_plan_agent_launch_config
 from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
 from envctl_engine.planning.plan_agent.models import PlanAgentLaunchOutcome, PlanAgentLaunchResult
 from envctl_engine.planning.plan_agent.recovery import plan_agent_native_recovery_command
+from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 from envctl_engine.startup.session import LocalStartupFailure, StartupSession
@@ -98,7 +100,91 @@ def launch_plan_agent_terminals_with_spinner(
             op_id="plan_agent.launch",
             state="stop",
         )
-        return launch_result
+    return launch_result
+
+
+def prepare_plan_agent_dependencies_for_launch(
+    runtime: Any,
+    session: StartupSession,
+    *,
+    created_worktrees: tuple[object, ...],
+    launch_config: object,
+    report_progress: Callable[..., None],
+    prepare_fn: Callable[..., object] = prepare_project_dependencies,
+    monotonic_fn: Callable[[], float] = time.monotonic,
+) -> None:
+    if not bool(getattr(launch_config, "enabled", False)) or not created_worktrees:
+        return
+    route = session.effective_route
+    if route.flags.get("launch_dependencies") is False:
+        runtime._emit(
+            "planning.dependency_bootstrap.finish",
+            status="skipped",
+            reason="disabled_by_flag",
+            project_count=0,
+            duration_ms=0.0,
+        )
+        return
+    context_by_name = {context.name: context for context in session.selected_contexts}
+    bootstrap_started = monotonic_fn()
+    runtime._emit(
+        "planning.dependency_bootstrap.start",
+        project_count=len(created_worktrees),
+        projects=[worktree.name for worktree in created_worktrees],
+        cli=getattr(launch_config, "cli", ""),
+        transport=getattr(launch_config, "transport", ""),
+    )
+    results: list[object] = []
+    try:
+        for worktree in created_worktrees:
+            context = context_by_name.get(worktree.name)
+            if context is None:
+                continue
+            report_progress(
+                route,
+                f"Preparing dependencies for {worktree.name}...",
+                project=worktree.name,
+            )
+            project_started = monotonic_fn()
+            result = prepare_fn(
+                runtime,
+                context=context,
+                route=route,
+                run_id=session.run_id,
+            )
+            results.append(result)
+            runtime._emit(
+                "planning.dependency_bootstrap.project",
+                project=worktree.name,
+                status="ok",
+                backend_manager=result.backend.manager,
+                frontend_manager=result.frontend.manager,
+                skipped=list(result.skipped),
+                duration_ms=round((monotonic_fn() - project_started) * 1000.0, 2),
+            )
+            report_progress(
+                route,
+                (
+                    f"Dependencies ready for {worktree.name}: "
+                    f"backend={result.backend.manager} frontend={result.frontend.manager}"
+                ),
+                project=worktree.name,
+            )
+    except Exception as exc:
+        runtime._emit(
+            "planning.dependency_bootstrap.finish",
+            status="failed",
+            error=str(exc),
+            duration_ms=round((monotonic_fn() - bootstrap_started) * 1000.0, 2),
+        )
+        raise
+    session.plan_agent_dependency_bootstrap_results = tuple(results)
+    runtime._emit(
+        "planning.dependency_bootstrap.finish",
+        status="ok",
+        project_count=len(results),
+        duration_ms=round((monotonic_fn() - bootstrap_started) * 1000.0, 2),
+    )
 
 
 def emit_plan_agent_launch_state(runtime: Any, session: StartupSession, launch_result: object) -> None:
