@@ -161,6 +161,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_orchestrator_does_not_retain_disabled_startup_resolution_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_resolve_disabled_startup_mode"))
 
+    def test_startup_orchestrator_does_not_retain_run_reuse_resolution_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_resolve_run_reuse"))
+
     def test_startup_orchestrator_does_not_retain_prepare_execution_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_prepare_execution"))
 

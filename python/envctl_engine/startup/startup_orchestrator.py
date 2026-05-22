@@ -8,7 +8,6 @@ from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
 from envctl_engine.planning.plan_agent.omx_transport import validate_plan_agent_attach_target
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
-from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
 from envctl_engine.startup.disabled_startup_resolution import resolve_disabled_startup_mode_with_runtime
@@ -22,7 +21,6 @@ from envctl_engine.startup.finalization import (
     headless_plan_output_only as finalization_headless_plan_output_only,
     maybe_attach_plan_agent_terminal as maybe_attach_plan_agent_terminal_impl,
     print_headless_plan_session_summary as print_headless_plan_session_summary_impl,
-    print_plan_dry_run_preview as print_plan_dry_run_preview_impl,
     resolve_plan_dry_run as resolve_plan_dry_run_impl,
     print_restart_port_rebound_summary as print_restart_port_rebound_summary_impl,
     render_plan_agent_degraded_handoff_for_terminal as finalization_render_plan_agent_degraded_handoff_for_terminal,
@@ -30,11 +28,7 @@ from envctl_engine.startup.finalization import (
     render_project_startup_warnings_for_route as finalization_render_project_startup_warnings_for_route,
 )
 from envctl_engine.startup.execution_preparation import prepare_startup_execution
-from envctl_engine.startup.run_reuse_support import (
-    prepare_dashboard_stopped_service_restore_with_runtime,
-    replace_existing_project_services_for_fresh_start_with_defaults,
-)
-from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse
+from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse_with_runtime
 from envctl_engine.startup.plan_agent_handoff import (
     prepare_and_launch_plan_agent_worktrees as prepare_and_launch_plan_agent_worktrees_impl,
     launch_plan_agent_terminals_with_spinner as launch_plan_agent_terminals_with_spinner_impl,
@@ -73,9 +67,6 @@ from envctl_engine.startup.startup_selection_support import (
     port_allocator as port_allocator_impl,
     select_start_tree_projects,
     trees_start_selection_required,
-)
-from envctl_engine.startup.service_bootstrap_domain import (
-    configured_service_types_for_mode as configured_service_types_for_mode_impl,
 )
 from envctl_engine.startup.startup_execution_support import (
     maybe_prewarm_docker as maybe_prewarm_docker_impl,
@@ -172,7 +163,15 @@ class StartupOrchestrator:
                     suppress_progress_output=suppress_progress_output,
                     validate_attach_target_fn=validate_plan_agent_attach_target,
                 ),
-                lambda _: self._resolve_run_reuse(session, terminate_restart_orphans=terminate_restart_orphans),
+                lambda _: resolve_startup_run_reuse_with_runtime(
+                    self.runtime,
+                    session,
+                    terminate_restart_orphan_listeners=terminate_restart_orphans,
+                    validate_attach_target_fn=validate_plan_agent_attach_target,
+                    attach_plan_agent_terminal=attach_plan_agent_terminal,
+                    progress_lock=self._progress_lock,
+                    last_progress_message_by_project=self._last_progress_message_by_project,
+                ),
                 lambda _: resolve_disabled_startup_mode_with_runtime(
                     self.runtime,
                     session,
@@ -235,84 +234,6 @@ class StartupOrchestrator:
             return finalize_failure(error=str(exc))
         except Exception as exc:
             return finalize_failure(error=str(exc))
-
-    def _resolve_run_reuse(self, session: StartupSession, *, terminate_restart_orphans) -> int | None:
-        validate_plan_agent_handoff = partial(
-            validate_plan_agent_handoff_with_attach_target,
-            self.runtime,
-            validate_plan_agent_attach_target,
-        )
-        return resolve_startup_run_reuse(
-            runtime=self.runtime,
-            session=session,
-            evaluate_run_reuse_fn=evaluate_run_reuse,
-            prepare_dashboard_stopped_service_restore=partial(
-                prepare_dashboard_stopped_service_restore_with_runtime,
-                self.runtime,
-                partial(emit_startup_phase, self.runtime),
-            ),
-            announce_session_identifiers=partial(
-                announce_session_identifiers_impl,
-                self.runtime,
-                headless_plan_output_only=finalization_headless_plan_output_only,
-            ),
-            emit_phase=partial(emit_startup_phase, self.runtime),
-            headless_plan_output_only=finalization_headless_plan_output_only,
-            maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
-                runtime=self.runtime,
-                session=session,
-                validate_plan_agent_handoff=validate_plan_agent_handoff,
-                attach_plan_agent_terminal=attach_plan_agent_terminal,
-                print_headless_plan_session_summary=lambda session, *, attach_target: (
-                    print_headless_plan_session_summary_impl(
-                        session,
-                        validate_plan_agent_handoff=validate_plan_agent_handoff,
-                        print_fn=print,
-                        attach_target=attach_target,
-                    )
-                ),
-            ),
-            print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary_impl(
-                session,
-                validate_plan_agent_handoff=validate_plan_agent_handoff,
-                print_fn=print,
-            ),
-            print_plan_dry_run_preview=lambda session: print_plan_dry_run_preview_impl(
-                self.runtime,
-                session,
-                print_fn=print,
-            ),
-            configured_service_types_for_mode=lambda runtime_mode: configured_service_types_for_mode_impl(
-                self.runtime.config,
-                runtime_mode,
-            ),
-            emit_snapshot=partial(emit_startup_plan_handoff_snapshot, self.runtime),
-            replace_existing_project_services_for_fresh_start=lambda session, *, candidate_state, reason: (
-                replace_existing_project_services_for_fresh_start_with_defaults(
-                    runtime=self.runtime,
-                    session=session,
-                    candidate_state=candidate_state,
-                    reason=reason,
-                    configured_service_types=set(
-                        configured_service_types_for_mode_impl(self.runtime.config, session.runtime_mode)
-                    ),
-                    additional_services=tuple(getattr(self.runtime.config, "additional_services", ()) or ()),
-                    announce_session_identifiers=partial(
-                        announce_session_identifiers_impl,
-                        self.runtime,
-                        headless_plan_output_only=finalization_headless_plan_output_only,
-                    ),
-                    report_progress=lambda route, message: report_progress(
-                        self.runtime,
-                        route,
-                        progress_lock=self._progress_lock,
-                        last_progress_message_by_project=self._last_progress_message_by_project,
-                        message=message,
-                    ),
-                    terminate_restart_orphan_listeners=terminate_restart_orphans,
-                )
-            ),
-        )
 
     def _finalize_success(self, session: StartupSession) -> int:
         validate_plan_agent_handoff = partial(

@@ -608,7 +608,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     return_value=PlanAgentLaunchResult(status="failed", reason="existing", attach_target=attach_target),
                 ),
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.evaluate_run_reuse",
+                    "envctl_engine.startup.run_reuse_resolution.evaluate_run_reuse",
                     return_value=RunReuseDecision(
                         candidate_state=existing_state,
                         decision_kind="resume_dashboard_exact",
@@ -714,7 +714,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
                 patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.evaluate_run_reuse",
+                    "envctl_engine.startup.run_reuse_resolution.evaluate_run_reuse",
                     return_value=RunReuseDecision(
                         candidate_state=existing_state,
                         decision_kind="resume_exact",
@@ -854,7 +854,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     side_effect=_record_launch,
                 ),
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.evaluate_run_reuse",
+                    "envctl_engine.startup.run_reuse_resolution.evaluate_run_reuse",
                     return_value=RunReuseDecision(
                         candidate_state=existing_state,
                         decision_kind="resume_exact",
@@ -1498,7 +1498,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 patch.object(engine, "_discover_projects", return_value=[context_a, context_b]),
                 patch.object(engine, "_select_plan_projects", return_value=[context_a, context_b]),
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.evaluate_run_reuse",
+                    "envctl_engine.startup.run_reuse_resolution.evaluate_run_reuse",
                     return_value=RunReuseDecision(
                         candidate_state=existing_state,
                         decision_kind="reuse_expand",

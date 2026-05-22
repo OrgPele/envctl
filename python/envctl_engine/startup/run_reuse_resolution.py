@@ -5,12 +5,28 @@ import time
 from typing import Any, cast
 
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.runtime.engine_runtime_startup_support import mark_run_reused
+from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
 from envctl_engine.runtime.runtime_context import resolve_state_repository
 from envctl_engine.state.runtime_map import build_runtime_map
-from envctl_engine.startup.finalization import build_planning_dashboard_state
-from envctl_engine.startup.run_reuse_support import RunReuseDecision, run_reuse_debug_orch_groups
+from envctl_engine.startup.finalization import (
+    build_planning_dashboard_state,
+    headless_plan_output_only,
+    maybe_attach_plan_agent_terminal,
+    print_headless_plan_session_summary,
+    print_plan_dry_run_preview,
+)
+from envctl_engine.startup.plan_agent_handoff import validate_plan_agent_handoff_with_attach_target
+from envctl_engine.startup.run_reuse_support import (
+    RunReuseDecision,
+    prepare_dashboard_stopped_service_restore_with_runtime,
+    replace_existing_project_services_for_fresh_start_with_defaults,
+    run_reuse_debug_orch_groups,
+)
 from envctl_engine.startup.session import StartupSession
+from envctl_engine.startup.session_lifecycle import announce_session_identifiers, emit_startup_phase
+from envctl_engine.startup.service_bootstrap_domain import configured_service_types_for_mode
+from envctl_engine.startup.startup_progress import report_progress
+from envctl_engine.ui.debug_snapshot import emit_startup_plan_handoff_snapshot
 
 
 def resolve_startup_run_reuse(
@@ -185,6 +201,104 @@ def resolve_startup_run_reuse(
         orch_group=sorted(debug_orch_groups) or None,
     )
     return None
+
+
+def resolve_startup_run_reuse_with_runtime(
+    runtime: Any,
+    session: StartupSession,
+    *,
+    terminate_restart_orphan_listeners: Callable[..., None],
+    validate_attach_target_fn: Callable[..., Any],
+    attach_plan_agent_terminal: Callable[..., Any],
+    progress_lock: Any,
+    last_progress_message_by_project: dict[str, str],
+    print_fn: Callable[[str], None] = print,
+) -> int | None:
+    def validate_plan_agent_handoff(session: StartupSession, *, phase: str) -> None:
+        validate_plan_agent_handoff_with_attach_target(
+            runtime,
+            validate_attach_target_fn,
+            session,
+            phase=phase,
+        )
+
+    def report_progress_fn(route: Route, message: str) -> None:
+        report_progress(
+            runtime,
+            route,
+            progress_lock=progress_lock,
+            last_progress_message_by_project=last_progress_message_by_project,
+            message=message,
+        )
+
+    return resolve_startup_run_reuse(
+        runtime=runtime,
+        session=session,
+        evaluate_run_reuse_fn=evaluate_run_reuse,
+        prepare_dashboard_stopped_service_restore=partial_prepare_dashboard_stopped_restore(runtime),
+        announce_session_identifiers=lambda session: announce_session_identifiers(
+            runtime,
+            session,
+            headless_plan_output_only=headless_plan_output_only,
+        ),
+        emit_phase=lambda *args, **kwargs: emit_startup_phase(runtime, *args, **kwargs),
+        headless_plan_output_only=headless_plan_output_only,
+        maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal(
+            runtime=runtime,
+            session=session,
+            validate_plan_agent_handoff=validate_plan_agent_handoff,
+            attach_plan_agent_terminal=attach_plan_agent_terminal,
+            print_headless_plan_session_summary=lambda session, *, attach_target: (
+                print_headless_plan_session_summary(
+                    session,
+                    validate_plan_agent_handoff=validate_plan_agent_handoff,
+                    print_fn=print_fn,
+                    attach_target=attach_target,
+                )
+            ),
+        ),
+        print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary(
+            session,
+            validate_plan_agent_handoff=validate_plan_agent_handoff,
+            print_fn=print_fn,
+        ),
+        print_plan_dry_run_preview=lambda session: print_plan_dry_run_preview(
+            runtime,
+            session,
+            print_fn=print_fn,
+        ),
+        configured_service_types_for_mode=lambda runtime_mode: set(
+            configured_service_types_for_mode(runtime.config, runtime_mode)
+        ),
+        emit_snapshot=lambda *args, **kwargs: emit_startup_plan_handoff_snapshot(runtime, *args, **kwargs),
+        replace_existing_project_services_for_fresh_start=lambda session, *, candidate_state, reason: (
+            replace_existing_project_services_for_fresh_start_with_defaults(
+                runtime=runtime,
+                session=session,
+                candidate_state=candidate_state,
+                reason=reason,
+                configured_service_types=set(configured_service_types_for_mode(runtime.config, session.runtime_mode)),
+                additional_services=tuple(getattr(runtime.config, "additional_services", ()) or ()),
+                announce_session_identifiers=lambda session: announce_session_identifiers(
+                    runtime,
+                    session,
+                    headless_plan_output_only=headless_plan_output_only,
+                ),
+                report_progress=report_progress_fn,
+                terminate_restart_orphan_listeners=terminate_restart_orphan_listeners,
+            )
+        ),
+        print_fn=print_fn,
+    )
+
+
+def partial_prepare_dashboard_stopped_restore(runtime: Any) -> Callable[..., bool]:
+    return lambda *args, **kwargs: prepare_dashboard_stopped_service_restore_with_runtime(
+        runtime,
+        lambda *phase_args, **phase_kwargs: emit_startup_phase(runtime, *phase_args, **phase_kwargs),
+        *args,
+        **kwargs,
+    )
 
 
 def _resume_matching_run(
