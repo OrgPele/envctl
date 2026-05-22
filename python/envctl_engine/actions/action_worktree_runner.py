@@ -205,10 +205,18 @@ def resolve_current_worktree_target(
         SimpleNamespace(name=name, root=root)
         for name, root in discover_tree_projects_fn(repo_root, trees_dir_name)
     ]
-    matches = [candidate for candidate in candidates if Path(str(getattr(candidate, "root"))).resolve() == cwd]
+    matches = [
+        candidate
+        for candidate in candidates
+        if _path_is_at_or_under(cwd, Path(str(getattr(candidate, "root"))).resolve())
+    ]
     if len(matches) != 1:
         return None
     return matches[0]
+
+
+def _path_is_at_or_under(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
 
 
 def main_repo_root_for_worktree(*, worktree_root: Path, runtime: Any, trees_dir_name: str | None = None) -> Path | None:

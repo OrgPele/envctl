@@ -664,15 +664,6 @@ def _codex_skill_root(*, home: Path) -> Path:
 
 def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
     mapping = {
-        "implement_plan": CodexSkillMetadata(
-            skill_name="envctl-implement-plan",
-            display_name="Envctl Implement Plan",
-            short_description="MAIN_TASK-driven implementation workflow",
-            description=(
-                "Use when you explicitly want the envctl implement_plan workflow for a MAIN_TASK-driven "
-                "implementation pass. Invoke it explicitly as $envctl-implement-plan."
-            ),
-        ),
         "implement_task": CodexSkillMetadata(
             skill_name="envctl-implement-task",
             display_name="Envctl Implement Task",
@@ -726,15 +717,6 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
                 "prepare the branch for PR handoff. Invoke it explicitly as $envctl-finalize-task."
             ),
         ),
-        "review_task_imp": CodexSkillMetadata(
-            skill_name="envctl-review-task",
-            display_name="Envctl Review Task",
-            short_description="Review an implementation against its original plan",
-            description=(
-                "Use when you explicitly want the envctl review_task_imp workflow to review a worktree "
-                "implementation against its originating plan. Invoke it explicitly as $envctl-review-task."
-            ),
-        ),
         "review_worktree_imp": CodexSkillMetadata(
             skill_name="envctl-review-worktree",
             display_name="Envctl Review Worktree",
@@ -744,13 +726,14 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
                 "review of a generated implementation worktree. Invoke it explicitly as $envctl-review-worktree."
             ),
         ),
-        "merge_trees_into_dev": CodexSkillMetadata(
-            skill_name="envctl-merge-trees-into-dev",
-            display_name="Envctl Merge Trees Into Dev",
-            short_description="Merge two implementation branches into dev",
+        "merge_implementation_branches": CodexSkillMetadata(
+            skill_name="envctl-merge-implementation-branches",
+            display_name="Envctl Merge Implementation Branches",
+            short_description="Reconcile implementation branches into an integration branch",
             description=(
-                "Use when you explicitly want the envctl merge_trees_into_dev workflow to reconcile two "
-                "implementation branches into dev. Invoke it explicitly as $envctl-merge-trees-into-dev."
+                "Use when you explicitly want the envctl merge_implementation_branches workflow to reconcile "
+                "two implementation branches into a target-neutral integration branch. Invoke it explicitly as "
+                "$envctl-merge-implementation-branches."
             ),
         ),
         "create_plan": CodexSkillMetadata(
@@ -791,15 +774,6 @@ def _codex_skill_metadata(preset: str) -> CodexSkillMetadata:
                 "Use only when you explicitly invoke $envctl-create-plan-auto-omx to create an envctl "
                 "implementation plan and automatically launch the OMX Ultragoal implementation workflow with "
                 "full-stack E2E scope by default."
-            ),
-        ),
-        "ship_release": CodexSkillMetadata(
-            skill_name="envctl-ship-release",
-            display_name="Envctl Ship Release",
-            short_description="Prepare and ship a production release",
-            description=(
-                "Use when you explicitly want the envctl ship_release workflow to prepare and ship a production "
-                "release end-to-end. Invoke it explicitly as $envctl-ship-release."
             ),
         ),
     }

@@ -1,347 +1,380 @@
-# Envctl Deep Codebase Refactor
+# Envctl Workflow Efficiency And Worktree Identity
 
-## Goals
+## Goals / non-goals / assumptions
 
-- Make the Python engine easier to change by shrinking the largest orchestration
-  modules into clear ownership areas with stable contracts.
-- Preserve every supported CLI flag, state artifact, prompt install behavior,
-  runtime feature contract, and plan-agent launch path while moving code.
-- Reduce the blast radius of changes in startup, action commands, worktree
-  planning, requirements adapters, dashboard orchestration, and plan-agent
-  transports.
-- Split oversized tests into feature-owned suites that still prove the same
-  public behavior and generated contract outputs.
-- Add or tighten structural guardrails only after the refactor has created
-  realistic module boundaries.
+Goals:
+- Make generated worktree branch names, envctl project names, and user-facing
+  `--project` selectors identical.
+- Make envctl commands run from an envctl-generated tree directory load the
+  owning parent repo `.envctl` automatically.
+- Add a focused validation planning surface so agents run relevant tests during
+  implementation instead of broad suites for every small change.
+- Add a narrow handoff command that combines the existing commit and PR flow,
+  then reports GitHub status-check state.
+- Keep envctl-local artifacts protected from accidental commits through the
+  existing global-excludes and commit-action protection policy.
 
-## Non-goals
+Non-goals:
+- Do not add background ship execution in this pass.
+- Do not add `envctl status --handoff`.
+- Do not change wrapper passthrough behavior such as `envctl playwright -- --help`.
+- Do not make broad release-gate or full-suite validation mandatory for every
+  implementation slice.
 
-- Do not redesign the CLI or remove compatibility commands.
-- Do not resurrect the old shell runtime.
-- Do not change plan-agent semantics, prompt presets, runtime state schemas, or
-  generated contract formats except where a compatibility-preserving update is
-  explicitly required by the refactor.
-- Do not make application-service or infrastructure changes. This plan is about
-  envctl's implementation quality.
+Assumptions:
+- Generated worktrees continue to live under the configured trees root, usually
+  `trees/<feature>/<iteration>`.
+- Existing repo config may intentionally track `.envctl` in some repositories,
+  so artifact protection must stay user-global or local-exclude based rather
+  than editing repo `.gitignore`.
+- The first version of focused test planning can be deterministic and
+  rule-based; deeper import graph or CGC-powered impact analysis can be layered
+  later.
 
-## User experience goal
+## Goal (user experience)
 
-Contributors should be able to change one runtime area without reading several
-thousand lines of unrelated orchestration code. A behavior change should have a
-small implementation surface, a predictable test file, and a contract or
-integration check that proves existing envctl workflows still work.
+An implementation agent working in a generated worktree should be able to use a
+single unambiguous name for the project, branch, runtime services, tests, PR, and
+handoff. During implementation it should ask envctl for the narrow relevant
+checks to run, and at the end it should hand off with one command instead of
+manually repeating `git status`, `git add`, `git commit`, `git push`, `gh pr`,
+and `gh pr checks` commands.
 
 ## Business logic and data model mapping
 
-- Runtime command dispatch lives around
-  `python/envctl_engine/runtime/engine_runtime.py`,
-  `python/envctl_engine/runtime/command_router.py`, and the runtime feature
-  contract generators.
-- Startup orchestration lives around
-  `python/envctl_engine/startup/startup_orchestrator.py`, including restart
-  handling, service launch, plan-agent worktree handoff, degraded completion,
-  truth reconciliation, and failure reporting.
-- Action commands live around
-  `python/envctl_engine/actions/action_command_orchestrator.py`, including
-  `test`, `pr`, `commit`, `review`, `migrate`, self-destruct worktree actions,
-  target resolution, summaries, and artifact persistence.
-- Planning and worktree setup live around
-  `python/envctl_engine/planning/worktree_domain.py` and
-  `python/envctl_engine/planning/plan_agent/*`, including selection memory,
-  worktree creation/sync/deletion, provenance, code-intelligence setup, transport
-  launch, readiness, and recovery.
-- Dependency and service bootstrap logic lives under
-  `python/envctl_engine/requirements/`, with
-  `python/envctl_engine/requirements/supabase.py` as the largest adapter.
-- Dashboard and terminal UI ownership lives under
-  `python/envctl_engine/ui/`, especially
-  `python/envctl_engine/ui/dashboard/orchestrator.py` and rendering modules.
-- The persistent data contracts are the existing state models, generated runtime
-  feature matrix, generated Python runtime gap report, parity manifest, startup
-  logs, debug reports, and `.envctl-state` artifacts. They must remain
-  compatible.
+- Worktree discovery and project identity live in
+  `python/envctl_engine/planning/__init__.py` through
+  `discover_tree_projects()`, `_append_feature_projects()`,
+  `predict_plan_projects()`, and `planning_existing_counts()`.
+- Worktree creation and branch naming live in
+  `python/envctl_engine/planning/worktree_domain.py` through
+  `_create_feature_worktrees_result()`, `_run_worktree_add()`, and
+  `_worktree_branch_name()`.
+- Explicit `ensure-worktree` behavior lives in
+  `python/envctl_engine/runtime/ensure_worktree_support.py`.
+- Runtime project contexts are built by
+  `python/envctl_engine/runtime/engine_runtime_startup_support.py::contexts_from_raw_projects()`.
+- Config loading starts in
+  `python/envctl_engine/config/__init__.py::load_config()`, which calls
+  `canonical_envctl_project_root()` and `discover_local_config_state()`.
+- Existing commit and PR behavior lives in
+  `python/envctl_engine/actions/project_action_domain.py::run_commit_action()`
+  and `run_pr_action()`, with action routing through
+  `python/envctl_engine/actions/action_command_orchestrator.py`.
+- Existing test execution behavior lives in
+  `python/envctl_engine/actions/action_test_runner.py::run_test_action()` and
+  test-command discovery/config in `python/envctl_engine/actions/actions_test.py`
+  plus config fields such as `ACTION_TEST_CMD`.
+- Envctl-local artifact protection is centralized in
+  `python/envctl_engine/config/local_artifacts.py`, enforced during commit by
+  `_partition_envctl_protected_paths()`, and installed into Git global excludes
+  by `python/envctl_engine/config/persistence.py::ensure_global_ignore_status()`.
 
-## Current behavior verified in the repo
+No database schema migration is required. New persistent data should be limited
+to optional JSON command output and, if needed, a small local metadata file under
+`.envctl-state/` for ship/check status. That state must remain local-only.
 
-- `PythonEngineRuntime` is still a broad facade. Its symbol overview includes
-  command dispatch, start/resume execution, project discovery, help/config,
-  migrate hooks, doctor/debug/release-gate/dashboard actions, action commands,
-  stop/blast cleanup, event/debug plumbing, requirement/service command
-  resolution, hook bridging, Supabase reinit, listener waits, and truth helpers.
-- `StartupOrchestrator` coordinates route validation, pre-stop/restart policy,
-  project context selection, plan dry-runs, plan-agent worktree preparation and
-  launch, disabled modes, run reuse, startup execution, success/failure
-  finalization, degraded handoff, progress display, requirements startup,
-  service startup, and handoff validation.
-- `ActionCommandOrchestrator` owns target resolution, self-destruct worktree
-  behavior, action execution for test/pr/commit/review/migrate, project action
-  environment and artifact replacement, status and spinner output, migrate
-  hints/logs, failed test collection, git-state summaries, and colorized output.
-- `worktree_domain.py` combines plan selection, selection memory, menus,
-  sync/create/delete operations, branch/ref handling, git hook policy,
-  code-intelligence setup for Serena and CGC, provenance, `MAIN_TASK.md`
-  seeding, and fresh AI worktree protection.
-- Plan-agent transports are split by surface
-  (`cmux_transport.py`, `tmux_transport.py`, `omx_transport.py`,
-  `superset_transport.py`), but readiness, launch intent, prompt submission,
-  failure context, and option mapping still share concepts that are easy to
-  duplicate incorrectly.
-- `requirements/supabase.py` is one of the largest production modules and mixes
-  adapter configuration, service lifecycle, health/readiness, user/database
-  setup, repair, and reinitialization concerns.
-- Several test files are larger than many production modules:
-  `tests/python/planning/test_plan_agent_launch_support.py`,
-  `tests/python/actions/test_actions_parity.py`,
-  `tests/python/runtime/test_engine_runtime_real_startup.py`,
-  `tests/python/requirements/test_requirements_adapters_real_contracts.py`, and
-  `tests/python/ui/test_dashboard_orchestrator_restart_selector.py`.
-- The repo already has useful structural contracts:
-  `tests/python/shared/test_support_module_decoupling.py`,
-  `tests/python/shared/test_utility_consolidation_contract.py`,
-  `tests/python/shared/test_structure_layout.py`,
-  `contracts/runtime_feature_matrix.json`,
-  `contracts/python_runtime_gap_report.json`,
-  `contracts/python_engine_parity_manifest.json`, and the scripts that generate
-  them.
-- CGC is healthy for this checkout with context `Envctl`; `cgc doctor` passes
-  and `cgc stats --context Envctl` reports the indexed repo successfully.
+## Current behavior (verified in code)
 
-## Root causes and gaps
+- `planning_feature_name()` derives a feature slug from the plan category and
+  file stem, for example `features/foo.md` becomes `features_foo`.
+- `worktree_domain._worktree_branch_name()` returns
+  `f"{feature}-{iteration}"`, and `_create_feature_worktrees_result()` records
+  created worktrees as `CreatedPlanWorktree(name=f"{feature}-{iteration}", ...)`.
+- `discover_tree_projects()` derives project names from tree paths. For nested
+  numeric iteration directories, `_append_feature_projects()` currently returns
+  `f"{feature_name}-{iter_dir.name}"`.
+- `ensure_worktree_support.run_ensure_worktree_command()` reports
+  `project_name=f"{feature}-{iteration}"` and `branch_name=f"{feature}-{iteration}"`.
+- `load_config()` chooses `requested_root` from `RUN_REPO_ROOT` or `Path.cwd()`,
+  resolves `base_dir = canonical_envctl_project_root(requested_root)`, then
+  calls `discover_local_config_state(base_dir, ENVCTL_CONFIG_FILE)`.
+- Existing docs already claim that when envctl runs from a linked worktree it
+  uses the owning main repo for `.envctl`, runtime scope, state files, port
+  locks, and latest-run artifacts. This must be enforced by tests for the exact
+  generated tree path shape.
+- `run_commit_action()` already stages non-protected paths, resolves a commit
+  message from `.envctl-commit-message.md` or env/config, commits, advances the
+  ledger pointer, and pushes the branch.
+- `run_pr_action()` already checks `existing_pr_url()` and creates a PR only
+  when none exists; if the worktree is dirty, it delegates to `run_commit_action()`.
+- `existing_pr_url()` currently uses `gh pr list --head <branch> --state open`.
+  There is no product command that waits for PR checks and returns a structured
+  status.
+- `config/local_artifacts.py` currently marks `.envctl*`, `MAIN_TASK.md`,
+  `OLD_TASK_*.md`, `trees/`, and `trees-*` as envctl-local artifacts.
+- Config persistence tests verify global exclude entries are installed and that
+  repo `.gitignore` is not modified.
+- Commit-action tests verify protected envctl-local files are unstaged or
+  skipped, including `MAIN_TASK.md` and `.envctl-state/worktree-provenance.json`.
 
-- The Python migration preserved behavior well, but many compatibility facades
-  still act as aggregation points instead of thin boundaries.
-- Orchestrators coordinate too many lifecycle phases directly, so a small change
-  to a launch mode, action summary, or runtime route often requires reading
-  unrelated code.
-- Test coverage is strong but clustered into very large files, making it harder
-  to identify the contract that protects a particular module.
-- Generated contract checks exist, but there is not yet a lightweight ownership
-  map that tells contributors which module family owns each behavior.
-- Transport launchers share semantic concepts but not enough shared vocabulary,
-  which increases the risk of flag drift across `tmux`, `cmux`, `omx`,
-  OpenCode, Codex, ULW, and new-session paths.
-- Requirements adapters are too broad. Supabase should expose the same public
-  adapter behavior through smaller lifecycle/config/health/user/database pieces.
+## Root cause(s) / gaps
 
-## Sequenced implementation plan
+- Worktree project identity is currently inferred from directory layout and
+  duplicated in multiple helper paths. The invariant that project name equals
+  branch name is implicit, not validated end-to-end.
+- Config discovery depends on the chosen base directory. The docs describe parent
+  `.envctl` lookup from generated tree dirs, but the implementation needs a
+  direct generated-worktree ownership resolver with tests for
+  `<repo>/trees/<feature>/<iteration>`.
+- Existing `commit` and `pr` actions are useful but are separate operational
+  steps. There is no single command that performs commit + PR + check monitoring
+  and returns a structured handoff result.
+- Agents lack a deterministic, repo-native command for choosing focused tests
+  from changed files. That pushes them toward broad test suites even for small
+  implementation slices.
+- Artifact protection exists, but the policy needs explicit coverage for the
+  workflow files agents use most often, especially `.envctl-commit-message.md`,
+  `MAIN_TASK.md`, `.envctl-state/`, and generated tree roots.
 
-### 1. Capture the current architecture and invariants
+## Plan
 
-- Add a short architecture inventory document, for example
-  `docs/reference/python-engine-architecture.md`, covering runtime, startup,
-  actions, planning/worktrees, plan-agent transports, requirements, UI, state,
-  and generated contracts.
-- Include an ownership table that maps the current high-level workflows to the
-  modules that own them.
-- Record invariants that must not change:
-  CLI flag behavior, `.envctl-state` artifact shape, generated contract
-  contents, prompt install output, plan-agent launch semantics, and release gate
-  expectations.
-- Use Serena symbol/reference tools for structural navigation during the work.
-  Use `cgc ... --context Envctl` for broad graph checks, complexity summaries,
-  and dead-code candidates.
-- Avoid adding hard size limits in this step. First create a measured baseline
-  so later guardrails are defensible.
+### 1) Centralize generated worktree identity
 
-### 2. Thin `PythonEngineRuntime` into explicit runtime delegates
+- Add a small identity helper module, or a focused section in
+  `planning/__init__.py`, that exposes one canonical function for generated
+  worktree identity:
+  - input: feature slug and iteration
+  - output: branch name, project name, and worktree path segment
+  - rule: branch name and project name are exactly identical
+- Route `_worktree_branch_name()`, `predict_plan_projects()`,
+  `_create_feature_worktrees_result()`, `_append_feature_projects()`,
+  `planning_existing_counts()`, and `ensure_worktree_support` through that
+  helper instead of open-coding `f"{feature}-{iteration}"`.
+- Add validation that generated project names discovered from nested tree paths
+  match the current branch when the worktree is a Git worktree and branch
+  information is cheaply available.
+- Keep the existing `features_foo-1` shape for compatibility unless a test
+  proves there is already a different branch name in use. The required invariant
+  is equality between branch and project, not a new naming format.
+- Preserve plan-file inference helpers such as
+  `project_action_domain._feature_name_from_project_name()` by updating their
+  tests against the centralized identity helper.
 
-- Group existing runtime methods by responsibility before moving code:
-  dispatch/help, project resolution, lifecycle start/resume/stop, action command
-  entry points, debug/doctor/release-gate commands, dashboard/interactive
-  commands, service command helpers, hook bridging, and truth/readiness helpers.
-- Move cohesive method clusters into existing domain modules where they already
-  exist. Add new modules only where there is no clear owner.
-- Keep `PythonEngineRuntime` as the public facade for the CLI and tests, but
-  reduce it to construction, delegation, and compatibility shims.
-- Preserve dispatch behavior in `command_router.py` and any generated feature
-  matrix output.
-- Add focused tests around the facade/delegate boundary so a method move cannot
-  silently change route selection, exit status, or output shape.
+### 2) Resolve parent repo config from generated tree directories
 
-### 3. Decompose startup orchestration by lifecycle phase
+- Add a generated-worktree ownership resolver in config loading, before
+  `discover_local_config_state()`:
+  - detect when `requested_root` or `ENVCTL_EXECUTION_ROOT` is inside
+    `<repo>/<trees_dir>/<feature>/<iteration>`
+  - read `.envctl-state/worktree-provenance.json` when present to identify the
+    owning repo root and original plan
+  - fall back to path shape plus nearest ancestor containing `.envctl` and the
+    configured trees directory
+  - keep `execution_root` as the actual worktree so backend/frontend paths and
+    command execution still point at the current worktree
+  - set `base_dir` to the owning repo root for `.envctl`, runtime scope,
+    planning dir, state, port locks, and tree discovery
+- Make `ENVCTL_CONFIG_FILE` explicit override continue to win.
+- Add a clear event/debug field for the resolved control-plane root versus
+  execution root so failures are inspectable.
+- Preserve inspect-only behavior when no `.envctl` exists and no parent config
+  can be found.
+- Ensure this logic does not walk outside the current repo arbitrarily. It
+  should climb only through the current path's ancestors and stop at filesystem
+  root or a Git boundary.
 
-- Extract plan-agent worktree preparation and launch handoff from
-  `StartupOrchestrator` into a planning/startup coordinator with a narrow input
-  and result object.
-- Extract restart/reuse/pre-stop policy into a dedicated startup policy module.
-- Extract success, degraded, and failure finalization into a renderer/finalizer
-  module that owns user-facing summaries and debug report references.
-- Extract requirement and service startup sequencing into a service bootstrap
-  coordinator, while keeping the current readiness and truth reconciliation
-  semantics.
-- Keep `StartupOrchestrator.execute` as the main sequence owner. It should read
-  as orchestration, not contain low-level launch and rendering details.
-- Preserve tests that cover degraded handoff, plan-agent launch skip/resume,
-  disabled modes, startup logs, and state truth.
+### 3) Add focused test planning
 
-### 4. Split action command orchestration into action-owned helpers
+- Add a new command surface:
+  `envctl test-plan --project <project> --json`.
+- Initial implementation should be rule-based and fast:
+  - collect changed files from `git diff --name-only`, `git diff --cached
+    --name-only`, and untracked non-protected paths
+  - map file prefixes to focused test groups
+  - include the exact command strings to run
+  - include a confidence level and a reason for each command
+  - include a separate full-gate recommendation for broad/risky changes
+- Suggested first ownership mapping:
+  - `python/envctl_engine/planning/` -> `tests/python/planning`
+  - `python/envctl_engine/actions/` -> `tests/python/actions`
+  - `python/envctl_engine/config/` -> `tests/python/config`
+  - `python/envctl_engine/startup/` -> `tests/python/startup`
+  - `python/envctl_engine/runtime/` -> `tests/python/runtime`
+  - `python/envctl_engine/requirements/` -> `tests/python/requirements`
+  - `python/envctl_engine/ui/` -> `tests/python/ui`
+  - prompt templates -> `tests/python/runtime/test_prompt_install_support.py`
+  - contract JSON/scripts -> relevant generator parity tests plus
+    `scripts/release_shipability_gate.py` only when the touched files require it
+- Make `envctl test --project <project> --changed` or `--affected` a thin
+  follow-up only after `test-plan` is useful; the first deliverable can be a
+  planner that prints commands without executing them.
+- Default policy:
+  - during implementation: run focused commands from `test-plan`
+  - before commit: run focused tests plus ruff for touched Python/test/script
+    paths
+  - before handoff: run broader validation only when `test-plan` marks the
+    change broad, runtime-critical, or contract-affecting
 
-- Move target resolution and project scope selection into an actions target
-  module.
-- Move `test` action execution and failed-test summary formatting into a test
-  action module.
-- Move `migrate` hints, migration logs, and migration result reporting into a
-  migrate action module.
-- Move self-destruct worktree handling into a worktree action helper with clear
-  safety checks.
-- Move project action environment/replacement/artifact persistence into a
-  reusable project action support module.
-- Keep `ActionCommandOrchestrator` as the compatibility entry point, but make
-  each action route call one focused helper.
-- Split `tests/python/actions/test_actions_parity.py` into smaller action-owned
-  test files after each helper extraction, preserving the same behavior
-  assertions.
+### 4) Add a narrow ship command
 
-### 5. Separate planning worktree responsibilities
+- Add `envctl ship --project <project> --json`.
+- Reuse existing action code rather than duplicating Git/PR behavior:
+  - resolve the project context through existing action target selection
+  - call the same commit logic as `run_commit_action()` so
+    `.envctl-commit-message.md` and protected-path behavior stay consistent
+  - call the same PR detection/creation path as `run_pr_action()` so a PR is
+    only created if one does not already exist
+  - add a check-monitoring step after PR detection/creation
+- Implement GitHub checks with `gh` first:
+  - identify the current branch
+  - identify the PR URL/number
+  - run a bounded `gh pr checks --watch` when available
+  - fall back to `gh pr checks --json` polling if `--watch` is unavailable or
+    unsuitable for JSON mode
+  - return status values such as `clean_no_changes`, `committed_pushed`,
+    `pr_exists`, `pr_created`, `checks_passed`, `checks_failed`,
+    `checks_pending_timeout`, and `gh_unavailable`
+- JSON output should include:
+  - project name
+  - project root
+  - branch
+  - commit sha when created
+  - whether anything was committed
+  - whether push happened
+  - PR URL and whether it was created
+  - checks state, failing checks, pending checks, and monitor duration
+  - protected local artifacts skipped
+- Plain output should remain concise and link to the PR.
+- Do not add background execution yet. The command should be simple and
+  composable enough that an agent or future subagent can run it while another
+  implementation task continues.
 
-- Split `worktree_domain.py` along the existing responsibilities:
-  selection/menu/memory, worktree sync/create/delete, provenance and
-  `MAIN_TASK.md` seeding, git hook policy, fresh AI worktree protection, and
-  code-intelligence setup.
-- Keep the public functions that callers use stable during the first pass. Move
-  implementations behind them, then simplify call sites once tests are green.
-- Preserve the strict boundary that plan operations only edit inside the current
-  checked-out worktree or generated plan worktrees.
-- Preserve Serena and CGC setup behavior, including repo-local ignores and
-  context selection.
-- Add tests that make accidental sibling-worktree writes and hook-policy drift
-  fail early.
+### 5) Tighten artifact protection policy
 
-### 6. Normalize plan-agent transport concepts
+- Keep `config/local_artifacts.py` as the policy source for files that envctl
+  should not commit by default.
+- Confirm whether `.envctl-commit-message.md` is intentionally covered by the
+  `.envctl*` pattern. If yes, add an explicit test naming that file so future
+  changes do not accidentally unprotect it.
+- Add or extend tests for:
+  - `.envctl-state/`
+  - `.envctl-commit-message.md`
+  - `MAIN_TASK.md`
+  - `OLD_TASK_*.md`
+  - `trees/`
+  - `trees-*`
+- Keep repo `.gitignore` untouched. Continue using Git global excludes from
+  config save/bootstrap and commit-action protected-path filtering.
+- Add docs that distinguish:
+  - repo configuration that may be intentionally tracked
+  - envctl runtime/task artifacts that should stay local
+  - generated tree roots that should never be committed from the parent repo
 
-- Introduce shared transport vocabulary for launch intent, selected surface,
-  prompt preset, readiness expectation, command preview, session identity,
-  failure reason, and recovery guidance.
-- Keep transport-specific modules for `tmux`, `cmux`, `omx`, OpenCode, Codex,
-  superset, and recovery behavior, but route common option mapping and result
-  rendering through shared helpers.
-- Add tests that exercise the same option matrix across transports:
-  `--cmux`, `--tmux`, `--omx`, `--codex`, `--opencode`, `--ulw`,
-  `--no-ulw-loop`, `--new-session`, `--headless`, direct-prompt behavior, and
-  skipped/resumed launches.
-- Preserve `contracts/runtime_feature_matrix.json` generation and update the
-  checked-in artifact only when the generator output changes intentionally.
-- Keep OpenCode-specific readiness failures observable with enough context to
-  diagnose the active command, expected prompt state, transport, and timeout.
+### 6) Update prompts and docs to use the efficient workflow
 
-### 7. Break requirements adapters into lifecycle components
+- Update implementation/finalization prompt templates to prefer:
+  - `envctl test-plan --project <current-worktree-name> --json` during coding
+  - focused test commands from that output
+  - `envctl ship --project <current-worktree-name> --json` for final handoff
+- Keep guidance that full validation is required for broad/risky changes, but
+  stop making full-suite validation sound mandatory for every tiny change.
+- Update `docs/user/ai-playbooks.md`, `docs/user/planning-and-worktrees.md`, and
+  relevant help text with the project-name-equals-branch invariant and the
+  focused-test/handoff flow.
 
-- Start with `requirements/supabase.py` because it is the largest adapter.
-- Separate configuration/env resolution, Docker/process lifecycle, health and
-  readiness checks, database setup, QA/auth user setup, repair/reinit, and
-  summary reporting.
-- Keep the existing adapter API stable for callers in startup and runtime code.
-- Add adapter-level tests that prove real contract behavior before and after the
-  split.
-- Apply the same pattern to other requirement adapters only where it reduces
-  complexity without hiding important behavior behind generic abstractions.
+## Tests (add these)
 
-### 8. Split oversized tests after production seams exist
+Backend tests:
+- `tests/python/planning/test_planning_worktree_setup.py`
+  - generated worktree branch, project name, created worktree name, and
+    provenance identity match exactly
+  - fresh AI worktree creation still targets the newly created identity
+- `tests/python/runtime/test_ensure_worktree_support.py` or existing
+  ensure-worktree tests
+  - JSON output reports identical `project_name` and `branch_name`
+- `tests/python/config/test_config_persistence.py` and
+  `tests/python/config/test_config_command_support.py`
+  - load config from `<repo>/trees/<feature>/<iteration>` using parent
+    `<repo>/.envctl`
+  - preserve worktree execution root for commands
+  - explicit `ENVCTL_CONFIG_FILE` override wins
+  - missing parent config preserves current non-interactive failure behavior
+- `tests/python/actions/test_actions_cli.py`
+  - ship command commits with `.envctl-commit-message.md`
+  - ship skips protected envctl-local artifacts
+  - ship creates PR only when none exists
+  - ship reports existing PR without creating another
+  - ship returns failed/pending/passed check status
+- `tests/python/actions/test_actions_parity.py`
+  - route-level action command orchestration for `ship`
+  - artifact protection explicitly covers `.envctl-commit-message.md`
+- New `tests/python/actions/test_test_plan_action.py`
+  - changed config files recommend config tests
+  - changed planning files recommend planning tests
+  - changed prompt templates recommend prompt install support tests
+  - broad/mixed changes recommend focused tests plus full-gate warning
 
-- Split large tests by behavior owner, not by arbitrary line count:
-  plan-agent launch options, transport readiness, action parity, runtime startup,
-  requirement adapter contracts, and dashboard restart selector behavior.
-- Prefer moving tests in the same commit as the production extraction they
-  protect, so review can compare old and new assertions.
-- Keep test names descriptive and preserve important fixtures to avoid losing
-  coverage through mechanical movement.
-- Add a lightweight structure test only after the largest modules have been
-  reduced. The guard should detect new god modules and require an explicit
-  waiver for legitimate aggregators.
+Frontend tests:
+- None expected for the first implementation. This is CLI/runtime workflow
+  behavior, not browser-visible UI.
 
-### 9. Tighten generated contracts and release checks
+Integration/E2E tests:
+- Add a temp-repo smoke test that creates an envctl worktree, runs envctl from
+  inside that worktree, and proves parent `.envctl` was loaded.
+- Add a fake-`gh` integration test for `envctl ship --json` covering commit,
+  existing PR, new PR, and check failure status without network.
+- Keep full release-gate validation as an optional final check for the
+  implementation branch, not a default per-edit requirement.
 
-- Re-run and update generated artifacts only when behavior or declared feature
-  inventory intentionally changes:
-  `scripts/generate_runtime_feature_matrix.py`,
-  `scripts/generate_python_runtime_gap_report.py`, and
-  `scripts/generate_python_engine_parity_manifest.py`.
-- Keep `scripts/release_shipability_gate.py` passing throughout the refactor.
-- Add contract tests for any new ownership map or architecture inventory if the
-  repo should treat it as a maintained source of truth.
-- Make import-cycle and structure-layout failures actionable by pointing to the
-  owning module family.
+## Observability / logging
 
-### 10. Update contributor-facing documentation
+- Emit a config discovery event or include debug-pack fields for:
+  - requested root
+  - execution root
+  - control-plane/base repo root
+  - config file path
+  - config source
+  - generated worktree provenance source when used
+- For `test-plan --json`, include reasons and confidence for every command.
+- For `ship --json`, include step timings and the exact final status so agents
+  can decide whether to keep implementing or stop for a failed check.
 
-- Update architecture docs after each major extraction, not only at the end.
-- Keep `AGENTS.md` guidance aligned with actual tooling:
-  Serena for symbol navigation and references, CGC for broad graph analysis,
-  and native search for literal strings or already-open files.
-- Add a short "how to change this area" note for runtime, startup, actions,
-  planning, transports, requirements, and dashboard code.
+## Rollout / verification
 
-## Tests
-
-- Static checks:
-  `uv tool run ruff check python tests scripts`.
-- Shared structure and import checks:
-  `uv run python -m pytest tests/python/shared/test_structure_layout.py
-  tests/python/shared/test_support_module_decoupling.py
-  tests/python/shared/test_utility_consolidation_contract.py`.
-- Runtime dispatch and contract checks:
-  `uv run python -m pytest tests/python/runtime tests/python/test_runtime_feature_inventory.py`.
-- Startup orchestration checks:
-  `uv run python -m pytest tests/python/startup tests/python/runtime/test_engine_runtime_real_startup.py`.
-- Action command checks:
-  `uv run python -m pytest tests/python/actions`.
-- Planning and plan-agent checks:
-  `uv run python -m pytest tests/python/planning`.
-- Requirements adapter checks:
-  `uv run python -m pytest tests/python/requirements`.
-- UI/dashboard checks:
-  `uv run python -m pytest tests/python/ui`.
-- Contract generation checks:
-  run the runtime feature matrix, Python runtime gap report, and parity manifest
-  generators with the checked-in timestamps where applicable, then compare to
-  the checked-in JSON artifacts.
-- Final gate:
-  run the repo release shipability gate and the full Python test suite before
-  opening or updating a PR.
-
-## Rollout and verification
-
-- Use small implementation commits by ownership area:
-  runtime facade, startup lifecycle, action commands, worktree domain,
-  transports, requirements, tests, docs/contracts.
-- After each ownership area, run the targeted test group plus ruff.
-- After each transport or runtime dispatch change, regenerate and compare
-  `contracts/runtime_feature_matrix.json`.
-- After any public behavior or release-gate-affecting change, run the full
-  release shipability gate before handoff.
-- Recommended launch:
-  `ENVCTL_PLAN_AGENT_CODEX_CYCLES=8 envctl --plan refactoring/envctl-deep-codebase-refactor --tmux --no-infra --headless --new-session`.
-- `--no-infra` is intentional here: the plan concerns envctl's Python
-  architecture, tests, contracts, and documentation. Starting project services
-  would not prove this refactor and would add noise to validation.
+- Recommended Codex cycles: `7`.
+  Rationale: this crosses config discovery, worktree identity, action commands,
+  GitHub integration, tests, docs, and prompt guidance, with several edge cases.
+- Intended launch scope: `--no-infra --headless --new-session`.
+  Runtime services do not prove this change; focused unit and temp-repo CLI
+  tests are the useful validation signal.
+- Launch command:
+  `cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=7 envctl --plan features/envctl-workflow-efficiency-and-identity --cmux --no-infra --headless --new-session`.
+- Implementation should be split into commits:
+  1. identity helper and tests
+  2. parent config discovery and tests
+  3. `test-plan` command and docs
+  4. `ship` command and fake-`gh` tests
+  5. artifact policy tests and prompt/doc updates
+- Run focused tests after each commit slice. Run ruff on touched Python/test
+  paths. Run broader action/config/planning/runtime tests before PR handoff.
 
 ## Definition of done
 
-- The largest orchestrators are reduced to thin coordination layers or clearly
-  justified facades.
-- Each major runtime area has an obvious owner module and focused tests.
-- Plan-agent transport flags and readiness behavior are covered by a shared
-  option matrix.
-- Supabase requirements behavior is preserved behind smaller components.
-- Giant tests are split by behavior without losing assertions.
-- Runtime feature matrix, Python runtime gap report, parity manifest, release
-  shipability gate, ruff, and the full Python test suite pass.
-- Documentation reflects the final ownership boundaries and tool guidance.
+- Generated worktree project names and branch names are identical everywhere
+  envctl reports or selects them.
+- Running envctl from a generated tree directory loads the owning parent `.envctl`
+  while executing project commands against the current worktree.
+- `envctl test-plan --project <project> --json` returns deterministic focused
+  commands for common envctl code areas.
+- `envctl ship --project <project> --json` commits from
+  `.envctl-commit-message.md`, pushes, creates a PR only when needed, monitors
+  checks, and returns structured status.
+- Envctl-local artifacts remain protected from accidental commits and are present
+  in the configured global excludes flow.
+- Docs and prompt templates teach focused testing and the narrow ship handoff
+  instead of repeated manual Git/GitHub command loops.
 
 ## Risk register
 
-- Dynamic CLI dispatch can hide call sites from structural tools. Mitigation:
-  keep behavior-level dispatch tests and generated feature matrix checks.
-- Moving code may accidentally change user-facing text. Mitigation: preserve
-  snapshot-like assertions around launch guidance, prompt install output,
-  failure summaries, and release-gate messages.
-- Generated contract files can drift during refactors. Mitigation: regenerate
-  only intentionally and compare generator output in tests.
-- Long-lived compatibility facades can become permanent. Mitigation: document
-  each facade's owner and remove redundant wrappers once call sites are updated.
-- Broad refactors can conflict with active plan-agent work. Mitigation: sequence
-  by ownership area and avoid touching unrelated files in a commit.
-- CGC and Serena indexes can lag after structural moves. Mitigation: let Serena
-  refresh automatically, run `serena project health-check` if symbol results
-  look stale, and refresh CGC with `cgc index . --context Envctl` after major
-  structural changes.
+- Parent `.envctl` discovery can accidentally choose the wrong ancestor in
+  unusual nested repositories. Mitigate with strict generated-worktree shape
+  checks, provenance-first resolution, and explicit override precedence.
+- `ship` can mask too much if it becomes a giant workflow. Keep it narrow:
+  commit, push, PR if missing, check status, structured result.
+- Focused test planning can under-select tests. Start with conservative
+  mappings, expose confidence/reasons, and recommend full gates for mixed or
+  contract-touching changes.
+- Artifact protection can conflict with intentionally tracked `.envctl` files.
+  Do not edit repo `.gitignore`; keep protection in global excludes and commit
+  filtering, and document the distinction.

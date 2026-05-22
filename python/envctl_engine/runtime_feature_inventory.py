@@ -230,6 +230,22 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         rollout_risk="Users could see confusing test selection or incomplete error propagation in interactive flows.",
         wave="Wave D",
     ),
+    "test-focused": FeatureDefinition(
+        area="actions",
+        feature="Command: run focused validation commands from changed files",
+        user_visible=True,
+        shell_source_of_truth=(),
+        python_source_of_truth=(
+            "python/envctl_engine/actions/test_plan_action.py",
+            "python/envctl_engine/actions/action_command_orchestrator.py",
+        ),
+        evidence_tests=(
+            "tests/python/actions/test_test_plan_action.py",
+            "tests/python/runtime/test_cli_router_parity.py",
+        ),
+        parity_status="verified_python",
+        notes="Focused validation planning is Python-owned and maps changed files to deterministic test and ruff commands.",
+    ),
     "pr": FeatureDefinition(
         area="actions",
         feature="Command: create pull requests for selected projects",
@@ -275,6 +291,22 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         severity="medium",
         rollout_risk="Edge-case commit flows can still diverge from user expectations if legacy message-resolution behavior is not fully proven.",
         wave="Wave D",
+    ),
+    "ship": FeatureDefinition(
+        area="actions",
+        feature="Command: commit, push, create or reuse PRs, and report GitHub checks",
+        user_visible=True,
+        shell_source_of_truth=(),
+        python_source_of_truth=(
+            "python/envctl_engine/actions/project_action_domain.py",
+            "python/envctl_engine/actions/actions_git.py",
+        ),
+        evidence_tests=(
+            "tests/python/actions/test_actions_cli.py",
+            "tests/python/runtime/test_cli_router_parity.py",
+        ),
+        parity_status="verified_python",
+        notes="Ship is a narrow Python handoff action that reuses commit/PR behavior and adds structured check status.",
     ),
     "review": FeatureDefinition(
         area="actions",
