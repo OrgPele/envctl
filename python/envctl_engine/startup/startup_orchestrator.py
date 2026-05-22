@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import threading
 from functools import partial
-from typing import Callable, cast, Iterable
+from typing import cast
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent.config import resolve_plan_agent_launch_config
@@ -55,8 +55,7 @@ from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.restart_prestop_support import (
     apply_restart_ports_to_contexts,
     handle_restart_prestop,
-    process_cwd,
-    terminate_restart_orphan_listeners,
+    terminate_restart_orphan_listeners_with_runtime,
 )
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
 from envctl_engine.startup.session_lifecycle import (
@@ -79,7 +78,6 @@ from envctl_engine.startup.startup_progress import (
 )
 from envctl_engine.startup.startup_selection_support import (
     port_allocator as port_allocator_impl,
-    process_runtime as process_runtime_impl,
     select_start_tree_projects,
     trees_start_selection_required,
 )
@@ -132,13 +130,26 @@ class StartupOrchestrator:
                     project_name_from_service=self.runtime._project_name_from_service,
                     set_plan_port=self.runtime._set_plan_port,
                 )
+            terminate_restart_orphans = partial(
+                terminate_restart_orphan_listeners_with_runtime,
+                self.runtime,
+            )
             for phase in (
                 partial(
                     validate_startup_route_contract,
                     self.runtime,
                     emit_phase=partial(emit_startup_phase, self.runtime),
                 ),
-                self._handle_restart_prestop,
+                lambda _: handle_restart_prestop(
+                    runtime=self.runtime,
+                    session=session,
+                    suppress_progress_output=suppress_progress_output,
+                    terminate_restart_orphan_listeners=terminate_restart_orphans,
+                    spinner_factory=spinner,
+                    use_spinner_policy_fn=use_spinner_policy,
+                    resolve_spinner_policy_fn=resolve_spinner_policy,
+                    emit_spinner_policy_fn=emit_spinner_policy,
+                ),
                 lambda _: select_startup_contexts(
                     runtime=self.runtime,
                     session=session,
@@ -150,7 +161,7 @@ class StartupOrchestrator:
                 ),
                 partial(resolve_plan_dry_run_impl, self.runtime, print_fn=print),
                 self._prepare_and_launch_plan_agent_worktrees,
-                self._resolve_run_reuse,
+                lambda _: self._resolve_run_reuse(session, terminate_restart_orphans=terminate_restart_orphans),
                 self._resolve_disabled_startup_mode,
             ):
                 code = phase(session)
@@ -208,42 +219,6 @@ class StartupOrchestrator:
             return finalize_failure(error=str(exc))
         except Exception as exc:
             return finalize_failure(error=str(exc))
-
-    def _handle_restart_prestop(self, session: StartupSession) -> int | None:
-        return handle_restart_prestop(
-            runtime=self.runtime,
-            session=session,
-            suppress_progress_output=suppress_progress_output,
-            terminate_restart_orphan_listeners=self._terminate_restart_orphan_listeners,
-            spinner_factory=spinner,
-            use_spinner_policy_fn=use_spinner_policy,
-            resolve_spinner_policy_fn=resolve_spinner_policy,
-            emit_spinner_policy_fn=emit_spinner_policy,
-        )
-
-    def _terminate_restart_orphan_listeners(
-        self,
-        *,
-        state,
-        selected_services: set[str],
-        aggressive: bool,
-    ) -> None:
-        rt = self.runtime
-        listener_pids_for_port = cast(Callable[[int], Iterable[int]], getattr(rt, "_listener_pids_for_port", None))
-        process_runtime = process_runtime_impl(rt)
-        port_allocator = port_allocator_impl(rt)
-        terminate_restart_orphan_listeners(
-            state=state,
-            selected_services=selected_services,
-            aggressive=aggressive,
-            backend_port_base=int(rt.config.backend_port_base),
-            frontend_port_base=int(rt.config.frontend_port_base),
-            port_spacing=int(getattr(rt.config, "port_spacing", 20) or 20),
-            listener_pids_for_port=listener_pids_for_port,
-            process_cwd=process_cwd,
-            terminate_pid=getattr(process_runtime, "terminate", None),
-            release_port=port_allocator.release,
-        )
 
     def _prepare_and_launch_plan_agent_worktrees(self, session: StartupSession) -> int | None:
         route = session.effective_route
@@ -350,7 +325,7 @@ class StartupOrchestrator:
             ),
         )
 
-    def _resolve_run_reuse(self, session: StartupSession) -> int | None:
+    def _resolve_run_reuse(self, session: StartupSession, *, terminate_restart_orphans) -> int | None:
         validate_plan_agent_handoff = partial(
             validate_plan_agent_handoff_with_attach_target,
             self.runtime,
@@ -423,7 +398,7 @@ class StartupOrchestrator:
                         last_progress_message_by_project=self._last_progress_message_by_project,
                         message=message,
                     ),
-                    terminate_restart_orphan_listeners=self._terminate_restart_orphan_listeners,
+                    terminate_restart_orphan_listeners=terminate_restart_orphans,
                 )
             ),
         )

@@ -128,6 +128,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_orchestrator_does_not_retain_process_cwd_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_process_cwd"))
 
+    def test_startup_orchestrator_does_not_retain_restart_orphan_listener_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_terminate_restart_orphan_listeners"))
+
     def test_startup_orchestrator_does_not_retain_plan_dry_run_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_resolve_plan_dry_run"))
 

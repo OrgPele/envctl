@@ -412,3 +412,26 @@ def terminate_restart_orphan_listeners(
     for match in matches:
         if terminate_pid(match.pid, term_timeout=0.5 if aggressive else 2.0, kill_timeout=1.0):
             release_port(match.port)
+
+
+def terminate_restart_orphan_listeners_with_runtime(
+    runtime: Any,
+    *,
+    state: Any,
+    selected_services: set[str],
+    aggressive: bool,
+) -> None:
+    process_runtime = getattr(runtime, "process_runner", None)
+    port_allocator = getattr(runtime, "port_planner", None)
+    terminate_restart_orphan_listeners(
+        state=state,
+        selected_services=selected_services,
+        aggressive=aggressive,
+        backend_port_base=int(runtime.config.backend_port_base),
+        frontend_port_base=int(runtime.config.frontend_port_base),
+        port_spacing=int(getattr(runtime.config, "port_spacing", 20) or 20),
+        listener_pids_for_port=getattr(runtime, "_listener_pids_for_port", None),
+        process_cwd=process_cwd,
+        terminate_pid=getattr(process_runtime, "terminate", None),
+        release_port=port_allocator.release,
+    )

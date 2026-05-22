@@ -23,6 +23,7 @@ from envctl_engine.startup.run_reuse_support import RunReuseDecision
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
 from envctl_engine.ui.status_symbols import STATUS_FAILURE
+import envctl_engine.startup.startup_orchestrator as startup_orchestrator
 
 
 class StartupOrchestratorFlowTests(unittest.TestCase):
@@ -1585,7 +1586,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 patch.object(engine, "_reconcile_state_truth", return_value=[]),
                 patch.object(engine, "_start_project_context", side_effect=_start_context),
                 patch.object(engine, "_terminate_services_from_state") as terminate_mock,
-                patch.object(engine.startup_orchestrator, "_terminate_restart_orphan_listeners") as orphan_mock,
+                patch.object(startup_orchestrator, "terminate_restart_orphan_listeners_with_runtime") as orphan_mock,
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
                 patch.object(
                     engine,
