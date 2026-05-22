@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 import sys
 import threading
 import time
@@ -58,6 +57,7 @@ from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.restart_prestop_support import (
     apply_restart_ports_to_contexts,
     handle_restart_prestop,
+    process_cwd,
     terminate_restart_orphan_listeners,
 )
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
@@ -210,17 +210,10 @@ class StartupOrchestrator:
             frontend_port_base=int(rt.config.frontend_port_base),
             port_spacing=int(getattr(rt.config, "port_spacing", 20) or 20),
             listener_pids_for_port=listener_pids_for_port,
-            process_cwd=self._process_cwd,
+            process_cwd=process_cwd,
             terminate_pid=getattr(process_runtime, "terminate", None),
             release_port=port_allocator.release,
         )
-
-    @staticmethod
-    def _process_cwd(pid: int) -> str | None:
-        try:
-            return str(Path(f"/proc/{pid}/cwd").resolve())
-        except OSError:
-            return None
 
     def _resolve_plan_dry_run(self, session: StartupSession) -> int | None:
         route = session.effective_route
@@ -240,12 +233,17 @@ class StartupOrchestrator:
         launch_config = resolve_plan_agent_launch_config(rt.config, getattr(rt, "env", {}), route=route)
         if launch_config.enabled and created_worktrees:
             self._ensure_run_id(session)
-            report_progress_fn = partial(
-                report_progress,
-                self.runtime,
-                progress_lock=self._progress_lock,
-                last_progress_message_by_project=self._last_progress_message_by_project,
-            )
+
+            def report_progress_fn(route: Route, message: str, *, project: str | None = None) -> None:
+                report_progress(
+                    self.runtime,
+                    route,
+                    progress_lock=self._progress_lock,
+                    last_progress_message_by_project=self._last_progress_message_by_project,
+                    message=message,
+                    project=project,
+                )
+
             prepare_plan_agent_dependencies_for_launch_impl(
                 rt,
                 session,

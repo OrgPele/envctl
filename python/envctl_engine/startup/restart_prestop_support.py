@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from envctl_engine.runtime.command_router import Route
@@ -44,6 +45,13 @@ class RestartOrphanListenerScan:
 class RestartOrphanListenerMatch:
     pid: int
     port: int
+
+
+def process_cwd(pid: int) -> str | None:
+    try:
+        return str(Path(f"/proc/{pid}/cwd").resolve())
+    except OSError:
+        return None
 
 
 def restart_fallback_start_route(route: Route, *, restart_lookup_mode: str) -> Route:
