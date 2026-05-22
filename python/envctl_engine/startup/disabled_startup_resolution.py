@@ -5,7 +5,23 @@ import time
 from typing import Any
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
+from envctl_engine.startup.finalization import (
+    build_planning_dashboard_state,
+    headless_plan_output_only,
+    maybe_attach_plan_agent_terminal,
+    print_headless_plan_session_summary,
+    print_plan_dry_run_preview,
+)
+from envctl_engine.startup.plan_agent_handoff import validate_plan_agent_handoff_with_attach_target
 from envctl_engine.startup.session import StartupSession
+from envctl_engine.startup.session_lifecycle import (
+    announce_session_identifiers,
+    emit_startup_phase,
+    ensure_run_id,
+    resolved_run_id,
+)
+from envctl_engine.startup.service_bootstrap_domain import configured_service_types_for_mode
 
 
 def resolve_disabled_startup_mode(
@@ -70,3 +86,65 @@ def resolve_disabled_startup_mode(
         return runtime._run_interactive_dashboard_loop(run_state)
     return 0
 
+
+def resolve_disabled_startup_mode_with_runtime(
+    runtime: Any,
+    session: StartupSession,
+    *,
+    validate_attach_target_fn: Callable[..., Any],
+    attach_plan_agent_terminal: Callable[..., Any],
+    print_fn: Callable[[str], None] = print,
+) -> int | None:
+    def validate_plan_agent_handoff(session: StartupSession, *, phase: str) -> None:
+        validate_plan_agent_handoff_with_attach_target(
+            runtime,
+            validate_attach_target_fn,
+            session,
+            phase=phase,
+        )
+
+    return resolve_disabled_startup_mode(
+        runtime=runtime,
+        session=session,
+        route_is_implicit_start=route_is_implicit_start,
+        ensure_run_id=lambda session: ensure_run_id(runtime, session),
+        announce_session_identifiers=lambda session: announce_session_identifiers(
+            runtime,
+            session,
+            headless_plan_output_only=headless_plan_output_only,
+        ),
+        resolved_run_id=resolved_run_id,
+        build_planning_dashboard_state=build_planning_dashboard_state,
+        configured_service_types_for_mode=lambda runtime_mode: configured_service_types_for_mode(
+            runtime.config,
+            runtime_mode,
+        ),
+        emit_phase=lambda *args, **kwargs: emit_startup_phase(runtime, *args, **kwargs),
+        validate_plan_agent_handoff=validate_plan_agent_handoff,
+        print_plan_dry_run_preview=lambda session: print_plan_dry_run_preview(
+            runtime,
+            session,
+            print_fn=print_fn,
+        ),
+        headless_plan_output_only=headless_plan_output_only,
+        print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary(
+            session,
+            validate_plan_agent_handoff=validate_plan_agent_handoff,
+            print_fn=print_fn,
+        ),
+        maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal(
+            runtime=runtime,
+            session=session,
+            validate_plan_agent_handoff=validate_plan_agent_handoff,
+            attach_plan_agent_terminal=attach_plan_agent_terminal,
+            print_headless_plan_session_summary=lambda session, *, attach_target: (
+                print_headless_plan_session_summary(
+                    session,
+                    validate_plan_agent_handoff=validate_plan_agent_handoff,
+                    print_fn=print_fn,
+                    attach_target=attach_target,
+                )
+            ),
+        ),
+        print_fn=print_fn,
+    )

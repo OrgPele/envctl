@@ -8,14 +8,12 @@ from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
 from envctl_engine.planning.plan_agent.omx_transport import validate_plan_agent_attach_target
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
-from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
-from envctl_engine.startup.disabled_startup_resolution import resolve_disabled_startup_mode
+from envctl_engine.startup.disabled_startup_resolution import resolve_disabled_startup_mode_with_runtime
 from envctl_engine.startup.context_selection import select_startup_contexts
 from envctl_engine.startup.finalization import (
-    build_planning_dashboard_state,
     build_success_run_state,
     emit_preserved_service_merge as finalization_emit_preserved_service_merge,
     finalize_failed_startup,
@@ -175,7 +173,12 @@ class StartupOrchestrator:
                     validate_attach_target_fn=validate_plan_agent_attach_target,
                 ),
                 lambda _: self._resolve_run_reuse(session, terminate_restart_orphans=terminate_restart_orphans),
-                self._resolve_disabled_startup_mode,
+                lambda _: resolve_disabled_startup_mode_with_runtime(
+                    self.runtime,
+                    session,
+                    validate_attach_target_fn=validate_plan_agent_attach_target,
+                    attach_plan_agent_terminal=attach_plan_agent_terminal,
+                ),
             ):
                 code = phase(session)
                 if code is not None:
@@ -232,57 +235,6 @@ class StartupOrchestrator:
             return finalize_failure(error=str(exc))
         except Exception as exc:
             return finalize_failure(error=str(exc))
-
-    def _resolve_disabled_startup_mode(self, session: StartupSession) -> int | None:
-        validate_plan_agent_handoff = partial(
-            validate_plan_agent_handoff_with_attach_target,
-            self.runtime,
-            validate_plan_agent_attach_target,
-        )
-        return resolve_disabled_startup_mode(
-            runtime=self.runtime,
-            session=session,
-            route_is_implicit_start=route_is_implicit_start,
-            ensure_run_id=partial(ensure_run_id, self.runtime),
-            announce_session_identifiers=partial(
-                announce_session_identifiers_impl,
-                self.runtime,
-                headless_plan_output_only=finalization_headless_plan_output_only,
-            ),
-            resolved_run_id=resolved_run_id,
-            build_planning_dashboard_state=build_planning_dashboard_state,
-            configured_service_types_for_mode=lambda runtime_mode: configured_service_types_for_mode_impl(
-                self.runtime.config,
-                runtime_mode,
-            ),
-            emit_phase=partial(emit_startup_phase, self.runtime),
-            validate_plan_agent_handoff=validate_plan_agent_handoff,
-            print_plan_dry_run_preview=lambda session: print_plan_dry_run_preview_impl(
-                self.runtime,
-                session,
-                print_fn=print,
-            ),
-            headless_plan_output_only=finalization_headless_plan_output_only,
-            print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary_impl(
-                session,
-                validate_plan_agent_handoff=validate_plan_agent_handoff,
-                print_fn=print,
-            ),
-            maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
-                runtime=self.runtime,
-                session=session,
-                validate_plan_agent_handoff=validate_plan_agent_handoff,
-                attach_plan_agent_terminal=attach_plan_agent_terminal,
-                print_headless_plan_session_summary=lambda session, *, attach_target: (
-                    print_headless_plan_session_summary_impl(
-                        session,
-                        validate_plan_agent_handoff=validate_plan_agent_handoff,
-                        print_fn=print,
-                        attach_target=attach_target,
-                    )
-                ),
-            ),
-        )
 
     def _resolve_run_reuse(self, session: StartupSession, *, terminate_restart_orphans) -> int | None:
         validate_plan_agent_handoff = partial(
