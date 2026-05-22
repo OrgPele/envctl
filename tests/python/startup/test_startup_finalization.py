@@ -19,6 +19,7 @@ from envctl_engine.startup.finalization import (
     plan_agent_degraded_handoff_text,
     plan_session_summary_lines,
     print_plan_dry_run_preview,
+    print_restart_port_rebound_summary,
     render_final_failure_status,
     render_project_startup_warnings,
     restart_port_rebound_summary_lines,
@@ -505,6 +506,34 @@ class StartupFinalizationTests(unittest.TestCase):
             lines,
             ["Port changed: feature-a-1 Backend 8000 -> 8100 (previous port still in use)"],
         )
+
+    def test_print_restart_port_rebound_summary_prints_rebound_lines_from_runtime_events(self) -> None:
+        route = parse_route(["restart"], env={})
+        route.flags["interactive_command"] = True
+        session = StartupSession(
+            requested_route=route,
+            effective_route=route,
+            requested_command="restart",
+            runtime_mode="trees",
+            run_id="run-finalization",
+            startup_event_index=0,
+        )
+        runtime = SimpleNamespace(
+            events=[
+                {
+                    "event": "port.rebound",
+                    "project": "feature-a-1",
+                    "service": "frontend",
+                    "restart_preferred_port": 3000,
+                    "port": 3100,
+                }
+            ]
+        )
+        lines: list[str] = []
+
+        print_restart_port_rebound_summary(runtime, session, print_fn=lines.append)
+
+        self.assertEqual(lines, ["Port changed: feature-a-1 Frontend 3000 -> 3100 (previous port still in use)"])
 
     def test_render_project_startup_warnings_prefers_spinner_detail(self) -> None:
         details: list[tuple[str, str]] = []

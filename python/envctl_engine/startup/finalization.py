@@ -296,6 +296,16 @@ def restart_port_rebound_summary_lines(
     return lines
 
 
+def print_restart_port_rebound_summary(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    *,
+    print_fn: Callable[[str], None],
+) -> None:
+    for line in restart_port_rebound_summary_lines(session, runtime.events):
+        print_fn(line)
+
+
 def render_project_startup_warnings(
     runtime: StartupRuntime,
     *,

@@ -30,10 +30,10 @@ from envctl_engine.startup.finalization import (
     format_failure_context_label as finalization_format_failure_context_label,
     headless_plan_session_summary_lines,
     print_plan_dry_run_preview as print_plan_dry_run_preview_impl,
+    print_restart_port_rebound_summary as print_restart_port_rebound_summary_impl,
     plan_session_summary_lines as finalization_plan_session_summary_lines,
     render_final_failure_status as finalization_render_final_failure_status,
     render_project_startup_warnings as finalization_render_project_startup_warnings,
-    restart_port_rebound_summary_lines,
 )
 from envctl_engine.startup.execution_preparation import prepare_startup_execution
 from envctl_engine.startup.run_reuse_support import (
@@ -472,8 +472,7 @@ class StartupOrchestrator:
         )
 
     def _print_restart_port_rebound_summary(self, session: StartupSession) -> None:
-        for line in restart_port_rebound_summary_lines(session, self.runtime.events):
-            print(line)
+        print_restart_port_rebound_summary_impl(self.runtime, session, print_fn=print)
 
     def _headless_plan_output_only(self, session: StartupSession) -> bool:
         route = session.effective_route
