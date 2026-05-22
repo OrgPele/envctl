@@ -335,7 +335,11 @@ class StartupOrchestrator:
                 print_fn=print,
             ),
             headless_plan_output_only=finalization_headless_plan_output_only,
-            print_headless_plan_session_summary=self._print_headless_plan_session_summary,
+            print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary_impl(
+                session,
+                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                print_fn=print,
+            ),
             maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
         )
 
@@ -349,7 +353,11 @@ class StartupOrchestrator:
             emit_phase=self._emit_phase,
             headless_plan_output_only=finalization_headless_plan_output_only,
             maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
-            print_headless_plan_session_summary=self._print_headless_plan_session_summary,
+            print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary_impl(
+                session,
+                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                print_fn=print,
+            ),
             print_plan_dry_run_preview=lambda session: print_plan_dry_run_preview_impl(
                 self.runtime,
                 session,
