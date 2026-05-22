@@ -480,7 +480,11 @@ class StartupOrchestrator:
             ),
             emit_snapshot=self._emit_snapshot,
             headless_plan_output_only=finalization_headless_plan_output_only,
-            print_headless_plan_session_summary=self._print_headless_plan_session_summary,
+            print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary_impl(
+                session,
+                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                print_fn=print,
+            ),
             maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
             finalize_plan_agent_degraded_handoff=self._finalize_plan_agent_degraded_handoff,
         )
