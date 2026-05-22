@@ -5,12 +5,16 @@ from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from envctl_engine.requirements.core import dependency_ids
 from envctl_engine.requirements.external import dependency_external_mode
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.shared.services import service_project_name, service_slug_from_record
 from envctl_engine.state.models import RunState
+from envctl_engine.startup.startup_selection_support import (
+    _restart_service_types_for_project,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +130,41 @@ def metadata_without_dashboard_stopped_services(
     else:
         updated.pop("dashboard_stopped_services", None)
     return updated
+
+
+def fresh_start_replacement_services(
+    *,
+    route: Route,
+    selected_contexts: list[object],
+    candidate_state: object,
+    configured_service_types: set[str],
+    additional_services: tuple[object, ...],
+    project_name_from_service: Callable[[str], str],
+) -> set[str]:
+    target_projects = {str(context.name).strip().lower() for context in selected_contexts}
+    target_projects.discard("")
+    if not target_projects:
+        return set()
+    selected_by_project = {
+        str(context.name).strip().lower(): _restart_service_types_for_project(
+            route=route,
+            project_name=str(context.name),
+            default_service_types=configured_service_types,
+            additional_services=additional_services,
+        )
+        for context in selected_contexts
+        if str(context.name).strip()
+    }
+    selected: set[str] = set()
+    for service_name, service in getattr(candidate_state, "services", {}).items():
+        project = service_project_name(service) or project_name_from_service(service_name)
+        project_key = str(project).strip().lower()
+        if project_key not in target_projects:
+            continue
+        service_type = service_slug_from_record(service)
+        if service_type and service_type in selected_by_project.get(project_key, set()):
+            selected.add(service_name)
+    return selected
 
 
 def evaluate_run_reuse(

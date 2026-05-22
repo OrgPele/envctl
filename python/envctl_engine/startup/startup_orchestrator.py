@@ -43,6 +43,7 @@ from envctl_engine.startup.dependency_bootstrap import prepare_project_dependenc
 from envctl_engine.startup.run_reuse_support import (
     RunReuseDecision,
     dashboard_stopped_service_entries as dashboard_stopped_service_entries_impl,
+    fresh_start_replacement_services as fresh_start_replacement_services_impl,
     metadata_without_dashboard_stopped_services as metadata_without_dashboard_stopped_services_impl,
 )
 from envctl_engine.startup.plan_agent_handoff import (
@@ -1034,33 +1035,14 @@ class StartupOrchestrator:
         )
 
     def _fresh_start_replacement_services(self, session: StartupSession, *, candidate_state) -> set[str]:
-        route = session.effective_route
-        target_projects = {str(context.name).strip().lower() for context in session.selected_contexts}
-        target_projects.discard("")
-        if not target_projects:
-            return set()
-        configured_types = set(self._configured_service_types_for_mode(session.runtime_mode))
-        additional_services = tuple(getattr(self.runtime.config, "additional_services", ()) or ())
-        selected_by_project = {
-            str(context.name).strip().lower(): _restart_service_types_for_project_impl(
-                route=route,
-                project_name=str(context.name),
-                default_service_types=configured_types,
-                additional_services=additional_services,
-            )
-            for context in session.selected_contexts
-            if str(context.name).strip()
-        }
-        selected: set[str] = set()
-        for service_name, service in candidate_state.services.items():
-            project = service_project_name(service) or self.runtime._project_name_from_service(service_name)
-            project_key = str(project).strip().lower()
-            if project_key not in target_projects:
-                continue
-            service_type = service_slug_from_record(service)
-            if service_type and service_type in selected_by_project.get(project_key, set()):
-                selected.add(service_name)
-        return selected
+        return fresh_start_replacement_services_impl(
+            route=session.effective_route,
+            selected_contexts=list(session.selected_contexts),
+            candidate_state=candidate_state,
+            configured_service_types=set(self._configured_service_types_for_mode(session.runtime_mode)),
+            additional_services=tuple(getattr(self.runtime.config, "additional_services", ()) or ()),
+            project_name_from_service=self.runtime._project_name_from_service,
+        )
 
     def _prepare_dashboard_stopped_service_restore(
         self,

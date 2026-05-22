@@ -3,8 +3,10 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
+from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.run_reuse_support import (
     dashboard_stopped_service_entries,
+    fresh_start_replacement_services,
     metadata_without_dashboard_stopped_services,
 )
 
@@ -73,6 +75,54 @@ class RunReuseSupportTests(unittest.TestCase):
                 restored_service_names={"Main Frontend"},
             ),
             {"keep": True},
+        )
+
+    def test_fresh_start_replacement_services_selects_configured_service_types_for_target_projects(self) -> None:
+        route = Route(command="start", mode="main", raw_args=["start"], flags={})
+        candidate_state = SimpleNamespace(
+            services={
+                "Main Backend": SimpleNamespace(name="Main Backend", project="Main", type="backend"),
+                "Main Frontend": SimpleNamespace(name="Main Frontend", project="Main", type="frontend"),
+                "Other Backend": SimpleNamespace(name="Other Backend", project="Other", type="backend"),
+            }
+        )
+
+        self.assertEqual(
+            fresh_start_replacement_services(
+                route=route,
+                selected_contexts=[SimpleNamespace(name="Main")],
+                candidate_state=candidate_state,
+                configured_service_types={"backend"},
+                additional_services=(),
+                project_name_from_service=lambda name: str(name).removesuffix(" Backend").removesuffix(" Frontend"),
+            ),
+            {"Main Backend"},
+        )
+
+    def test_fresh_start_replacement_services_honors_restart_service_type_filters(self) -> None:
+        route = Route(
+            command="restart",
+            mode="main",
+            raw_args=["restart"],
+            flags={"_restart_request": True, "restart_service_types": ["frontend"]},
+        )
+        candidate_state = SimpleNamespace(
+            services={
+                "Main Backend": SimpleNamespace(name="Main Backend", project="Main", type="backend"),
+                "Main Frontend": SimpleNamespace(name="Main Frontend", project="Main", type="frontend"),
+            }
+        )
+
+        self.assertEqual(
+            fresh_start_replacement_services(
+                route=route,
+                selected_contexts=[SimpleNamespace(name="Main")],
+                candidate_state=candidate_state,
+                configured_service_types={"backend", "frontend"},
+                additional_services=(),
+                project_name_from_service=lambda name: str(name).removesuffix(" Backend").removesuffix(" Frontend"),
+            ),
+            {"Main Frontend"},
         )
 
 
