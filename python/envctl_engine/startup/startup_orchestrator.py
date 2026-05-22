@@ -11,11 +11,7 @@ from typing import Callable, Mapping, cast, Iterable
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent.config import resolve_plan_agent_launch_config
 from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
-from envctl_engine.planning.plan_agent.models import (
-    CreatedPlanWorktree,
-    PlanAgentLaunchConfig,
-    PlanAgentLaunchResult,
-)
+from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanAgentLaunchConfig, PlanAgentLaunchResult
 from envctl_engine.planning.plan_agent.omx_transport import validate_plan_agent_attach_target
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope, route_is_implicit_start
@@ -24,6 +20,7 @@ from envctl_engine.runtime.runtime_context import resolve_state_repository
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
+from envctl_engine.startup.context_selection import select_startup_contexts
 from envctl_engine.startup.finalization import (
     build_failure_run_state,
     build_planning_dashboard_state,
@@ -311,86 +308,21 @@ class StartupOrchestrator:
         return None
 
     def _select_contexts(self, session: StartupSession) -> int | None:
-        rt = self.runtime
-        route = session.effective_route
-        runtime_mode = session.runtime_mode
-        selection_started = time.monotonic()
-        project_contexts = rt._discover_projects(mode=runtime_mode)
-        if route.command == "plan":
-            project_contexts = rt._select_plan_projects(route, project_contexts)
-        elif self._trees_start_selection_required(route=route, runtime_mode=runtime_mode):
-            project_contexts = self._select_start_tree_projects(route=route, project_contexts=project_contexts)
-        else:
-            try:
-                project_contexts = rt._apply_setup_worktree_selection(route, project_contexts)
-            except RuntimeError as exc:
-                print(str(exc))
-                return 1
-        if route.projects:
-            allow = {project.lower() for project in route.projects}
-            project_contexts = [ctx for ctx in project_contexts if ctx.name.lower() in allow]
-        self._apply_restart_ports(session, project_contexts)
-        duplicate_error = rt._duplicate_project_context_error(project_contexts)
-        if duplicate_error:
-            self._emit_phase(session, "project_selection", selection_started, status="error")
-            print(duplicate_error)
-            rt._emit("planning.projects.duplicate", error=duplicate_error)
-            return 1
-        self._emit_phase(
-            session,
-            "project_selection",
-            selection_started,
-            status="ok",
-            project_count=len(project_contexts),
+        return select_startup_contexts(
+            runtime=self.runtime,
+            session=session,
+            trees_start_selection_required=lambda route, runtime_mode: self._trees_start_selection_required(
+                route=route,
+                runtime_mode=runtime_mode,
+            ),
+            select_start_tree_projects=lambda *, route, project_contexts: self._select_start_tree_projects(
+                route=route,
+                project_contexts=project_contexts,
+            ),
+            apply_restart_ports=self._apply_restart_ports,
+            emit_phase=self._emit_phase,
+            emit_snapshot=self._emit_snapshot,
         )
-        self._emit_snapshot(
-            session,
-            "plan_selector_exit",
-            command=route.command,
-            mode=runtime_mode,
-            project_count=len(project_contexts),
-            projects=[context.name for context in project_contexts],
-        )
-        if not project_contexts:
-            if self._trees_start_selection_required(route=route, runtime_mode=runtime_mode):
-                print("No worktrees selected.")
-            else:
-                print("No projects discovered for selected mode.")
-            return 1
-        if (
-            route.command == "plan"
-            and not bool(route.flags.get("planning_prs"))
-            and not bool(route.flags.get("dry_run"))
-        ):
-            planning_orchestrator = getattr(rt, "planning_worktree_orchestrator", None)
-            selection_getter = getattr(planning_orchestrator, "last_plan_selection_result", None)
-            if callable(selection_getter):
-                session.plan_agent_launch_requested = True
-                selection_result = selection_getter()
-                selected_names = {context.name for context in project_contexts}
-                created_worktrees = tuple(
-                    worktree
-                    for worktree in getattr(selection_result, "created_worktrees", ())
-                    if isinstance(worktree, CreatedPlanWorktree) and worktree.name in selected_names
-                )
-                explicit_plan_agent_launch = any(
-                    bool(route.flags.get(flag_name)) for flag_name in ("cmux", "tmux", "omx", "codex", "opencode")
-                )
-                if not created_worktrees and explicit_plan_agent_launch:
-                    recovered_worktrees: list[CreatedPlanWorktree] = []
-                    for context in project_contexts:
-                        recovered_worktrees.append(
-                            CreatedPlanWorktree(
-                                name=context.name,
-                                root=Path(context.root),
-                                plan_file="",
-                            )
-                        )
-                    created_worktrees = tuple(recovered_worktrees)
-                session.pending_plan_agent_worktrees = created_worktrees
-        session.selected_contexts = list(project_contexts)
-        session.contexts_to_start = list(project_contexts)
-        return None
 
     def _apply_restart_ports(self, session: StartupSession, contexts: list[ProjectContextLike]) -> None:
         state = session.restart_state
