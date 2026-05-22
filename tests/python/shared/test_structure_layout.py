@@ -349,6 +349,16 @@ class StructureLayoutTests(unittest.TestCase):
             facade.read_text(encoding="utf-8"),
         )
 
+    def test_startup_run_reuse_resolution_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "run_reuse_resolution.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "startup_orchestrator.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.startup.run_reuse_resolution import",
+            facade.read_text(encoding="utf-8"),
+        )
+
     def test_repo_local_launcher_is_python_script(self) -> None:
         launcher = REPO_ROOT / "bin" / "envctl"
         self.assertTrue(launcher.is_file())
