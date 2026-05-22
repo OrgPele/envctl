@@ -56,6 +56,7 @@ from envctl_engine.startup.plan_agent_handoff import (
     should_degrade_to_plan_agent_handoff as should_degrade_to_plan_agent_handoff_impl,
     should_fail_for_plan_agent_launch_result as should_fail_for_plan_agent_launch_result_impl,
 )
+from envctl_engine.startup.post_start_reconcile import reconcile_strict_truth_after_start
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.restart_prestop_support import (
     apply_restart_ports_to_contexts,
@@ -967,49 +968,13 @@ class StartupOrchestrator:
         )
 
     def _reconcile_strict_truth(self, session: StartupSession) -> None:
-        rt = self.runtime
-        if rt.config.runtime_truth_mode != "strict":
-            return
-        if session.plan_agent_handoff_degraded:
-            reconcile_started = time.monotonic()
-            self._emit_phase(
-                session,
-                "post_start_reconcile",
-                reconcile_started,
-                status="skipped_degraded_handoff",
-                missing_count=0,
-            )
-            rt._emit(
-                "state.reconcile",
-                run_id=session.run_id,
-                source="start.post_start",
-                missing_count=0,
-                missing_services=[],
-                skipped=True,
-                reason="plan_agent_handoff_degraded",
-            )
-            return
-        run_state = build_success_run_state(rt, session)
-        reconcile_started = time.monotonic()
-        degraded_services = rt._reconcile_state_truth(run_state)
-        self._emit_phase(
-            session,
-            "post_start_reconcile",
-            reconcile_started,
-            status="degraded" if degraded_services else "ok",
-            missing_count=len(degraded_services),
+        reconcile_strict_truth_after_start(
+            runtime=self.runtime,
+            session=session,
+            build_run_state=build_success_run_state,
+            reconcile_state_truth=self.runtime._reconcile_state_truth,
+            emit_phase=self._emit_phase,
         )
-        rt._emit(
-            "state.reconcile",
-            run_id=run_state.run_id,
-            source="start.post_start",
-            missing_count=len(degraded_services),
-            missing_services=degraded_services,
-        )
-        if degraded_services:
-            session.strict_truth_failed = True
-            unique_services = sorted(set(degraded_services))
-            raise RuntimeError("service truth degraded after startup: " + ", ".join(unique_services))
 
     def _finalize_success(self, session: StartupSession) -> int:
         if session.plan_agent_handoff_degraded:
