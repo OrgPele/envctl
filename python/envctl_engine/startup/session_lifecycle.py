@@ -50,6 +50,23 @@ def announce_session_identifiers(
     session.identifiers_announced = True
 
 
+def emit_startup_phase(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    phase: str,
+    started_at: float,
+    **extra: object,
+) -> None:
+    runtime._emit(
+        "startup.phase",
+        command=session.requested_command,
+        mode=session.runtime_mode,
+        phase=phase,
+        duration_ms=round((time.monotonic() - started_at) * 1000.0, 2),
+        **extra,
+    )
+
+
 def validate_startup_route_contract(
     runtime: StartupRuntime,
     session: StartupSession,

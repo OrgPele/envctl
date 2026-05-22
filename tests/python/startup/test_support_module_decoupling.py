@@ -125,6 +125,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_orchestrator_does_not_retain_emit_snapshot_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_emit_snapshot"))
 
+    def test_startup_orchestrator_does_not_retain_emit_phase_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_emit_phase"))
+
     def test_requirements_parallel_defaults_to_sequential_on_macos_with_cli_override(self) -> None:
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
         orchestrator = SimpleNamespace(runtime=runtime)

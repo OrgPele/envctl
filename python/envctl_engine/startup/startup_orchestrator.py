@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sys
 import threading
-import time
 from typing import Callable, cast, Iterable
 from functools import partial
 
@@ -65,6 +64,7 @@ from envctl_engine.startup.session import ProjectStartupResult, StartupSession
 from envctl_engine.startup.session_lifecycle import (
     announce_session_identifiers as announce_session_identifiers_impl,
     create_startup_session,
+    emit_startup_phase,
     ensure_run_id,
     resolved_run_id,
     validate_startup_route_contract,
@@ -158,7 +158,11 @@ class StartupOrchestrator:
         )
 
     def _validate_route_contract(self, session: StartupSession) -> int | None:
-        return validate_startup_route_contract(self.runtime, session, emit_phase=self._emit_phase)
+        return validate_startup_route_contract(
+            self.runtime,
+            session,
+            emit_phase=partial(emit_startup_phase, self.runtime),
+        )
 
     def _handle_restart_prestop(self, session: StartupSession) -> int | None:
         return handle_restart_prestop(
@@ -179,7 +183,7 @@ class StartupOrchestrator:
             trees_start_selection_required=trees_start_selection_required,
             select_start_tree_projects=select_start_tree_projects,
             apply_restart_ports=self._apply_restart_ports,
-            emit_phase=self._emit_phase,
+            emit_phase=partial(emit_startup_phase, self.runtime),
             emit_snapshot=partial(emit_startup_plan_handoff_snapshot, self.runtime),
         )
 
@@ -291,7 +295,7 @@ class StartupOrchestrator:
                 self.runtime.config,
                 runtime_mode,
             ),
-            emit_phase=self._emit_phase,
+            emit_phase=partial(emit_startup_phase, self.runtime),
             validate_plan_agent_handoff=self._validate_plan_agent_handoff,
             print_plan_dry_run_preview=lambda session: print_plan_dry_run_preview_impl(
                 self.runtime,
@@ -327,7 +331,7 @@ class StartupOrchestrator:
             evaluate_run_reuse_fn=evaluate_run_reuse,
             prepare_dashboard_stopped_service_restore=self._prepare_dashboard_stopped_service_restore,
             announce_session_identifiers=self._announce_session_identifiers,
-            emit_phase=self._emit_phase,
+            emit_phase=partial(emit_startup_phase, self.runtime),
             headless_plan_output_only=finalization_headless_plan_output_only,
             maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
                 runtime=self.runtime,
@@ -408,14 +412,14 @@ class StartupOrchestrator:
             candidate_state=candidate_state,
             reuse_started=reuse_started,
             decision_kind=decision_kind,
-            emit_phase=self._emit_phase,
+            emit_phase=partial(emit_startup_phase, self.runtime),
         )
 
     def _prepare_execution(self, session: StartupSession) -> None:
         prepare_startup_execution(
             session=session,
             maybe_prewarm_docker=lambda *, route, mode: maybe_prewarm_docker_impl(self, route=route, mode=mode),
-            emit_phase=self._emit_phase,
+            emit_phase=partial(emit_startup_phase, self.runtime),
         )
 
     def _start_selected_contexts(self, session: StartupSession) -> None:
@@ -451,7 +455,7 @@ class StartupOrchestrator:
             session=session,
             build_run_state=build_success_run_state,
             reconcile_state_truth=self.runtime._reconcile_state_truth,
-            emit_phase=self._emit_phase,
+            emit_phase=partial(emit_startup_phase, self.runtime),
         )
 
     def _finalize_success(self, session: StartupSession) -> int:
@@ -465,7 +469,7 @@ class StartupOrchestrator:
                 self.runtime,
                 session,
             ),
-            emit_phase=self._emit_phase,
+            emit_phase=partial(emit_startup_phase, self.runtime),
             requirements_timing_enabled=lambda route: requirements_timing_enabled_impl(self, route),
             suppress_timing_output=suppress_timing_output,
             print_startup_summary=lambda **kwargs: print_startup_summary_impl(self, **kwargs),
@@ -507,7 +511,7 @@ class StartupOrchestrator:
             ensure_run_id=self._ensure_run_id,
             validate_plan_agent_handoff=self._validate_plan_agent_handoff,
             build_success_run_state=build_success_run_state,
-            emit_phase=self._emit_phase,
+            emit_phase=partial(emit_startup_phase, self.runtime),
             render_plan_agent_degraded_handoff=lambda session: (
                 finalization_render_plan_agent_degraded_handoff_for_terminal(
                     self.runtime,
@@ -540,7 +544,7 @@ class StartupOrchestrator:
             error=error,
             ensure_run_id=self._ensure_run_id,
             port_allocator=port_allocator_impl,
-            emit_phase=self._emit_phase,
+            emit_phase=partial(emit_startup_phase, self.runtime),
             render_final_failure_status=finalization_render_final_failure_status,
         )
 
@@ -569,16 +573,6 @@ class StartupOrchestrator:
             self.runtime,
             session,
             validation_reason="attach_target_stale_after_launch",
-        )
-
-    def _emit_phase(self, session: StartupSession, phase: str, started_at: float, **extra: object) -> None:
-        self.runtime._emit(
-            "startup.phase",
-            command=session.requested_command,
-            mode=session.runtime_mode,
-            phase=phase,
-            duration_ms=round((time.monotonic() - started_at) * 1000.0, 2),
-            **extra,
         )
 
     def start_project_context(

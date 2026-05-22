@@ -6,6 +6,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.session_lifecycle import (
     announce_session_identifiers,
     create_startup_session,
+    emit_startup_phase,
     validate_startup_route_contract,
 )
 
@@ -42,6 +43,9 @@ class _RuntimeStub:
     def _enforce_runtime_readiness_contract(self, *, scope: str) -> bool:
         self.readiness_scope = scope
         return self.readiness
+
+    def _emit(self, event: str, **payload: object) -> None:
+        self.events.append({"event": event, **payload})
 
 
 class StartupSessionLifecycleTests(unittest.TestCase):
@@ -100,6 +104,21 @@ class StartupSessionLifecycleTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(phases, [("runtime_readiness_gate", {"status": "blocked"})])
         self.assertEqual(rendered, ["Startup blocked: strict runtime readiness gate is incomplete."])
+
+    def test_emit_startup_phase_records_runtime_phase_event(self) -> None:
+        route = Route(command="restart", mode="tree", raw_args=[], passthrough_args=[], projects=[], flags={})
+        runtime = _RuntimeStub()
+        session = create_startup_session(runtime, route)
+
+        emit_startup_phase(runtime, session, "artifacts_write", 0.0, status="ok")
+
+        event = runtime.events[-1]
+        self.assertEqual(event["event"], "startup.phase")
+        self.assertEqual(event["command"], "restart")
+        self.assertEqual(event["mode"], "tree")
+        self.assertEqual(event["phase"], "artifacts_write")
+        self.assertEqual(event["status"], "ok")
+        self.assertIsInstance(event["duration_ms"], float)
 
 
 if __name__ == "__main__":
