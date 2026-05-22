@@ -15,6 +15,7 @@ from envctl_engine.dashboard_metadata import (
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
 from envctl_engine.shared.services import service_display_name
+from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
 from envctl_engine.startup.run_reuse_support import build_startup_identity_metadata
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
@@ -239,6 +240,27 @@ def plan_dry_run_preview_lines(session: StartupSession, *, created_names: set[st
         action = "create" if context.name in created_names else "reuse"
         lines.append(f"{context.name}: {action}")
     return lines
+
+
+def print_plan_dry_run_preview(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    *,
+    print_fn: Callable[[str], None],
+) -> None:
+    route = session.effective_route
+    if route.command != "plan" or not bool(route.flags.get("dry_run")):
+        return
+    planning_orchestrator = getattr(runtime, "planning_worktree_orchestrator", None)
+    selection_getter = getattr(planning_orchestrator, "last_plan_selection_result", None)
+    selection_result = selection_getter() if callable(selection_getter) else None
+    created_names = {
+        worktree.name
+        for worktree in getattr(selection_result, "created_worktrees", ())
+        if isinstance(worktree, CreatedPlanWorktree)
+    }
+    for line in plan_dry_run_preview_lines(session, created_names=created_names):
+        print_fn(line)
 
 
 def restart_port_rebound_summary_lines(

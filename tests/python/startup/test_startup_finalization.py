@@ -18,10 +18,12 @@ from envctl_engine.startup.finalization import (
     plan_dry_run_preview_lines,
     plan_agent_degraded_handoff_text,
     plan_session_summary_lines,
+    print_plan_dry_run_preview,
     render_final_failure_status,
     render_project_startup_warnings,
     restart_port_rebound_summary_lines,
 )
+from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
 from envctl_engine.startup.session import LocalStartupFailure, StartupSession
 from envctl_engine.state.models import RunState
 
@@ -420,6 +422,53 @@ class StartupFinalizationTests(unittest.TestCase):
                 "feature-b-1: create",
             ],
         )
+
+    def test_print_plan_dry_run_preview_reads_created_worktrees_from_runtime_orchestrator(self) -> None:
+        route = parse_route(["plan", "--dry-run"], env={})
+        session = StartupSession(
+            requested_route=route,
+            effective_route=route,
+            requested_command="plan",
+            runtime_mode="trees",
+            run_id="run-finalization",
+            selected_contexts=[
+                SimpleNamespace(name="feature-a-1", root=Path("/repo/trees/feature-a/1")),
+                SimpleNamespace(name="feature-b-1", root=Path("/repo/trees/feature-b/1")),
+            ],
+        )
+        selection_result = SimpleNamespace(
+            created_worktrees=(
+                CreatedPlanWorktree(
+                    name="feature-b-1",
+                    root=Path("/repo/trees/feature-b/1"),
+                    plan_file="/repo/todo/plans/feature-b.md",
+                ),
+                SimpleNamespace(name="ignored"),
+            )
+        )
+        runtime = SimpleNamespace(
+            planning_worktree_orchestrator=SimpleNamespace(last_plan_selection_result=lambda: selection_result)
+        )
+        lines: list[str] = []
+
+        print_plan_dry_run_preview(runtime, session, print_fn=lines.append)
+
+        self.assertEqual(
+            lines,
+            [
+                "Dry run: no worktrees, git state, or services were modified.",
+                "feature-a-1: reuse",
+                "feature-b-1: create",
+            ],
+        )
+
+    def test_print_plan_dry_run_preview_skips_non_plan_or_non_dry_run_routes(self) -> None:
+        session = _session(contexts=[])
+        lines: list[str] = []
+
+        print_plan_dry_run_preview(SimpleNamespace(), session, print_fn=lines.append)
+
+        self.assertEqual(lines, [])
 
     def test_restart_port_rebound_summary_lines_deduplicate_port_changes(self) -> None:
         route = parse_route(["restart"], env={})

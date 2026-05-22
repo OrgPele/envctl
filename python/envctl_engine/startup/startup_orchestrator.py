@@ -29,7 +29,7 @@ from envctl_engine.startup.finalization import (
     format_degraded_handoff_text_for_terminal,
     format_failure_context_label as finalization_format_failure_context_label,
     headless_plan_session_summary_lines,
-    plan_dry_run_preview_lines,
+    print_plan_dry_run_preview as print_plan_dry_run_preview_impl,
     plan_session_summary_lines as finalization_plan_session_summary_lines,
     render_final_failure_status as finalization_render_final_failure_status,
     render_project_startup_warnings as finalization_render_project_startup_warnings,
@@ -480,19 +480,7 @@ class StartupOrchestrator:
         return route.command == "plan" and bool(route.flags.get("batch"))
 
     def _print_plan_dry_run_preview(self, session: StartupSession) -> None:
-        route = session.effective_route
-        if route.command != "plan" or not bool(route.flags.get("dry_run")):
-            return
-        planning_orchestrator = getattr(self.runtime, "planning_worktree_orchestrator", None)
-        selection_getter = getattr(planning_orchestrator, "last_plan_selection_result", None)
-        selection_result = selection_getter() if callable(selection_getter) else None
-        created_names = {
-            worktree.name
-            for worktree in getattr(selection_result, "created_worktrees", ())
-            if isinstance(worktree, CreatedPlanWorktree)
-        }
-        for line in plan_dry_run_preview_lines(session, created_names=created_names):
-            print(line)
+        print_plan_dry_run_preview_impl(self.runtime, session, print_fn=print)
 
     def _maybe_attach_plan_agent_terminal(self, session: StartupSession) -> int | None:
         self._validate_plan_agent_handoff(session, phase="interactive_attach")
