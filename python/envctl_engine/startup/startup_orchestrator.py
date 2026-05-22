@@ -48,6 +48,9 @@ from envctl_engine.startup.plan_agent_handoff import (
     emit_plan_agent_launch_state as emit_plan_agent_launch_state_impl,
     local_startup_failure_reason as plan_agent_local_startup_failure_reason,
     plan_agent_launch_failure_message as plan_agent_launch_failure_message_impl,
+    plan_agent_launch_spinner_label as plan_agent_launch_spinner_label_impl,
+    plan_agent_launch_spinner_message as plan_agent_launch_spinner_message_impl,
+    plan_agent_launch_spinner_success_message as plan_agent_launch_spinner_success_message_impl,
     record_plan_agent_handoff_local_startup_failure as record_plan_agent_handoff_local_startup_failure_impl,
     should_fail_for_plan_agent_launch_result as should_fail_for_plan_agent_launch_result_impl,
 )
@@ -681,27 +684,15 @@ class StartupOrchestrator:
 
     @staticmethod
     def _plan_agent_launch_spinner_label(launch_config: PlanAgentLaunchConfig) -> str:
-        transport = str(getattr(launch_config, "transport", "")).strip().lower()
-        cli = str(getattr(launch_config, "cli", "")).strip().lower()
-        if transport == "omx":
-            return "OMX-managed Codex"
-        if cli == "opencode":
-            return "OpenCode"
-        if cli == "codex":
-            return "Codex"
-        return "AI"
+        return plan_agent_launch_spinner_label_impl(launch_config)
 
     @classmethod
     def _plan_agent_launch_spinner_message(cls, launch_config: PlanAgentLaunchConfig, *, count: int) -> str:
-        label = cls._plan_agent_launch_spinner_label(launch_config)
-        noun = "session" if count == 1 else "sessions"
-        return f"Launching {label} AI {noun}..."
+        return plan_agent_launch_spinner_message_impl(launch_config, count=count)
 
     @classmethod
     def _plan_agent_launch_spinner_success_message(cls, launch_config: PlanAgentLaunchConfig, *, count: int) -> str:
-        label = cls._plan_agent_launch_spinner_label(launch_config)
-        noun = "session" if count == 1 else "sessions"
-        return f"{label} AI {noun} ready"
+        return plan_agent_launch_spinner_success_message_impl(launch_config, count=count)
 
     def _resolve_disabled_startup_mode(self, session: StartupSession) -> int | None:
         rt = self.runtime

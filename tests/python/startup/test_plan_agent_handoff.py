@@ -7,6 +7,9 @@ from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.startup.plan_agent_handoff import (
     emit_plan_agent_launch_state,
     local_startup_failure_reason,
+    plan_agent_launch_spinner_label,
+    plan_agent_launch_spinner_message,
+    plan_agent_launch_spinner_success_message,
     plan_agent_launch_failure_message,
     record_plan_agent_handoff_local_startup_failure,
     should_fail_for_plan_agent_launch_result,
@@ -182,6 +185,25 @@ class PlanAgentHandoffTests(unittest.TestCase):
         self.assertEqual(
             plan_agent_launch_failure_message(launch_result),
             "Plan agent session failed to start: missing_executables",
+        )
+
+    def test_plan_agent_launch_spinner_text_describes_transport_and_count(self) -> None:
+        self.assertEqual(plan_agent_launch_spinner_label(SimpleNamespace(transport="omx", cli="codex")), "OMX-managed Codex")
+        self.assertEqual(plan_agent_launch_spinner_label(SimpleNamespace(transport="tmux", cli="opencode")), "OpenCode")
+        self.assertEqual(plan_agent_launch_spinner_label(SimpleNamespace(transport="cmux", cli="codex")), "Codex")
+        self.assertEqual(plan_agent_launch_spinner_label(SimpleNamespace(transport="cmux", cli="unknown")), "AI")
+
+        self.assertEqual(
+            plan_agent_launch_spinner_message(SimpleNamespace(transport="tmux", cli="codex"), count=1),
+            "Launching Codex AI session...",
+        )
+        self.assertEqual(
+            plan_agent_launch_spinner_message(SimpleNamespace(transport="tmux", cli="codex"), count=2),
+            "Launching Codex AI sessions...",
+        )
+        self.assertEqual(
+            plan_agent_launch_spinner_success_message(SimpleNamespace(transport="omx", cli="codex"), count=1),
+            "OMX-managed Codex AI session ready",
         )
 
 

@@ -54,6 +54,30 @@ def plan_agent_launch_failure_message(launch_result: object) -> str:
     return f"Plan agent session failed to start{suffix}"
 
 
+def plan_agent_launch_spinner_label(launch_config: object) -> str:
+    transport = str(getattr(launch_config, "transport", "")).strip().lower()
+    cli = str(getattr(launch_config, "cli", "")).strip().lower()
+    if transport == "omx":
+        return "OMX-managed Codex"
+    if cli == "opencode":
+        return "OpenCode"
+    if cli == "codex":
+        return "Codex"
+    return "AI"
+
+
+def plan_agent_launch_spinner_message(launch_config: object, *, count: int) -> str:
+    label = plan_agent_launch_spinner_label(launch_config)
+    noun = "session" if count == 1 else "sessions"
+    return f"Launching {label} AI {noun}..."
+
+
+def plan_agent_launch_spinner_success_message(launch_config: object, *, count: int) -> str:
+    label = plan_agent_launch_spinner_label(launch_config)
+    noun = "session" if count == 1 else "sessions"
+    return f"{label} AI {noun} ready"
+
+
 def local_startup_failure_reason(error: str) -> str | None:
     if "missing_service_start_command" in error:
         return "missing_service_start_command"
