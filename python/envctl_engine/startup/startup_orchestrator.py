@@ -49,8 +49,10 @@ from envctl_engine.startup.plan_agent_handoff import (
     plan_agent_launch_spinner_label as plan_agent_launch_spinner_label_impl,
     plan_agent_launch_spinner_message as plan_agent_launch_spinner_message_impl,
     plan_agent_launch_spinner_success_message as plan_agent_launch_spinner_success_message_impl,
+    plan_agent_handoff_validation_required as plan_agent_handoff_validation_required_impl,
     record_plan_agent_handoff_local_startup_failure as record_plan_agent_handoff_local_startup_failure_impl,
     record_stale_plan_agent_handoff as record_stale_plan_agent_handoff_impl,
+    should_degrade_to_plan_agent_handoff as should_degrade_to_plan_agent_handoff_impl,
     should_fail_for_plan_agent_launch_result as should_fail_for_plan_agent_launch_result_impl,
 )
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
@@ -1706,16 +1708,7 @@ class StartupOrchestrator:
 
     def _should_degrade_to_plan_agent_handoff(self, session: StartupSession, *, error: str) -> bool:
         self._validate_plan_agent_handoff(session, phase="local_startup_failure")
-        route = session.effective_route
-        if route.command != "plan":
-            return False
-        if self._local_startup_failure_reason(error) is None:
-            return False
-        if not session.plan_agent_session_started:
-            return False
-        if bool(route.flags.get("batch")):
-            return True
-        return session.plan_agent_attach_target is not None
+        return should_degrade_to_plan_agent_handoff_impl(session, error=error)
 
     def _validate_plan_agent_handoff(self, session: StartupSession, *, phase: str) -> None:
         if not self._plan_agent_handoff_validation_required(session):
@@ -1737,10 +1730,7 @@ class StartupOrchestrator:
         self._record_stale_plan_agent_handoff(session, validation_reason="attach_target_stale_after_launch")
 
     def _plan_agent_handoff_validation_required(self, session: StartupSession) -> bool:
-        route = session.effective_route
-        if route.command != "plan":
-            return False
-        return bool(route.flags.get("omx"))
+        return plan_agent_handoff_validation_required_impl(session)
 
     def _record_stale_plan_agent_handoff(self, session: StartupSession, *, validation_reason: str) -> None:
         record_stale_plan_agent_handoff_impl(self.runtime, session, validation_reason=validation_reason)

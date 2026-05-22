@@ -206,6 +206,26 @@ def should_fail_for_plan_agent_launch_result(session: StartupSession, launch_res
     return launch_failed and not session.plan_agent_attach_target
 
 
+def plan_agent_handoff_validation_required(session: StartupSession) -> bool:
+    route = session.effective_route
+    if route.command != "plan":
+        return False
+    return bool(route.flags.get("omx"))
+
+
+def should_degrade_to_plan_agent_handoff(session: StartupSession, *, error: str) -> bool:
+    route = session.effective_route
+    if route.command != "plan":
+        return False
+    if local_startup_failure_reason(error) is None:
+        return False
+    if not session.plan_agent_session_started:
+        return False
+    if bool(route.flags.get("batch")):
+        return True
+    return session.plan_agent_attach_target is not None
+
+
 def plan_agent_launch_failure_message(launch_result: object) -> str:
     details = []
     for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):

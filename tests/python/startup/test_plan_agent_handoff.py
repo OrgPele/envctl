@@ -15,9 +15,11 @@ from envctl_engine.startup.plan_agent_handoff import (
     plan_agent_launch_spinner_message,
     plan_agent_launch_spinner_success_message,
     plan_agent_launch_failure_message,
+    plan_agent_handoff_validation_required,
     record_plan_agent_handoff_local_startup_failure,
     record_stale_plan_agent_handoff,
     should_fail_for_plan_agent_launch_result,
+    should_degrade_to_plan_agent_handoff,
 )
 from envctl_engine.startup.session import StartupSession
 
@@ -165,6 +167,47 @@ class PlanAgentHandoffTests(unittest.TestCase):
         start_session = _session(args=["--trees"])
         start_session.plan_agent_launch_requested = True
         self.assertFalse(should_fail_for_plan_agent_launch_result(start_session, failed_result))
+
+    def test_plan_agent_handoff_validation_required_only_for_omx_plan_routes(self) -> None:
+        self.assertTrue(plan_agent_handoff_validation_required(_session(args=["plan", "--omx"])))
+        self.assertFalse(plan_agent_handoff_validation_required(_session(args=["plan", "--tmux"])))
+        self.assertFalse(plan_agent_handoff_validation_required(_session(args=["--trees", "--omx"])))
+
+    def test_should_degrade_to_plan_agent_handoff_requires_plan_session_and_known_error(self) -> None:
+        session = _session(args=["plan", "--tmux", "--headless"])
+        session.plan_agent_launch_result = SimpleNamespace(status="launched", outcomes=())
+
+        self.assertTrue(
+            should_degrade_to_plan_agent_handoff(
+                session,
+                error="missing_service_start_command: backend",
+            )
+        )
+        self.assertFalse(should_degrade_to_plan_agent_handoff(session, error="backend crashed"))
+
+        no_session = _session(args=["plan", "--tmux", "--headless"])
+        self.assertFalse(
+            should_degrade_to_plan_agent_handoff(
+                no_session,
+                error="missing_service_start_command: backend",
+            )
+        )
+
+        interactive_session = _session(args=["plan", "--tmux"])
+        interactive_session.plan_agent_launch_result = SimpleNamespace(status="launched", outcomes=())
+        self.assertFalse(
+            should_degrade_to_plan_agent_handoff(
+                interactive_session,
+                error="missing_service_start_command: backend",
+            )
+        )
+        interactive_session.plan_agent_attach_target = SimpleNamespace(session_name="envctl-plan")
+        self.assertTrue(
+            should_degrade_to_plan_agent_handoff(
+                interactive_session,
+                error="missing_service_start_command: backend",
+            )
+        )
 
     def test_plan_agent_launch_failure_message_prefers_outcome_details(self) -> None:
         launch_result = SimpleNamespace(
