@@ -113,7 +113,7 @@ Use `--no-deps` when you want to launch the AI session without dependency prep o
 and dependency prep. Use `--no-infra` when the task does not need backend, frontend, managed dependencies, or
 dependency prep at all.
 
-Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset. By default that preset is `implement_task`. OpenCode cmux and tmux launches submit the rendered prompt body directly and prepend `/ulw-loop` by default; add `--no-ulw-loop` when you want the plain rendered OpenCode prompt for one launch. Codex resolves the preset from the envctl-managed prompt file and submits the full prompt body directly. `implement_plan` is still available when you want to override the default.
+Each launched surface stays interactive. Envctl creates the tab, renames it to a compact worktree-derived title, starts the configured shell, types `cd <worktree>`, starts the selected AI CLI, then sends the configured preset. By default that preset is `implement_task`. OpenCode cmux and tmux launches submit the rendered prompt body directly and prepend `/ulw-loop` by default; add `--no-ulw-loop` when you want the plain rendered OpenCode prompt for one launch. Codex resolves the preset from the envctl-managed prompt file and submits the full prompt body directly.
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
 
@@ -259,7 +259,10 @@ envctl ship --project features_demo-1 --json
 continues to drive the default commit message and envctl-local artifacts such as
 `.envctl-state/`, `MAIN_TASK.md`, `OLD_TASK_*.md`, `trees/`, and `trees-*` stay
 local. The command returns the PR URL plus GitHub check status in a structured
-payload.
+payload. It returns the current state immediately and does not block on pending
+CI; agents can run it in a background/subagent lane, propagate commit/push/PR,
+merge-conflict, failed-check, or review-comment problems immediately, and keep
+the main implementation lane working until final check confirmation is needed.
 
 Use `--plan` when:
 

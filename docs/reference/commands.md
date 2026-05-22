@@ -107,18 +107,15 @@ Behavior:
 - omitting `--preset` installs all built-in presets
 - `envctl install-prompts --help` prints command-specific usage, examples, and Codex-specific guidance
 - built-in presets:
-  - `implement_plan`
   - `implement_task`
-  - `review_task_imp`
   - `review_worktree_imp`
   - `continue_task`
   - `finalize_task`
-  - `merge_trees_into_dev`
+  - `merge_implementation_branches`
   - `create_plan`
   - `create_plan_auto_codex`
   - `create_plan_auto_opencode`
   - `create_plan_auto_omx`
-  - `ship_release`
 - target roots:
   - Codex: `~/.codex/skills/envctl-*`
   - Claude Code: `~/.claude/commands`

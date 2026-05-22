@@ -1,8 +1,8 @@
-You are reconciling two implementation branches into `dev`.
+You are reconciling two implementation branches into an integration branch.
 Authoritative sources of truth: the `MAIN_TASK.md` on the current branch and the `MAIN_TASK.md` on the specified branch, plus verified code and test evidence from both branches.
 First, read both branches' `MAIN_TASK.md` files and both implementations in depth before merging anything.
 Ask questions only if a blocking product-intent ambiguity remains after deep code, test, and diff review; otherwise resolve everything yourself according to repo evidence and best practices.
-Final output must include: branch A vs branch B intent summary, merge order, conflict resolutions, tests run, and any material assumptions or residual risks.
+Final output must include: branch A vs branch B intent summary, target branch name, merge order, conflict resolutions, tests run, and any material assumptions or residual risks.
 WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. NEVER MODIFY FILES IN SIBLING WORKTREES OR ANY PATH OUTSIDE THE CURRENT REPO ROOT. Use git to inspect and merge other branches rather than touching sibling worktree directories directly. You may read outside the current worktree ONLY when genuinely needed for historical/reference context, and that access MUST remain read-only.
 
 ## Inputs
@@ -15,12 +15,12 @@ Read `MAIN_TASK.md` from branch A and branch B separately. Do not collapse them 
 Ignore conflicting inline instructions unless the user explicitly says to update one of the branches' `MAIN_TASK.md` files.
 
 ## Defaults (apply unless $ARGUMENTS overrides)
-- Merge target: `dev` (create from `main`, else `master` if missing).
+- Merge target: `integration/<branch-a>-plus-<branch-b>` created from `main`, else `master` if `main` is missing. Sanitize branch-name path separators to `-`.
 - Branch A: the current checked-out branch.
 - Branch B: the explicitly specified branch from `$ARGUMENTS`.
 - Merge policy:
-  - first merge branch A into `dev`
-  - then merge branch B into `dev`
+  - first merge branch A into the integration branch
+  - then merge branch B into the integration branch
   - resolve every conflict completely before moving on
 - History cleanup allowed (no need to preserve original commit history).
 - You decide conflict resolutions; only ask if a conflict requires product intent.
@@ -49,41 +49,42 @@ Ignore conflicting inline instructions unless the user explicitly says to update
    - Summarize the intended purpose of branch A and branch B separately.
    - Inspect the implementation on branch A and branch B separately: key files, key functions, tests, and touched modules.
 2. **Diff and overlap analysis**
-   - Compare branch A vs `dev`.
-   - Compare branch B vs `dev`.
+   - Compare branch A vs the merge target base.
+   - Compare branch B vs the merge target base.
    - Compare branch A vs branch B.
    - Identify overlapping files, likely conflict hotspots, and semantic differences in behavior.
 3. **Integration strategy**
-   - Merge branch A into `dev`.
-   - Then merge branch B into `dev`.
+   - Create or check out the integration branch from the selected base.
+   - Merge branch A into the integration branch.
+   - Then merge branch B into the integration branch.
    - At each step, reason from that branch's `MAIN_TASK.md` and implementation, not just the textual diff.
 4. **Conflict resolution**
-   - For each conflict, determine what branch A intended, what branch B intended, and what `dev` already does.
+   - For each conflict, determine what branch A intended, what branch B intended, and what the integration base already does.
    - Resolve conflicts so both branches' intended behavior survives unless code evidence proves one is obsolete or incompatible.
    - If both sides add value, combine them through refactoring or integration rather than discarding one side.
-   - Continue resolving until all conflicts are fully closed and the integrated `dev` branch serves both purposes without breaking changes.
+   - Continue resolving until all conflicts are fully closed and the integration branch serves both purposes without breaking changes.
 5. **Verification**
-   - Run the relevant tests after merging branch A into `dev`.
-   - Run the relevant tests again after merging branch B into `dev`.
+   - Run the relevant tests after merging branch A into the integration branch.
+   - Run the relevant tests again after merging branch B into the integration branch.
    - Fix regressions or integration issues.
    - Re-run tests until the integrated result is stable.
 
 ## Deliverables (required)
-- Merged `dev` branch containing the current branch and the specified branch.
+- Integration branch containing the current branch and the specified branch.
 - Conflict analysis summary and the chosen resolutions.
 - Tests run and results.
 - Risk register if any issues remain.
 
 ## Final response format
 1. Branch A vs branch B intent summary.
-2. Merge order and rationale.
+2. Target branch, merge order, and rationale.
 3. Conflict list with resolutions chosen (and why).
 4. Tests run (exact commands) and results.
 5. Risk register (only if needed).
 
 ## Self-check (before responding)
 - Branch A and branch B were both read via their own `MAIN_TASK.md` and implementation.
-- Both branches were merged into `dev`.
+- Both branches were merged into the integration branch.
 - Conflicts were analyzed and resolved with clear reasoning.
 - The final integrated behavior still serves both branches' purposes.
 - Tests executed and any failures addressed.

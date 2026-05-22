@@ -21,8 +21,6 @@ class CommandExitCodeTests(unittest.TestCase):
 
     def _codex_skill_target(self, *, home: Path, preset: str) -> Path:
         skill_name = f"envctl-{preset.replace('_', '-')}"
-        if preset == "review_task_imp":
-            skill_name = "envctl-review-task"
         if preset == "review_worktree_imp":
             skill_name = "envctl-review-worktree"
         return home / ".codex" / "skills" / skill_name / "SKILL.md"
@@ -564,33 +562,6 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertIn("read-only", written)
             self.assertIn("findings-first", written)
 
-    def test_install_prompts_cli_run_installs_opencode_review_prompt_with_original_plan_contract(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo = Path(tmpdir) / "repo"
-            runtime = Path(tmpdir) / "runtime"
-            home = Path(tmpdir) / "home"
-            target = home / ".config" / "opencode" / "commands" / "review_task_imp.md"
-            repo.mkdir(parents=True, exist_ok=True)
-
-            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap:
-                code = cli.run(
-                    ["install-prompts", "--cli", "opencode", "--preset", "review_task_imp", "--json"],
-                    env={
-                        "RUN_REPO_ROOT": str(repo),
-                        "RUN_SH_RUNTIME_DIR": str(runtime),
-                        "HOME": str(home),
-                    },
-                )
-
-            self.assertEqual(code, 0)
-            bootstrap.assert_not_called()
-            written = target.read_text(encoding="utf-8")
-            self.assertIn("Authoritative source of truth: the original plan file that created this worktree.", written)
-            self.assertIn(".envctl-state/worktree-provenance.json", written)
-            self.assertIn("If no original plan file can be resolved, stop and report exactly what was missing", written)
-            self.assertNotIn("Authoritative source of truth: `MAIN_TASK.md`.", written)
-            self.assertNotIn("Verify functionality matches MAIN_TASK.md exactly", written)
-
     def test_install_prompts_cli_run_installs_create_plan_auto_codex_skill(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -618,7 +589,7 @@ class CommandExitCodeTests(unittest.TestCase):
             written = target.read_text(encoding="utf-8")
             self.assertIn("$envctl-create-plan-auto-codex", written)
             self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles>", written)
-            self.assertIn("exactly one integer from `0` through `8`", written)
+            self.assertIn("--preset implement_task", written)
             self.assertNotIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <category>/<slug>", written)
             self.assertIn("--new-session", written)
 
@@ -648,45 +619,11 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertTrue(target.exists())
             written = target.read_text(encoding="utf-8")
             self.assertIn(
-                "envctl --plan <category>/<slug> --cmux --opencode --entire-system "
+                "envctl --plan <category>/<slug> --cmux --opencode --preset implement_task --entire-system "
                 "--headless --new-session",
                 written,
             )
-            self.assertIn("Codex cycle settings are intentionally ignored for this surface", written)
-
-    def test_install_prompts_cli_run_keeps_with_codex_skills_as_compatibility_noop(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo = Path(tmpdir) / "repo"
-            runtime = Path(tmpdir) / "runtime"
-            home = Path(tmpdir) / "home"
-            target = self._codex_skill_target(home=home, preset="ship_release")
-            repo.mkdir(parents=True, exist_ok=True)
-            stdout = StringIO()
-
-            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap, redirect_stdout(stdout):
-                code = cli.run(
-                    [
-                        "install-prompts",
-                        "--cli",
-                        "codex",
-                        "--preset",
-                        "ship_release",
-                        "--with-codex-skills",
-                        "--json",
-                    ],
-                    env={
-                        "RUN_REPO_ROOT": str(repo),
-                        "RUN_SH_RUNTIME_DIR": str(runtime),
-                        "HOME": str(home),
-                    },
-                )
-
-            self.assertEqual(code, 0)
-            bootstrap.assert_not_called()
-            payload = json.loads(stdout.getvalue())
-            self.assertIn("skill_results", payload)
-            self.assertEqual(payload["skill_results"][0]["path"], str(target))
-            self.assertTrue(target.exists())
+            self.assertIn("OpenCode plan-agent launches use the `/ulw-loop` prefix by default", written)
 
     def test_doctor_repo_resolves_root_without_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

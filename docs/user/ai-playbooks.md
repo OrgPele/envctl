@@ -37,20 +37,17 @@ Notes:
 
 Current built-in presets:
 
-- `implement_plan`
 - `implement_task`
-- `review_task_imp`
 - `review_worktree_imp`
 - `continue_task`
 - `finalize_task`
-- `merge_trees_into_dev`
+- `merge_implementation_branches`
 - `create_plan`
 - `create_plan_auto_codex`
 - `create_plan_auto_opencode`
 - `create_plan_auto_omx`
-- `ship_release`
 
-`implement_task` is the default preset used by the optional post-`--plan` launch flow. For Codex, envctl resolves the shipped preset body and submits it directly; the installed `SKILL.md` files are for direct manual Codex use. `implement_plan` remains available as a backward-compatible preset.
+`implement_task` is the default preset used by the optional post-`--plan` launch flow. For Codex, envctl resolves the shipped preset body and submits it directly; the installed `SKILL.md` files are for direct manual Codex use.
 
 All Codex presets now install as explicit-only skills. Run `envctl install-prompts --cli codex`, then edit the generated `SKILL.md` files under `~/.codex/skills/envctl-*` if you want to customize them for manual Codex use. The installed skills are explicit-only and use names such as:
 
@@ -214,6 +211,11 @@ envctl ship --project api --json
 
 This commits with the same `.envctl-commit-message.md` behavior as
 `envctl commit`, creates a PR only when needed, and reports GitHub check status.
+`ship` returns the current PR/check state instead of blocking on pending CI. In
+agent workflows, run it in a background/subagent lane when available; the
+shipping lane should surface commit, push, PR, merge-conflict, failed-check, or
+review-comment problems immediately while the main implementation lane continues
+non-overlapping work. Before final handoff, wait for required checks to finish.
 For generated worktrees, the project selector is the branch name.
 
 ## Multi-Repo Control

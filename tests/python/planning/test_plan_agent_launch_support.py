@@ -3761,20 +3761,6 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             "_plan_agent_pr_review_comments_followup.md",
         )
 
-    def test_build_plan_agent_workflow_uses_direct_submission_for_ship_release(self) -> None:
-        self.assertIsNotNone(_build_plan_agent_workflow)
-        workflow = _build_plan_agent_workflow(cli="codex", preset="ship_release", codex_cycles=0)
-
-        self.assertEqual(workflow.mode, "single_prompt")
-        self.assertEqual(
-            [(step.kind, step.text) for step in workflow.steps],
-            [
-                ("submit_direct_prompt", "ship_release"),
-                ("queue_message", _browser_e2e_instruction_text()),
-                ("queue_message", _pr_review_comments_instruction_text()),
-            ],
-        )
-
     def test_build_plan_agent_workflow_for_single_cycle_adds_finalization_and_browser_e2e_messages(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
         self.assertIsNotNone(_finalization_instruction_text)
@@ -3865,9 +3851,9 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
     def test_workflow_step_prompt_text_loads_direct_codex_prompt_body(self) -> None:
         self.assertIsNotNone(_workflow_step_prompt_text)
         with tempfile.TemporaryDirectory() as tmpdir:
-            prompt_path = Path(tmpdir) / ".config" / "envctl" / "codex" / "prompts" / "ship_release.md"
+            prompt_path = Path(tmpdir) / ".config" / "envctl" / "codex" / "prompts" / "implement_task.md"
             prompt_path.parent.mkdir(parents=True, exist_ok=True)
-            prompt_path.write_text("Ship this release carefully.\n", encoding="utf-8")
+            prompt_path.write_text("Implement this task carefully.\n", encoding="utf-8")
             runtime = _RuntimeHarness(
                 config=load_config(
                     {
@@ -3878,7 +3864,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 env={"HOME": tmpdir},
                 process_runner=_RecordingRunner(),
             )
-            step = workflow._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="ship_release")
+            step = workflow._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")
 
             prompt_text, error = _workflow_step_prompt_text(
                 runtime,
@@ -3888,7 +3874,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             )
 
         self.assertIsNone(error)
-        self.assertEqual(prompt_text, "Ship this release carefully.\n")
+        self.assertEqual(prompt_text, "Implement this task carefully.\n")
 
     def test_workflow_step_prompt_text_preserves_literal_arguments_mentions_in_review_prompt(self) -> None:
         self.assertIsNotNone(_workflow_step_prompt_text)
@@ -4298,7 +4284,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             runtime,
             launch_config=_launch_config_for_tests(cli="codex"),
             cli="codex",
-            preset="ship_release",
+            preset="merge_implementation_branches",
         )
 
         self.assertIsNone(error)
