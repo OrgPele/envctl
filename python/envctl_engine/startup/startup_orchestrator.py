@@ -462,16 +462,17 @@ class StartupOrchestrator:
             print_startup_summary=lambda **kwargs: print_startup_summary_impl(self, **kwargs),
             startup_breakdown_enabled=lambda route: startup_breakdown_enabled_impl(self, route),
             suppress_progress_output=self._suppress_progress_output,
-            print_restart_port_rebound_summary=self._print_restart_port_rebound_summary,
+            print_restart_port_rebound_summary=lambda session: print_restart_port_rebound_summary_impl(
+                self.runtime,
+                session,
+                print_fn=print,
+            ),
             emit_snapshot=self._emit_snapshot,
             headless_plan_output_only=finalization_headless_plan_output_only,
             print_headless_plan_session_summary=self._print_headless_plan_session_summary,
             maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
             finalize_plan_agent_degraded_handoff=self._finalize_plan_agent_degraded_handoff,
         )
-
-    def _print_restart_port_rebound_summary(self, session: StartupSession) -> None:
-        print_restart_port_rebound_summary_impl(self.runtime, session, print_fn=print)
 
     def _print_plan_dry_run_preview(self, session: StartupSession) -> None:
         print_plan_dry_run_preview_impl(self.runtime, session, print_fn=print)
