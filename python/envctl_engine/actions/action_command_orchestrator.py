@@ -17,6 +17,8 @@ from envctl_engine.actions.action_migrate_support import (
     MigrateResultRecord as _MigrateResultRecord,
     is_migrate_env_source_hint as is_migrate_env_source_hint_impl,
     migrate_env_source_hint_lines as migrate_env_source_hint_lines_impl,
+    migrate_failure_headline as migrate_failure_headline_impl,
+    migrate_failure_headline_from_lines as migrate_failure_headline_from_lines_impl,
     migrate_failure_hint_lines as migrate_failure_hint_lines_impl,
     migrate_result_record as migrate_result_record_impl,
     migrate_result_records as migrate_result_records_impl,
@@ -24,6 +26,7 @@ from envctl_engine.actions.action_migrate_support import (
     print_migrate_failure_logs as print_migrate_failure_logs_impl,
     print_migrate_result_records as print_migrate_result_records_impl,
     print_migrate_result_summary as print_migrate_result_summary_impl,
+    project_action_failure_summary_lines as project_action_failure_summary_lines_impl,
     record_index as record_index_impl,
     render_migrate_project_name as render_migrate_project_name_impl,
     render_migrate_symbol as render_migrate_symbol_impl,
@@ -1363,53 +1366,23 @@ if result.returncode != 0:
         error_output: str,
         migrate_env_metadata: Mapping[str, object] | None = None,
     ) -> list[str]:
-        lines = self._format_summary_error_lines(error_output)
-        if command_name != "migrate":
-            return lines
-        headline = self._migrate_failure_headline_from_lines(lines)
-        hint_lines = self._migrate_failure_hint_lines(error_output)
-        env_lines = self._migrate_env_source_hint_lines(migrate_env_metadata)
-        merged: list[str] = []
-        if headline:
-            merged.append(headline)
-        seen = set(merged)
-        for line in lines:
-            if line in seen:
-                continue
-            merged.append(line)
-            seen.add(line)
-        for hint in [*hint_lines, *env_lines]:
-            if hint in seen:
-                continue
-            merged.append(hint)
-            seen.add(hint)
-        return merged
+        return project_action_failure_summary_lines_impl(
+            command_name=command_name,
+            error_output=error_output,
+            migrate_env_metadata=migrate_env_metadata,
+            format_summary_error_lines=self._format_summary_error_lines,
+        )
 
     @staticmethod
     def _migrate_failure_headline(error_output: str) -> str:
-        lines = ActionCommandOrchestrator._format_summary_error_lines(error_output)
-        headline = ActionCommandOrchestrator._migrate_failure_headline_from_lines(lines)
-        return headline or "Command failed."
+        return migrate_failure_headline_impl(
+            error_output,
+            format_summary_error_lines=ActionCommandOrchestrator._format_summary_error_lines,
+        )
 
     @staticmethod
     def _migrate_failure_headline_from_lines(lines: list[str]) -> str:
-        if not lines:
-            return ""
-        has_exception = any(ActionCommandOrchestrator._is_exception_start(line) for line in lines)
-        for line in lines:
-            if ActionCommandOrchestrator._is_exception_start(line):
-                return line
-        for line in lines:
-            if line == "Traceback (most recent call last):":
-                continue
-            if has_exception and line.startswith('File "'):
-                continue
-            if ActionCommandOrchestrator._is_captured_output_header(line):
-                continue
-            if ActionCommandOrchestrator._is_exception_context_marker(line):
-                continue
-            return line
-        return lines[0]
+        return migrate_failure_headline_from_lines_impl(lines)
 
     @staticmethod
     def _migrate_failure_hint_lines(error_output: str) -> list[str]:

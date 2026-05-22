@@ -8,8 +8,11 @@ import unittest
 
 from envctl_engine.actions.action_migrate_support import (
     MigrateResultRecord,
+    migrate_failure_headline,
+    migrate_failure_headline_from_lines,
     migrate_env_source_hint_lines,
     migrate_failure_hint_lines,
+    project_action_failure_summary_lines,
     migrate_result_record,
     print_migrate_result_records,
 )
@@ -82,6 +85,54 @@ class ActionMigrateSupportTests(unittest.TestCase):
             hints,
             ["hint: backend env source: override | /repo/backend/custom.env | override_resolution=found"],
         )
+
+    def test_migrate_failure_headline_prefers_actionable_exception(self) -> None:
+        lines = [
+            "Traceback (most recent call last):",
+            'File "/tmp/project/backend/alembic/env.py", line 19, in <module>',
+            "alembic.util.exc.CommandError: migration failed",
+        ]
+
+        self.assertEqual(
+            migrate_failure_headline_from_lines(lines),
+            "alembic.util.exc.CommandError: migration failed",
+        )
+        self.assertEqual(
+            migrate_failure_headline("\n".join(lines)),
+            "alembic.util.exc.CommandError: migration failed",
+        )
+
+    def test_project_action_failure_summary_lines_merges_migrate_hints_and_env_source(self) -> None:
+        lines = project_action_failure_summary_lines(
+            command_name="migrate",
+            error_output="\n".join(
+                [
+                    "Traceback (most recent call last):",
+                    '  File "/repo/backend/alembic/env.py", line 12, in <module>',
+                    "pydantic_core._pydantic_core.ValidationError: 1 validation error for Settings",
+                    "DATABASE_URL",
+                    "  Field required [type=missing]",
+                ]
+            ),
+            migrate_env_metadata={
+                "env_file_source": "override",
+                "env_file_path": "/repo/backend/custom.env",
+                "override_requested": True,
+                "override_resolution": "missing",
+            },
+        )
+
+        self.assertEqual(lines[0], "pydantic_core._pydantic_core.ValidationError: 1 validation error for Settings")
+        self.assertIn(
+            "hint: migrate failed before Alembic reached revisions because required env vars were missing "
+            "(DATABASE_URL).",
+            lines,
+        )
+        self.assertIn(
+            "hint: backend env source: override | /repo/backend/custom.env | override_resolution=missing",
+            lines,
+        )
+        self.assertEqual(len(lines), len(dict.fromkeys(lines)))
 
     def test_print_migrate_result_records_compacts_multi_project_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
