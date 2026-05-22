@@ -5,11 +5,25 @@ from types import SimpleNamespace
 import unittest
 
 from envctl_engine.actions.action_test_plan_support import build_test_execution_specs_for_route
+from envctl_engine.actions.action_test_plan_support import is_legacy_tree_test_script, select_test_services
 from envctl_engine.actions.action_test_support import TestTargetContext
 from envctl_engine.runtime.command_router import parse_route
 
 
 class ActionTestPlanSupportTests(unittest.TestCase):
+    def test_test_service_selection_uses_flags_and_additional_service_names(self) -> None:
+        backend_route = parse_route(["test", "--service", "backend"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        frontend_route = parse_route(["test", "--service", "frontend"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        service_route = parse_route(["test", "--service", "voice-runtime"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+
+        self.assertEqual(select_test_services(backend_route, backend_flag=None, frontend_flag=None), (True, False))
+        self.assertEqual(select_test_services(frontend_route, backend_flag=None, frontend_flag=None), (False, True))
+        self.assertEqual(select_test_services(service_route, backend_flag=None, frontend_flag=None), (True, True))
+
+    def test_legacy_tree_test_script_detection_matches_old_shell_wrapper(self) -> None:
+        self.assertTrue(is_legacy_tree_test_script(["bash", "/repo/scripts/test-all-trees.sh"]))
+        self.assertFalse(is_legacy_tree_test_script(["bash", "/repo/scripts/test-one-tree.sh"]))
+
     def test_failed_flag_delegates_to_failed_spec_builder(self) -> None:
         route = parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"})
         expected = [SimpleNamespace(index=1)]

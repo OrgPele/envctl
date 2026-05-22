@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Mapping
 
+from envctl_engine.actions.action_command_support import service_types_from_route_services
 from envctl_engine.actions.action_test_support import TestExecutionSpec, TestTargetContext, build_test_execution_specs
+from envctl_engine.actions.action_test_support import is_backend_only_selection
 from envctl_engine.runtime.command_router import Route
 
 
@@ -72,3 +74,19 @@ def _first_non_empty(*values: object) -> str | None:
         if text:
             return text
     return None
+
+
+def select_test_services(
+    route: Route,
+    backend_flag: object,
+    frontend_flag: object,
+) -> tuple[bool, bool]:
+    return is_backend_only_selection(
+        backend_flag,
+        frontend_flag,
+        service_types_from_route_services(route),
+    )
+
+
+def is_legacy_tree_test_script(command: list[str]) -> bool:
+    return len(command) >= 2 and command[0] == "bash" and command[1].endswith("test-all-trees.sh")

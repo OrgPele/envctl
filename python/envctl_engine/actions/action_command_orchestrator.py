@@ -61,6 +61,8 @@ from envctl_engine.actions.action_test_service_support import (
 )
 from envctl_engine.actions.action_test_plan_support import (
     build_test_execution_specs_for_route as build_test_execution_specs_for_route_impl,
+    is_legacy_tree_test_script as is_legacy_tree_test_script_impl,
+    select_test_services as select_test_services_impl,
 )
 from envctl_engine.actions.project_action_report_support import (
     first_output_line as first_output_line_impl,
@@ -84,7 +86,6 @@ from envctl_engine.actions.action_test_support import (
     TestSuiteSpinnerGroup as _TestSuiteSpinnerGroup,
     TestTargetContext,
     build_test_target_contexts,
-    is_backend_only_selection,
     rich_progress_available as _rich_progress_available,
 )
 from envctl_engine.actions.action_test_runner import run_test_action as run_test_action_impl
@@ -647,11 +648,7 @@ if result.returncode != 0:
         backend_flag: object,
         frontend_flag: object,
     ) -> tuple[bool, bool]:
-        return is_backend_only_selection(
-            backend_flag,
-            frontend_flag,
-            self._service_types_from_route_services(route),
-        )
+        return select_test_services_impl(route, backend_flag, frontend_flag)
 
     def _build_test_execution_specs(
         self,
@@ -1900,7 +1897,7 @@ if result.returncode != 0:
 
     @staticmethod
     def _is_legacy_tree_test_script(command: list[str]) -> bool:
-        return len(command) >= 2 and command[0] == "bash" and command[1].endswith("test-all-trees.sh")
+        return is_legacy_tree_test_script_impl(command)
 
     def _test_target_contexts(self, targets: list[object]) -> list[TestTargetContext]:
         rt = self.runtime
