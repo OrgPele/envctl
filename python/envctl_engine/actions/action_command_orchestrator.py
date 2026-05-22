@@ -40,6 +40,10 @@ from envctl_engine.actions.action_migrate_support import (
 from envctl_engine.actions.action_migrate_execution_support import (
     run_migrate_action as run_migrate_action_impl,
 )
+from envctl_engine.actions.action_output_support import (
+    action_colors_enabled as action_colors_enabled_impl,
+    colorize_action_text as colorize_action_text_impl,
+)
 from envctl_engine.actions.action_failed_rerun_support import (
     build_failed_test_execution_specs_from_state as build_failed_test_execution_specs_from_state_impl,
     summary_indicates_extraction_failure as summary_indicates_extraction_failure_impl,
@@ -138,7 +142,6 @@ from envctl_engine.startup.service_bootstrap_domain import (
 from envctl_engine.state.models import RequirementsResult
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.test_output.test_runner import TestRunner
-from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
 from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
@@ -852,40 +855,16 @@ class ActionCommandOrchestrator:
         return project_action_success_status_impl(command_name=command_name, completed=completed)
 
     def _colors_enabled(self) -> bool:
-        rt_env = getattr(self.runtime, "env", {})
-        interactive_tty = False
-        can_interactive_tty = getattr(self.runtime.raw_runtime, "_can_interactive_tty", None)
-        if callable(can_interactive_tty):
-            try:
-                interactive_tty = bool(can_interactive_tty())
-            except Exception:
-                interactive_tty = False
-        return colors_enabled(rt_env, stream=sys.stdout, interactive_tty=interactive_tty)
+        return action_colors_enabled_impl(self.runtime)
 
     def _colorize(self, text: str, *, fg: str | None = None, bold: bool = False, dim: bool = False) -> str:
-        if not self._colors_enabled():
-            return text
-        palette = {
-            "red": "31",
-            "green": "32",
-            "yellow": "33",
-            "blue": "34",
-            "magenta": "35",
-            "cyan": "36",
-            "gray": "90",
-        }
-        codes: list[str] = []
-        if bold:
-            codes.append("1")
-        if dim:
-            codes.append("2")
-        if fg is not None:
-            code = palette.get(str(fg).strip().lower())
-            if code is not None:
-                codes.append(code)
-        if not codes:
-            return text
-        return f"\033[{';'.join(codes)}m{text}\033[0m"
+        return colorize_action_text_impl(
+            text,
+            enabled=self._colors_enabled(),
+            fg=fg,
+            bold=bold,
+            dim=dim,
+        )
 
     @staticmethod
     def _command_start_status(command_name: str, targets: list[object]) -> str:
