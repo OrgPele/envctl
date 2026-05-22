@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from pathlib import Path
+import shlex
 from typing import Any
 
+from envctl_engine.planning.plan_agent.config import resolve_plan_agent_launch_config
 from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
+from envctl_engine.planning.plan_agent.models import PlanAgentLaunchOutcome, PlanAgentLaunchResult
+from envctl_engine.planning.plan_agent.recovery import plan_agent_native_recovery_command
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 from envctl_engine.startup.session import LocalStartupFailure, StartupSession
@@ -118,6 +123,77 @@ def emit_plan_agent_launch_state(runtime: Any, session: StartupSession, launch_r
         failed_worktrees=failed_worktrees,
         session_name=session_name or None,
         implementation_session_running=session.plan_agent_session_started,
+    )
+
+
+def record_stale_plan_agent_handoff(
+    runtime: Any,
+    session: StartupSession,
+    *,
+    validation_reason: str,
+    resolve_launch_config_fn: Callable[..., object] = resolve_plan_agent_launch_config,
+    recovery_command_fn: Callable[..., tuple[str, ...]] = plan_agent_native_recovery_command,
+) -> None:
+    attach_target = session.plan_agent_attach_target
+    if attach_target is None:
+        return
+    stale_session_name = str(getattr(attach_target, "session_name", "") or "").strip()
+    stale_attach_command = " ".join(
+        str(part).strip() for part in getattr(attach_target, "attach_command", ()) if str(part).strip()
+    )
+    session.plan_agent_stale_session_name = stale_session_name
+    session.plan_agent_stale_attach_command = stale_attach_command
+    session.plan_agent_handoff_validation_reason = validation_reason
+    session.plan_agent_handoff_degraded = True
+    launch_config = resolve_launch_config_fn(runtime.config, getattr(runtime, "env", {}), route=session.effective_route)
+    recovery_command = shlex.join(
+        recovery_command_fn(
+            runtime,
+            route=session.effective_route,
+            launch_config=launch_config,
+            created_worktrees=tuple(session.pending_plan_agent_worktrees),
+        )
+    )
+    session.plan_agent_recovery_command = recovery_command
+    session.plan_agent_attach_target = None
+    launch_result = session.plan_agent_launch_result
+    outcomes = tuple(getattr(launch_result, "outcomes", ()) or ()) if launch_result is not None else ()
+    failed_outcomes = []
+    for outcome in outcomes:
+        failed_outcomes.append(
+            PlanAgentLaunchOutcome(
+                worktree_name=str(getattr(outcome, "worktree_name", "") or ""),
+                worktree_root=Path(getattr(outcome, "worktree_root", ".") or "."),
+                surface_id=getattr(outcome, "surface_id", None),
+                status="failed",
+                reason=validation_reason,
+            )
+        )
+    session.plan_agent_launch_result = PlanAgentLaunchResult(
+        status="failed",
+        reason=validation_reason,
+        outcomes=tuple(failed_outcomes),
+        attach_target=None,
+    )
+    session.base_metadata.update(
+        {
+            "plan_agent_handoff_degraded": True,
+            "implementation_session_running": False,
+            "plan_agent_stale_session_name": stale_session_name,
+            "plan_agent_stale_attach_command": stale_attach_command,
+            "plan_agent_handoff_validation_reason": validation_reason,
+            "plan_agent_launch_status": "failed",
+            "plan_agent_launch_reason": validation_reason,
+        }
+    )
+    if recovery_command:
+        session.base_metadata["plan_agent_recovery_command"] = recovery_command
+    runtime._emit(
+        "startup.plan_agent_handoff.validation_failed",
+        reason=validation_reason,
+        stale_session_name=stale_session_name or None,
+        stale_attach_command=stale_attach_command or None,
+        recovery_command=recovery_command or None,
     )
 
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
+from envctl_engine.planning.plan_agent.models import PlanAgentLaunchOutcome, PlanAgentLaunchResult
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.startup.plan_agent_handoff import (
     emit_plan_agent_launch_state,
@@ -14,6 +16,7 @@ from envctl_engine.startup.plan_agent_handoff import (
     plan_agent_launch_spinner_success_message,
     plan_agent_launch_failure_message,
     record_plan_agent_handoff_local_startup_failure,
+    record_stale_plan_agent_handoff,
     should_fail_for_plan_agent_launch_result,
 )
 from envctl_engine.startup.session import StartupSession
@@ -283,6 +286,79 @@ class PlanAgentHandoffTests(unittest.TestCase):
         self.assertIn(("success", "Codex AI sessions ready"), spinner_actions)
         lifecycle_events = [event for event in events if event[0] == "ui.spinner.lifecycle"]
         self.assertEqual([event[1]["state"] for event in lifecycle_events], ["start", "success", "stop"])
+
+    def test_record_stale_plan_agent_handoff_rewrites_session_and_emits_validation_event(self) -> None:
+        session = _session(args=["plan", "--omx", "--codex"])
+        session.pending_plan_agent_worktrees = (SimpleNamespace(name="feature-a-1"),)
+        session.plan_agent_attach_target = SimpleNamespace(
+            session_name=" stale-session ",
+            attach_command=("tmux", "attach", "-t", "stale-session"),
+        )
+        session.plan_agent_launch_result = PlanAgentLaunchResult(
+            status="launched",
+            reason="launched",
+            outcomes=(
+                PlanAgentLaunchOutcome(
+                    worktree_name="feature-a-1",
+                    worktree_root=Path("/tmp/feature-a-1"),
+                    surface_id="surface-1",
+                    status="launched",
+                ),
+            ),
+            attach_target=session.plan_agent_attach_target,
+        )
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(),
+            env={},
+            _emit=lambda event, **payload: events.append((event, payload)),
+        )
+
+        record_stale_plan_agent_handoff(
+            runtime,
+            session,
+            validation_reason="attach_target_stale_after_launch",
+            resolve_launch_config_fn=lambda config, env, *, route: SimpleNamespace(transport="tmux", cli="codex"),
+            recovery_command_fn=lambda rt, *, route, launch_config, created_worktrees: (
+                "envctl",
+                "--plan",
+                "feature-a",
+                "--tmux",
+            ),
+        )
+
+        self.assertIsNone(session.plan_agent_attach_target)
+        self.assertTrue(session.plan_agent_handoff_degraded)
+        self.assertEqual(session.plan_agent_stale_session_name, "stale-session")
+        self.assertEqual(session.plan_agent_stale_attach_command, "tmux attach -t stale-session")
+        self.assertEqual(session.plan_agent_handoff_validation_reason, "attach_target_stale_after_launch")
+        self.assertEqual(session.plan_agent_recovery_command, "envctl --plan feature-a --tmux")
+        assert session.plan_agent_launch_result is not None
+        self.assertEqual(session.plan_agent_launch_result.status, "failed")
+        self.assertEqual(session.plan_agent_launch_result.reason, "attach_target_stale_after_launch")
+        self.assertEqual(session.plan_agent_launch_result.attach_target, None)
+        self.assertEqual(session.plan_agent_launch_result.outcomes[0].status, "failed")
+        self.assertEqual(session.plan_agent_launch_result.outcomes[0].reason, "attach_target_stale_after_launch")
+        self.assertEqual(session.plan_agent_launch_result.outcomes[0].surface_id, "surface-1")
+        self.assertEqual(session.base_metadata["plan_agent_handoff_degraded"], True)
+        self.assertEqual(session.base_metadata["implementation_session_running"], False)
+        self.assertEqual(session.base_metadata["plan_agent_stale_session_name"], "stale-session")
+        self.assertEqual(session.base_metadata["plan_agent_stale_attach_command"], "tmux attach -t stale-session")
+        self.assertEqual(session.base_metadata["plan_agent_recovery_command"], "envctl --plan feature-a --tmux")
+        self.assertEqual(
+            events,
+            [
+                (
+                    "startup.plan_agent_handoff.validation_failed",
+                    {
+                        "reason": "attach_target_stale_after_launch",
+                        "stale_session_name": "stale-session",
+                        "stale_attach_command": "tmux attach -t stale-session",
+                        "recovery_command": "envctl --plan feature-a --tmux",
+                    },
+                )
+            ],
+        )
 
 
 if __name__ == "__main__":

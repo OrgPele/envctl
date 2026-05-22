@@ -3,7 +3,6 @@ from __future__ import annotations
 import concurrent.futures
 from contextlib import nullcontext
 from pathlib import Path
-import shlex
 import sys
 import threading
 import time
@@ -15,11 +14,9 @@ from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
 from envctl_engine.planning.plan_agent.models import (
     CreatedPlanWorktree,
     PlanAgentLaunchConfig,
-    PlanAgentLaunchOutcome,
     PlanAgentLaunchResult,
 )
 from envctl_engine.planning.plan_agent.omx_transport import validate_plan_agent_attach_target
-from envctl_engine.planning.plan_agent.recovery import plan_agent_native_recovery_command
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope, route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
@@ -53,6 +50,7 @@ from envctl_engine.startup.plan_agent_handoff import (
     plan_agent_launch_spinner_message as plan_agent_launch_spinner_message_impl,
     plan_agent_launch_spinner_success_message as plan_agent_launch_spinner_success_message_impl,
     record_plan_agent_handoff_local_startup_failure as record_plan_agent_handoff_local_startup_failure_impl,
+    record_stale_plan_agent_handoff as record_stale_plan_agent_handoff_impl,
     should_fail_for_plan_agent_launch_result as should_fail_for_plan_agent_launch_result_impl,
 )
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
@@ -1745,71 +1743,7 @@ class StartupOrchestrator:
         return bool(route.flags.get("omx"))
 
     def _record_stale_plan_agent_handoff(self, session: StartupSession, *, validation_reason: str) -> None:
-        attach_target = session.plan_agent_attach_target
-        if attach_target is None:
-            return
-        stale_session_name = str(getattr(attach_target, "session_name", "") or "").strip()
-        stale_attach_command = " ".join(
-            str(part).strip() for part in getattr(attach_target, "attach_command", ()) if str(part).strip()
-        )
-        session.plan_agent_stale_session_name = stale_session_name
-        session.plan_agent_stale_attach_command = stale_attach_command
-        session.plan_agent_handoff_validation_reason = validation_reason
-        session.plan_agent_handoff_degraded = True
-        launch_config = resolve_plan_agent_launch_config(
-            self.runtime.config,
-            getattr(self.runtime, "env", {}),
-            route=session.effective_route,
-        )
-        recovery_command = shlex.join(
-            plan_agent_native_recovery_command(
-                self.runtime,
-                route=session.effective_route,
-                launch_config=launch_config,
-                created_worktrees=tuple(session.pending_plan_agent_worktrees),
-            )
-        )
-        session.plan_agent_recovery_command = recovery_command
-        session.plan_agent_attach_target = None
-        launch_result = session.plan_agent_launch_result
-        outcomes = tuple(getattr(launch_result, "outcomes", ()) or ()) if launch_result is not None else ()
-        failed_outcomes = []
-        for outcome in outcomes:
-            failed_outcomes.append(
-                PlanAgentLaunchOutcome(
-                    worktree_name=str(getattr(outcome, "worktree_name", "") or ""),
-                    worktree_root=Path(getattr(outcome, "worktree_root", ".") or "."),
-                    surface_id=getattr(outcome, "surface_id", None),
-                    status="failed",
-                    reason=validation_reason,
-                )
-            )
-        session.plan_agent_launch_result = PlanAgentLaunchResult(
-            status="failed",
-            reason=validation_reason,
-            outcomes=tuple(failed_outcomes),
-            attach_target=None,
-        )
-        session.base_metadata.update(
-            {
-                "plan_agent_handoff_degraded": True,
-                "implementation_session_running": False,
-                "plan_agent_stale_session_name": stale_session_name,
-                "plan_agent_stale_attach_command": stale_attach_command,
-                "plan_agent_handoff_validation_reason": validation_reason,
-                "plan_agent_launch_status": "failed",
-                "plan_agent_launch_reason": validation_reason,
-            }
-        )
-        if recovery_command:
-            session.base_metadata["plan_agent_recovery_command"] = recovery_command
-        self.runtime._emit(
-            "startup.plan_agent_handoff.validation_failed",
-            reason=validation_reason,
-            stale_session_name=stale_session_name or None,
-            stale_attach_command=stale_attach_command or None,
-            recovery_command=recovery_command or None,
-        )
+        record_stale_plan_agent_handoff_impl(self.runtime, session, validation_reason=validation_reason)
 
     @staticmethod
     def _local_startup_failure_reason(error: str) -> str | None:
