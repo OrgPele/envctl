@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shlex
 import sys
 from typing import cast
 
@@ -45,6 +46,88 @@ def render_final_failure_status(
     if context_label and context_label not in rendered:
         rendered = f"{rendered} ({context_label})"
     return rendered
+
+
+def plan_session_summary_lines(
+    session: StartupSession,
+    *,
+    attach_target: object | None = None,
+) -> list[str]:
+    resolved_target = attach_target or session.plan_agent_attach_target
+    if resolved_target is None:
+        return []
+    lines: list[str] = []
+    attach_command = " ".join(
+        str(part).strip() for part in getattr(resolved_target, "attach_command", ()) if str(part).strip()
+    )
+    new_session_command = " ".join(
+        str(part).strip() for part in getattr(resolved_target, "new_session_command", ()) if str(part).strip()
+    )
+    session_name = str(getattr(resolved_target, "session_name", "")).strip()
+    if new_session_command:
+        lines.append(
+            "existing session: envctl did not create a new AI session because one already exists for this "
+            "plan/workspace/CLI."
+        )
+    if attach_command:
+        lines.append(f"attach: {attach_command}")
+    if new_session_command:
+        lines.append(f"new session: {new_session_command}")
+    if session_name:
+        lines.append(f"kill: tmux kill-session -t {shlex.quote(session_name)}")
+    return lines
+
+
+def plan_agent_degraded_handoff_text(session: StartupSession) -> str:
+    lines = [
+        "Implementation session is running, but local app startup failed.",
+        "",
+        "AI session:",
+    ]
+    session_lines = plan_session_summary_lines(session)
+    if session_lines:
+        lines.extend(f"  {line}" for line in session_lines)
+    else:
+        lines.append("  status: running (attach guidance unavailable for this launch transport)")
+    failures = list(session.local_startup_failures)
+    if failures:
+        lines.append("")
+        if len(failures) == 1:
+            failure = failures[0]
+            lines.extend(
+                [
+                    "Local app startup:",
+                    f"  project: {failure.project}",
+                    f"  error: {failure.error}",
+                    (
+                        "  effect: backend/frontend services were not started; the AI implementation session "
+                        "can continue."
+                    ),
+                    (
+                        "  next: configure ENVCTL_BACKEND_START_CMD / ENVCTL_FRONTEND_START_CMD if this "
+                        "worktree should start services, or disable tree startup when you only want AI "
+                        "implementation sessions."
+                    ),
+                ]
+            )
+        else:
+            lines.append("Local app startup:")
+            for failure in failures:
+                lines.extend(
+                    [
+                        f"  project: {failure.project}",
+                        f"  error: {failure.error}",
+                        (
+                            "  effect: backend/frontend services were not started; the AI implementation "
+                            "session can continue."
+                        ),
+                    ]
+                )
+            lines.append(
+                "  next: configure ENVCTL_BACKEND_START_CMD / ENVCTL_FRONTEND_START_CMD if these worktrees "
+                "should start services, or disable tree startup when you only want AI implementation sessions."
+            )
+    return "\n".join(lines)
 
 
 def failure_context_label(session: StartupSession, final_error: str) -> str | None:

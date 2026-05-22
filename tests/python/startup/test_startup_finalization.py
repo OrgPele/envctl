@@ -5,8 +5,13 @@ from types import SimpleNamespace
 import unittest
 
 from envctl_engine.runtime.command_router import parse_route
-from envctl_engine.startup.finalization import failure_context_label, render_final_failure_status
-from envctl_engine.startup.session import StartupSession
+from envctl_engine.startup.finalization import (
+    failure_context_label,
+    plan_agent_degraded_handoff_text,
+    plan_session_summary_lines,
+    render_final_failure_status,
+)
+from envctl_engine.startup.session import LocalStartupFailure, StartupSession
 
 
 def _session(*, contexts: list[object], contexts_to_start: list[object] | None = None) -> StartupSession:
@@ -53,6 +58,50 @@ class StartupFinalizationTests(unittest.TestCase):
         )
 
         self.assertEqual(rendered, "✗ Startup failed: missing command (worktree: feature-a-1)")
+
+    def test_plan_session_summary_lines_render_attach_new_session_and_kill_guidance(self) -> None:
+        session = _session(contexts=[])
+        session.plan_agent_attach_target = SimpleNamespace(
+            attach_command=("tmux", "attach", "-t", "envctl-plan"),
+            new_session_command=("envctl", "plan", "--new-session"),
+            session_name="envctl-plan",
+        )
+
+        lines = plan_session_summary_lines(session)
+
+        self.assertEqual(
+            lines,
+            [
+                "existing session: envctl did not create a new AI session because one already exists for this "
+                "plan/workspace/CLI.",
+                "attach: tmux attach -t envctl-plan",
+                "new session: envctl plan --new-session",
+                "kill: tmux kill-session -t envctl-plan",
+            ],
+        )
+
+    def test_plan_agent_degraded_handoff_text_includes_failure_and_attach_guidance(self) -> None:
+        session = _session(contexts=[])
+        session.plan_agent_attach_target = SimpleNamespace(
+            attach_command=("tmux", "attach", "-t", "envctl-plan"),
+            new_session_command=(),
+            session_name="envctl-plan",
+        )
+        session.local_startup_failures.append(
+            LocalStartupFailure(
+                project="feature-a-1",
+                error="missing_service_start_command: backend",
+                reason="missing_service_start_command",
+            )
+        )
+
+        text = plan_agent_degraded_handoff_text(session)
+
+        self.assertIn("Implementation session is running, but local app startup failed.", text)
+        self.assertIn("  attach: tmux attach -t envctl-plan", text)
+        self.assertIn("  project: feature-a-1", text)
+        self.assertIn("  error: missing_service_start_command: backend", text)
+        self.assertIn("  next: configure ENVCTL_BACKEND_START_CMD / ENVCTL_FRONTEND_START_CMD", text)
 
 
 if __name__ == "__main__":
