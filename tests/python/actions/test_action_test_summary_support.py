@@ -11,6 +11,7 @@ import unittest
 from envctl_engine.actions.action_test_summary_support import (
     collect_failed_test_manifest_entries,
     collect_failed_tests,
+    format_summary_error_lines,
     print_test_suite_overview,
     suite_display_name,
     write_failed_tests_summary,
@@ -103,6 +104,62 @@ class ActionTestSummarySupportTests(unittest.TestCase):
 
     def test_suite_display_name_keeps_failed_only_suffix(self) -> None:
         self.assertEqual(suite_display_name("backend_pytest", failed_only=True), "Backend (pytest, failed only)")
+
+    def test_format_summary_error_lines_omits_terminal_chrome_and_keeps_failure(self) -> None:
+        lines = format_summary_error_lines(
+            "\n".join(
+                [
+                    "----------------------------------------------------------------------",
+                    "Traceback (most recent call last):",
+                    'AssertionError: Regex didn\'t match: something not found in "\\x1b[48;2;39;39;39m..."',
+                    "  ╭────────────────────────────────────────────────────╮",
+                    "  │  Run tests for                                    │",
+                    "RESULT_SERVICES=Main Admin",
+                    'File "/tmp/test.py", line 10, in test_case',
+                ]
+            )
+        )
+
+        rendered = "\n".join(lines)
+        self.assertIn("Traceback (most recent call last):", rendered)
+        self.assertIn("AssertionError: Regex didn't match: something not found in <omitted output>", rendered)
+        self.assertIn('File "/tmp/test.py", line 10, in test_case', rendered)
+        self.assertNotIn("------", rendered)
+        self.assertNotIn("Run tests for", rendered)
+        self.assertNotIn("RESULT_SERVICES=", rendered)
+
+    def test_format_summary_error_lines_preserves_structured_traceback_context(self) -> None:
+        lines = format_summary_error_lines(
+            "\n".join(
+                [
+                    "Traceback (most recent call last):",
+                    'File "/Users/kfiramar/projects/envctl/python/envctl_engine/ui/foo.py", line 10, in helper',
+                    "do_the_thing()",
+                    'File "/Users/kfiramar/projects/envctl/tests/python/ui/test_textual_selector_responsiveness.py", line 274, in test_mouse_click_selects_single_mode_without_enter',
+                    'self.assertEqual(app.return_value, ["beta"])',
+                    "AssertionError: None != ['beta']",
+                    "",
+                    "During handling of the above exception, another exception occurred:",
+                    "Traceback (most recent call last):",
+                    'File "/Users/kfiramar/projects/envctl/python/envctl_engine/ui/bar.py", line 22, in wrapper',
+                    "raise RuntimeError('wrapper failed')",
+                    "RuntimeError: wrapper failed",
+                    "Captured stdout call",
+                    "selector state before click: focused=selector-row-1",
+                ]
+            )
+        )
+
+        rendered = "\n".join(lines)
+        self.assertIn('File "/Users/kfiramar/projects/envctl/python/envctl_engine/ui/foo.py", line 10, in helper', rendered)
+        self.assertIn(
+            'File "/Users/kfiramar/projects/envctl/tests/python/ui/test_textual_selector_responsiveness.py", line 274, in test_mouse_click_selects_single_mode_without_enter',
+            rendered,
+        )
+        self.assertIn("During handling of the above exception, another exception occurred:", rendered)
+        self.assertIn("RuntimeError: wrapper failed", rendered)
+        self.assertIn("Captured stdout call", rendered)
+        self.assertIn("selector state before click: focused=selector-row-1", rendered)
 
     def test_print_test_suite_overview_groups_projects_and_renders_summary_link(self) -> None:
         outcomes = [

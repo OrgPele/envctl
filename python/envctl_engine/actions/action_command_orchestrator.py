@@ -6,7 +6,6 @@ import concurrent.futures
 import os
 from pathlib import Path
 import tempfile
-import re
 import sys
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, cast
@@ -46,15 +45,27 @@ from envctl_engine.actions.action_target_support import (
     resolve_action_targets as resolve_action_targets_impl,
 )
 from envctl_engine.actions.action_test_summary_support import (
+    captured_output_blocks as captured_output_blocks_impl,
     collect_failed_test_manifest_entries as collect_failed_test_manifest_entries_impl,
     collect_failed_tests as collect_failed_tests_impl,
     collect_generic_suite_failures as collect_generic_suite_failures_impl,
     collect_suite_failure_contexts as collect_suite_failure_contexts_impl,
+    compact_summary_line as compact_summary_line_impl,
     default_git_state_components as git_state_components_impl,
+    exception_body_block as exception_body_block_impl,
+    exception_context_markers as exception_context_markers_impl,
+    format_summary_error_lines as format_summary_error_lines_impl,
+    is_captured_output_header as is_captured_output_header_impl,
+    is_exception_context_marker as is_exception_context_marker_impl,
+    is_exception_start as is_exception_start_impl,
+    is_user_code_frame as is_user_code_frame_impl,
+    looks_like_terminal_chrome as looks_like_terminal_chrome_impl,
     print_test_suite_overview as print_test_suite_overview_impl,
     resolve_failed_test_error as resolve_failed_test_error_impl,
     short_failed_summary_path as short_failed_summary_path_impl,
+    structured_summary_lines as structured_summary_lines_impl,
     suite_display_name as suite_display_name_impl,
+    user_code_frame_blocks as user_code_frame_blocks_impl,
     write_failed_tests_summary as write_failed_tests_summary_impl,
 )
 from envctl_engine.actions.action_test_service_support import (
@@ -109,7 +120,6 @@ from envctl_engine.startup.service_bootstrap_domain import (
 from envctl_engine.state.models import PortPlan, RequirementsResult
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.test_output.test_runner import TestRunner
-from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
 from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
@@ -1481,215 +1491,51 @@ if result.returncode != 0:
 
     @staticmethod
     def _format_summary_error_lines(error_text: str) -> list[str]:
-        cleaned = strip_ansi(error_text)
-        lines: list[str] = []
-        for raw_line in cleaned.splitlines():
-            compact = ActionCommandOrchestrator._compact_summary_line(raw_line)
-            if compact:
-                lines.append(compact)
-        if not lines:
-            return []
-
-        max_lines = 60
-        if len(lines) <= max_lines:
-            return lines
-        structured = ActionCommandOrchestrator._structured_summary_lines(lines)
-        if not structured:
-            structured = lines[:]
-        merged = structured[:]
-        seen = set(merged)
-        for line in lines:
-            if len(merged) >= max_lines:
-                break
-            if line in seen:
-                continue
-            merged.append(line)
-            seen.add(line)
-        if len(lines) > len(merged):
-            merged.append(f"... ({len(lines) - len(merged)} more lines omitted)")
-        return merged[: max_lines + 1]
+        return format_summary_error_lines_impl(error_text)
 
     @staticmethod
     def _compact_summary_line(line: str) -> str:
-        stripped = line.strip()
-        if not stripped:
-            return ""
-        if re.fullmatch(r"[-=]{6,}", stripped):
-            return ""
-        if ActionCommandOrchestrator._looks_like_terminal_chrome(stripped):
-            return ""
-        stripped = re.sub(r"( not found in )(['\"]).*", r"\1<omitted output>", stripped)
-        stripped = re.sub(r"( not found: )(['\"]).*", r"\1<omitted output>", stripped)
-        stripped = re.sub(r"(result(?:ed)? in )(['\"]).*", r"\1<omitted output>", stripped, flags=re.IGNORECASE)
-        if len(stripped) > 220:
-            stripped = f"{stripped[:217].rstrip()}..."
-        return stripped
+        return compact_summary_line_impl(line)
 
     @staticmethod
     def _structured_summary_lines(lines: list[str]) -> list[str]:
-        assembled: list[str] = []
-        seen: set[str] = set()
-
-        def append_block(block: list[str], *, allow_gap: bool = False) -> None:
-            nonlocal assembled
-            block = [line for line in block if line]
-            if not block:
-                return
-            if allow_gap and assembled and assembled[-1] != "...":
-                assembled.append("...")
-            for line in block:
-                if line in seen:
-                    continue
-                assembled.append(line)
-                seen.add(line)
-
-        traceback_header = next((line for line in lines if line.startswith("Traceback (most recent call last):")), "")
-        if traceback_header:
-            append_block([traceback_header])
-
-        for block in ActionCommandOrchestrator._user_code_frame_blocks(lines):
-            append_block(block, allow_gap=bool(assembled))
-
-        context_markers = ActionCommandOrchestrator._exception_context_markers(lines)
-        if context_markers:
-            append_block(context_markers, allow_gap=bool(assembled))
-
-        exception_body = ActionCommandOrchestrator._exception_body_block(lines)
-        if exception_body:
-            append_block(exception_body, allow_gap=bool(assembled))
-
-        captured_blocks = ActionCommandOrchestrator._captured_output_blocks(lines)
-        for block in captured_blocks:
-            append_block(block, allow_gap=bool(assembled))
-
-        max_lines = 24
-        if assembled:
-            return assembled[:max_lines]
-        return []
+        return structured_summary_lines_impl(lines)
 
     @staticmethod
     def _user_code_frame_blocks(lines: list[str]) -> list[list[str]]:
-        blocks: list[list[str]] = []
-        file_indexes = [index for index, line in enumerate(lines) if line.startswith('File "')]
-        for index in file_indexes:
-            if not ActionCommandOrchestrator._is_user_code_frame(lines[index]):
-                continue
-            block = [lines[index]]
-            cursor = index + 1
-            while cursor < len(lines):
-                line = lines[cursor]
-                if line.startswith('File "') or ActionCommandOrchestrator._is_captured_output_header(line):
-                    break
-                if ActionCommandOrchestrator._is_exception_start(line):
-                    break
-                block.append(line)
-                cursor += 1
-            blocks.append(block[:3])
-        return blocks
+        return user_code_frame_blocks_impl(lines)
 
     @staticmethod
     def _exception_body_block(lines: list[str]) -> list[str]:
-        start = -1
-        for index in range(len(lines) - 1, -1, -1):
-            if ActionCommandOrchestrator._is_exception_start(lines[index]):
-                start = index
-                break
-        if start < 0:
-            return []
-        block = [lines[start]]
-        cursor = start + 1
-        while cursor < len(lines):
-            line = lines[cursor]
-            if line.startswith('File "') or ActionCommandOrchestrator._is_captured_output_header(line):
-                break
-            block.append(line)
-            cursor += 1
-        return block[:5]
+        return exception_body_block_impl(lines)
 
     @staticmethod
     def _captured_output_blocks(lines: list[str]) -> list[list[str]]:
-        blocks: list[list[str]] = []
-        index = 0
-        while index < len(lines):
-            line = lines[index]
-            if not ActionCommandOrchestrator._is_captured_output_header(line):
-                index += 1
-                continue
-            block = [line]
-            cursor = index + 1
-            while cursor < len(lines):
-                candidate = lines[cursor]
-                if ActionCommandOrchestrator._is_captured_output_header(candidate):
-                    break
-                if candidate.startswith('File "') and ActionCommandOrchestrator._is_user_code_frame(candidate):
-                    break
-                if candidate == "Traceback (most recent call last):":
-                    break
-                if ActionCommandOrchestrator._is_exception_context_marker(candidate):
-                    break
-                block.append(candidate)
-                cursor += 1
-            blocks.append(block[:5])
-            index = cursor
-        return blocks
+        return captured_output_blocks_impl(lines)
 
     @staticmethod
     def _exception_context_markers(lines: list[str]) -> list[str]:
-        return [line for line in lines if ActionCommandOrchestrator._is_exception_context_marker(line)][:3]
+        return exception_context_markers_impl(lines)
 
     @staticmethod
     def _is_user_code_frame(line: str) -> bool:
-        match = re.match(r'^File "([^"]+)"', line)
-        if match is None:
-            return False
-        path = match.group(1)
-        stdlib_markers = (
-            "/Cellar/python@",
-            "/Frameworks/Python.framework/",
-            "/lib/python",
-            "/site-packages/",
-            "/asyncio/",
-            "/unittest/",
-        )
-        return not any(marker in path for marker in stdlib_markers)
+        return is_user_code_frame_impl(line)
 
     @staticmethod
     def _is_exception_start(line: str) -> bool:
-        return bool(
-            re.match(
-                r"^(?:AssertionError|[A-Za-z_][\w.]*(?:Error|Exception|Failure|Exit|Interrupt|Warning))(?:\b|:)",
-                line,
-            )
-        )
+        return is_exception_start_impl(line)
 
     @staticmethod
     def _is_exception_context_marker(line: str) -> bool:
-        lowered = line.strip().lower()
-        return (
-            "during handling of the above exception" in lowered or "the above exception was the direct cause" in lowered
-        )
+        return is_exception_context_marker_impl(line)
 
     @staticmethod
     def _is_captured_output_header(line: str) -> bool:
-        lowered = line.strip().lower()
-        return (
-            lowered.startswith("captured stdout")
-            or lowered.startswith("captured stderr")
-            or lowered.startswith("captured log")
-            or lowered in {"stdout:", "stderr:"}
-        )
+        return is_captured_output_header_impl(line)
 
     @staticmethod
     def _looks_like_terminal_chrome(line: str) -> bool:
-        if "RESULT_SERVICES=" in line or "Run tests for" in line or "Filter targets..." in line:
-            return True
-        box_chars = "╭╮╰╯│▊▎▔▁▄▅▇"
-        box_count = sum(1 for char in line if char in box_chars)
-        if box_count >= 4:
-            return True
-        if len(line) >= 40 and sum(1 for char in line if char == " ") > len(line) * 0.55 and box_count >= 1:
-            return True
-        return False
+        return looks_like_terminal_chrome_impl(line)
 
     @staticmethod
     def _noop_restore() -> None:
