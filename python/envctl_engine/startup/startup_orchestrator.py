@@ -149,10 +149,6 @@ class StartupOrchestrator:
     def _create_session(self, route: Route) -> StartupSession:
         return create_startup_session(self.runtime, route)
 
-    @staticmethod
-    def _resolved_run_id(session: StartupSession) -> str:
-        return resolved_run_id(session)
-
     def _announce_session_identifiers(self, session: StartupSession) -> None:
         announce_session_identifiers_impl(
             self.runtime,
@@ -282,7 +278,7 @@ class StartupOrchestrator:
             route_is_implicit_start=route_is_implicit_start,
             ensure_run_id=partial(ensure_run_id, self.runtime),
             announce_session_identifiers=self._announce_session_identifiers,
-            resolved_run_id=self._resolved_run_id,
+            resolved_run_id=resolved_run_id,
             build_planning_dashboard_state=build_planning_dashboard_state,
             configured_service_types_for_mode=lambda runtime_mode: configured_service_types_for_mode_impl(
                 self.runtime.config,
@@ -392,7 +388,7 @@ class StartupOrchestrator:
             runtime=self.runtime,
             session=session,
             suppress_progress_output=suppress_progress_output,
-            resolved_run_id=self._resolved_run_id,
+            resolved_run_id=resolved_run_id,
             record_project_startup=record_project_startup_impl,
             render_project_startup_warnings=partial(
                 finalization_render_project_startup_warnings_for_route,
