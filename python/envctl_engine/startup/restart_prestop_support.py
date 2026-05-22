@@ -107,6 +107,25 @@ def restart_port_assignments(
     return by_project
 
 
+def apply_restart_port_assignments(
+    contexts: Iterable[Any],
+    assignments: dict[str, dict[str, int]],
+    *,
+    set_plan_port: Callable[[Any, int], None],
+) -> None:
+    for context in contexts:
+        ports = assignments.get(str(getattr(context, "name", "")).strip().lower())
+        if not ports:
+            continue
+        context_ports = getattr(context, "ports", {})
+        for service_type, port in ports.items():
+            plan = context_ports.get(service_type)
+            if plan is None:
+                continue
+            set_plan_port(plan, port)
+            plan.source = "restart"
+
+
 def restart_orphan_listener_scan(
     state: Any,
     *,

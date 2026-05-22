@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.restart_prestop_support import (
     RestartOrphanListenerScan,
+    apply_restart_port_assignments,
     restart_matching_orphan_listeners,
     restart_orphan_listener_scan,
     restart_fallback_start_route,
@@ -159,6 +160,28 @@ class RestartPrestopSupportTests(unittest.TestCase):
             ),
             {"fallback": {"backend": 8000}},
         )
+
+    def test_apply_restart_port_assignments_updates_matching_context_plans(self) -> None:
+        main_backend = SimpleNamespace(port=None, source=None)
+        main_frontend = SimpleNamespace(port=None, source=None)
+        other_backend = SimpleNamespace(port=None, source=None)
+        contexts = [
+            SimpleNamespace(name="Main", ports={"backend": main_backend, "frontend": main_frontend}),
+            SimpleNamespace(name="Other", ports={"backend": other_backend}),
+        ]
+        assignments = {"main": {"backend": 8000, "frontend": 3000}, "missing": {"backend": 9000}}
+        set_calls: list[tuple[object, int]] = []
+
+        apply_restart_port_assignments(
+            contexts,
+            assignments,
+            set_plan_port=lambda plan, port: set_calls.append((plan, port)),
+        )
+
+        self.assertEqual(set_calls, [(main_backend, 8000), (main_frontend, 3000)])
+        self.assertEqual(main_backend.source, "restart")
+        self.assertEqual(main_frontend.source, "restart")
+        self.assertIsNone(other_backend.source)
 
     def test_restart_orphan_listener_scan_tracks_selected_cwds_and_nearby_ports(self) -> None:
         state = SimpleNamespace(

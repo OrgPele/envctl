@@ -61,6 +61,7 @@ from envctl_engine.startup.plan_agent_handoff import (
 )
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.restart_prestop_support import (
+    apply_restart_port_assignments,
     restart_fallback_start_route,
     restart_matching_orphan_listeners,
     restart_orphan_listener_scan,
@@ -416,16 +417,7 @@ class StartupOrchestrator:
             selected_services=selected_services,
             project_name_from_service=self.runtime._project_name_from_service,
         )
-        for context in contexts:
-            ports = by_project.get(str(context.name).strip().lower())
-            if not ports:
-                continue
-            for service_type, port in ports.items():
-                plan = context.ports.get(service_type)
-                if plan is None:
-                    continue
-                self.runtime._set_plan_port(plan, port)
-                plan.source = "restart"
+        apply_restart_port_assignments(contexts, by_project, set_plan_port=self.runtime._set_plan_port)
 
     def _terminate_restart_orphan_listeners(
         self,
