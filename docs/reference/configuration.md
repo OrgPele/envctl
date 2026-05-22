@@ -417,8 +417,8 @@ Cycle mode notes:
 - invalid or negative values are ignored and the launcher stays on the single implementation prompt plus enabled follow-ups
 - very large values are bounded internally for safety before the workflow is expanded
 - if queue injection fails after the initial `implement_task` submit, envctl falls back to the initial one-shot launch and leaves the Codex surface running
-- the global default remains `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`; `$envctl-create-plan-auto-codex` computes a `0` through `8` recommendation and uses that command-scoped value for the envctl command it launches
-- `$envctl-create-plan-auto-opencode` ignores Codex cycles and uses `--tmux --opencode` with the default `/ulw-loop` prefix
+- the global default remains `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`; `$envctl-create-plan-auto-codex` computes a `0` through `3` recommendation and uses that command-scoped value for the envctl command it launches; values above `3` are bounded to `3`
+- `$envctl-create-plan-auto-opencode` ignores Codex cycles and uses `--cmux --opencode` with the default `/ulw-loop` prefix
 - `$envctl-create-plan-auto-omx` uses `--omx --ultragoal`; Codex `/goal` framing is submitted first when enabled, Ultragoal wraps the initial prompt, and envctl can queue the same Codex follow-up cycle workflow used by plain Codex TUI launches. Use `--omx --ralph` explicitly when you need the Ralph compatibility workflow.
 
 Superset transport notes:

@@ -96,15 +96,14 @@ Before showing or running any envctl worktree-and-prompt follow-up, default impl
 Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run.
 
 ## Codex cycle recommendation
-Before launching envctl, choose exactly one integer from `0` through `8` as an informational Codex-equivalent implementation-depth recommendation. Use this rubric:
+Before launching envctl, choose exactly one integer from `0` through `3` as an informational Codex-equivalent implementation-depth recommendation. Use this rubric:
 
 - `0`: trivial docs, prompt, static edit, or very small one-file change where one implementation prompt is enough.
-- `1-2`: small localized code or test changes with low integration risk.
-- `3-4`: normal multi-file feature or fix requiring implementation, verification, and at least one follow-up pass.
-- `5-6`: cross-module/runtime behavior, meaningful edge cases, or broad test/docs updates.
-- `7-8`: high-complexity, multi-surface, risky, or architecture-sensitive work that benefits from many continuation/review rounds.
+- `1`: small localized code or test change with low integration risk.
+- `2`: normal multi-file feature or fix, moderate verification, or a task that benefits from one continuation/finalization pass.
+- `3`: genuinely complex, high-risk, cross-module, runtime-sensitive, or architecture-sensitive work.
 
-Prefer the smallest number that can plausibly finish the task and verify it. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record both the recommended Codex cycle count and the intended launch-scope flags. This recommendation is informational on the OMX Ultragoal surface; do not add `ENVCTL_PLAN_AGENT_CODEX_CYCLES` to the launch command.
+Prefer the smallest number that can plausibly finish the task and verify it; `3` is exceptional. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record both the recommended Codex cycle count and the intended launch-scope flags. This recommendation is informational on the OMX Ultragoal surface; do not add `ENVCTL_PLAN_AGENT_CODEX_CYCLES` to the launch command.
 
 ## Automatic envctl follow-up
 The explicit auto skill invocation is the approval to launch envctl after the plan is written. Do not ask an approval question before launching.

@@ -628,7 +628,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             codex_config = launch_support.resolve_plan_agent_launch_config(
                 config,
-                {"ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4"},
+                {"ENVCTL_PLAN_AGENT_CODEX_CYCLES": "3"},
                 route=parse_route(["--plan", "features/example", "--tmux"], env={}),
             )
             codex_workflow = _build_plan_agent_workflow(
@@ -652,7 +652,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             omx_config = launch_support.resolve_plan_agent_launch_config(
                 config,
-                {"ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4"},
+                {"ENVCTL_PLAN_AGENT_CODEX_CYCLES": "3"},
                 route=parse_route(["--plan", "features/example", "--omx", "--ultragoal"], env={}),
             )
             omx_workflow = _build_plan_agent_workflow(
@@ -665,10 +665,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(codex_config.transport, "tmux")
         self.assertEqual(codex_config.cli, "codex")
         self.assertEqual(codex_config.preset, "implement_task")
-        self.assertEqual(codex_config.codex_cycles, 4)
+        self.assertEqual(codex_config.codex_cycles, 3)
         self.assertTrue(codex_config.pr_review_comments_followup_enable)
         self.assertEqual(codex_workflow.mode, "codex_cycles")
-        self.assertEqual(codex_workflow.codex_cycles, 4)
+        self.assertEqual(codex_workflow.codex_cycles, 3)
 
         self.assertEqual(opencode_config.transport, "tmux")
         self.assertEqual(opencode_config.cli, "opencode")
@@ -679,7 +679,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(omx_config.transport, "omx")
         self.assertEqual(omx_config.cli, "codex")
         self.assertEqual(omx_config.omx_workflow, "ultragoal")
-        self.assertEqual(omx_config.codex_cycles, 4)
+        self.assertEqual(omx_config.codex_cycles, 3)
         self.assertIsNone(omx_config.codex_cycles_warning)
         self.assertTrue(omx_config.pr_review_comments_followup_enable)
         self.assertEqual(omx_workflow.mode, "codex_cycles")
@@ -3620,15 +3620,34 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "RUN_REPO_ROOT": str(repo),
                     "RUN_SH_RUNTIME_DIR": str(runtime),
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
-                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "3",
                     "CYCLES": "2",
                 }
             )
 
             launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
 
-        self.assertEqual(launch_config.codex_cycles, 4)
+        self.assertEqual(launch_config.codex_cycles, 3)
         self.assertIsNone(launch_config.codex_cycles_warning)
+
+    def test_resolve_plan_agent_launch_config_bounds_above_maximum_canonical_cycles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
+
+        self.assertEqual(launch_config.codex_cycles, 3)
+        self.assertEqual(launch_config.codex_cycles_warning, "bounded_codex_cycles")
 
     def test_resolve_plan_agent_launch_config_reports_invalid_cycles_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3665,7 +3684,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
 
-        self.assertEqual(launch_config.codex_cycles, 10)
+        self.assertEqual(launch_config.codex_cycles, 3)
         self.assertEqual(launch_config.codex_cycles_warning, "bounded_codex_cycles")
 
     def test_resolve_plan_agent_launch_config_ignores_invalid_codex_cycles(self) -> None:
@@ -4477,7 +4496,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=999)
 
         self.assertEqual(workflow.mode, "codex_cycles")
-        self.assertEqual(workflow.codex_cycles, 10)
+        self.assertEqual(workflow.codex_cycles, 3)
         self.assertEqual(len(workflow.steps), 3 + (1 + 3 * (workflow.codex_cycles - 1)))
 
     def test_codex_cycle_launch_queues_follow_up_messages_with_tab(self) -> None:
