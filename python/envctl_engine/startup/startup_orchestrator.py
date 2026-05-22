@@ -662,9 +662,6 @@ class StartupOrchestrator:
     ) -> RequirementsResult:
         return start_requirements_for_project_impl(self, context, mode=mode, route=route)
 
-    def _requirements_timing_enabled(self, route: Route | None) -> bool:
-        return requirements_timing_enabled_impl(self, route)
-
     def start_project_services(
         self,
         context: ProjectContextLike,
