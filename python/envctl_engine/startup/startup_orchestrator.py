@@ -13,7 +13,7 @@ from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanAg
 from envctl_engine.planning.plan_agent.omx_transport import validate_plan_agent_attach_target
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
 from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
-from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
+from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
 from envctl_engine.startup.disabled_startup_resolution import resolve_disabled_startup_mode
@@ -40,6 +40,7 @@ from envctl_engine.startup.run_reuse_support import (
     dashboard_stopped_service_entries as dashboard_stopped_service_entries_impl,
     fresh_start_replacement_services as fresh_start_replacement_services_impl,
     metadata_without_dashboard_stopped_services as metadata_without_dashboard_stopped_services_impl,
+    prepare_dashboard_stopped_service_restore as prepare_dashboard_stopped_service_restore_impl,
 )
 from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse
 from envctl_engine.startup.plan_agent_handoff import (
@@ -410,86 +411,14 @@ class StartupOrchestrator:
         reuse_started: float,
         decision_kind: str,
     ) -> bool:
-        active_service_names = set(candidate_state.services)
-        stopped_entries = [
-            entry
-            for entry in self._dashboard_stopped_service_entries(candidate_state)
-            if entry["name"] not in active_service_names
-        ]
-        if not stopped_entries:
-            return False
-        selected_context_by_name = {
-            str(context.name).strip().casefold(): context
-            for context in session.selected_contexts
-            if str(getattr(context, "name", "")).strip()
-        }
-        restore_entries = [
-            entry for entry in stopped_entries if entry["project"].casefold() in selected_context_by_name
-        ]
-        if not restore_entries:
-            return False
-        target_project_names = sorted({entry["project"] for entry in restore_entries}, key=str.casefold)
-        target_project_keys = {name.casefold() for name in target_project_names}
-        contexts_to_start = [
-            context
-            for key, context in selected_context_by_name.items()
-            if key in target_project_keys
-        ]
-        if not contexts_to_start:
-            return False
-        stopped_service_names = sorted({entry["name"] for entry in restore_entries})
-        stopped_service_types = sorted({entry["type"] for entry in restore_entries})
-        session.base_metadata = self._metadata_without_dashboard_stopped_services(
-            mark_run_reused(candidate_state.metadata, reason="restore_stopped_services"),
-            restored_service_names=set(stopped_service_names),
+        return prepare_dashboard_stopped_service_restore_impl(
+            runtime=self.runtime,
+            session=session,
+            candidate_state=candidate_state,
+            reuse_started=reuse_started,
+            decision_kind=decision_kind,
+            emit_phase=self._emit_phase,
         )
-        session.preserved_services = dict(candidate_state.services)
-        session.preserved_requirements = dict(candidate_state.requirements)
-        session.contexts_to_start = contexts_to_start
-        route = session.effective_route
-        session.effective_route = Route(
-            command=route.command,
-            mode=route.mode,
-            raw_args=route.raw_args,
-            passthrough_args=route.passthrough_args,
-            projects=target_project_names,
-            flags={
-                **route.flags,
-                "_restart_request": True,
-                "_restore_dashboard_stopped_services": True,
-                "services": stopped_service_names,
-                "restart_service_types": stopped_service_types,
-                "restart_include_requirements": False,
-            },
-        )
-        self._emit_phase(
-            session,
-            "auto_resume_evaluate",
-            reuse_started,
-            status="restore_stopped_services",
-            match_mode="exact" if decision_kind == "resume_exact" else "subset",
-            stopped_service_count=len(stopped_service_names),
-            target_projects=target_project_names,
-        )
-        self.runtime._emit(
-            "state.auto_resume.restore_stopped_services",
-            run_id=candidate_state.run_id,
-            mode=session.runtime_mode,
-            command=route.command,
-            projects=target_project_names,
-            services=stopped_service_names,
-        )
-        self.runtime._emit(
-            "state.run_reuse.applied",
-            run_id=candidate_state.run_id,
-            mode=session.runtime_mode,
-            command=route.command,
-            decision_kind="restore_stopped_services",
-            reason="dashboard_stopped_services",
-            restored_projects=target_project_names,
-            restored_services=stopped_service_names,
-        )
-        return True
 
     @staticmethod
     def _dashboard_stopped_service_entries(state) -> list[dict[str, str]]:

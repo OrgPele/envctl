@@ -7,6 +7,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.run_reuse_support import (
     dashboard_stopped_service_entries,
     fresh_start_replacement_services,
+    prepare_dashboard_stopped_service_restore,
     metadata_without_dashboard_stopped_services,
     run_reuse_debug_orch_groups,
 )
@@ -82,6 +83,92 @@ class RunReuseSupportTests(unittest.TestCase):
                 restored_service_names={"Main Frontend"},
             ),
             {"keep": True},
+        )
+
+    def test_prepare_dashboard_stopped_service_restore_rewrites_route_and_preserves_active_state(self) -> None:
+        route = Route(command="start", mode="trees", raw_args=["start"], flags={})
+        session = SimpleNamespace(
+            selected_contexts=[SimpleNamespace(name="Main"), SimpleNamespace(name="Other")],
+            effective_route=route,
+            runtime_mode="trees",
+            base_metadata={},
+            preserved_services={},
+            preserved_requirements={},
+            contexts_to_start=[],
+        )
+        candidate_state = SimpleNamespace(
+            run_id="run-existing",
+            services={"Main Backend": object()},
+            requirements={"Main": object()},
+            metadata={
+                "dashboard_stopped_services": [
+                    {"project": "Main", "type": "frontend", "name": "Main Frontend"},
+                    {"project": "Other", "type": "backend", "name": "Other Backend"},
+                ],
+                "keep": True,
+            },
+        )
+        events: list[tuple[str, dict[str, object]]] = []
+        phases: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(_emit=lambda event, **payload: events.append((event, payload)))
+
+        restored = prepare_dashboard_stopped_service_restore(
+            runtime=runtime,
+            session=session,
+            candidate_state=candidate_state,
+            reuse_started=12.0,
+            decision_kind="resume_subset",
+            emit_phase=lambda session, phase, started_at, **payload: phases.append((phase, payload)),
+        )
+
+        self.assertTrue(restored)
+        self.assertEqual(session.contexts_to_start, [session.selected_contexts[0], session.selected_contexts[1]])
+        self.assertEqual(session.preserved_services, candidate_state.services)
+        self.assertEqual(session.preserved_requirements, candidate_state.requirements)
+        self.assertEqual(session.base_metadata["keep"], True)
+        self.assertNotIn("dashboard_stopped_services", session.base_metadata)
+        self.assertEqual(session.effective_route.projects, ["Main", "Other"])
+        self.assertEqual(session.effective_route.flags["_restart_request"], True)
+        self.assertEqual(session.effective_route.flags["_restore_dashboard_stopped_services"], True)
+        self.assertEqual(session.effective_route.flags["services"], ["Main Frontend", "Other Backend"])
+        self.assertEqual(session.effective_route.flags["restart_service_types"], ["backend", "frontend"])
+        self.assertEqual(phases[0][0], "auto_resume_evaluate")
+        self.assertEqual(phases[0][1]["status"], "restore_stopped_services")
+        self.assertEqual(phases[0][1]["match_mode"], "subset")
+        self.assertEqual(
+            [event for event, _payload in events],
+            ["state.auto_resume.restore_stopped_services", "state.run_reuse.applied"],
+        )
+
+    def test_prepare_dashboard_stopped_service_restore_ignores_active_or_unselected_entries(self) -> None:
+        route = Route(command="start", mode="trees", raw_args=["start"], flags={})
+        session = SimpleNamespace(
+            selected_contexts=[SimpleNamespace(name="Main")],
+            effective_route=route,
+            runtime_mode="trees",
+        )
+        candidate_state = SimpleNamespace(
+            run_id="run-existing",
+            services={"Main Frontend": object()},
+            requirements={},
+            metadata={
+                "dashboard_stopped_services": [
+                    {"project": "Main", "type": "frontend", "name": "Main Frontend"},
+                    {"project": "Other", "type": "backend", "name": "Other Backend"},
+                ]
+            },
+        )
+        runtime = SimpleNamespace(_emit=lambda *args, **kwargs: self.fail("restore should not emit"))
+
+        self.assertFalse(
+            prepare_dashboard_stopped_service_restore(
+                runtime=runtime,
+                session=session,
+                candidate_state=candidate_state,
+                reuse_started=12.0,
+                decision_kind="resume_exact",
+                emit_phase=lambda *args, **kwargs: self.fail("restore should not emit phase"),
+            )
         )
 
     def test_fresh_start_replacement_services_selects_configured_service_types_for_target_projects(self) -> None:
