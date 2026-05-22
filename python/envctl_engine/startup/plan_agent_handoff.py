@@ -347,6 +347,21 @@ def validate_plan_agent_handoff(
     )
 
 
+def validate_plan_agent_handoff_with_attach_target(
+    runtime: Any,
+    validate_attach_target_fn: Callable[..., PlanAgentAttachValidation],
+    session: StartupSession,
+    *,
+    phase: str,
+) -> None:
+    validate_plan_agent_handoff(
+        runtime,
+        session,
+        phase=phase,
+        validate_attach_target_fn=validate_attach_target_fn,
+    )
+
+
 def should_degrade_to_validated_plan_agent_handoff(
     runtime: Any,
     session: StartupSession,

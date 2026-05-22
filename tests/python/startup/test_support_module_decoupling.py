@@ -137,6 +137,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_orchestrator_does_not_retain_dashboard_stopped_restore_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_prepare_dashboard_stopped_service_restore"))
 
+    def test_startup_orchestrator_does_not_retain_plan_agent_handoff_validation_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_validate_plan_agent_handoff"))
+
     def test_requirements_parallel_defaults_to_sequential_on_macos_with_cli_override(self) -> None:
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
         orchestrator = SimpleNamespace(runtime=runtime)

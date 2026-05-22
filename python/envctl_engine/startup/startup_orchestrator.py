@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import sys
 import threading
-from typing import Callable, cast, Iterable
 from functools import partial
+from typing import Callable, cast, Iterable
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.planning.plan_agent.config import resolve_plan_agent_launch_config
@@ -48,7 +48,7 @@ from envctl_engine.startup.plan_agent_handoff import (
     record_plan_agent_handoff_local_startup_failure as record_plan_agent_handoff_local_startup_failure_impl,
     should_degrade_to_validated_plan_agent_handoff,
     should_fail_for_plan_agent_launch_result as should_fail_for_plan_agent_launch_result_impl,
-    validate_plan_agent_handoff as validate_plan_agent_handoff_impl,
+    validate_plan_agent_handoff_with_attach_target,
 )
 from envctl_engine.startup.post_start_reconcile import reconcile_strict_truth_after_start
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
@@ -255,7 +255,12 @@ class StartupOrchestrator:
         )
         session.plan_agent_launch_result = launch_result
         session.plan_agent_attach_target = launch_result.attach_target
-        self._validate_plan_agent_handoff(session, phase="post_launch")
+        validate_plan_agent_handoff_with_attach_target(
+            self.runtime,
+            validate_plan_agent_attach_target,
+            session,
+            phase="post_launch",
+        )
         emit_plan_agent_launch_state_impl(self.runtime, session, launch_result)
         if should_fail_for_plan_agent_launch_result_impl(session, launch_result):
             raise RuntimeError(plan_agent_launch_failure_message_impl(launch_result))
@@ -281,6 +286,11 @@ class StartupOrchestrator:
         )
 
     def _resolve_disabled_startup_mode(self, session: StartupSession) -> int | None:
+        validate_plan_agent_handoff = partial(
+            validate_plan_agent_handoff_with_attach_target,
+            self.runtime,
+            validate_plan_agent_attach_target,
+        )
         return resolve_disabled_startup_mode(
             runtime=self.runtime,
             session=session,
@@ -294,7 +304,7 @@ class StartupOrchestrator:
                 runtime_mode,
             ),
             emit_phase=partial(emit_startup_phase, self.runtime),
-            validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+            validate_plan_agent_handoff=validate_plan_agent_handoff,
             print_plan_dry_run_preview=lambda session: print_plan_dry_run_preview_impl(
                 self.runtime,
                 session,
@@ -303,18 +313,18 @@ class StartupOrchestrator:
             headless_plan_output_only=finalization_headless_plan_output_only,
             print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary_impl(
                 session,
-                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
                 print_fn=print,
             ),
             maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
                 runtime=self.runtime,
                 session=session,
-                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
                 attach_plan_agent_terminal=attach_plan_agent_terminal,
                 print_headless_plan_session_summary=lambda session, *, attach_target: (
                     print_headless_plan_session_summary_impl(
                         session,
-                        validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                        validate_plan_agent_handoff=validate_plan_agent_handoff,
                         print_fn=print,
                         attach_target=attach_target,
                     )
@@ -323,6 +333,11 @@ class StartupOrchestrator:
         )
 
     def _resolve_run_reuse(self, session: StartupSession) -> int | None:
+        validate_plan_agent_handoff = partial(
+            validate_plan_agent_handoff_with_attach_target,
+            self.runtime,
+            validate_plan_agent_attach_target,
+        )
         return resolve_startup_run_reuse(
             runtime=self.runtime,
             session=session,
@@ -338,12 +353,12 @@ class StartupOrchestrator:
             maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
                 runtime=self.runtime,
                 session=session,
-                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
                 attach_plan_agent_terminal=attach_plan_agent_terminal,
                 print_headless_plan_session_summary=lambda session, *, attach_target: (
                     print_headless_plan_session_summary_impl(
                         session,
-                        validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                        validate_plan_agent_handoff=validate_plan_agent_handoff,
                         print_fn=print,
                         attach_target=attach_target,
                     )
@@ -351,7 +366,7 @@ class StartupOrchestrator:
             ),
             print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary_impl(
                 session,
-                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
                 print_fn=print,
             ),
             print_plan_dry_run_preview=lambda session: print_plan_dry_run_preview_impl(
@@ -433,11 +448,16 @@ class StartupOrchestrator:
         )
 
     def _finalize_success(self, session: StartupSession) -> int:
+        validate_plan_agent_handoff = partial(
+            validate_plan_agent_handoff_with_attach_target,
+            self.runtime,
+            validate_plan_agent_attach_target,
+        )
         return finalize_successful_startup(
             runtime=self.runtime,
             session=session,
             ensure_run_id=self._ensure_run_id,
-            validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+            validate_plan_agent_handoff=validate_plan_agent_handoff,
             build_success_run_state=build_success_run_state,
             emit_preserved_service_merge=lambda session: finalization_emit_preserved_service_merge(
                 self.runtime,
@@ -458,18 +478,18 @@ class StartupOrchestrator:
             headless_plan_output_only=finalization_headless_plan_output_only,
             print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary_impl(
                 session,
-                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
                 print_fn=print,
             ),
             maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
                 runtime=self.runtime,
                 session=session,
-                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
                 attach_plan_agent_terminal=attach_plan_agent_terminal,
                 print_headless_plan_session_summary=lambda session, *, attach_target: (
                     print_headless_plan_session_summary_impl(
                         session,
-                        validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                        validate_plan_agent_handoff=validate_plan_agent_handoff,
                         print_fn=print,
                         attach_target=attach_target,
                     )
@@ -479,11 +499,16 @@ class StartupOrchestrator:
         )
 
     def _finalize_plan_agent_degraded_handoff(self, session: StartupSession) -> int:
+        validate_plan_agent_handoff = partial(
+            validate_plan_agent_handoff_with_attach_target,
+            self.runtime,
+            validate_plan_agent_attach_target,
+        )
         return finalize_plan_agent_degraded_handoff(
             runtime=self.runtime,
             session=session,
             ensure_run_id=self._ensure_run_id,
-            validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+            validate_plan_agent_handoff=validate_plan_agent_handoff,
             build_success_run_state=build_success_run_state,
             emit_phase=partial(emit_startup_phase, self.runtime),
             render_plan_agent_degraded_handoff=lambda session: (
@@ -498,12 +523,12 @@ class StartupOrchestrator:
             maybe_attach_plan_agent_terminal=lambda session: maybe_attach_plan_agent_terminal_impl(
                 runtime=self.runtime,
                 session=session,
-                validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
                 attach_plan_agent_terminal=attach_plan_agent_terminal,
                 print_headless_plan_session_summary=lambda session, *, attach_target: (
                     print_headless_plan_session_summary_impl(
                         session,
-                        validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+                        validate_plan_agent_handoff=validate_plan_agent_handoff,
                         print_fn=print,
                         attach_target=attach_target,
                     )
@@ -520,14 +545,6 @@ class StartupOrchestrator:
             port_allocator=port_allocator_impl,
             emit_phase=partial(emit_startup_phase, self.runtime),
             render_final_failure_status=finalization_render_final_failure_status,
-        )
-
-    def _validate_plan_agent_handoff(self, session: StartupSession, *, phase: str) -> None:
-        validate_plan_agent_handoff_impl(
-            self.runtime,
-            session,
-            phase=phase,
-            validate_attach_target_fn=validate_plan_agent_attach_target,
         )
 
     def start_project_context(
