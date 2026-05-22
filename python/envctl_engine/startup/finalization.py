@@ -12,6 +12,7 @@ from envctl_engine.dashboard_metadata import (
 )
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
+from envctl_engine.shared.services import service_display_name
 from envctl_engine.startup.run_reuse_support import build_startup_identity_metadata
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
@@ -49,6 +50,39 @@ def plan_dry_run_preview_lines(session: StartupSession, *, created_names: set[st
     for context in session.selected_contexts:
         action = "create" if context.name in created_names else "reuse"
         lines.append(f"{context.name}: {action}")
+    return lines
+
+
+def restart_port_rebound_summary_lines(
+    session: StartupSession,
+    events: list[dict[str, object]],
+) -> list[str]:
+    route = session.effective_route
+    if session.requested_command != "restart" or not bool(route.flags.get("interactive_command")):
+        return []
+    lines: list[str] = []
+    seen: set[tuple[str, str, int, int]] = set()
+    for event in events[session.startup_event_index :]:
+        if event.get("event") != "port.rebound":
+            continue
+        previous = event.get("restart_preferred_port")
+        current = event.get("port")
+        project = str(event.get("project") or "").strip()
+        service = str(event.get("service") or "").strip()
+        if not project or not service:
+            continue
+        if not isinstance(previous, int) or previous <= 0:
+            continue
+        if not isinstance(current, int) or current <= 0 or current == previous:
+            continue
+        key = (project, service, previous, current)
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(
+            f"Port changed: {project} {service_display_name(service)} "
+            f"{previous} -> {current} (previous port still in use)"
+        )
     return lines
 
 

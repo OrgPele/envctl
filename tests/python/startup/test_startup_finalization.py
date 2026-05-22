@@ -13,6 +13,7 @@ from envctl_engine.startup.finalization import (
     plan_agent_degraded_handoff_text,
     plan_session_summary_lines,
     render_final_failure_status,
+    restart_port_rebound_summary_lines,
 )
 from envctl_engine.startup.session import LocalStartupFailure, StartupSession
 
@@ -167,6 +168,42 @@ class StartupFinalizationTests(unittest.TestCase):
                 "feature-a-1: reuse",
                 "feature-b-1: create",
             ],
+        )
+
+    def test_restart_port_rebound_summary_lines_deduplicate_port_changes(self) -> None:
+        route = parse_route(["restart"], env={})
+        route.flags["interactive_command"] = True
+        session = StartupSession(
+            requested_route=route,
+            effective_route=route,
+            requested_command="restart",
+            runtime_mode="trees",
+            run_id="run-finalization",
+            startup_event_index=1,
+        )
+        events = [
+            {"event": "port.rebound", "project": "ignored", "service": "backend", "restart_preferred_port": 1, "port": 2},
+            {
+                "event": "port.rebound",
+                "project": "feature-a-1",
+                "service": "backend",
+                "restart_preferred_port": 8000,
+                "port": 8100,
+            },
+            {
+                "event": "port.rebound",
+                "project": "feature-a-1",
+                "service": "backend",
+                "restart_preferred_port": 8000,
+                "port": 8100,
+            },
+        ]
+
+        lines = restart_port_rebound_summary_lines(session, events)
+
+        self.assertEqual(
+            lines,
+            ["Port changed: feature-a-1 Backend 8000 -> 8100 (previous port still in use)"],
         )
 
 
