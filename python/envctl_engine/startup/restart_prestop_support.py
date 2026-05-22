@@ -6,8 +6,8 @@ from typing import Any, Callable, Iterable
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.services import service_project_name, service_slug_from_record
 from envctl_engine.startup.startup_selection_support import (
-    _restart_include_requirements,
     _restart_selected_services,
+    restart_include_requirements,
     restart_target_projects,
     restart_target_projects_for_selected_services,
 )
@@ -105,7 +105,7 @@ def restart_start_route(
 def restart_prestop_selection(*, state: Any, route: Route, runtime: Any) -> RestartPrestopSelection:
     selected_services = _restart_selected_services(state=state, route=route)
     target_projects = restart_target_projects(state=state, route=route, runtime=runtime)
-    include_requirements = _restart_include_requirements(route)
+    include_requirements = restart_include_requirements(route)
     if include_requirements and not target_projects:
         target_projects = restart_target_projects_for_selected_services(
             selected_services=selected_services,

@@ -227,7 +227,7 @@ def select_start_tree_projects(
     return filtered
 
 
-def _restart_include_requirements(route: Route) -> bool:
+def restart_include_requirements(route: Route) -> bool:
     explicit = route.flags.get("restart_include_requirements")
     if explicit is not None:
         return bool(explicit)
@@ -502,6 +502,7 @@ _state_covers_selected_projects = state_covers_selected_projects
 _trees_start_selection_required = trees_start_selection_required
 _tree_preselected_projects_from_state = tree_preselected_projects_from_state
 _select_start_tree_projects = select_start_tree_projects
+_restart_include_requirements = restart_include_requirements
 _restart_target_projects = restart_target_projects
 _restart_target_projects_for_selected_services = restart_target_projects_for_selected_services
 _port_allocator = port_allocator
