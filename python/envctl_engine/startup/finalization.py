@@ -147,6 +147,33 @@ def finalize_successful_startup(
     return 0
 
 
+def finalize_plan_agent_degraded_handoff(
+    *,
+    runtime: StartupRuntime,
+    session: StartupSession,
+    ensure_run_id: Callable[[StartupSession], None],
+    validate_plan_agent_handoff: Callable[..., None],
+    build_success_run_state: Callable[[StartupRuntime, StartupSession], RunState],
+    emit_phase: Callable[..., None],
+    render_plan_agent_degraded_handoff: Callable[[StartupSession], None],
+    headless_plan_output_only: Callable[[StartupSession], bool],
+    maybe_attach_plan_agent_terminal: Callable[[StartupSession], int | None],
+) -> int:
+    ensure_run_id(session)
+    validate_plan_agent_handoff(session, phase="degraded_finalization")
+    run_state = build_success_run_state(runtime, session)
+    artifacts_started = time.monotonic()
+    runtime._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
+    emit_phase(session, "artifacts_write", artifacts_started, status="degraded")
+    render_plan_agent_degraded_handoff(session)
+    if headless_plan_output_only(session):
+        return 0
+    attach_code = maybe_attach_plan_agent_terminal(session)
+    if attach_code is not None:
+        return attach_code
+    return 0
+
+
 def finalize_failed_startup(
     *,
     runtime: StartupRuntime,

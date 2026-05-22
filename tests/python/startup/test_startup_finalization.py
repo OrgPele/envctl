@@ -11,6 +11,7 @@ from envctl_engine.startup.finalization import (
     emit_preserved_service_merge,
     failure_context_label,
     finalize_failed_startup,
+    finalize_plan_agent_degraded_handoff,
     finalize_successful_startup,
     headless_plan_session_summary_lines,
     plan_dry_run_preview_lines,
@@ -226,6 +227,39 @@ class StartupFinalizationTests(unittest.TestCase):
         )
 
         self.assertEqual(result, 7)
+
+    def test_finalize_plan_agent_degraded_handoff_writes_artifacts_and_attach_result(self) -> None:
+        session = _session(contexts=[])
+        run_state = RunState(run_id="run-finalization", mode="trees")
+        writes: list[tuple[RunState, list[object], list[str]]] = []
+        events: list[tuple[str, dict[str, object]]] = []
+        rendered: list[StartupSession] = []
+        headless_checks: list[StartupSession] = []
+        attach_checks: list[StartupSession] = []
+
+        runtime = SimpleNamespace(
+            _write_artifacts=lambda state, contexts, *, errors: writes.append((state, list(contexts), list(errors))),
+        )
+
+        result = finalize_plan_agent_degraded_handoff(
+            runtime=runtime,
+            session=session,
+            ensure_run_id=lambda session: None,
+            validate_plan_agent_handoff=lambda session, *, phase: events.append(("validate", {"phase": phase})),
+            build_success_run_state=lambda runtime, session: run_state,
+            emit_phase=lambda session, phase, started_at, **extra: events.append((f"phase:{phase}", dict(extra))),
+            render_plan_agent_degraded_handoff=rendered.append,
+            headless_plan_output_only=lambda session: headless_checks.append(session) or False,
+            maybe_attach_plan_agent_terminal=lambda session: attach_checks.append(session) or 5,
+        )
+
+        self.assertEqual(result, 5)
+        self.assertEqual(writes, [(run_state, [], [])])
+        self.assertIn(("validate", {"phase": "degraded_finalization"}), events)
+        self.assertIn(("phase:artifacts_write", {"status": "degraded"}), events)
+        self.assertEqual(rendered, [session])
+        self.assertEqual(headless_checks, [session])
+        self.assertEqual(attach_checks, [session])
 
     def test_failure_context_label_prefers_named_context_from_error(self) -> None:
         alpha = SimpleNamespace(name="alpha", root=Path("/repo/trees/alpha/1"))

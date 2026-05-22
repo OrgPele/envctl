@@ -24,6 +24,7 @@ from envctl_engine.startup.finalization import (
     emit_preserved_service_merge as finalization_emit_preserved_service_merge,
     failure_context_label as finalization_failure_context_label,
     finalize_failed_startup,
+    finalize_plan_agent_degraded_handoff,
     finalize_successful_startup,
     format_failure_context_label as finalization_format_failure_context_label,
     headless_plan_session_summary_lines,
@@ -599,20 +600,17 @@ class StartupOrchestrator:
         return attach_code
 
     def _finalize_plan_agent_degraded_handoff(self, session: StartupSession) -> int:
-        rt = self.runtime
-        self._ensure_run_id(session)
-        self._validate_plan_agent_handoff(session, phase="degraded_finalization")
-        run_state = build_success_run_state(rt, session)
-        artifacts_started = time.monotonic()
-        rt._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
-        self._emit_phase(session, "artifacts_write", artifacts_started, status="degraded")
-        self._render_plan_agent_degraded_handoff(session)
-        if self._headless_plan_output_only(session):
-            return 0
-        attach_code = self._maybe_attach_plan_agent_terminal(session)
-        if attach_code is not None:
-            return attach_code
-        return 0
+        return finalize_plan_agent_degraded_handoff(
+            runtime=self.runtime,
+            session=session,
+            ensure_run_id=self._ensure_run_id,
+            validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+            build_success_run_state=build_success_run_state,
+            emit_phase=self._emit_phase,
+            render_plan_agent_degraded_handoff=self._render_plan_agent_degraded_handoff,
+            headless_plan_output_only=self._headless_plan_output_only,
+            maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
+        )
 
     def _emit_preserved_service_merge(self, session: StartupSession) -> None:
         finalization_emit_preserved_service_merge(self.runtime, session)
