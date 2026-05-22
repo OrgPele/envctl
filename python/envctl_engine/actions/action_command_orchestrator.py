@@ -52,6 +52,9 @@ from envctl_engine.actions.action_test_summary_support import (
     suite_display_name as suite_display_name_impl,
     write_failed_tests_summary as write_failed_tests_summary_impl,
 )
+from envctl_engine.actions.action_test_service_support import (
+    additional_service_test_execution_specs as additional_service_test_execution_specs_impl,
+)
 from envctl_engine.actions.project_action_report_support import (
     first_output_line as first_output_line_impl,
     persist_project_action_result as persist_project_action_result_impl,
@@ -722,52 +725,18 @@ if result.returncode != 0:
         targets: list[object],
         target_contexts: list[TestTargetContext],
     ) -> list["_TestExecutionSpec"]:
-        from envctl_engine.actions.action_test_support import TestCommandSpec, TestExecutionSpec
-
-        service_types = self._service_types_from_route_services(route) - {"backend", "frontend"}
-        if not service_types:
-            return []
         rt = self.runtime
-        specs: list[TestExecutionSpec] = []
-        for service_name in sorted(service_types):
-            service = rt.config.app_service_by_name(service_name) if hasattr(rt.config, "app_service_by_name") else None
-            if service is None:
-                raise RuntimeError(f"Unknown additional service {service_name!r} for envctl test --service")
-            raw_command = str(getattr(service, "test_cmd", "") or "").strip()
-            if not raw_command:
-                env_suffix = str(getattr(service, "env_suffix", "") or service_name.upper().replace("-", "_"))
-                raise RuntimeError(
-                    f"No test command configured for additional service {service_name!r}. "
-                    f"Set ENVCTL_SERVICE_{env_suffix}_TEST_CMD to use envctl test --service {service_name}."
-                )
-            dir_name = str(getattr(service, "dir_name", "") or "").strip()
-            for target in target_contexts:
-                replacements = dict(self.action_replacements(targets, target=target.target_obj))
-                command = rt.split_command(raw_command, replacements=replacements)
-                cwd = target.project_root / dir_name if dir_name and dir_name != "." else target.project_root
-                specs.append(
-                    TestExecutionSpec(
-                        index=0,
-                        spec=TestCommandSpec(command=command, cwd=cwd, source=f"configured_service:{service_name}"),
-                        args=[],
-                        resolved_source=f"configured_service:{service_name}",
-                        project_name=target.project_name,
-                        project_root=target.project_root,
-                        target_obj=target.target_obj,
-                    )
-                )
-        return [
-            TestExecutionSpec(
-                index=index,
-                spec=spec.spec,
-                args=spec.args,
-                resolved_source=spec.resolved_source,
-                project_name=spec.project_name,
-                project_root=spec.project_root,
-                target_obj=spec.target_obj,
-            )
-            for index, spec in enumerate(specs, start=1)
-        ]
+        return additional_service_test_execution_specs_impl(
+            route=route,
+            targets=targets,
+            target_contexts=target_contexts,
+            config=rt.config,
+            split_command=lambda raw_command, replacements: rt.split_command(
+                raw_command,
+                replacements=replacements,
+            ),
+            action_replacements_builder=self.action_replacements,
+        )
 
     def _build_failed_test_execution_specs(
         self,
