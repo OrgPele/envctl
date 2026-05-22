@@ -23,7 +23,7 @@ from envctl_engine.startup.run_reuse_support import RunReuseDecision
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
 from envctl_engine.ui.status_symbols import STATUS_FAILURE
-import envctl_engine.startup.startup_orchestrator as startup_orchestrator
+import envctl_engine.startup.lifecycle as startup_lifecycle
 
 
 class StartupOrchestratorFlowTests(unittest.TestCase):
@@ -130,7 +130,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             with (
                 patch.object(engine, "_discover_projects", return_value=[context]),
                 patch.object(engine, "_select_plan_projects", return_value=[context]),
-                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", side_effect=_launch),
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", side_effect=_launch),
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
                 patch.object(engine, "_write_artifacts"),
             ):
@@ -348,7 +348,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     "last_plan_selection_result",
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
-                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=PlanAgentLaunchResult(status="launched", reason="launched", attach_target=attach_target)),
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", return_value=PlanAgentLaunchResult(status="launched", reason="launched", attach_target=attach_target)),
                 patch.object(engine, "_write_artifacts"),
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
             ):
@@ -411,7 +411,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     "last_plan_selection_result",
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
-                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", return_value=launch_result),
                 patch.object(engine, "_write_artifacts", side_effect=lambda state, contexts, *, errors: captured.update({"state": state, "contexts": list(contexts), "errors": list(errors)})),
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
             ):
@@ -497,7 +497,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     "last_plan_selection_result",
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
-                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", side_effect=_record_launch),
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", side_effect=_record_launch),
                 patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
                 patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
                 patch.object(engine, "_write_artifacts"),
@@ -558,7 +558,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     "last_plan_selection_result",
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
-                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", side_effect=_record_launch),
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", side_effect=_record_launch),
                 patch.object(engine, "_write_artifacts"),
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
             ):
@@ -604,7 +604,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    "envctl_engine.startup.lifecycle.launch_plan_agent_terminals",
                     return_value=PlanAgentLaunchResult(status="failed", reason="existing", attach_target=attach_target),
                 ),
                 patch(
@@ -692,11 +692,11 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.prepare_project_dependencies",
+                    "envctl_engine.startup.lifecycle.prepare_project_dependencies",
                     return_value=dependency_result,
                 ),
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    "envctl_engine.startup.lifecycle.launch_plan_agent_terminals",
                     return_value=PlanAgentLaunchResult(
                         status="launched",
                         reason="launched",
@@ -724,7 +724,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     ),
                 ),
                 patch.object(engine, "_resume", side_effect=_record_resume),
-                patch("envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal", return_value=0) as attach_mock,
+                patch("envctl_engine.startup.lifecycle.attach_plan_agent_terminal", return_value=0) as attach_mock,
                 patch.object(engine, "_run_interactive_dashboard_loop", return_value=0) as dashboard_mock,
             ):
                 out = StringIO()
@@ -846,11 +846,11 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.prepare_project_dependencies",
+                    "envctl_engine.startup.lifecycle.prepare_project_dependencies",
                     return_value=dependency_result,
                 ),
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    "envctl_engine.startup.lifecycle.launch_plan_agent_terminals",
                     side_effect=_record_launch,
                 ),
                 patch(
@@ -864,10 +864,10 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     ),
                 ),
                 patch.object(engine, "_resume", side_effect=_record_resume),
-                patch("envctl_engine.startup.startup_orchestrator.attach_plan_agent_terminal", return_value=0) as attach_mock,
+                patch("envctl_engine.startup.lifecycle.attach_plan_agent_terminal", return_value=0) as attach_mock,
                 patch.object(engine, "_run_interactive_dashboard_loop", return_value=0) as dashboard_mock,
-                patch("envctl_engine.startup.startup_orchestrator.spinner", side_effect=_record_spinner),
-                patch("envctl_engine.startup.startup_orchestrator.resolve_spinner_policy") as policy_mock,
+                patch("envctl_engine.startup.lifecycle.spinner", side_effect=_record_spinner),
+                patch("envctl_engine.startup.lifecycle.resolve_spinner_policy") as policy_mock,
             ):
                 policy_mock.side_effect = lambda *_args, **_kwargs: type(
                     "_Policy",
@@ -938,7 +938,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     "last_plan_selection_result",
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
-                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", return_value=launch_result),
                 patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
                 patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
                 patch.object(
@@ -1037,7 +1037,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     "last_plan_selection_result",
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
-                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", return_value=launch_result),
                 patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
                 patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
                 patch.object(
@@ -1106,7 +1106,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     "last_plan_selection_result",
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
-                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", return_value=launch_result),
                 patch.object(
                     engine,
                     "_start_project_context",
@@ -1159,7 +1159,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    "envctl_engine.startup.lifecycle.launch_plan_agent_terminals",
                     return_value=PlanAgentLaunchResult(status="failed", reason="missing_executables", outcomes=()),
                 ),
                 patch.object(
@@ -1214,7 +1214,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     "last_plan_selection_result",
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
-                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", return_value=launch_result),
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", return_value=launch_result),
                 patch.object(
                     engine,
                     "_start_project_context",
@@ -1374,7 +1374,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                     return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
                 ),
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    "envctl_engine.startup.lifecycle.launch_plan_agent_terminals",
                     return_value=PlanAgentLaunchResult(
                         status="launched",
                         reason="launched",
@@ -1586,7 +1586,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 patch.object(engine, "_reconcile_state_truth", return_value=[]),
                 patch.object(engine, "_start_project_context", side_effect=_start_context),
                 patch.object(engine, "_terminate_services_from_state") as terminate_mock,
-                patch.object(startup_orchestrator, "terminate_restart_orphan_listeners_with_runtime") as orphan_mock,
+                patch.object(startup_lifecycle, "terminate_restart_orphan_listeners_with_runtime") as orphan_mock,
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
                 patch.object(
                     engine,
@@ -1638,7 +1638,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
                 patch.object(engine, "_discover_projects", return_value=[context]),
                 patch.object(engine, "_select_plan_projects", return_value=[context]),
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    "envctl_engine.startup.lifecycle.launch_plan_agent_terminals",
                     side_effect=lambda *args, **kwargs: (
                         order.append("launch"),
                         PlanAgentLaunchResult(status="launched", reason="launched", outcomes=()),
@@ -1711,7 +1711,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             with (
                 patch.object(engine, "_discover_projects", return_value=[context]),
                 patch.object(engine, "_select_plan_projects", return_value=[context]),
-                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", side_effect=_launch),
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", side_effect=_launch),
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
                 patch.object(engine, "_write_artifacts"),
             ):
@@ -1795,7 +1795,7 @@ class StartupOrchestratorFlowTests(unittest.TestCase):
             with (
                 patch.object(engine, "_discover_projects", return_value=[context]),
                 patch.object(engine, "_select_plan_projects", return_value=[context]),
-                patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals") as launch_mock,
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals") as launch_mock,
                 patch.object(engine, "_write_artifacts"),
             ):
                 out = StringIO()

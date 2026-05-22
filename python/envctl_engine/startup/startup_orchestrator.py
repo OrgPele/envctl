@@ -1,71 +1,22 @@
 from __future__ import annotations
 
 import threading
-from functools import partial
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
-from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
-from envctl_engine.planning.plan_agent.omx_transport import validate_plan_agent_attach_target
-from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
-from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
-from envctl_engine.startup.disabled_startup_resolution import resolve_disabled_startup_mode_with_runtime
-from envctl_engine.startup.context_selection import select_startup_contexts
-from envctl_engine.startup.finalization import (
-    build_success_run_state,
-    finalize_failed_startup,
-    finalize_successful_startup_with_runtime,
-    headless_plan_output_only as finalization_headless_plan_output_only,
-    resolve_plan_dry_run as resolve_plan_dry_run_impl,
-    render_final_failure_status as finalization_render_final_failure_status,
-    render_project_startup_warnings_for_route as finalization_render_project_startup_warnings_for_route,
-)
-from envctl_engine.startup.execution_preparation import prepare_startup_execution_with_runtime
-from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse_with_runtime
-from envctl_engine.startup.plan_agent_handoff import (
-    prepare_and_launch_plan_agent_worktrees as prepare_and_launch_plan_agent_worktrees_impl,
-    launch_plan_agent_terminals_with_spinner as launch_plan_agent_terminals_with_spinner_impl,
-    prepare_plan_agent_dependencies_for_launch as prepare_plan_agent_dependencies_for_launch_impl,
-    record_plan_agent_handoff_local_startup_failure as record_plan_agent_handoff_local_startup_failure_impl,
-    should_degrade_to_validated_plan_agent_handoff,
-    validate_plan_agent_handoff_with_attach_target,
-)
-from envctl_engine.startup.post_start_reconcile import reconcile_strict_truth_after_start
+from envctl_engine.startup.lifecycle import execute_startup_lifecycle
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
-from envctl_engine.startup.restart_prestop_support import (
-    apply_restart_ports_to_contexts,
-    handle_restart_prestop,
-    terminate_restart_orphan_listeners_with_runtime,
-)
-from envctl_engine.startup.session import ProjectStartupResult, StartupSession
-from envctl_engine.startup.session_lifecycle import (
-    announce_session_identifiers as announce_session_identifiers_impl,
-    create_startup_session,
-    emit_startup_phase,
-    ensure_run_id,
-    resolved_run_id,
-    validate_startup_route_contract,
-)
-from envctl_engine.startup.selected_context_startup import start_selected_contexts_with_runtime
+from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.startup.startup_progress import (
     ProjectSpinnerGroup,
     report_progress,
-    suppress_progress_output,
     suppress_timing_output,
-)
-from envctl_engine.startup.startup_selection_support import (
-    port_allocator as port_allocator_impl,
-    select_start_tree_projects,
-    trees_start_selection_required,
 )
 from envctl_engine.startup.startup_execution_support import (
     start_project_context as start_project_context_impl,
     start_project_services as start_project_services_impl,
     start_requirements_for_project as start_requirements_for_project_impl,
 )
-from envctl_engine.ui.debug_snapshot import emit_startup_plan_handoff_snapshot
-from envctl_engine.ui.spinner import spinner, use_spinner_policy
-from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
 _MODE_TREE_TOKENS_NORMALIZED = {str(token).strip().lower() for token in MODE_TREE_TOKENS}
 _ProjectSpinnerGroup = ProjectSpinnerGroup
@@ -81,149 +32,11 @@ class StartupOrchestrator:
         self._shared_dependency_progress_reported: bool = False
 
     def execute(self, route: Route) -> int:
-        session = create_startup_session(self.runtime, route)
-        finalize_failure = partial(
-            finalize_failed_startup,
-            runtime=self.runtime,
-            session=session,
-            ensure_run_id=partial(ensure_run_id, self.runtime),
-            port_allocator=port_allocator_impl,
-            emit_phase=partial(emit_startup_phase, self.runtime),
-            render_final_failure_status=finalization_render_final_failure_status,
-        )
-        try:
-            def apply_restart_ports(session: StartupSession, contexts: list[ProjectContextLike]) -> None:
-                apply_restart_ports_to_contexts(
-                    session.restart_state,
-                    route=session.effective_route,
-                    contexts=contexts,
-                    project_name_from_service=self.runtime._project_name_from_service,
-                    set_plan_port=self.runtime._set_plan_port,
-                )
-            terminate_restart_orphans = partial(
-                terminate_restart_orphan_listeners_with_runtime,
-                self.runtime,
-            )
-            for phase in (
-                partial(
-                    validate_startup_route_contract,
-                    self.runtime,
-                    emit_phase=partial(emit_startup_phase, self.runtime),
-                ),
-                lambda _: handle_restart_prestop(
-                    runtime=self.runtime,
-                    session=session,
-                    suppress_progress_output=suppress_progress_output,
-                    terminate_restart_orphan_listeners=terminate_restart_orphans,
-                    spinner_factory=spinner,
-                    use_spinner_policy_fn=use_spinner_policy,
-                    resolve_spinner_policy_fn=resolve_spinner_policy,
-                    emit_spinner_policy_fn=emit_spinner_policy,
-                ),
-                lambda _: select_startup_contexts(
-                    runtime=self.runtime,
-                    session=session,
-                    trees_start_selection_required=trees_start_selection_required,
-                    select_start_tree_projects=select_start_tree_projects,
-                    apply_restart_ports=apply_restart_ports,
-                    emit_phase=partial(emit_startup_phase, self.runtime),
-                    emit_snapshot=partial(emit_startup_plan_handoff_snapshot, self.runtime),
-                ),
-                partial(resolve_plan_dry_run_impl, self.runtime, print_fn=print),
-                lambda _: prepare_and_launch_plan_agent_worktrees_impl(
-                    self.runtime,
-                    session,
-                    ensure_run_id=partial(ensure_run_id, self.runtime),
-                    report_progress=lambda route, message, *, project=None: report_progress(
-                        self.runtime,
-                        route,
-                        progress_lock=self._progress_lock,
-                        last_progress_message_by_project=self._last_progress_message_by_project,
-                        message=message,
-                        project=project,
-                    ),
-                    prepare_dependencies_for_launch=prepare_plan_agent_dependencies_for_launch_impl,
-                    prepare_fn=prepare_project_dependencies,
-                    launch_with_spinner=launch_plan_agent_terminals_with_spinner_impl,
-                    launch_fn=launch_plan_agent_terminals,
-                    suppress_progress_output=suppress_progress_output,
-                    validate_attach_target_fn=validate_plan_agent_attach_target,
-                ),
-                lambda _: resolve_startup_run_reuse_with_runtime(
-                    self.runtime,
-                    session,
-                    terminate_restart_orphan_listeners=terminate_restart_orphans,
-                    validate_attach_target_fn=validate_plan_agent_attach_target,
-                    attach_plan_agent_terminal=attach_plan_agent_terminal,
-                    progress_lock=self._progress_lock,
-                    last_progress_message_by_project=self._last_progress_message_by_project,
-                ),
-                lambda _: resolve_disabled_startup_mode_with_runtime(
-                    self.runtime,
-                    session,
-                    validate_attach_target_fn=validate_plan_agent_attach_target,
-                    attach_plan_agent_terminal=attach_plan_agent_terminal,
-                ),
-            ):
-                code = phase(session)
-                if code is not None:
-                    return code
-            ensure_run_id(self.runtime, session)
-            announce_session_identifiers_impl(
-                self.runtime,
-                session,
-                headless_plan_output_only=finalization_headless_plan_output_only,
-            )
-            prepare_startup_execution_with_runtime(self.runtime, session)
-            start_selected_contexts_with_runtime(
-                self.runtime,
-                session=session,
-                suppress_progress_output=suppress_progress_output,
-                resolved_run_id=resolved_run_id,
-                render_project_startup_warnings=partial(
-                    finalization_render_project_startup_warnings_for_route,
-                    self.runtime,
-                    suppress_progress_output=suppress_progress_output,
-                ),
-                should_degrade_to_plan_agent_handoff=lambda session, error: (
-                    should_degrade_to_validated_plan_agent_handoff(
-                        self.runtime,
-                        session,
-                        error=error,
-                        validate_attach_target_fn=validate_plan_agent_attach_target,
-                    )
-                ),
-                record_plan_agent_handoff_local_startup_failure=partial(
-                    record_plan_agent_handoff_local_startup_failure_impl,
-                    self.runtime,
-                ),
-                spinner_factory=spinner,
-                use_spinner_policy_fn=use_spinner_policy,
-                resolve_spinner_policy_fn=resolve_spinner_policy,
-                emit_spinner_policy_fn=emit_spinner_policy,
-                project_spinner_group_factory=_ProjectSpinnerGroup,
-            )
-            reconcile_strict_truth_after_start(
-                runtime=self.runtime,
-                session=session,
-                build_run_state=build_success_run_state,
-                reconcile_state_truth=self.runtime._reconcile_state_truth,
-                emit_phase=partial(emit_startup_phase, self.runtime),
-            )
-            validate_plan_agent_handoff = partial(
-                validate_plan_agent_handoff_with_attach_target,
-                self.runtime,
-                validate_plan_agent_attach_target,
-            )
-            return finalize_successful_startup_with_runtime(
-                self.runtime,
-                session,
-                validate_plan_agent_handoff=validate_plan_agent_handoff,
-            )
-        except RuntimeError as exc:
-            return finalize_failure(error=str(exc))
-        except Exception as exc:
-            return finalize_failure(error=str(exc))
+        return execute_startup_lifecycle(self, route)
+
+    @property
+    def project_spinner_group_factory(self) -> type[ProjectSpinnerGroup]:
+        return _ProjectSpinnerGroup
 
     def start_project_context(
         self,

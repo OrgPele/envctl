@@ -156,7 +156,7 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
 
             with (
                 patch("envctl_engine.startup.startup_orchestrator._ProjectSpinnerGroup", _GroupStub),
-                patch("envctl_engine.startup.startup_orchestrator.resolve_spinner_policy") as policy_mock,
+                patch("envctl_engine.startup.lifecycle.resolve_spinner_policy") as policy_mock,
                 patch.object(engine, "_print_summary") as print_summary_mock,
             ):
                 policy_mock.side_effect = lambda *_args, **_kwargs: type(
@@ -301,7 +301,7 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
 
             with (
                 patch("envctl_engine.startup.startup_orchestrator._ProjectSpinnerGroup", _GroupStub),
-                patch("envctl_engine.startup.startup_orchestrator.resolve_spinner_policy") as policy_mock,
+                patch("envctl_engine.startup.lifecycle.resolve_spinner_policy") as policy_mock,
                 patch.object(engine, "_print_summary") as print_summary_mock,
             ):
                 policy_mock.side_effect = lambda *_args, **_kwargs: type(
@@ -475,7 +475,7 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
 
             with (
                 patch("envctl_engine.startup.startup_orchestrator._ProjectSpinnerGroup", _GroupStub),
-                patch("envctl_engine.startup.startup_orchestrator.resolve_spinner_policy") as policy_mock,
+                patch("envctl_engine.startup.lifecycle.resolve_spinner_policy") as policy_mock,
             ):
                 policy_mock.side_effect = lambda *_args, **_kwargs: type(
                     "_Policy",
@@ -590,8 +590,8 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
                 yield _SpinnerStub()
 
             with (
-                patch("envctl_engine.startup.startup_orchestrator.spinner", side_effect=fake_spinner),
-                patch("envctl_engine.startup.startup_orchestrator.resolve_spinner_policy") as policy_mock,
+                patch("envctl_engine.startup.lifecycle.spinner", side_effect=fake_spinner),
+                patch("envctl_engine.startup.lifecycle.resolve_spinner_policy") as policy_mock,
             ):
                 policy_mock.side_effect = lambda *_args, **_kwargs: type(
                     "_Policy",
@@ -731,8 +731,8 @@ class StartupSpinnerIntegrationTests(unittest.TestCase):
                 yield _SpinnerStub()
 
             with (
-                patch("envctl_engine.startup.startup_orchestrator.spinner", side_effect=fake_spinner),
-                patch("envctl_engine.startup.startup_orchestrator.resolve_spinner_policy") as policy_mock,
+                patch("envctl_engine.startup.lifecycle.spinner", side_effect=fake_spinner),
+                patch("envctl_engine.startup.lifecycle.resolve_spinner_policy") as policy_mock,
             ):
                 policy_mock.side_effect = lambda *_args, **_kwargs: type(
                     "_Policy",
