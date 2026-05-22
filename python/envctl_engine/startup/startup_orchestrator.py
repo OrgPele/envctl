@@ -292,7 +292,10 @@ class StartupOrchestrator:
             announce_session_identifiers=self._announce_session_identifiers,
             resolved_run_id=self._resolved_run_id,
             build_planning_dashboard_state=build_planning_dashboard_state,
-            configured_service_types_for_mode=self._configured_service_types_for_mode,
+            configured_service_types_for_mode=lambda runtime_mode: configured_service_types_for_mode_impl(
+                self.runtime.config,
+                runtime_mode,
+            ),
             emit_phase=self._emit_phase,
             validate_plan_agent_handoff=self._validate_plan_agent_handoff,
             print_plan_dry_run_preview=lambda session: print_plan_dry_run_preview_impl(
@@ -355,7 +358,10 @@ class StartupOrchestrator:
                 session,
                 print_fn=print,
             ),
-            configured_service_types_for_mode=self._configured_service_types_for_mode,
+            configured_service_types_for_mode=lambda runtime_mode: configured_service_types_for_mode_impl(
+                self.runtime.config,
+                runtime_mode,
+            ),
             emit_snapshot=self._emit_snapshot,
             replace_existing_project_services_for_fresh_start=self._replace_existing_project_services_for_fresh_start,
         )
@@ -383,7 +389,9 @@ class StartupOrchestrator:
             route=session.effective_route,
             selected_contexts=list(session.selected_contexts),
             candidate_state=candidate_state,
-            configured_service_types=set(self._configured_service_types_for_mode(session.runtime_mode)),
+            configured_service_types=set(
+                configured_service_types_for_mode_impl(self.runtime.config, session.runtime_mode)
+            ),
             additional_services=tuple(getattr(self.runtime.config, "additional_services", ()) or ()),
             project_name_from_service=self.runtime._project_name_from_service,
         )
@@ -595,9 +603,6 @@ class StartupOrchestrator:
             checkpoint=checkpoint,
             extra=extra or None,
         )
-
-    def _configured_service_types_for_mode(self, runtime_mode: str) -> list[str]:
-        return configured_service_types_for_mode_impl(self.runtime.config, runtime_mode)
 
     def _render_project_startup_warnings(
         self,
