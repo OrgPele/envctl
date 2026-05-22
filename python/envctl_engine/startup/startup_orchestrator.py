@@ -131,7 +131,7 @@ class StartupOrchestrator:
                 code = phase(session)
                 if code is not None:
                     return code
-            self._ensure_run_id(session)
+            ensure_run_id(self.runtime, session)
             self._announce_session_identifiers(session)
             prepare_startup_execution(
                 session=session,
@@ -148,9 +148,6 @@ class StartupOrchestrator:
 
     def _create_session(self, route: Route) -> StartupSession:
         return create_startup_session(self.runtime, route)
-
-    def _ensure_run_id(self, session: StartupSession) -> None:
-        ensure_run_id(self.runtime, session)
 
     @staticmethod
     def _resolved_run_id(session: StartupSession) -> str:
@@ -229,7 +226,7 @@ class StartupOrchestrator:
         rt = self.runtime
         launch_config = resolve_plan_agent_launch_config(rt.config, getattr(rt, "env", {}), route=route)
         if launch_config.enabled and created_worktrees:
-            self._ensure_run_id(session)
+            ensure_run_id(self.runtime, session)
 
             def report_progress_fn(route: Route, message: str, *, project: str | None = None) -> None:
                 report_progress(
@@ -283,7 +280,7 @@ class StartupOrchestrator:
             runtime=self.runtime,
             session=session,
             route_is_implicit_start=route_is_implicit_start,
-            ensure_run_id=self._ensure_run_id,
+            ensure_run_id=partial(ensure_run_id, self.runtime),
             announce_session_identifiers=self._announce_session_identifiers,
             resolved_run_id=self._resolved_run_id,
             build_planning_dashboard_state=build_planning_dashboard_state,
@@ -437,7 +434,7 @@ class StartupOrchestrator:
         return finalize_successful_startup(
             runtime=self.runtime,
             session=session,
-            ensure_run_id=self._ensure_run_id,
+            ensure_run_id=partial(ensure_run_id, self.runtime),
             validate_plan_agent_handoff=validate_plan_agent_handoff,
             build_success_run_state=build_success_run_state,
             emit_preserved_service_merge=lambda session: finalization_emit_preserved_service_merge(
@@ -488,7 +485,7 @@ class StartupOrchestrator:
         return finalize_plan_agent_degraded_handoff(
             runtime=self.runtime,
             session=session,
-            ensure_run_id=self._ensure_run_id,
+            ensure_run_id=partial(ensure_run_id, self.runtime),
             validate_plan_agent_handoff=validate_plan_agent_handoff,
             build_success_run_state=build_success_run_state,
             emit_phase=partial(emit_startup_phase, self.runtime),
@@ -522,7 +519,7 @@ class StartupOrchestrator:
             runtime=self.runtime,
             session=session,
             error=error,
-            ensure_run_id=self._ensure_run_id,
+            ensure_run_id=partial(ensure_run_id, self.runtime),
             port_allocator=port_allocator_impl,
             emit_phase=partial(emit_startup_phase, self.runtime),
             render_final_failure_status=finalization_render_final_failure_status,

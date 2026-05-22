@@ -149,6 +149,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_orchestrator_does_not_retain_route_contract_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_validate_route_contract"))
 
+    def test_startup_orchestrator_does_not_retain_run_id_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_ensure_run_id"))
+
     def test_requirements_parallel_defaults_to_sequential_on_macos_with_cli_override(self) -> None:
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
         orchestrator = SimpleNamespace(runtime=runtime)
