@@ -7,6 +7,8 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.restart_prestop_support import (
     RestartOrphanListenerScan,
     apply_restart_port_assignments,
+    apply_restart_ports_to_contexts,
+    terminate_restart_orphan_listeners,
     restart_matching_orphan_listeners,
     restart_orphan_listener_scan,
     restart_fallback_start_route,
@@ -305,6 +307,87 @@ class RestartPrestopSupportTests(unittest.TestCase):
         )
 
         self.assertEqual([(match.pid, match.port) for match in matches], [(10, 8000), (12, 8001)])
+
+    def test_apply_restart_ports_to_contexts_noops_without_state_or_selected_services(self) -> None:
+        set_calls: list[tuple[object, int]] = []
+        context = SimpleNamespace(name="Main", ports={"backend": SimpleNamespace(source=None)})
+        route = Route(command="start", mode="main", flags={})
+
+        apply_restart_ports_to_contexts(
+            None,
+            route=route,
+            contexts=[context],
+            project_name_from_service=lambda name: "Main",
+            set_plan_port=lambda plan, port: set_calls.append((plan, port)),
+        )
+        apply_restart_ports_to_contexts(
+            SimpleNamespace(services={}),
+            route=route,
+            contexts=[context],
+            project_name_from_service=lambda name: "Main",
+            set_plan_port=lambda plan, port: set_calls.append((plan, port)),
+        )
+
+        self.assertEqual(set_calls, [])
+
+    def test_apply_restart_ports_to_contexts_uses_restart_selection_flags(self) -> None:
+        backend_plan = SimpleNamespace(source=None)
+        context = SimpleNamespace(name="Main", ports={"backend": backend_plan})
+        route = Route(
+            command="start",
+            mode="main",
+            flags={"_restart_selected_services": ["Main Backend"]},
+        )
+        state = SimpleNamespace(
+            services={
+                "Main Backend": SimpleNamespace(
+                    name="Main Backend",
+                    project="Main",
+                    type="backend",
+                    actual_port=8001,
+                    requested_port=8000,
+                )
+            }
+        )
+
+        apply_restart_ports_to_contexts(
+            state,
+            route=route,
+            contexts=[context],
+            project_name_from_service=lambda name: str(name).removesuffix(" Backend"),
+            set_plan_port=lambda plan, port: setattr(plan, "port", port),
+        )
+
+        self.assertEqual(backend_plan.port, 8001)
+        self.assertEqual(backend_plan.source, "restart")
+
+    def test_terminate_restart_orphan_listeners_releases_successfully_terminated_ports(self) -> None:
+        state = SimpleNamespace(
+            services={
+                "Main Backend": SimpleNamespace(type="backend", cwd="/repo/backend", actual_port=8000),
+            }
+        )
+        released: list[int] = []
+        terminated: list[tuple[int, float, float]] = []
+
+        terminate_restart_orphan_listeners(
+            state=state,
+            selected_services={"Main Backend"},
+            aggressive=True,
+            backend_port_base=8000,
+            frontend_port_base=3000,
+            port_spacing=0,
+            listener_pids_for_port=lambda port: [42] if port == 8000 else [],
+            process_cwd=lambda pid: "/repo/backend" if pid == 42 else None,
+            terminate_pid=lambda pid, *, term_timeout, kill_timeout: terminated.append(
+                (pid, term_timeout, kill_timeout)
+            )
+            or True,
+            release_port=released.append,
+        )
+
+        self.assertEqual(terminated, [(42, 0.5, 1.0)])
+        self.assertEqual(released, [8000])
 
 
 if __name__ == "__main__":

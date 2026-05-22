@@ -60,14 +60,12 @@ from envctl_engine.startup.plan_agent_handoff import (
 )
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.restart_prestop_support import (
-    apply_restart_port_assignments,
-    restart_matching_orphan_listeners,
-    restart_orphan_listener_scan,
-    restart_port_assignments,
+    apply_restart_ports_to_contexts,
     restart_prestop_preservation,
     restart_prestop_selection,
     restart_prestop_state,
     restart_start_route,
+    terminate_restart_orphan_listeners,
 )
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
 from envctl_engine.startup.startup_progress import (
@@ -325,19 +323,13 @@ class StartupOrchestrator:
         )
 
     def _apply_restart_ports(self, session: StartupSession, contexts: list[ProjectContextLike]) -> None:
-        state = session.restart_state
-        if state is None:
-            return
-        selected_services_raw = session.effective_route.flags.get("_restart_selected_services")
-        selected_services = set(selected_services_raw) if isinstance(selected_services_raw, list) else set()
-        if not selected_services:
-            return
-        by_project = restart_port_assignments(
-            state,
-            selected_services=selected_services,
+        apply_restart_ports_to_contexts(
+            session.restart_state,
+            route=session.effective_route,
+            contexts=contexts,
             project_name_from_service=self.runtime._project_name_from_service,
+            set_plan_port=self.runtime._set_plan_port,
         )
-        apply_restart_port_assignments(contexts, by_project, set_plan_port=self.runtime._set_plan_port)
 
     def _terminate_restart_orphan_listeners(
         self,
@@ -347,29 +339,21 @@ class StartupOrchestrator:
         aggressive: bool,
     ) -> None:
         rt = self.runtime
-        scan = restart_orphan_listener_scan(
-            state,
-            selected_services=selected_services,
-            backend_port_base=int(rt.config.backend_port_base),
-            frontend_port_base=int(rt.config.frontend_port_base),
-            port_spacing=int(getattr(rt.config, "port_spacing", 20) or 20),
-        )
-        if not scan.selected_by_cwd:
-            return
         listener_pids_for_port = cast(Callable[[int], Iterable[int]], getattr(rt, "_listener_pids_for_port", None))
         process_runtime = self._process_runtime(rt)
         port_allocator = port_allocator_impl(rt)
-        terminate_pid = getattr(process_runtime, "terminate", None)
-        if not callable(listener_pids_for_port) or not callable(terminate_pid):
-            return
-        matches = restart_matching_orphan_listeners(
-            scan,
+        terminate_restart_orphan_listeners(
+            state=state,
+            selected_services=selected_services,
+            aggressive=aggressive,
+            backend_port_base=int(rt.config.backend_port_base),
+            frontend_port_base=int(rt.config.frontend_port_base),
+            port_spacing=int(getattr(rt.config, "port_spacing", 20) or 20),
             listener_pids_for_port=listener_pids_for_port,
             process_cwd=self._process_cwd,
+            terminate_pid=getattr(process_runtime, "terminate", None),
+            release_port=port_allocator.release,
         )
-        for match in matches:
-            if terminate_pid(match.pid, term_timeout=0.5 if aggressive else 2.0, kill_timeout=1.0):
-                port_allocator.release(match.port)
 
     @staticmethod
     def _process_cwd(pid: int) -> str | None:

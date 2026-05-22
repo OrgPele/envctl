@@ -184,6 +184,28 @@ def apply_restart_port_assignments(
             plan.source = "restart"
 
 
+def apply_restart_ports_to_contexts(
+    state: Any | None,
+    *,
+    route: Route,
+    contexts: Iterable[Any],
+    project_name_from_service: Callable[[str], str],
+    set_plan_port: Callable[[Any, int], None],
+) -> None:
+    if state is None:
+        return
+    selected_services_raw = route.flags.get("_restart_selected_services")
+    selected_services = set(selected_services_raw) if isinstance(selected_services_raw, list) else set()
+    if not selected_services:
+        return
+    by_project = restart_port_assignments(
+        state,
+        selected_services=selected_services,
+        project_name_from_service=project_name_from_service,
+    )
+    apply_restart_port_assignments(contexts, by_project, set_plan_port=set_plan_port)
+
+
 def restart_orphan_listener_scan(
     state: Any,
     *,
@@ -235,3 +257,37 @@ def restart_matching_orphan_listeners(
                     seen_pids.add(pid)
                     matches.append(RestartOrphanListenerMatch(pid=pid, port=port))
     return matches
+
+
+def terminate_restart_orphan_listeners(
+    *,
+    state: Any,
+    selected_services: set[str],
+    aggressive: bool,
+    backend_port_base: int,
+    frontend_port_base: int,
+    port_spacing: int,
+    listener_pids_for_port: Callable[[int], Iterable[int]] | None,
+    process_cwd: Callable[[int], str | None],
+    terminate_pid: Callable[..., bool] | None,
+    release_port: Callable[[int], None],
+) -> None:
+    scan = restart_orphan_listener_scan(
+        state,
+        selected_services=selected_services,
+        backend_port_base=backend_port_base,
+        frontend_port_base=frontend_port_base,
+        port_spacing=port_spacing,
+    )
+    if not scan.selected_by_cwd:
+        return
+    if not callable(listener_pids_for_port) or not callable(terminate_pid):
+        return
+    matches = restart_matching_orphan_listeners(
+        scan,
+        listener_pids_for_port=listener_pids_for_port,
+        process_cwd=process_cwd,
+    )
+    for match in matches:
+        if terminate_pid(match.pid, term_timeout=0.5 if aggressive else 2.0, kill_timeout=1.0):
+            release_port(match.port)
