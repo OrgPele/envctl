@@ -22,17 +22,14 @@ from envctl_engine.startup.finalization import (
     build_planning_dashboard_state,
     build_success_run_state,
     emit_preserved_service_merge as finalization_emit_preserved_service_merge,
-    failure_context_label as finalization_failure_context_label,
     finalize_failed_startup,
     finalize_plan_agent_degraded_handoff,
     finalize_successful_startup,
-    format_failure_context_label as finalization_format_failure_context_label,
     headless_plan_output_only as finalization_headless_plan_output_only,
     maybe_attach_plan_agent_terminal as maybe_attach_plan_agent_terminal_impl,
     print_headless_plan_session_summary as print_headless_plan_session_summary_impl,
     print_plan_dry_run_preview as print_plan_dry_run_preview_impl,
     print_restart_port_rebound_summary as print_restart_port_rebound_summary_impl,
-    plan_session_summary_lines as finalization_plan_session_summary_lines,
     render_plan_agent_degraded_handoff_for_terminal as finalization_render_plan_agent_degraded_handoff_for_terminal,
     render_final_failure_status as finalization_render_final_failure_status,
     render_project_startup_warnings_for_route as finalization_render_project_startup_warnings_for_route,
@@ -520,14 +517,6 @@ class StartupOrchestrator:
             attach_target=attach_target,
         )
 
-    def _plan_session_summary_lines(
-        self,
-        session: StartupSession,
-        *,
-        attach_target: object | None = None,
-    ) -> list[str]:
-        return finalization_plan_session_summary_lines(session, attach_target=attach_target)
-
     def _render_plan_agent_degraded_handoff(self, session: StartupSession) -> None:
         finalization_render_plan_agent_degraded_handoff_for_terminal(
             self.runtime,
@@ -544,40 +533,8 @@ class StartupOrchestrator:
             ensure_run_id=self._ensure_run_id,
             port_allocator=port_allocator_impl,
             emit_phase=self._emit_phase,
-            render_final_failure_status=self._render_final_failure_status_for_helper,
+            render_final_failure_status=finalization_render_final_failure_status,
         )
-
-    def _render_final_failure_status_for_helper(
-        self,
-        runtime: StartupRuntime,
-        session: StartupSession,
-        error: str,
-        *,
-        interactive_tty: bool | None = None,
-    ) -> str:
-        return finalization_render_final_failure_status(runtime, session, error, interactive_tty=interactive_tty)
-
-    def _render_final_failure_status(
-        self,
-        session: StartupSession,
-        final_error: str,
-        *,
-        interactive_tty: bool | None,
-    ) -> str:
-        return finalization_render_final_failure_status(
-            self.runtime,
-            session,
-            final_error,
-            interactive_tty=interactive_tty,
-        )
-
-    @staticmethod
-    def _failure_context_label(session: StartupSession, final_error: str) -> str | None:
-        return finalization_failure_context_label(session, final_error)
-
-    @staticmethod
-    def _format_failure_context_label(context: ProjectContextLike) -> str:
-        return finalization_format_failure_context_label(context)
 
     def _record_project_startup(
         self,
