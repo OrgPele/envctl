@@ -427,6 +427,23 @@ def plan_agent_degraded_handoff_text(session: StartupSession) -> str:
     return "\n".join(lines)
 
 
+def format_degraded_handoff_text_for_terminal(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    *,
+    stream: object | None,
+) -> str:
+    text = plan_agent_degraded_handoff_text(session)
+    link_mode = str(runtime.env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
+    return render_paths_in_terminal_text(
+        text,
+        paths=local_paths_in_text(text),
+        env=runtime.env,
+        stream=stream,
+        interactive_tty=(True if link_mode == "on" else None),
+    )
+
+
 def failure_context_label(session: StartupSession, final_error: str) -> str | None:
     contexts: list[ProjectContextLike] = []
     seen_names: set[str] = set()

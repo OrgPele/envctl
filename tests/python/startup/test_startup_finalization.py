@@ -13,6 +13,7 @@ from envctl_engine.startup.finalization import (
     finalize_failed_startup,
     finalize_plan_agent_degraded_handoff,
     finalize_successful_startup,
+    format_degraded_handoff_text_for_terminal,
     headless_plan_session_summary_lines,
     plan_dry_run_preview_lines,
     plan_agent_degraded_handoff_text,
@@ -353,6 +354,27 @@ class StartupFinalizationTests(unittest.TestCase):
                 "recovery: envctl plan --omx --new-session",
             ],
         )
+
+    def test_format_degraded_handoff_text_for_terminal_applies_path_links(self) -> None:
+        session = _session(contexts=[])
+        session.plan_agent_attach_target = SimpleNamespace(
+            attach_command=("tmux", "attach", "-t", "envctl-plan"),
+            new_session_command=(),
+            session_name="envctl-plan",
+        )
+        session.local_startup_failures.append(
+            LocalStartupFailure(
+                project="feature-a-1",
+                error="missing_service_start_command: /tmp/envctl/missing backend",
+                reason="missing_service_start_command",
+            )
+        )
+        runtime = SimpleNamespace(env={"ENVCTL_UI_HYPERLINK_MODE": "off"})
+
+        rendered = format_degraded_handoff_text_for_terminal(runtime, session, stream=None)
+
+        self.assertIn("Implementation session is running, but local app startup failed.", rendered)
+        self.assertIn("missing_service_start_command: /tmp/envctl/missing backend", rendered)
 
     def test_emit_preserved_service_merge_reports_preserved_and_replaced_state(self) -> None:
         session = _session(contexts=[])

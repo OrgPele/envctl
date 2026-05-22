@@ -26,9 +26,9 @@ from envctl_engine.startup.finalization import (
     finalize_failed_startup,
     finalize_plan_agent_degraded_handoff,
     finalize_successful_startup,
+    format_degraded_handoff_text_for_terminal,
     format_failure_context_label as finalization_format_failure_context_label,
     headless_plan_session_summary_lines,
-    plan_agent_degraded_handoff_text,
     plan_dry_run_preview_lines,
     plan_session_summary_lines as finalization_plan_session_summary_lines,
     render_final_failure_status as finalization_render_final_failure_status,
@@ -106,7 +106,6 @@ from envctl_engine.startup.startup_execution_support import (
     startup_breakdown_enabled as startup_breakdown_enabled_impl,
 )
 from envctl_engine.ui.debug_snapshot import emit_plan_handoff_snapshot
-from envctl_engine.ui.path_links import local_paths_in_text, render_paths_in_terminal_text
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
@@ -543,17 +542,7 @@ class StartupOrchestrator:
         return finalization_plan_session_summary_lines(session, attach_target=attach_target)
 
     def _render_plan_agent_degraded_handoff(self, session: StartupSession) -> None:
-        text = plan_agent_degraded_handoff_text(session)
-        link_mode = str(self.runtime.env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
-        print(
-            render_paths_in_terminal_text(
-                text,
-                paths=local_paths_in_text(text),
-                env=self.runtime.env,
-                stream=sys.stdout,
-                interactive_tty=(True if link_mode == "on" else None),
-            )
-        )
+        print(format_degraded_handoff_text_for_terminal(self.runtime, session, stream=sys.stdout))
 
     def _finalize_failure(self, session: StartupSession, error: str) -> int:
         return finalize_failed_startup(
