@@ -18,6 +18,7 @@ from envctl_engine.startup.finalization import (
     plan_dry_run_preview_lines,
     plan_agent_degraded_handoff_text,
     plan_session_summary_lines,
+    print_headless_plan_session_summary,
     print_plan_dry_run_preview,
     print_restart_port_rebound_summary,
     render_final_failure_status,
@@ -357,6 +358,49 @@ class StartupFinalizationTests(unittest.TestCase):
                 "recovery: envctl plan --omx --new-session",
             ],
         )
+
+    def test_print_headless_plan_session_summary_validates_when_no_attach_target_override(self) -> None:
+        session = _session(contexts=[])
+        session.plan_agent_handoff_validation_reason = "attach_target_stale_after_launch"
+        session.plan_agent_stale_session_name = "envctl-stale"
+        session.plan_agent_recovery_command = "envctl plan --tmux --new-session"
+        validations: list[tuple[StartupSession, str]] = []
+        lines: list[str] = []
+
+        print_headless_plan_session_summary(
+            session,
+            validate_plan_agent_handoff=lambda session, *, phase: validations.append((session, phase)),
+            print_fn=lines.append,
+        )
+
+        self.assertEqual(validations, [(session, "headless_output")])
+        self.assertEqual(
+            lines,
+            [
+                "Plan agent launch did not leave an attachable AI session.",
+                "reason: attach_target_stale_after_launch",
+                "stale_session: envctl-stale",
+                "recovery: envctl plan --tmux --new-session",
+            ],
+        )
+
+    def test_print_headless_plan_session_summary_uses_attach_target_override_without_validation(self) -> None:
+        session = _session(contexts=[])
+        attach_target = SimpleNamespace(
+            attach_command=("tmux", "attach", "-t", "envctl-plan"),
+            new_session_command=(),
+            session_name="envctl-plan",
+        )
+        lines: list[str] = []
+
+        print_headless_plan_session_summary(
+            session,
+            attach_target=attach_target,
+            validate_plan_agent_handoff=lambda session, *, phase: self.fail("override attach target should skip validation"),
+            print_fn=lines.append,
+        )
+
+        self.assertEqual(lines, ["attach: tmux attach -t envctl-plan", "kill: tmux kill-session -t envctl-plan"])
 
     def test_format_degraded_handoff_text_for_terminal_applies_path_links(self) -> None:
         session = _session(contexts=[])

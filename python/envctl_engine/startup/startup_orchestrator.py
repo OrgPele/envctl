@@ -28,7 +28,7 @@ from envctl_engine.startup.finalization import (
     finalize_successful_startup,
     format_degraded_handoff_text_for_terminal,
     format_failure_context_label as finalization_format_failure_context_label,
-    headless_plan_session_summary_lines,
+    print_headless_plan_session_summary as print_headless_plan_session_summary_impl,
     print_plan_dry_run_preview as print_plan_dry_run_preview_impl,
     print_restart_port_rebound_summary as print_restart_port_rebound_summary_impl,
     plan_session_summary_lines as finalization_plan_session_summary_lines,
@@ -515,10 +515,12 @@ class StartupOrchestrator:
         *,
         attach_target: object | None = None,
     ) -> None:
-        if attach_target is None:
-            self._validate_plan_agent_handoff(session, phase="headless_output")
-        for line in headless_plan_session_summary_lines(session, attach_target=attach_target):
-            print(line)
+        print_headless_plan_session_summary_impl(
+            session,
+            validate_plan_agent_handoff=self._validate_plan_agent_handoff,
+            print_fn=print,
+            attach_target=attach_target,
+        )
 
     def _plan_session_summary_lines(
         self,

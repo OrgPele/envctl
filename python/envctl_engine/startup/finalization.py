@@ -407,6 +407,19 @@ def headless_plan_session_summary_lines(
     return lines
 
 
+def print_headless_plan_session_summary(
+    session: StartupSession,
+    *,
+    validate_plan_agent_handoff: Callable[..., None],
+    print_fn: Callable[[str], None],
+    attach_target: object | None = None,
+) -> None:
+    if attach_target is None:
+        validate_plan_agent_handoff(session, phase="headless_output")
+    for line in headless_plan_session_summary_lines(session, attach_target=attach_target):
+        print_fn(line)
+
+
 def plan_agent_degraded_handoff_text(session: StartupSession) -> str:
     lines = [
         "Implementation session is running, but local app startup failed.",
