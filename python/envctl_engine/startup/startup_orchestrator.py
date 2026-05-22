@@ -163,7 +163,7 @@ class StartupOrchestrator:
         return handle_restart_prestop(
             runtime=self.runtime,
             session=session,
-            suppress_progress_output=self._suppress_progress_output,
+            suppress_progress_output=suppress_progress_output,
             terminate_restart_orphan_listeners=self._terminate_restart_orphan_listeners,
             spinner_factory=spinner,
             use_spinner_policy_fn=use_spinner_policy,
@@ -275,7 +275,7 @@ class StartupOrchestrator:
                 route=session.effective_route,
                 created_worktrees=created_worktrees,
                 launch_config=launch_config,
-                suppress_progress_output=self._suppress_progress_output(session.effective_route),
+                suppress_progress_output=suppress_progress_output(session.effective_route),
                 launch_fn=launch_plan_agent_terminals,
             ),
         )
@@ -418,13 +418,13 @@ class StartupOrchestrator:
         start_selected_contexts(
             runtime=self.runtime,
             session=session,
-            suppress_progress_output=self._suppress_progress_output,
+            suppress_progress_output=suppress_progress_output,
             resolved_run_id=self._resolved_run_id,
             record_project_startup=record_project_startup_impl,
             render_project_startup_warnings=partial(
                 finalization_render_project_startup_warnings_for_route,
                 self.runtime,
-                suppress_progress_output=self._suppress_progress_output,
+                suppress_progress_output=suppress_progress_output,
             ),
             should_degrade_to_plan_agent_handoff=lambda session, error: self._should_degrade_to_plan_agent_handoff(
                 session,
@@ -466,7 +466,7 @@ class StartupOrchestrator:
             suppress_timing_output=suppress_timing_output,
             print_startup_summary=lambda **kwargs: print_startup_summary_impl(self, **kwargs),
             startup_breakdown_enabled=lambda route: startup_breakdown_enabled_impl(self, route),
-            suppress_progress_output=self._suppress_progress_output,
+            suppress_progress_output=suppress_progress_output,
             print_restart_port_rebound_summary=lambda session: print_restart_port_rebound_summary_impl(
                 self.runtime,
                 session,
@@ -596,10 +596,6 @@ class StartupOrchestrator:
         run_id: str,
     ) -> ProjectStartupResult:
         return start_project_context_impl(self, context=context, mode=mode, route=route, run_id=run_id)
-
-    @staticmethod
-    def _suppress_progress_output(route: Route) -> bool:
-        return suppress_progress_output(route)
 
     def _report_progress(self, route: Route, message: str, *, project: str | None = None) -> None:
         report_progress(
