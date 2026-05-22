@@ -116,7 +116,11 @@ class StartupOrchestrator:
         session = self._create_session(route)
         try:
             for phase in (
-                self._validate_route_contract,
+                partial(
+                    validate_startup_route_contract,
+                    self.runtime,
+                    emit_phase=partial(emit_startup_phase, self.runtime),
+                ),
                 self._handle_restart_prestop,
                 self._select_contexts,
                 partial(resolve_plan_dry_run_impl, self.runtime, print_fn=print),
@@ -157,13 +161,6 @@ class StartupOrchestrator:
             self.runtime,
             session,
             headless_plan_output_only=finalization_headless_plan_output_only,
-        )
-
-    def _validate_route_contract(self, session: StartupSession) -> int | None:
-        return validate_startup_route_contract(
-            self.runtime,
-            session,
-            emit_phase=partial(emit_startup_phase, self.runtime),
         )
 
     def _handle_restart_prestop(self, session: StartupSession) -> int | None:
