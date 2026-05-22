@@ -193,19 +193,24 @@ envctl errors --all
 ## Tight Loop for One Project
 
 ```bash
+envctl test-focused
+envctl ship --json
+```
+
+From outside the generated worktree, pass the project explicitly:
+
+```bash
 envctl test-focused --project api
-envctl test-focused --project api --dry-run
 envctl test --project api
 envctl logs --project api --logs-follow
 envctl restart --project api
 ```
 
 Use `test-focused` to run the focused checks selected from the current changed
-files, or add `--dry-run` to preview the commands without executing them. At
-final handoff, prefer the narrow ship flow:
+files. At final handoff, prefer the narrow ship flow:
 
 ```bash
-envctl ship --project api --json
+envctl ship --json
 ```
 
 This commits with the same `.envctl-commit-message.md` behavior as
@@ -215,8 +220,9 @@ conflicts, and reports GitHub check status with `failing_checks` and
 on pending CI. In agent workflows, run it in a background/subagent lane when
 available; the shipping lane should surface commit, push, PR, merge-conflict,
 failed-check, or review-comment problems immediately while the main
-implementation lane continues non-overlapping work. Before final handoff, wait
-for required checks to finish.
+implementation lane continues non-overlapping work. Only return to the shipping
+lane if the subagent reports an issue or final check completion. Before final
+handoff, wait for required checks to finish.
 For generated worktrees, the project selector is the branch name.
 
 ## Multi-Repo Control

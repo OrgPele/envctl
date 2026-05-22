@@ -232,26 +232,27 @@ while keeping the generated worktree as the execution root for service commands
 and tests. An explicit `ENVCTL_CONFIG_FILE` still selects the config file.
 
 During implementation, ask envctl for focused validation commands before running
-large suites:
+large suites. From inside the generated worktree, no project selector is needed:
+
+```bash
+envctl test-focused
+```
+
+This runs the focused commands in order and stops at the first failure, so the
+local loop fails fast instead of spending time on checks that depend on an
+earlier failure. When running from outside the generated worktree, pass the
+project explicitly:
 
 ```bash
 envctl test-focused --project features_demo-1
 ```
 
-This runs the focused commands in order and stops at the first failure, so the
-local loop fails fast instead of spending time on checks that depend on an
-earlier failure. To preview the commands without running them, use:
-
-```bash
-envctl test-focused --project features_demo-1 --dry-run
-```
-
 Add `--json` to either form for the structured `envctl.test_plan.v1` payload,
 including exact commands, confidence, reasons, changed files, and full-gate
-guidance. For final handoff, use:
+guidance. For final handoff from inside the generated worktree, use:
 
 ```bash
-envctl ship --project features_demo-1 --json
+envctl ship --json
 ```
 
 `ship` reuses `envctl commit` and `envctl pr`, so `.envctl-commit-message.md`
@@ -263,7 +264,8 @@ and `pending_checks` in a structured payload. It returns the current state
 immediately and does not block on pending CI; agents can run it in a
 background/subagent lane, propagate commit/push/PR, merge-conflict,
 failed-check, or review-comment problems immediately, and keep the main
-implementation lane working until final check confirmation is needed.
+implementation lane working until the shipping subagent reports an issue or
+final check completion.
 
 Use `--plan` when:
 
