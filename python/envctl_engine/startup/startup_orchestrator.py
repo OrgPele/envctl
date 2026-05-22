@@ -45,6 +45,7 @@ from envctl_engine.startup.finalization import (
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
 from envctl_engine.startup.run_reuse_support import RunReuseDecision
 from envctl_engine.startup.plan_agent_handoff import (
+    emit_plan_agent_launch_state as emit_plan_agent_launch_state_impl,
     local_startup_failure_reason as plan_agent_local_startup_failure_reason,
     record_plan_agent_handoff_local_startup_failure as record_plan_agent_handoff_local_startup_failure_impl,
 )
@@ -1919,28 +1920,7 @@ class StartupOrchestrator:
         )
 
     def _emit_plan_agent_launch_state(self, session: StartupSession, launch_result: object) -> None:
-        attach_target = getattr(launch_result, "attach_target", None)
-        session_name = str(getattr(attach_target, "session_name", "")).strip() if attach_target is not None else ""
-        launched_worktrees: list[str] = []
-        failed_worktrees: list[str] = []
-        for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
-            status = str(getattr(outcome, "status", "")).strip().lower()
-            worktree_name = str(getattr(outcome, "worktree_name", "")).strip()
-            if status == "launched" and worktree_name:
-                launched_worktrees.append(worktree_name)
-            elif status == "failed" and worktree_name:
-                failed_worktrees.append(worktree_name)
-        self.runtime._emit(
-            "startup.plan_agent_launch_state",
-            command=session.effective_route.command,
-            mode=session.runtime_mode,
-            status=str(getattr(launch_result, "status", "")).strip(),
-            reason=str(getattr(launch_result, "reason", "")).strip(),
-            launched_worktrees=launched_worktrees,
-            failed_worktrees=failed_worktrees,
-            session_name=session_name or None,
-            implementation_session_running=session.plan_agent_session_started,
-        )
+        emit_plan_agent_launch_state_impl(self.runtime, session, launch_result)
 
     def _emit_phase(self, session: StartupSession, phase: str, started_at: float, **extra: object) -> None:
         self.runtime._emit(

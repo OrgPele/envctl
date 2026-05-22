@@ -5,6 +5,31 @@ from typing import Any
 from envctl_engine.startup.session import LocalStartupFailure, StartupSession
 
 
+def emit_plan_agent_launch_state(runtime: Any, session: StartupSession, launch_result: object) -> None:
+    attach_target = getattr(launch_result, "attach_target", None)
+    session_name = str(getattr(attach_target, "session_name", "")).strip() if attach_target is not None else ""
+    launched_worktrees: list[str] = []
+    failed_worktrees: list[str] = []
+    for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
+        status = str(getattr(outcome, "status", "")).strip().lower()
+        worktree_name = str(getattr(outcome, "worktree_name", "")).strip()
+        if status == "launched" and worktree_name:
+            launched_worktrees.append(worktree_name)
+        elif status == "failed" and worktree_name:
+            failed_worktrees.append(worktree_name)
+    runtime._emit(
+        "startup.plan_agent_launch_state",
+        command=session.effective_route.command,
+        mode=session.runtime_mode,
+        status=str(getattr(launch_result, "status", "")).strip(),
+        reason=str(getattr(launch_result, "reason", "")).strip(),
+        launched_worktrees=launched_worktrees,
+        failed_worktrees=failed_worktrees,
+        session_name=session_name or None,
+        implementation_session_running=session.plan_agent_session_started,
+    )
+
+
 def local_startup_failure_reason(error: str) -> str | None:
     if "missing_service_start_command" in error:
         return "missing_service_start_command"

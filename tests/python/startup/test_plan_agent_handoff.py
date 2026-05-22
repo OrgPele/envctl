@@ -5,6 +5,7 @@ import unittest
 
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.startup.plan_agent_handoff import (
+    emit_plan_agent_launch_state,
     local_startup_failure_reason,
     record_plan_agent_handoff_local_startup_failure,
 )
@@ -99,6 +100,44 @@ class PlanAgentHandoffTests(unittest.TestCase):
         self.assertEqual(session.local_startup_failures[0].reason, "local_startup_failed")
         self.assertEqual(events[-1][1]["route_transport"], "cmux")
         self.assertIsNone(events[-1][1]["omx_workflow"])
+
+    def test_emit_plan_agent_launch_state_summarizes_launch_outcomes(self) -> None:
+        session = _session(args=["plan", "--tmux"])
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(_emit=lambda event, **payload: events.append((event, payload)))
+        launch_result = SimpleNamespace(
+            status="partial",
+            reason="one_failed",
+            attach_target=SimpleNamespace(session_name="envctl-plan"),
+            outcomes=(
+                SimpleNamespace(status="launched", worktree_name="feature-a-1"),
+                SimpleNamespace(status="failed", worktree_name="feature-a-2"),
+                SimpleNamespace(status="skipped", worktree_name="feature-a-3"),
+                SimpleNamespace(status="failed", worktree_name=""),
+            ),
+        )
+        session.plan_agent_launch_result = launch_result
+
+        emit_plan_agent_launch_state(runtime, session, launch_result)
+
+        self.assertEqual(
+            events,
+            [
+                (
+                    "startup.plan_agent_launch_state",
+                    {
+                        "command": "plan",
+                        "mode": "trees",
+                        "status": "partial",
+                        "reason": "one_failed",
+                        "launched_worktrees": ["feature-a-1"],
+                        "failed_worktrees": ["feature-a-2"],
+                        "session_name": "envctl-plan",
+                        "implementation_session_running": True,
+                    },
+                )
+            ],
+        )
 
 
 if __name__ == "__main__":
