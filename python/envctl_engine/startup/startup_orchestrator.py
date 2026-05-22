@@ -240,7 +240,7 @@ class StartupOrchestrator:
         route = session.effective_route
         if route.command != "plan" or not bool(route.flags.get("dry_run")):
             return None
-        self._print_plan_dry_run_preview(session)
+        print_plan_dry_run_preview_impl(self.runtime, session, print_fn=print)
         return 0
 
     def _prepare_and_launch_plan_agent_worktrees(self, session: StartupSession) -> int | None:
@@ -329,7 +329,11 @@ class StartupOrchestrator:
             configured_service_types_for_mode=self._configured_service_types_for_mode,
             emit_phase=self._emit_phase,
             validate_plan_agent_handoff=self._validate_plan_agent_handoff,
-            print_plan_dry_run_preview=self._print_plan_dry_run_preview,
+            print_plan_dry_run_preview=lambda session: print_plan_dry_run_preview_impl(
+                self.runtime,
+                session,
+                print_fn=print,
+            ),
             headless_plan_output_only=finalization_headless_plan_output_only,
             print_headless_plan_session_summary=self._print_headless_plan_session_summary,
             maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
@@ -346,7 +350,11 @@ class StartupOrchestrator:
             headless_plan_output_only=finalization_headless_plan_output_only,
             maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
             print_headless_plan_session_summary=self._print_headless_plan_session_summary,
-            print_plan_dry_run_preview=self._print_plan_dry_run_preview,
+            print_plan_dry_run_preview=lambda session: print_plan_dry_run_preview_impl(
+                self.runtime,
+                session,
+                print_fn=print,
+            ),
             configured_service_types_for_mode=self._configured_service_types_for_mode,
             emit_snapshot=self._emit_snapshot,
             replace_existing_project_services_for_fresh_start=self._replace_existing_project_services_for_fresh_start,
@@ -476,9 +484,6 @@ class StartupOrchestrator:
             maybe_attach_plan_agent_terminal=self._maybe_attach_plan_agent_terminal,
             finalize_plan_agent_degraded_handoff=self._finalize_plan_agent_degraded_handoff,
         )
-
-    def _print_plan_dry_run_preview(self, session: StartupSession) -> None:
-        print_plan_dry_run_preview_impl(self.runtime, session, print_fn=print)
 
     def _maybe_attach_plan_agent_terminal(self, session: StartupSession) -> int | None:
         return maybe_attach_plan_agent_terminal_impl(
