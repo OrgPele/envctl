@@ -11,7 +11,7 @@ $ARGUMENTS
 
 ## Required workflow
 1. Read `MAIN_TASK.md` and briefly inspect the current repo state so you understand what is being finalized.
-2. Determine the current worktree/project name, run `envctl test-plan --project <current-worktree-name> --json`, then run the focused commands it recommends.
+2. Determine the current worktree/project name, then run `envctl test-focused --project <current-worktree-name>` for focused validation. Use `envctl test-focused --project <current-worktree-name> --dry-run --json` only when you need to preview the command plan.
 3. If tests fail, investigate and fix the failures when they are caused by the current implementation, then rerun the relevant validation until the tree is in a good state or you have a concrete blocker. Run broad validation when the test plan recommends it or the change is cross-cutting/risky.
 4. For runtime or browser-visible work, use project-scoped envctl helpers before handoff:
    - `envctl endpoints --project <current-worktree-name> --json` to read canonical active URLs and dependency ports.
@@ -19,12 +19,13 @@ $ARGUMENTS
    - `envctl playwright --project <current-worktree-name> -- <command>` for Playwright/browser tests against the active frontend.
    - If this prompt is installed as a Codex skill or direct prompt, you may also use available Codex skills named in the session, such as `$browser`, for browser verification.
 5. Update `.envctl-commit-message.md` so the next commit message reflects the finalized implementation accurately.
-6. Run `envctl ship --project <current-worktree-name> --json` to commit, push, create or reuse the PR, and report status checks. Fall back to `envctl commit`, `envctl pr`, and GitHub CLI checks only if `ship` is unavailable or blocked by the environment.
-7. Inspect all unresolved PR review comments and review threads, address ALL actionable comments, commit and push any follow-up fixes, then wait for final PR confirmation/status checks before closing out the task. If comments are already resolved or non-actionable, report that evidence.
+6. Run `envctl ship --project <current-worktree-name> --json`. It commits, pushes, creates or reuses the PR, and returns current status and merge-conflict details. If checks are pending, continue useful local finalization work, then wait for GitHub checks separately when they are pending before final handoff. Fall back to `envctl commit`, `envctl pr`, and GitHub CLI checks only if `ship` is unavailable or blocked by the environment.
+7. If `ship` returns `status: "merge_conflicts"`, use the `merge_conflicts` payload to resolve the conflict, rerun validation, and run `ship` again.
+8. Inspect unresolved PR review comments and review threads, address all actionable comments, commit and push follow-up fixes, then wait for final PR confirmation/status checks before closing out. If comments are already resolved or non-actionable, report that evidence.
 
 ## Non-negotiables
 - Prefer `envctl` commands over ad hoc test commands for the final validation pass.
-- Do not claim success without running the focused commands from `envctl test-plan --project <current-worktree-name> --json`.
+- Do not claim success without running `envctl test-focused --project <current-worktree-name>` or the focused commands shown by its `--dry-run --json` output.
 - If validation fails and you cannot resolve it safely, stop before commit/push/PR and report the blocker clearly.
 - Keep `.envctl-commit-message.md` focused on one complete next commit message. Treat `### Envctl pointer ###` as the boundary after the last successful commit; everything after it is the next default commit message.
 - Preserve repo conventions and avoid unrelated cleanup.

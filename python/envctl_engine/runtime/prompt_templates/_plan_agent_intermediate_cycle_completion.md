@@ -1,1 +1,1 @@
-When the current implementation pass finishes, commit the work and push the branch.
+When the current implementation pass finishes, run the focused checks that fit the changes, commit the work, and push the branch. Do not wait idly on PR checks during this intermediate cycle unless this is the final handoff.

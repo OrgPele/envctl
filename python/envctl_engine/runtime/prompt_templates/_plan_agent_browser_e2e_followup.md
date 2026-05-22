@@ -1,3 +1,10 @@
 $browser
 
-After the implementation commit is pushed, the PR is created or updated, and GitHub status checks have completed successfully, run browser-based E2E validation against the full `envctl --entire-system --headless` stack. Re-read the initial `MAIN_TASK.md` and verify that the requested feature is completely implemented end-to-end, using the ready localhost addresses injected below when present. Do not ask the user to start services. If injected addresses are missing or stale, default to starting `envctl --entire-system --headless` yourself and then read envctl state/health output for the actual host/port values. Prefer `envctl endpoints --project <current-worktree-name> --json` for canonical active URLs, `envctl qa-user ensure --project <current-worktree-name> ... --json` for deterministic auth credentials when needed, and `envctl playwright --project <current-worktree-name> -- <command>` for Playwright/browser tests against the active frontend. Because this follow-up is a Codex prompt, you may use the available `$browser` skill when it is installed in the session. If the feature is browser-visible or can be observed through the browser, prove it is visible in the browser and capture evidence. You must fix any issue, regression, or mismatch introduced by the implementation before final handoff, then rerun the relevant checks, stop the exact scope you started, and report the evidence.
+Run browser-based E2E validation after the implementation commit is pushed, the PR exists, and required GitHub checks have completed successfully.
+
+Workflow:
+1. Re-read `MAIN_TASK.md` and verify the feature is implemented end-to-end.
+2. Use injected localhost addresses when present. If they are missing or stale, start `envctl --entire-system --headless` yourself and read real addresses from envctl state/health output.
+3. Prefer `envctl endpoints --project <current-worktree-name> --json` for active URLs, `envctl qa-user ensure --project <current-worktree-name> ... --json` for deterministic auth, and `envctl playwright --project <current-worktree-name> -- <command>` for browser tests against the active frontend.
+4. Use the available `$browser` skill when browser observation is useful.
+5. Fix any issue, regression, or mismatch introduced by the implementation, rerun relevant checks, stop the exact runtime scope you started, and report evidence.
