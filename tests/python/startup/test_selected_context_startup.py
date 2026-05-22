@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import unittest
 
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.startup.selected_context_startup import start_selected_contexts
+from envctl_engine.startup.selected_context_startup import record_project_startup, start_selected_contexts
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
 from envctl_engine.state.models import RequirementsResult
 
@@ -130,6 +130,19 @@ class SelectedContextStartupTests(unittest.TestCase):
         self.assertTrue(execution_route.flags["debug_suppress_progress_output"])
         self.assertEqual(runtime.events[0][0], "spinner.policy")
         self.assertIn(("startup.execution", {"mode": "sequential", "workers": 1, "projects": ["Alpha"]}), runtime.events)
+
+    def test_record_project_startup_updates_session_result_maps_and_started_names(self) -> None:
+        route = Route(command="start", mode="trees", raw_args=["start"], passthrough_args=[], projects=[], flags={})
+        context = self._context("Alpha")
+        session = self._session(route=route, contexts=[context])
+        requirements = RequirementsResult(project="Alpha")
+        result = ProjectStartupResult(requirements=requirements, services={"Alpha Backend": object()})
+
+        record_project_startup(session, context, result)
+
+        self.assertEqual(session.requirements_by_project, {"Alpha": requirements})
+        self.assertEqual(session.services_by_project, {"Alpha": result.services})
+        self.assertEqual(session.started_context_names, ["Alpha"])
 
     def test_start_selected_contexts_degrades_local_startup_failure_when_handoff_allowed(self) -> None:
         runtime = _RuntimeStub()

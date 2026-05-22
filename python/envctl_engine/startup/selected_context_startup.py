@@ -17,6 +17,16 @@ def project_spinner_success_message(session: StartupSession, context: ProjectCon
     return f"startup completed ({_project_ports_text(context)})"
 
 
+def record_project_startup(
+    session: StartupSession,
+    context: ProjectContextLike,
+    result: ProjectStartupResult,
+) -> None:
+    session.requirements_by_project[context.name] = result.requirements
+    session.services_by_project[context.name] = result.services
+    session.started_context_names.append(context.name)
+
+
 def start_selected_contexts(
     *,
     runtime: StartupRuntime,

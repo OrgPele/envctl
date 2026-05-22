@@ -74,7 +74,10 @@ from envctl_engine.startup.session_lifecycle import (
     resolved_run_id,
     validate_startup_route_contract,
 )
-from envctl_engine.startup.selected_context_startup import start_selected_contexts
+from envctl_engine.startup.selected_context_startup import (
+    record_project_startup as record_project_startup_impl,
+    start_selected_contexts,
+)
 from envctl_engine.startup.startup_progress import (
     ProjectSpinnerGroup,
     report_progress,
@@ -601,9 +604,7 @@ class StartupOrchestrator:
         context: ProjectContextLike,
         result: ProjectStartupResult,
     ) -> None:
-        session.requirements_by_project[context.name] = result.requirements
-        session.services_by_project[context.name] = result.services
-        session.started_context_names.append(context.name)
+        record_project_startup_impl(session, context, result)
 
     def _should_degrade_to_plan_agent_handoff(self, session: StartupSession, *, error: str) -> bool:
         self._validate_plan_agent_handoff(session, phase="local_startup_failure")
