@@ -33,6 +33,7 @@ from envctl_engine.startup.finalization import (
     build_success_run_state,
     failure_context_label as finalization_failure_context_label,
     format_failure_context_label as finalization_format_failure_context_label,
+    headless_plan_session_summary_lines,
     plan_agent_degraded_handoff_text,
     plan_session_summary_lines as finalization_plan_session_summary_lines,
     render_final_failure_status as finalization_render_final_failure_status,
@@ -1718,19 +1719,8 @@ class StartupOrchestrator:
     ) -> None:
         if attach_target is None:
             self._validate_plan_agent_handoff(session, phase="headless_output")
-        for line in self._plan_session_summary_lines(session, attach_target=attach_target):
+        for line in headless_plan_session_summary_lines(session, attach_target=attach_target):
             print(line)
-        if attach_target is None and session.plan_agent_attach_target is None:
-            reason = str(session.plan_agent_handoff_validation_reason or "").strip()
-            stale_name = str(session.plan_agent_stale_session_name or "").strip()
-            if reason:
-                print("Plan agent launch did not leave an attachable AI session.")
-                print(f"reason: {reason}")
-                if stale_name:
-                    print(f"stale_session: {stale_name}")
-                recovery_command = str(session.plan_agent_recovery_command or "").strip()
-                if recovery_command:
-                    print(f"recovery: {recovery_command}")
 
     def _plan_session_summary_lines(
         self,

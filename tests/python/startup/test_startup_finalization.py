@@ -7,6 +7,7 @@ import unittest
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.startup.finalization import (
     failure_context_label,
+    headless_plan_session_summary_lines,
     plan_agent_degraded_handoff_text,
     plan_session_summary_lines,
     render_final_failure_status,
@@ -102,6 +103,24 @@ class StartupFinalizationTests(unittest.TestCase):
         self.assertIn("  project: feature-a-1", text)
         self.assertIn("  error: missing_service_start_command: backend", text)
         self.assertIn("  next: configure ENVCTL_BACKEND_START_CMD / ENVCTL_FRONTEND_START_CMD", text)
+
+    def test_headless_plan_session_summary_lines_include_validation_failure_guidance(self) -> None:
+        session = _session(contexts=[])
+        session.plan_agent_handoff_validation_reason = "attach_target_stale_after_launch"
+        session.plan_agent_stale_session_name = "envctl-stale"
+        session.plan_agent_recovery_command = "envctl plan --omx --new-session"
+
+        lines = headless_plan_session_summary_lines(session)
+
+        self.assertEqual(
+            lines,
+            [
+                "Plan agent launch did not leave an attachable AI session.",
+                "reason: attach_target_stale_after_launch",
+                "stale_session: envctl-stale",
+                "recovery: envctl plan --omx --new-session",
+            ],
+        )
 
 
 if __name__ == "__main__":

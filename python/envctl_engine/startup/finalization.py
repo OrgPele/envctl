@@ -78,6 +78,28 @@ def plan_session_summary_lines(
     return lines
 
 
+def headless_plan_session_summary_lines(
+    session: StartupSession,
+    *,
+    attach_target: object | None = None,
+) -> list[str]:
+    lines = plan_session_summary_lines(session, attach_target=attach_target)
+    if attach_target is not None or session.plan_agent_attach_target is not None:
+        return lines
+    reason = str(session.plan_agent_handoff_validation_reason or "").strip()
+    if not reason:
+        return lines
+    lines.append("Plan agent launch did not leave an attachable AI session.")
+    lines.append(f"reason: {reason}")
+    stale_name = str(session.plan_agent_stale_session_name or "").strip()
+    if stale_name:
+        lines.append(f"stale_session: {stale_name}")
+    recovery_command = str(session.plan_agent_recovery_command or "").strip()
+    if recovery_command:
+        lines.append(f"recovery: {recovery_command}")
+    return lines
+
+
 def plan_agent_degraded_handoff_text(session: StartupSession) -> str:
     lines = [
         "Implementation session is running, but local app startup failed.",
