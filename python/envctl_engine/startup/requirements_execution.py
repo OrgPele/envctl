@@ -5,6 +5,7 @@ import re
 import sys
 import threading
 import time
+from collections.abc import Callable
 
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.requirements.external import (
@@ -18,6 +19,8 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_port_allocator
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
+from envctl_engine.startup.startup_progress import report_progress as report_progress_impl
+from envctl_engine.startup.startup_progress import suppress_timing_output
 from envctl_engine.startup.startup_selection_support import restart_include_requirements
 from envctl_engine.state.models import RequirementsResult
 
@@ -119,6 +122,8 @@ def start_requirements_for_project(
     *,
     mode: str,
     route: Route | None = None,
+    report_progress_fn: Callable[..., None] | None = None,
+    suppress_timing_output_fn: Callable[[Route | None], bool] = suppress_timing_output,
 ) -> RequirementsResult:
     rt = orchestrator.runtime
     port_allocator = resolve_port_allocator(rt)
@@ -214,14 +219,21 @@ def start_requirements_for_project(
             return
         progress_project_flag = route.flags.get(REQUIREMENTS_PROGRESS_PROJECT_FLAG) if route is not None else None
         progress_project = str(progress_project_flag).strip() if progress_project_flag is not None else context.name
-        orchestrator._report_progress(
-            route,
-            format_requirements_progress_message(
-                active=active_requirements,
-                pending=pending_requirements,
-            ),
-            project=progress_project or context.name,
+        progress_message = format_requirements_progress_message(
+            active=active_requirements,
+            pending=pending_requirements,
         )
+        if report_progress_fn is not None:
+            report_progress_fn(route, progress_message, project=progress_project or context.name)
+        else:
+            report_progress_impl(
+                rt,
+                route,
+                progress_lock=getattr(orchestrator, "_progress_lock"),
+                last_progress_message_by_project=getattr(orchestrator, "_last_progress_message_by_project"),
+                message=progress_message,
+                project=progress_project or context.name,
+            )
 
     def run_component(component: str, plan: object, *, strict: bool = False) -> RequirementOutcome:
         component_started = time.monotonic()
@@ -324,7 +336,7 @@ def start_requirements_for_project(
         workers=worker_count,
         enabled=sorted(definition.id for definition in enabled_definitions),
     )
-    if timing_enabled and not orchestrator._suppress_timing_output(route):
+    if timing_enabled and not suppress_timing_output_fn(route):
         print(
             "Requirements execution for "
             f"{context.name}: "
@@ -362,7 +374,7 @@ def start_requirements_for_project(
         components=component_timings_ms,
         failures=len(failures),
     )
-    if timing_enabled and not orchestrator._suppress_timing_output(route):
+    if timing_enabled and not suppress_timing_output_fn(route):
         component_parts = " ".join(
             f"{name}={component_timings_ms.get(name, 0.0):.1f}ms"
             for name in (definition.id for definition in definitions)

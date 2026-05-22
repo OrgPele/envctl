@@ -240,12 +240,18 @@ class StartupOrchestrator:
         launch_config = resolve_plan_agent_launch_config(rt.config, getattr(rt, "env", {}), route=route)
         if launch_config.enabled and created_worktrees:
             self._ensure_run_id(session)
+            report_progress_fn = partial(
+                report_progress,
+                self.runtime,
+                progress_lock=self._progress_lock,
+                last_progress_message_by_project=self._last_progress_message_by_project,
+            )
             prepare_plan_agent_dependencies_for_launch_impl(
                 rt,
                 session,
                 created_worktrees=created_worktrees,
                 launch_config=launch_config,
-                report_progress=self._report_progress,
+                report_progress=report_progress_fn,
                 prepare_fn=prepare_project_dependencies,
             )
         launch_result = self._launch_plan_agent_terminals_with_spinner(
@@ -386,7 +392,13 @@ class StartupOrchestrator:
                 project_name_from_service=self.runtime._project_name_from_service,
             ),
             announce_session_identifiers=self._announce_session_identifiers,
-            report_progress=self._report_progress,
+            report_progress=lambda route, message: report_progress(
+                self.runtime,
+                route,
+                progress_lock=self._progress_lock,
+                last_progress_message_by_project=self._last_progress_message_by_project,
+                message=message,
+            ),
             terminate_restart_orphan_listeners=self._terminate_restart_orphan_listeners,
         )
 
@@ -595,16 +607,20 @@ class StartupOrchestrator:
         route: Route,
         run_id: str,
     ) -> ProjectStartupResult:
-        return start_project_context_impl(self, context=context, mode=mode, route=route, run_id=run_id)
-
-    def _report_progress(self, route: Route, message: str, *, project: str | None = None) -> None:
-        report_progress(
-            self.runtime,
-            route,
-            progress_lock=self._progress_lock,
-            last_progress_message_by_project=self._last_progress_message_by_project,
-            message=message,
-            project=project,
+        return start_project_context_impl(
+            self,
+            context=context,
+            mode=mode,
+            route=route,
+            run_id=run_id,
+            report_progress_fn=lambda route, message, *, project=None: report_progress(
+                self.runtime,
+                route,
+                progress_lock=self._progress_lock,
+                last_progress_message_by_project=self._last_progress_message_by_project,
+                message=message,
+                project=project,
+            ),
         )
 
     def start_requirements_for_project(
@@ -614,7 +630,21 @@ class StartupOrchestrator:
         mode: str,
         route: Route | None = None,
     ) -> RequirementsResult:
-        return start_requirements_for_project_impl(self, context, mode=mode, route=route)
+        return start_requirements_for_project_impl(
+            self,
+            context,
+            mode=mode,
+            route=route,
+            report_progress_fn=lambda route, message, *, project=None: report_progress(
+                self.runtime,
+                route,
+                progress_lock=self._progress_lock,
+                last_progress_message_by_project=self._last_progress_message_by_project,
+                message=message,
+                project=project,
+            ),
+            suppress_timing_output_fn=suppress_timing_output,
+        )
 
     def start_project_services(
         self,

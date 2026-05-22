@@ -113,6 +113,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_orchestrator_does_not_retain_suppress_progress_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_suppress_progress_output"))
 
+    def test_startup_orchestrator_does_not_retain_report_progress_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_report_progress"))
+
     def test_requirements_parallel_defaults_to_sequential_on_macos_with_cli_override(self) -> None:
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
         orchestrator = SimpleNamespace(runtime=runtime)
