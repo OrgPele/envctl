@@ -11,6 +11,7 @@ from envctl_engine.startup.restart_prestop_support import (
     restart_orphan_listener_scan,
     restart_fallback_start_route,
     restart_port_assignments,
+    restart_prestop_selection,
     restart_prestop_preservation,
     restart_start_route,
 )
@@ -95,6 +96,29 @@ class RestartPrestopSupportTests(unittest.TestCase):
         self.assertEqual(result.preserved_services, {})
         self.assertEqual(result.requirements_to_release, {})
         self.assertEqual(set(result.preserved_requirements), {"Main"})
+
+    def test_restart_prestop_selection_falls_back_to_selected_service_projects_for_requirements(self) -> None:
+        state = SimpleNamespace(
+            services={
+                "Main Backend": SimpleNamespace(project="Main", type="backend"),
+                "Other Backend": SimpleNamespace(project="Other", type="backend"),
+            }
+        )
+        route = Route(
+            command="restart",
+            mode="main",
+            raw_args=["restart"],
+            flags={"restart_include_requirements": True, "services": ["Main Backend"]},
+        )
+        runtime = SimpleNamespace(
+            _project_name_from_service=lambda service_name: str(service_name).removesuffix(" Backend")
+        )
+
+        selection = restart_prestop_selection(state=state, route=route, runtime=runtime)
+
+        self.assertEqual(selection.selected_services, {"Main Backend"})
+        self.assertEqual(selection.target_projects, {"Main"})
+        self.assertTrue(selection.include_requirements)
 
     def test_restart_port_assignments_use_actual_port_then_requested_port_for_selected_services(self) -> None:
         state = SimpleNamespace(

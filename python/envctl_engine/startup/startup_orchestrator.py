@@ -67,6 +67,7 @@ from envctl_engine.startup.restart_prestop_support import (
     restart_orphan_listener_scan,
     restart_port_assignments,
     restart_prestop_preservation,
+    restart_prestop_selection,
     restart_start_route,
 )
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
@@ -82,10 +83,7 @@ from envctl_engine.startup.startup_selection_support import (
     project_app_ports_text as project_app_ports_text_impl,
     project_ports_text as project_ports_text_impl,
     _restart_include_requirements as _restart_include_requirements_impl,
-    _restart_selected_services as _restart_selected_services_impl,
     _restart_service_types_for_project as _restart_service_types_for_project_impl,
-    restart_target_projects as restart_target_projects_impl,
-    restart_target_projects_for_selected_services as restart_target_projects_for_selected_services_impl,
     select_start_tree_projects as select_start_tree_projects_impl,
     trees_start_selection_required as trees_start_selection_required_impl,
 )
@@ -228,15 +226,10 @@ class StartupOrchestrator:
             return None
         session.restart_state = resumed
 
-        selected_services = _restart_selected_services_impl(state=resumed, route=route)
-        target_projects = restart_target_projects_impl(state=resumed, route=route, runtime=rt)
-        include_requirements = self._restart_include_requirements(route)
-        if include_requirements and not target_projects:
-            target_projects = restart_target_projects_for_selected_services_impl(
-                selected_services=selected_services,
-                state=resumed,
-                runtime=rt,
-            )
+        selection = restart_prestop_selection(state=resumed, route=route, runtime=rt)
+        selected_services = selection.selected_services
+        target_projects = selection.target_projects
+        include_requirements = selection.include_requirements
         rt._emit(
             "restart.selection",
             include_requirements=include_requirements,

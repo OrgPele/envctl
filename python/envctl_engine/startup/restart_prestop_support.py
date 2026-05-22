@@ -5,6 +5,12 @@ from typing import Any, Callable, Iterable
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.services import service_project_name, service_slug_from_record
+from envctl_engine.startup.startup_selection_support import (
+    _restart_include_requirements,
+    _restart_selected_services,
+    restart_target_projects,
+    restart_target_projects_for_selected_services,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,6 +18,13 @@ class RestartPrestopPreservation:
     preserved_services: dict[str, object]
     preserved_requirements: dict[str, object]
     requirements_to_release: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class RestartPrestopSelection:
+    selected_services: set[str]
+    target_projects: set[str]
+    include_requirements: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +71,23 @@ def restart_start_route(
             "_restart_target_projects": sorted(target_projects),
             "_restart_include_requirements": include_requirements,
         },
+    )
+
+
+def restart_prestop_selection(*, state: Any, route: Route, runtime: Any) -> RestartPrestopSelection:
+    selected_services = _restart_selected_services(state=state, route=route)
+    target_projects = restart_target_projects(state=state, route=route, runtime=runtime)
+    include_requirements = _restart_include_requirements(route)
+    if include_requirements and not target_projects:
+        target_projects = restart_target_projects_for_selected_services(
+            selected_services=selected_services,
+            state=state,
+            runtime=runtime,
+        )
+    return RestartPrestopSelection(
+        selected_services=selected_services,
+        target_projects=target_projects,
+        include_requirements=include_requirements,
     )
 
 
