@@ -100,6 +100,10 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_orchestrator_does_not_retain_fresh_start_replacement_services_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_fresh_start_replacement_services"))
 
+    def test_startup_orchestrator_does_not_retain_dashboard_stopped_services_static_wrappers(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_dashboard_stopped_service_entries"))
+        self.assertFalse(hasattr(StartupOrchestrator, "_metadata_without_dashboard_stopped_services"))
+
     def test_requirements_parallel_defaults_to_sequential_on_macos_with_cli_override(self) -> None:
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
         orchestrator = SimpleNamespace(runtime=runtime)

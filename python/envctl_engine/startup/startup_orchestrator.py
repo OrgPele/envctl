@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import threading
 import time
-from typing import Callable, Mapping, cast, Iterable
+from typing import Callable, cast, Iterable
 from functools import partial
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
@@ -37,9 +37,7 @@ from envctl_engine.startup.finalization import (
 )
 from envctl_engine.startup.execution_preparation import prepare_startup_execution
 from envctl_engine.startup.run_reuse_support import (
-    dashboard_stopped_service_entries as dashboard_stopped_service_entries_impl,
     fresh_start_replacement_services as fresh_start_replacement_services_impl,
-    metadata_without_dashboard_stopped_services as metadata_without_dashboard_stopped_services_impl,
     prepare_dashboard_stopped_service_restore as prepare_dashboard_stopped_service_restore_impl,
     replace_existing_project_services_for_fresh_start as replace_existing_project_services_for_fresh_start_impl,
 )
@@ -408,21 +406,6 @@ class StartupOrchestrator:
             reuse_started=reuse_started,
             decision_kind=decision_kind,
             emit_phase=self._emit_phase,
-        )
-
-    @staticmethod
-    def _dashboard_stopped_service_entries(state) -> list[dict[str, str]]:
-        return dashboard_stopped_service_entries_impl(state)
-
-    @staticmethod
-    def _metadata_without_dashboard_stopped_services(
-        metadata: Mapping[str, object],
-        *,
-        restored_service_names: set[str],
-    ) -> dict[str, object]:
-        return metadata_without_dashboard_stopped_services_impl(
-            metadata,
-            restored_service_names=restored_service_names,
         )
 
     def _prepare_execution(self, session: StartupSession) -> None:
