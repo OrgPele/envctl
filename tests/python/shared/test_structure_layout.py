@@ -319,6 +319,16 @@ class StructureLayoutTests(unittest.TestCase):
             facade.read_text(encoding="utf-8"),
         )
 
+    def test_selected_context_startup_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "selected_context_startup.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "startup_orchestrator.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.startup.selected_context_startup import",
+            facade.read_text(encoding="utf-8"),
+        )
+
     def test_repo_local_launcher_is_python_script(self) -> None:
         launcher = REPO_ROOT / "bin" / "envctl"
         self.assertTrue(launcher.is_file())

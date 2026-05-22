@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import concurrent.futures
-from contextlib import nullcontext
 from pathlib import Path
 import sys
 import threading
@@ -14,7 +12,7 @@ from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanAgentLaunchConfig, PlanAgentLaunchResult
 from envctl_engine.planning.plan_agent.omx_transport import validate_plan_agent_attach_target
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
-from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope, route_is_implicit_start
+from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
 from envctl_engine.runtime.runtime_context import resolve_state_repository
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
@@ -68,6 +66,7 @@ from envctl_engine.startup.restart_prestop_support import (
     terminate_restart_orphan_listeners,
 )
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
+from envctl_engine.startup.selected_context_startup import start_selected_contexts
 from envctl_engine.startup.startup_progress import (
     ProjectSpinnerGroup,
     report_progress,
@@ -77,8 +76,6 @@ from envctl_engine.startup.startup_progress import (
 from envctl_engine.startup.startup_selection_support import (
     port_allocator as port_allocator_impl,
     process_runtime as process_runtime_impl,
-    project_app_ports_text as project_app_ports_text_impl,
-    project_ports_text as project_ports_text_impl,
     _restart_include_requirements as _restart_include_requirements_impl,
     _restart_service_types_for_project as _restart_service_types_for_project_impl,
     select_start_tree_projects as select_start_tree_projects_impl,
@@ -104,13 +101,6 @@ from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinne
 
 _MODE_TREE_TOKENS_NORMALIZED = {str(token).strip().lower() for token in MODE_TREE_TOKENS}
 _ProjectSpinnerGroup = ProjectSpinnerGroup
-
-
-def _project_spinner_success_message(session: StartupSession, context: ProjectContextLike) -> str:
-    dependency_scope = effective_dependency_scope(session.effective_route, session.runtime_mode)
-    if session.runtime_mode == "trees" and dependency_scope == "shared":
-        return f"startup completed ({project_app_ports_text_impl(context)})"
-    return f"startup completed ({project_ports_text_impl(context)})"
 
 
 class StartupOrchestrator:
@@ -957,219 +947,24 @@ class StartupOrchestrator:
         self._emit_phase(session, "docker_prewarm", prewarm_started, status="ok")
 
     def _start_selected_contexts(self, session: StartupSession) -> None:
-        rt = self.runtime
-        route = session.effective_route
-        spinner_message = f"Starting {len(session.contexts_to_start)} project(s)..."
-        spinner_policy = resolve_spinner_policy(dict(rt.env))
-        use_startup_spinner = spinner_policy.enabled and not self._suppress_progress_output(route)
-        emit_spinner_policy(
-            rt._emit,
-            spinner_policy,
-            context={"component": "startup_orchestrator", "op_id": "startup.execute"},
+        start_selected_contexts(
+            runtime=self.runtime,
+            session=session,
+            suppress_progress_output=self._suppress_progress_output,
+            resolved_run_id=self._resolved_run_id,
+            record_project_startup=self._record_project_startup,
+            render_project_startup_warnings=self._render_project_startup_warnings,
+            should_degrade_to_plan_agent_handoff=lambda session, error: self._should_degrade_to_plan_agent_handoff(
+                session,
+                error=error,
+            ),
+            record_plan_agent_handoff_local_startup_failure=self._record_plan_agent_handoff_local_startup_failure,
+            spinner_factory=spinner,
+            use_spinner_policy_fn=use_spinner_policy,
+            resolve_spinner_policy_fn=resolve_spinner_policy,
+            emit_spinner_policy_fn=emit_spinner_policy,
+            project_spinner_group_factory=_ProjectSpinnerGroup,
         )
-        parallel_enabled, parallel_workers = rt._tree_parallel_startup_config(
-            mode=session.runtime_mode,
-            route=route,
-            project_count=len(session.contexts_to_start),
-        )
-        rt._emit(
-            "startup.execution",
-            mode="parallel" if parallel_enabled else "sequential",
-            workers=parallel_workers,
-            projects=[context.name for context in session.contexts_to_start],
-        )
-        debug_suppress_plan_progress = bool(
-            session.requested_command == "plan"
-            and str(rt.env.get("ENVCTL_DEBUG_SUPPRESS_PLAN_PROGRESS", "")).strip().lower() in {"1", "true", "yes", "on"}
-        )
-        route_for_execution = Route(
-            command=route.command,
-            mode=route.mode,
-            raw_args=route.raw_args,
-            passthrough_args=route.passthrough_args,
-            projects=route.projects,
-            flags={
-                **route.flags,
-                "_spinner_update": None,
-                "_spinner_update_project": None,
-                "debug_suppress_progress_output": debug_suppress_plan_progress,
-            },
-        )
-        use_project_spinner_group = (
-            parallel_enabled
-            and use_startup_spinner
-            and len(session.selected_contexts) > 1
-            and str(getattr(spinner_policy, "backend", "")) == "rich"
-        )
-        session.used_project_spinner_group = use_project_spinner_group
-        project_spinner_group = _ProjectSpinnerGroup(
-            projects=[context.name for context in session.selected_contexts],
-            enabled=use_project_spinner_group,
-            policy=spinner_policy,
-            emit=rt._emit,
-            component="startup_orchestrator",
-            op_id="startup.execute",
-            env=dict(rt.env),
-        )
-        use_single_spinner = use_startup_spinner and not use_project_spinner_group
-        group_context = project_spinner_group if use_project_spinner_group else nullcontext(project_spinner_group)
-
-        with (
-            use_spinner_policy(spinner_policy),
-            spinner(spinner_message, enabled=use_single_spinner) as active_spinner,
-        ):
-            if use_single_spinner:
-                route_for_execution.flags["_spinner_update"] = active_spinner.update
-                rt._emit(
-                    "ui.spinner.lifecycle",
-                    component="startup_orchestrator",
-                    op_id="startup.execute",
-                    state="start",
-                    message=spinner_message,
-                )
-            if use_project_spinner_group:
-                route_for_execution.flags["_spinner_update_project"] = project_spinner_group.update_project
-            try:
-                with group_context:
-                    if use_project_spinner_group and session.resumed_context_names:
-                        for project_name in session.resumed_context_names:
-                            project_spinner_group.mark_success(project_name, "restored")
-                    if parallel_enabled:
-                        completed: dict[str, ProjectStartupResult] = {}
-                        failures: list[str] = []
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_workers) as executor:
-                            future_map = {
-                                executor.submit(
-                                    rt._start_project_context,
-                                    context=context,
-                                    mode=session.runtime_mode,
-                                    route=route_for_execution,
-                                    run_id=self._resolved_run_id(session),
-                                ): context
-                                for context in session.contexts_to_start
-                            }
-                            for future in concurrent.futures.as_completed(future_map):
-                                context = future_map[future]
-                                try:
-                                    result = cast(ProjectStartupResult, future.result())
-                                    completed[context.name] = result
-                                    if use_single_spinner:
-                                        done = len(session.resumed_context_names) + len(completed)
-                                        progress_message = (
-                                            f"Started {done}/{len(session.selected_contexts)} project(s)..."
-                                        )
-                                        active_spinner.update(progress_message)
-                                        rt._emit(
-                                            "ui.spinner.lifecycle",
-                                            component="startup_orchestrator",
-                                            op_id="startup.execute",
-                                            state="update",
-                                            message=progress_message,
-                                        )
-                                    if use_project_spinner_group:
-                                        project_spinner_group.mark_success(
-                                            context.name,
-                                            _project_spinner_success_message(session, context),
-                                        )
-                                    self._render_project_startup_warnings(
-                                        context=context,
-                                        warnings=result.warnings,
-                                        route=route_for_execution,
-                                        project_spinner_group=project_spinner_group
-                                        if use_project_spinner_group
-                                        else None,
-                                    )
-                                except RuntimeError as exc:
-                                    if self._should_degrade_to_plan_agent_handoff(session, error=str(exc)):
-                                        self._record_plan_agent_handoff_local_startup_failure(
-                                            session,
-                                            project_name=context.name,
-                                            error=str(exc),
-                                        )
-                                        if use_project_spinner_group:
-                                            project_spinner_group.mark_success(
-                                                context.name,
-                                                "AI session running; local startup failed",
-                                            )
-                                        continue
-                                    failures.append(str(exc))
-                                    rt._emit("startup.project.failed", project=context.name, error=str(exc))
-                                    if use_project_spinner_group:
-                                        project_spinner_group.mark_failure(context.name, str(exc))
-                        for context in session.contexts_to_start:
-                            result = completed.get(context.name)
-                            if result is None:
-                                continue
-                            self._record_project_startup(session, context, result)
-                        if failures:
-                            raise RuntimeError("; ".join(failures))
-                    else:
-                        for context in session.contexts_to_start:
-                            try:
-                                result = cast(ProjectStartupResult, rt._start_project_context(
-                                    context=context,
-                                    mode=session.runtime_mode,
-                                    route=route_for_execution,
-                                    run_id=self._resolved_run_id(session),
-                                ))
-                            except RuntimeError as exc:
-                                if self._should_degrade_to_plan_agent_handoff(session, error=str(exc)):
-                                    self._record_plan_agent_handoff_local_startup_failure(
-                                        session,
-                                        project_name=context.name,
-                                        error=str(exc),
-                                    )
-                                    if use_project_spinner_group:
-                                        project_spinner_group.mark_success(
-                                            context.name,
-                                            "AI session running; local startup failed",
-                                        )
-                                    continue
-                                raise
-                            self._record_project_startup(session, context, result)
-                            self._render_project_startup_warnings(
-                                context=context,
-                                warnings=result.warnings,
-                                route=route_for_execution,
-                                project_spinner_group=project_spinner_group if use_project_spinner_group else None,
-                            )
-            except RuntimeError:
-                if use_single_spinner:
-                    active_spinner.fail("Startup failed")
-                    rt._emit(
-                        "ui.spinner.lifecycle",
-                        component="startup_orchestrator",
-                        op_id="startup.execute",
-                        state="fail",
-                        message="Startup failed",
-                    )
-                    rt._emit(
-                        "ui.spinner.lifecycle",
-                        component="startup_orchestrator",
-                        op_id="startup.execute",
-                        state="stop",
-                    )
-                raise
-            if use_single_spinner:
-                success_message = (
-                    "AI session running; local startup failed"
-                    if session.plan_agent_handoff_degraded
-                    else "Startup complete"
-                )
-                active_spinner.succeed(success_message)
-                rt._emit(
-                    "ui.spinner.lifecycle",
-                    component="startup_orchestrator",
-                    op_id="startup.execute",
-                    state="success",
-                    message=success_message,
-                )
-                rt._emit(
-                    "ui.spinner.lifecycle",
-                    component="startup_orchestrator",
-                    op_id="startup.execute",
-                    state="stop",
-                )
 
     def _reconcile_strict_truth(self, session: StartupSession) -> None:
         rt = self.runtime
