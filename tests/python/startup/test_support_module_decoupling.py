@@ -78,6 +78,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         self.assertFalse(hasattr(StartupOrchestrator, "_trees_start_selection_required"))
         self.assertFalse(hasattr(StartupOrchestrator, "_select_start_tree_projects"))
 
+    def test_startup_orchestrator_does_not_retain_process_runtime_pass_through_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_process_runtime"))
+
     def test_requirements_parallel_defaults_to_sequential_on_macos_with_cli_override(self) -> None:
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
         orchestrator = SimpleNamespace(runtime=runtime)
@@ -713,6 +716,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
                 _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
                 _service_enabled_for_mode=lambda mode, service: True,
+                process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: None),
                 _prepare_backend_runtime=prepare_backend_runtime,
                 _prepare_frontend_runtime=prepare_frontend_runtime,
                 _service_command_source=lambda **kwargs: "configured",
@@ -720,7 +724,6 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             )
             orchestrator = SimpleNamespace(
                 runtime=runtime,
-                _process_runtime=lambda rt: SimpleNamespace(start_background=lambda *args, **kwargs: None),
                 _restart_service_types_for_project=lambda **kwargs: {"backend", "frontend"},
                 _suppress_timing_output=lambda route: True,
             )
@@ -866,6 +869,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _service_command_source=lambda **kwargs: "configured",
                 _service_start_command_resolved=lambda service_name, **kwargs: ("python -c pass", "configured"),
                 _split_command=lambda command, **kwargs: ["python", "-c", "pass"],
+                process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)),
                 _detect_service_actual_port=lambda service_name, pid, requested_port, **kwargs: 8022
                 if service_name == "voice-runtime"
                 else requested_port,
@@ -876,9 +880,6 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             )
             orchestrator = SimpleNamespace(
                 runtime=runtime,
-                _process_runtime=lambda rt: SimpleNamespace(
-                    start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)
-                ),
                 _restart_service_types_for_project=lambda route, project_name, default_service_types: set(default_service_types),
                 _suppress_timing_output=lambda route: True,
             )
@@ -982,6 +983,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                     "scripts/envctl/start-voice-runtime.sh",
                     str(kwargs["port"]),
                 ],
+                process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)),
                 _detect_service_actual_port=lambda **kwargs: 8010,
                 _listener_truth_enforced=lambda: True,
                 _service_listener_failure_detail=lambda **kwargs: "",
@@ -990,9 +992,6 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             )
             orchestrator = SimpleNamespace(
                 runtime=runtime,
-                _process_runtime=lambda rt: SimpleNamespace(
-                    start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)
-                ),
                 _restart_service_types_for_project=lambda **kwargs: {"voice-runtime"},
                 _suppress_timing_output=lambda route: True,
             )
@@ -1093,6 +1092,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _service_enabled_for_mode=lambda mode, service_name: service_name == "voice-runtime",
                 _service_command_source=lambda **kwargs: "configured",
                 _split_command=lambda command, **kwargs: ["python", "-c", "pass"],
+                process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)),
                 _detect_service_actual_port=lambda **kwargs: 8019,
                 _listener_truth_enforced=lambda: True,
                 _service_listener_failure_detail=lambda **kwargs: "",
@@ -1101,7 +1101,6 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             )
             orchestrator = SimpleNamespace(
                 runtime=runtime,
-                _process_runtime=lambda rt: SimpleNamespace(start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)),
                 _restart_service_types_for_project=lambda **kwargs: {"voice-runtime"},
                 _suppress_timing_output=lambda route: True,
             )

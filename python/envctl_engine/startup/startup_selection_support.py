@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
 
 from envctl_engine.planning import list_planning_files, planning_existing_counts, select_projects_for_plan_files
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
@@ -17,10 +16,6 @@ from envctl_engine.state.models import RunState
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 
 _MODE_TREE_TOKENS_NORMALIZED = {str(token).strip().lower() for token in MODE_TREE_TOKENS}
-
-
-class _RuntimeOwner(Protocol):
-    runtime: StartupRuntime
 
 
 def project_ports_text(context: ProjectContextLike) -> str:

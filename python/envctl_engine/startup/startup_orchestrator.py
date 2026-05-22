@@ -205,7 +205,7 @@ class StartupOrchestrator:
     ) -> None:
         rt = self.runtime
         listener_pids_for_port = cast(Callable[[int], Iterable[int]], getattr(rt, "_listener_pids_for_port", None))
-        process_runtime = self._process_runtime(rt)
+        process_runtime = process_runtime_impl(rt)
         port_allocator = port_allocator_impl(rt)
         terminate_restart_orphan_listeners(
             state=state,
@@ -698,7 +698,3 @@ class StartupOrchestrator:
             default_service_types=default_service_types,
             additional_services=additional_services,
         )
-
-    @staticmethod
-    def _process_runtime(runtime: object):
-        return process_runtime_impl(runtime)

@@ -7,6 +7,7 @@ from pathlib import Path
 import time
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.runtime_context import resolve_process_runtime
 from envctl_engine.runtime.browser_diagnostics import launch_diagnostics_payload
 from envctl_engine.runtime.service_manager import ServiceStartDescriptor
 from envctl_engine.runtime.runtime_context import resolve_port_allocator
@@ -214,7 +215,7 @@ def start_project_services(
 ) -> dict[str, ServiceRecord]:
     rt = orchestrator.runtime
     port_allocator = resolve_port_allocator(rt)
-    process_runtime = orchestrator._process_runtime(rt)
+    process_runtime = resolve_process_runtime(rt)
     effective_mode = str(route.mode if route is not None else "main").strip().lower() or "main"
     backend_plan = context.ports["backend"]
     frontend_plan = context.ports["frontend"]
