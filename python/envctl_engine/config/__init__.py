@@ -1123,6 +1123,9 @@ def _dependency_toggle_explicit_for_mode(
 def _apply_plan_agent_aliases(resolved: dict[str, str], *, explicit_values: Mapping[str, str]) -> None:
     if "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE" not in explicit_values and "CMUX" in explicit_values:
         resolved["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] = str(explicit_values.get("CMUX", ""))
+    if "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT" not in explicit_values and "CMUX" in explicit_values:
+        if parse_bool(explicit_values.get("CMUX"), False):
+            resolved["ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT"] = "cmux"
     if "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE" not in explicit_values and "CMUX_WORKSPACE" in explicit_values:
         resolved["ENVCTL_PLAN_AGENT_CMUX_WORKSPACE"] = str(explicit_values.get("CMUX_WORKSPACE", ""))
     if "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE" not in explicit_values and "SUPERSET" in explicit_values:

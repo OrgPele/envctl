@@ -1030,7 +1030,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
             )
             self.assertNotIn(
                 f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md "
-                "--tmux --opencode --headless --new-session",
+                "--cmux --opencode --headless --new-session",
                 output,
             )
             self.assertNotIn("command:", output)
@@ -1246,7 +1246,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
 
             self.assertIn(
                 f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md "
-                "--tmux --opencode --headless --new-session",
+                "--cmux --opencode --headless --new-session",
                 output,
             )
             self.assertNotIn("AI session:", output)
@@ -1307,7 +1307,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertIn("Frontend: http://localhost:9004", output)
             self.assertIn(
                 f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md "
-                "--tmux --opencode --headless --new-session",
+                "--cmux --opencode --headless --new-session",
                 output,
             )
             self.assertNotIn("AI session:", output)
@@ -1370,7 +1370,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
             )
             self.assertNotIn(
                 f"○ Run AI: envctl --repo {repo} --plan features/feature-a.md "
-                "--tmux --opencode --headless --new-session",
+                "--cmux --opencode --headless --new-session",
                 output,
             )
 
@@ -1406,7 +1406,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
 
             self.assertIn(
                 f"○ Run AI: envctl --repo {repo} --plan 'feature with spaces;and-symbols.md' "
-                "--tmux --opencode --headless --new-session",
+                "--cmux --opencode --headless --new-session",
                 output,
             )
             self.assertNotIn("codex-tmux", output)
@@ -1443,7 +1443,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
 
             self.assertIn(
                 f"○ Run AI: envctl --repo {repo} --plan feature_without_plan.md "
-                "--tmux --opencode --headless --new-session",
+                "--cmux --opencode --headless --new-session",
                 output,
             )
             self.assertNotIn("codex-tmux", output)
@@ -1488,7 +1488,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
             self.assertIn(
                 f"○ Run AI: envctl --repo {repo} "
                 "--plan refactoring/supportopia-to-pele-complete-repo-rename.md "
-                "--tmux --opencode --headless --new-session",
+                "--cmux --opencode --headless --new-session",
                 output,
             )
             self.assertNotIn("codex-tmux", output)
@@ -1538,7 +1538,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
 
             self.assertIn(
                 f"○ Run AI: envctl --repo {repo} --plan test-headless/tmux-headless-check.md "
-                "--tmux --opencode --headless --new-session",
+                "--cmux --opencode --headless --new-session",
                 output,
             )
             self.assertNotIn(" --project", output)
@@ -1580,7 +1580,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
 
             self.assertIn(
                 f"○ Run AI: envctl --repo {repo} --plan features/task.md "
-                "--tmux --opencode --headless --new-session",
+                "--cmux --opencode --headless --new-session",
                 output,
             )
             self.assertNotIn(" --project", output)

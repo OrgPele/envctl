@@ -78,6 +78,8 @@ def resolve_plan_agent_launch_config(
     _apply_plan_agent_aliases(env_map, explicit_values=env_map)
     route_flags = getattr(route, "flags", {}) or {}
     cmux_launch_requested = bool(route_flags.get("cmux"))
+    tmux_launch_requested = bool(route_flags.get("tmux"))
+    omx_launch_requested = bool(route_flags.get("omx"))
     opencode_launch_requested = bool(route_flags.get("opencode"))
     configured_surface_transport = str(
         env_map.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
@@ -89,12 +91,17 @@ def resolve_plan_agent_launch_config(
     if configured_surface_transport not in {"cmux", "tmux", "superset"}:
         surface_transport_warning = "invalid_surface_transport"
         configured_surface_transport = _default_plan_agent_surface_transport()
+    cmux_workspace = str(
+        env_map.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
+        or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
+        or ""
+    ).strip()
     transport: Literal["cmux", "tmux", "omx", "superset"]
-    if bool(route_flags.get("omx")):
+    if omx_launch_requested:
         transport = "omx"
-    elif bool(route_flags.get("tmux")):
+    elif tmux_launch_requested:
         transport = "tmux"
-    elif cmux_launch_requested:
+    elif cmux_launch_requested or cmux_workspace:
         transport = "cmux"
     elif opencode_launch_requested:
         transport = _default_plan_agent_surface_transport()
@@ -133,11 +140,6 @@ def resolve_plan_agent_launch_config(
         or config.raw.get("ENVCTL_PLAN_AGENT_SHELL")
         or _DEFAULT_SHELL
     ).strip() or _DEFAULT_SHELL
-    cmux_workspace = str(
-        env_map.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
-        or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
-        or ""
-    ).strip()
     superset_project = str(
         env_map.get("ENVCTL_PLAN_AGENT_SUPERSET_PROJECT")
         or config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_PROJECT")
@@ -166,9 +168,10 @@ def resolve_plan_agent_launch_config(
         (
             bool(cmux_workspace),
             cmux_launch_requested,
+            tmux_launch_requested,
+            omx_launch_requested,
             opencode_launch_requested,
             bool(superset_project or superset_workspace),
-            transport in {"tmux", "omx"},
         )
     )
     direct_prompt_enabled = parse_bool(

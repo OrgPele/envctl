@@ -325,7 +325,7 @@ class PrereqPolicyTests(unittest.TestCase):
             def fake_which(binary: str) -> str | None:
                 if binary == "git":
                     return "/usr/bin/git"
-                if binary in {"cmux", "opencode"}:
+                if binary in {"cmux", "tmux", "opencode"}:
                     return None
                 return f"/usr/bin/{binary}"
 
@@ -336,7 +336,7 @@ class PrereqPolicyTests(unittest.TestCase):
                 ok, reason = cli.check_prereqs(route, config)
 
             self.assertFalse(ok)
-            self.assertIn("cmux", str(reason))
+            self.assertIn("tmux", str(reason))
             self.assertIn("opencode", str(reason))
 
     def test_plan_omx_team_route_requires_omx_tmux_script_and_codex(self) -> None:
@@ -427,7 +427,7 @@ class PrereqPolicyTests(unittest.TestCase):
             def fake_which(binary: str) -> str | None:
                 if binary == "git":
                     return "/usr/bin/git"
-                if binary in {"cmux", "codex"}:
+                if binary in {"cmux", "tmux", "codex"}:
                     return None
                 return f"/usr/bin/{binary}"
 
@@ -462,7 +462,7 @@ class PrereqPolicyTests(unittest.TestCase):
             def fake_which(binary: str) -> str | None:
                 if binary == "git":
                     return "/usr/bin/git"
-                if binary in {"cmux", "codex"}:
+                if binary in {"cmux", "tmux", "codex"}:
                     return None
                 return f"/usr/bin/{binary}"
 
@@ -473,7 +473,7 @@ class PrereqPolicyTests(unittest.TestCase):
                 ok, reason = cli.check_prereqs(route, config)
 
             self.assertFalse(ok)
-            self.assertIn("cmux", str(reason))
+            self.assertIn("tmux", str(reason))
             self.assertIn("codex", str(reason))
 
     def test_cycles_alias_alone_does_not_enable_plan_agent_prereqs(self) -> None:
