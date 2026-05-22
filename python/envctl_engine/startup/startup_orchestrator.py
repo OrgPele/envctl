@@ -29,6 +29,7 @@ from envctl_engine.startup.finalization import (
     maybe_attach_plan_agent_terminal as maybe_attach_plan_agent_terminal_impl,
     print_headless_plan_session_summary as print_headless_plan_session_summary_impl,
     print_plan_dry_run_preview as print_plan_dry_run_preview_impl,
+    resolve_plan_dry_run as resolve_plan_dry_run_impl,
     print_restart_port_rebound_summary as print_restart_port_rebound_summary_impl,
     render_plan_agent_degraded_handoff_for_terminal as finalization_render_plan_agent_degraded_handoff_for_terminal,
     render_final_failure_status as finalization_render_final_failure_status,
@@ -120,7 +121,7 @@ class StartupOrchestrator:
                 self._validate_route_contract,
                 self._handle_restart_prestop,
                 self._select_contexts,
-                self._resolve_plan_dry_run,
+                partial(resolve_plan_dry_run_impl, self.runtime, print_fn=print),
                 self._prepare_and_launch_plan_agent_worktrees,
                 self._resolve_run_reuse,
                 self._resolve_disabled_startup_mode,
@@ -214,13 +215,6 @@ class StartupOrchestrator:
             terminate_pid=getattr(process_runtime, "terminate", None),
             release_port=port_allocator.release,
         )
-
-    def _resolve_plan_dry_run(self, session: StartupSession) -> int | None:
-        route = session.effective_route
-        if route.command != "plan" or not bool(route.flags.get("dry_run")):
-            return None
-        print_plan_dry_run_preview_impl(self.runtime, session, print_fn=print)
-        return 0
 
     def _prepare_and_launch_plan_agent_worktrees(self, session: StartupSession) -> int | None:
         route = session.effective_route

@@ -283,6 +283,19 @@ def print_plan_dry_run_preview(
         print_fn(line)
 
 
+def resolve_plan_dry_run(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    *,
+    print_fn: Callable[[str], None],
+) -> int | None:
+    route = session.effective_route
+    if route.command != "plan" or not bool(route.flags.get("dry_run")):
+        return None
+    print_plan_dry_run_preview(runtime, session, print_fn=print_fn)
+    return 0
+
+
 def restart_port_rebound_summary_lines(
     session: StartupSession,
     events: list[dict[str, object]],
