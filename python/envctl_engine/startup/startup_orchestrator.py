@@ -33,6 +33,7 @@ from envctl_engine.startup.finalization import (
     render_project_startup_warnings as finalization_render_project_startup_warnings,
     restart_port_rebound_summary_lines,
 )
+from envctl_engine.startup.execution_preparation import prepare_startup_execution
 from envctl_engine.startup.run_reuse_support import (
     dashboard_stopped_service_entries as dashboard_stopped_service_entries_impl,
     fresh_start_replacement_services as fresh_start_replacement_services_impl,
@@ -504,10 +505,11 @@ class StartupOrchestrator:
         )
 
     def _prepare_execution(self, session: StartupSession) -> None:
-        route = session.effective_route
-        prewarm_started = time.monotonic()
-        self._maybe_prewarm_docker(route=route, mode=session.runtime_mode)
-        self._emit_phase(session, "docker_prewarm", prewarm_started, status="ok")
+        prepare_startup_execution(
+            session=session,
+            maybe_prewarm_docker=self._maybe_prewarm_docker,
+            emit_phase=self._emit_phase,
+        )
 
     def _start_selected_contexts(self, session: StartupSession) -> None:
         start_selected_contexts(
