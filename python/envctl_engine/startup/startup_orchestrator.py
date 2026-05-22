@@ -378,22 +378,19 @@ class StartupOrchestrator:
             session=session,
             candidate_state=candidate_state,
             reason=reason,
-            fresh_start_replacement_services=self._fresh_start_replacement_services,
+            fresh_start_replacement_services=lambda _, *, candidate_state: fresh_start_replacement_services_impl(
+                route=session.effective_route,
+                selected_contexts=list(session.selected_contexts),
+                candidate_state=candidate_state,
+                configured_service_types=set(
+                    configured_service_types_for_mode_impl(self.runtime.config, session.runtime_mode)
+                ),
+                additional_services=tuple(getattr(self.runtime.config, "additional_services", ()) or ()),
+                project_name_from_service=self.runtime._project_name_from_service,
+            ),
             announce_session_identifiers=self._announce_session_identifiers,
             report_progress=self._report_progress,
             terminate_restart_orphan_listeners=self._terminate_restart_orphan_listeners,
-        )
-
-    def _fresh_start_replacement_services(self, session: StartupSession, *, candidate_state) -> set[str]:
-        return fresh_start_replacement_services_impl(
-            route=session.effective_route,
-            selected_contexts=list(session.selected_contexts),
-            candidate_state=candidate_state,
-            configured_service_types=set(
-                configured_service_types_for_mode_impl(self.runtime.config, session.runtime_mode)
-            ),
-            additional_services=tuple(getattr(self.runtime.config, "additional_services", ()) or ()),
-            project_name_from_service=self.runtime._project_name_from_service,
         )
 
     def _prepare_dashboard_stopped_service_restore(
