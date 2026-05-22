@@ -80,6 +80,54 @@ def mark_run_reused(metadata: Mapping[str, object] | None, *, reason: str) -> di
     return updated
 
 
+def dashboard_stopped_service_entries(state: object) -> list[dict[str, str]]:
+    raw = getattr(state, "metadata", {}).get("dashboard_stopped_services")
+    if not isinstance(raw, list):
+        return []
+    entries: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        project = str(item.get("project", "") or "").strip()
+        service_type = str(item.get("type", "") or "").strip().lower()
+        name = str(item.get("name", "") or "").strip()
+        if not project or service_type not in {"backend", "frontend"}:
+            continue
+        entries.append(
+            {
+                "project": project,
+                "type": service_type,
+                "name": name or f"{project} {service_type.title()}",
+            }
+        )
+    return entries
+
+
+def metadata_without_dashboard_stopped_services(
+    metadata: Mapping[str, object],
+    *,
+    restored_service_names: set[str],
+) -> dict[str, object]:
+    updated = dict(metadata)
+    raw = updated.get("dashboard_stopped_services")
+    if not isinstance(raw, list):
+        return updated
+    remaining: list[object] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            remaining.append(item)
+            continue
+        name = str(item.get("name", "") or "").strip()
+        if name in restored_service_names:
+            continue
+        remaining.append(dict(item))
+    if remaining:
+        updated["dashboard_stopped_services"] = remaining
+    else:
+        updated.pop("dashboard_stopped_services", None)
+    return updated
+
+
 def evaluate_run_reuse(
     runtime: Any,
     *,

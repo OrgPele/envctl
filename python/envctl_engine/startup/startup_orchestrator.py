@@ -40,7 +40,11 @@ from envctl_engine.startup.finalization import (
     restart_port_rebound_summary_lines,
 )
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
-from envctl_engine.startup.run_reuse_support import RunReuseDecision
+from envctl_engine.startup.run_reuse_support import (
+    RunReuseDecision,
+    dashboard_stopped_service_entries as dashboard_stopped_service_entries_impl,
+    metadata_without_dashboard_stopped_services as metadata_without_dashboard_stopped_services_impl,
+)
 from envctl_engine.startup.plan_agent_handoff import (
     emit_plan_agent_launch_state as emit_plan_agent_launch_state_impl,
     launch_plan_agent_terminals_with_spinner as launch_plan_agent_terminals_with_spinner_impl,
@@ -1149,26 +1153,7 @@ class StartupOrchestrator:
 
     @staticmethod
     def _dashboard_stopped_service_entries(state) -> list[dict[str, str]]:
-        raw = getattr(state, "metadata", {}).get("dashboard_stopped_services")
-        if not isinstance(raw, list):
-            return []
-        entries: list[dict[str, str]] = []
-        for item in raw:
-            if not isinstance(item, Mapping):
-                continue
-            project = str(item.get("project", "") or "").strip()
-            service_type = str(item.get("type", "") or "").strip().lower()
-            name = str(item.get("name", "") or "").strip()
-            if not project or service_type not in {"backend", "frontend"}:
-                continue
-            entries.append(
-                {
-                    "project": project,
-                    "type": service_type,
-                    "name": name or f"{project} {service_type.title()}",
-                }
-            )
-        return entries
+        return dashboard_stopped_service_entries_impl(state)
 
     @staticmethod
     def _metadata_without_dashboard_stopped_services(
@@ -1176,24 +1161,10 @@ class StartupOrchestrator:
         *,
         restored_service_names: set[str],
     ) -> dict[str, object]:
-        updated = dict(metadata)
-        raw = updated.get("dashboard_stopped_services")
-        if not isinstance(raw, list):
-            return updated
-        remaining: list[object] = []
-        for item in raw:
-            if not isinstance(item, Mapping):
-                remaining.append(item)
-                continue
-            name = str(item.get("name", "") or "").strip()
-            if name in restored_service_names:
-                continue
-            remaining.append(dict(item))
-        if remaining:
-            updated["dashboard_stopped_services"] = remaining
-        else:
-            updated.pop("dashboard_stopped_services", None)
-        return updated
+        return metadata_without_dashboard_stopped_services_impl(
+            metadata,
+            restored_service_names=restored_service_names,
+        )
 
     def _prepare_execution(self, session: StartupSession) -> None:
         route = session.effective_route
