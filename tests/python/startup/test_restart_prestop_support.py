@@ -8,6 +8,7 @@ from envctl_engine.startup.restart_prestop_support import (
     RestartOrphanListenerScan,
     apply_restart_port_assignments,
     apply_restart_ports_to_contexts,
+    handle_restart_prestop,
     terminate_restart_orphan_listeners,
     restart_matching_orphan_listeners,
     restart_orphan_listener_scan,
@@ -20,7 +21,138 @@ from envctl_engine.startup.restart_prestop_support import (
 )
 
 
+class _NullContext:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class _RecordingSpinner:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def __enter__(self):
+        self.events.append("enter")
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.events.append("exit")
+        return False
+
+    def succeed(self, message: str) -> None:
+        self.events.append(f"succeed:{message}")
+
+    def fail(self, message: str) -> None:
+        self.events.append(f"fail:{message}")
+
+
 class RestartPrestopSupportTests(unittest.TestCase):
+    def test_handle_restart_prestop_noops_for_non_restart_routes(self) -> None:
+        route = Route(command="start", mode="main", raw_args=["start"], flags={})
+        session = SimpleNamespace(effective_route=route, runtime_mode="main")
+        runtime = SimpleNamespace()
+
+        result = handle_restart_prestop(
+            runtime=runtime,
+            session=session,
+            suppress_progress_output=lambda route: False,
+            terminate_restart_orphan_listeners=lambda **kwargs: self.fail("orphan cleanup should not run"),
+            spinner_factory=lambda *args, **kwargs: self.fail("spinner should not start"),
+            use_spinner_policy_fn=lambda policy: self.fail("spinner policy should not start"),
+            resolve_spinner_policy_fn=lambda env: self.fail("spinner policy should not resolve"),
+            emit_spinner_policy_fn=lambda *args, **kwargs: self.fail("spinner policy should not emit"),
+        )
+
+        self.assertIsNone(result)
+
+    def test_handle_restart_prestop_rewrites_to_start_when_no_existing_state(self) -> None:
+        route = Route(command="restart", mode="main", raw_args=["restart"], flags={})
+        session = SimpleNamespace(effective_route=route, runtime_mode="main")
+        runtime = SimpleNamespace(
+            _effective_start_mode=lambda route: "main",
+            _try_load_existing_state=lambda *, mode: None,
+            _emit=lambda *args, **kwargs: None,
+        )
+
+        result = handle_restart_prestop(
+            runtime=runtime,
+            session=session,
+            suppress_progress_output=lambda route: False,
+            terminate_restart_orphan_listeners=lambda **kwargs: self.fail("orphan cleanup should not run"),
+            spinner_factory=lambda *args, **kwargs: self.fail("spinner should not start"),
+            use_spinner_policy_fn=lambda policy: self.fail("spinner policy should not start"),
+            resolve_spinner_policy_fn=lambda env: self.fail("spinner policy should not resolve"),
+            emit_spinner_policy_fn=lambda *args, **kwargs: self.fail("spinner policy should not emit"),
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(session.runtime_mode, "main")
+        self.assertEqual(session.effective_route.command, "start")
+        self.assertTrue(session.effective_route.flags["_restart_request"])
+
+    def test_handle_restart_prestop_stops_selected_services_and_preserves_remaining_state(self) -> None:
+        route = Route(
+            command="restart",
+            mode="main",
+            raw_args=["restart"],
+            flags={"services": ["Main Backend"], "restart_include_requirements": True},
+        )
+        session = SimpleNamespace(
+            effective_route=route,
+            runtime_mode="main",
+            restart_state=None,
+            preserved_requirements={},
+            preserved_services={},
+        )
+        state = SimpleNamespace(
+            mode="main",
+            services={"Main Backend": object(), "Other Backend": object()},
+            requirements={"Main": object(), "Other": object()},
+        )
+        events: list[tuple[str, dict[str, object]]] = []
+        released: list[object] = []
+        terminated: list[tuple[object, set[str]]] = []
+        orphan_calls: list[dict[str, object]] = []
+        spinner = _RecordingSpinner()
+
+        runtime = SimpleNamespace(
+            env={},
+            _effective_start_mode=lambda route: "main",
+            _try_load_existing_state=lambda *, mode: state,
+            _project_name_from_service=lambda name: str(name).removesuffix(" Backend"),
+            _terminate_services_from_state=lambda state, *, selected_services, aggressive, verify_ownership: terminated.append(
+                (state, set(selected_services))
+            ),
+            _release_requirement_ports=released.append,
+            _emit=lambda event, **payload: events.append((event, payload)),
+        )
+
+        result = handle_restart_prestop(
+            runtime=runtime,
+            session=session,
+            suppress_progress_output=lambda route: False,
+            terminate_restart_orphan_listeners=lambda **kwargs: orphan_calls.append(dict(kwargs)),
+            spinner_factory=lambda *args, **kwargs: spinner,
+            use_spinner_policy_fn=lambda policy: _NullContext(),
+            resolve_spinner_policy_fn=lambda env: SimpleNamespace(enabled=True),
+            emit_spinner_policy_fn=lambda emit, policy, *, context: emit("spinner.policy", **context),
+        )
+
+        self.assertIsNone(result)
+        self.assertIs(session.restart_state, state)
+        self.assertEqual(terminated, [(state, {"Main Backend"})])
+        self.assertEqual(len(orphan_calls), 1)
+        self.assertEqual(orphan_calls[0]["selected_services"], {"Main Backend"})
+        self.assertEqual(released, [state.requirements["Main"]])
+        self.assertEqual(session.preserved_services, {"Other Backend": state.services["Other Backend"]})
+        self.assertEqual(session.preserved_requirements, {"Other": state.requirements["Other"]})
+        self.assertEqual(session.effective_route.command, "start")
+        self.assertEqual(session.effective_route.flags["_restart_selected_services"], ["Main Backend"])
+        self.assertEqual(spinner.events, ["enter", "succeed:Restart pre-stop complete", "exit"])
+        self.assertIn(("restart.selection", {"include_requirements": True, "target_projects": ["Main"], "selected_services": ["Main Backend"]}), events)
+
     def test_restart_fallback_start_route_preserves_request_context_and_marks_restart(self) -> None:
         route = Route(
             command="restart",

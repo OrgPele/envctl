@@ -119,6 +119,119 @@ def restart_prestop_selection(*, state: Any, route: Route, runtime: Any) -> Rest
     )
 
 
+def handle_restart_prestop(
+    *,
+    runtime: Any,
+    session: Any,
+    suppress_progress_output: Callable[[Route], bool],
+    terminate_restart_orphan_listeners: Callable[..., None],
+    spinner_factory: Callable[..., Any],
+    use_spinner_policy_fn: Callable[[Any], Any],
+    resolve_spinner_policy_fn: Callable[[dict[str, str]], Any],
+    emit_spinner_policy_fn: Callable[..., None],
+) -> int | None:
+    route = session.effective_route
+    if route.command != "restart":
+        return None
+    prestop_state = restart_prestop_state(route=route, runtime=runtime)
+    restart_lookup_mode = prestop_state.restart_lookup_mode
+    resumed = prestop_state.state
+    if prestop_state.fallback_route is not None:
+        session.effective_route = prestop_state.fallback_route
+        session.runtime_mode = restart_lookup_mode
+        return None
+    session.restart_state = resumed
+
+    selection = restart_prestop_selection(state=resumed, route=route, runtime=runtime)
+    selected_services = selection.selected_services
+    target_projects = selection.target_projects
+    include_requirements = selection.include_requirements
+    runtime._emit(
+        "restart.selection",
+        include_requirements=include_requirements,
+        target_projects=sorted(target_projects),
+        selected_services=sorted(selected_services),
+    )
+    prestop_policy = resolve_spinner_policy_fn(dict(runtime.env))
+    use_prestop_spinner = prestop_policy.enabled and not suppress_progress_output(route)
+    emit_spinner_policy_fn(
+        runtime._emit,
+        prestop_policy,
+        context={"component": "startup_orchestrator", "op_id": "restart.prestop"},
+    )
+    with (
+        use_spinner_policy_fn(prestop_policy),
+        spinner_factory("Restarting services...", enabled=use_prestop_spinner) as prestop_spinner,
+    ):
+        if use_prestop_spinner:
+            runtime._emit(
+                "ui.spinner.lifecycle",
+                component="startup_orchestrator",
+                op_id="restart.prestop",
+                state="start",
+                message="Restarting services...",
+            )
+        try:
+            runtime._terminate_services_from_state(
+                resumed,
+                selected_services=selected_services,
+                aggressive=False,
+                verify_ownership=True,
+            )
+            terminate_restart_orphan_listeners(
+                state=resumed,
+                selected_services=selected_services,
+                aggressive=True,
+            )
+            preservation = restart_prestop_preservation(
+                resumed,
+                selected_services=selected_services,
+                include_requirements=include_requirements,
+                target_projects=target_projects,
+            )
+            for requirements in preservation.requirements_to_release.values():
+                runtime._release_requirement_ports(requirements)
+            session.preserved_requirements = dict(preservation.preserved_requirements)
+            session.preserved_services = dict(preservation.preserved_services)
+            if use_prestop_spinner:
+                prestop_spinner.succeed("Restart pre-stop complete")
+                runtime._emit(
+                    "ui.spinner.lifecycle",
+                    component="startup_orchestrator",
+                    op_id="restart.prestop",
+                    state="success",
+                    message="Restart pre-stop complete",
+                )
+        except Exception:
+            if use_prestop_spinner:
+                prestop_spinner.fail("Restart pre-stop failed")
+                runtime._emit(
+                    "ui.spinner.lifecycle",
+                    component="startup_orchestrator",
+                    op_id="restart.prestop",
+                    state="fail",
+                    message="Restart pre-stop failed",
+                )
+            raise
+        finally:
+            if use_prestop_spinner:
+                runtime._emit(
+                    "ui.spinner.lifecycle",
+                    component="startup_orchestrator",
+                    op_id="restart.prestop",
+                    state="stop",
+                )
+    session.effective_route = restart_start_route(
+        route,
+        restart_lookup_mode=restart_lookup_mode,
+        selected_services=selected_services,
+        target_projects=target_projects,
+        include_requirements=include_requirements,
+    )
+    session.runtime_mode = restart_lookup_mode
+    return None
+
+
 def restart_prestop_preservation(
     state: Any,
     *,

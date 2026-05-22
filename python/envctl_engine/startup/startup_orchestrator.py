@@ -58,10 +58,7 @@ from envctl_engine.startup.post_start_reconcile import reconcile_strict_truth_af
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.restart_prestop_support import (
     apply_restart_ports_to_contexts,
-    restart_prestop_preservation,
-    restart_prestop_selection,
-    restart_prestop_state,
-    restart_start_route,
+    handle_restart_prestop,
     terminate_restart_orphan_listeners,
 )
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
@@ -165,107 +162,16 @@ class StartupOrchestrator:
         return validate_startup_route_contract(self.runtime, session, emit_phase=self._emit_phase)
 
     def _handle_restart_prestop(self, session: StartupSession) -> int | None:
-        rt = self.runtime
-        route = session.effective_route
-        if route.command != "restart":
-            return None
-        prestop_state = restart_prestop_state(route=route, runtime=rt)
-        restart_lookup_mode = prestop_state.restart_lookup_mode
-        resumed = prestop_state.state
-        if prestop_state.fallback_route is not None:
-            session.effective_route = prestop_state.fallback_route
-            session.runtime_mode = restart_lookup_mode
-            return None
-        session.restart_state = resumed
-
-        selection = restart_prestop_selection(state=resumed, route=route, runtime=rt)
-        selected_services = selection.selected_services
-        target_projects = selection.target_projects
-        include_requirements = selection.include_requirements
-        rt._emit(
-            "restart.selection",
-            include_requirements=include_requirements,
-            target_projects=sorted(target_projects),
-            selected_services=sorted(selected_services),
+        return handle_restart_prestop(
+            runtime=self.runtime,
+            session=session,
+            suppress_progress_output=self._suppress_progress_output,
+            terminate_restart_orphan_listeners=self._terminate_restart_orphan_listeners,
+            spinner_factory=spinner,
+            use_spinner_policy_fn=use_spinner_policy,
+            resolve_spinner_policy_fn=resolve_spinner_policy,
+            emit_spinner_policy_fn=emit_spinner_policy,
         )
-        prestop_policy = resolve_spinner_policy(dict(rt.env))
-        use_prestop_spinner = prestop_policy.enabled and not self._suppress_progress_output(route)
-        emit_spinner_policy(
-            rt._emit,
-            prestop_policy,
-            context={"component": "startup_orchestrator", "op_id": "restart.prestop"},
-        )
-        with (
-            use_spinner_policy(prestop_policy),
-            spinner("Restarting services...", enabled=use_prestop_spinner) as prestop_spinner,
-        ):
-            if use_prestop_spinner:
-                rt._emit(
-                    "ui.spinner.lifecycle",
-                    component="startup_orchestrator",
-                    op_id="restart.prestop",
-                    state="start",
-                    message="Restarting services...",
-                )
-            try:
-                rt._terminate_services_from_state(
-                    resumed,
-                    selected_services=selected_services,
-                    aggressive=False,
-                    verify_ownership=True,
-                )
-                self._terminate_restart_orphan_listeners(
-                    state=resumed,
-                    selected_services=selected_services,
-                    aggressive=True,
-                )
-                preservation = restart_prestop_preservation(
-                    resumed,
-                    selected_services=selected_services,
-                    include_requirements=include_requirements,
-                    target_projects=target_projects,
-                )
-                for requirements in preservation.requirements_to_release.values():
-                    rt._release_requirement_ports(requirements)
-                session.preserved_requirements = dict(preservation.preserved_requirements)
-                session.preserved_services = dict(preservation.preserved_services)
-                if use_prestop_spinner:
-                    prestop_spinner.succeed("Restart pre-stop complete")
-                    rt._emit(
-                        "ui.spinner.lifecycle",
-                        component="startup_orchestrator",
-                        op_id="restart.prestop",
-                        state="success",
-                        message="Restart pre-stop complete",
-                    )
-            except Exception:
-                if use_prestop_spinner:
-                    prestop_spinner.fail("Restart pre-stop failed")
-                    rt._emit(
-                        "ui.spinner.lifecycle",
-                        component="startup_orchestrator",
-                        op_id="restart.prestop",
-                        state="fail",
-                        message="Restart pre-stop failed",
-                    )
-                raise
-            finally:
-                if use_prestop_spinner:
-                    rt._emit(
-                        "ui.spinner.lifecycle",
-                        component="startup_orchestrator",
-                        op_id="restart.prestop",
-                        state="stop",
-                    )
-        session.effective_route = restart_start_route(
-            route,
-            restart_lookup_mode=restart_lookup_mode,
-            selected_services=selected_services,
-            target_projects=target_projects,
-            include_requirements=include_requirements,
-        )
-        session.runtime_mode = restart_lookup_mode
-        return None
 
     def _select_contexts(self, session: StartupSession) -> int | None:
         return select_startup_contexts(
