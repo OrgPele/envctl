@@ -6,7 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.config import load_config
+from envctl_engine.config import discover_local_config_state, load_config
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
 from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.state import dump_state
@@ -38,6 +38,28 @@ class RuntimeScopeIsolationTests(unittest.TestCase):
             self.assertEqual(worktree_config.runtime_scope_dir, main_config.runtime_scope_dir)
             self.assertEqual(worktree_runtime.runtime_root, main_runtime.runtime_root)
             self.assertEqual(worktree_runtime.port_planner.lock_dir, main_runtime.port_planner.lock_dir)
+
+    def test_managed_linked_worktree_uses_parent_config_path_even_before_parent_envctl_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime_dir = root / "runtime"
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+            provenance = worktree / ".envctl-state" / "worktree-provenance.json"
+            provenance.parent.mkdir(parents=True, exist_ok=True)
+            provenance.write_text('{"schema_version": 1}\n', encoding="utf-8")
+
+            config = load_config({"RUN_REPO_ROOT": str(worktree), "RUN_SH_RUNTIME_DIR": str(runtime_dir)})
+            local_state = discover_local_config_state(config.base_dir)
+
+            self.assertEqual(config.base_dir, repo.resolve())
+            self.assertEqual(local_state.config_file_path, repo.resolve() / ".envctl")
+            self.assertFalse(local_state.config_file_exists)
 
     def test_managed_linked_worktree_keeps_main_mode_execution_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

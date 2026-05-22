@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os as _os
 import shutil as _shutil
 import sys as _sys
 import uuid
@@ -171,7 +170,9 @@ from envctl_engine.runtime.engine_runtime_state_support import (
     load_state_artifact as runtime_load_state_artifact,
     on_port_event as runtime_on_port_event,
     run_state_to_json as runtime_run_state_to_json,
+    state_action as runtime_state_action,
     state_has_synthetic_services as runtime_state_has_synthetic_services,
+    state_lookup_strict_mode_match as runtime_state_lookup_strict_mode_match,
 )
 from envctl_engine.runtime.engine_runtime_state_lookup import (
     state_matches_scope as runtime_state_matches_scope,
@@ -186,29 +187,66 @@ from envctl_engine.runtime.engine_runtime_state_truth import (
     requirement_truth_issues as runtime_requirement_truth_issues,
     state_fingerprint as runtime_state_fingerprint,
 )
-from envctl_engine.runtime.engine_runtime_dispatch import dispatch_command as runtime_dispatch_command
+from envctl_engine.runtime.engine_runtime_action_support import (
+    action_env as runtime_action_env,
+    action_extra_env as runtime_action_extra_env,
+    action_replacements as runtime_action_replacements,
+    project_name_from_service as runtime_project_name_from_service,
+    projects_for_services as runtime_projects_for_services,
+    resolve_action_targets as runtime_resolve_action_targets,
+    run_action_command as runtime_run_action_command,
+    run_analyze_action as runtime_run_analyze_action,
+    run_commit_action as runtime_run_commit_action,
+    run_delete_worktree_action as runtime_run_delete_worktree_action,
+    run_migrate_action as runtime_run_migrate_action,
+    run_pr_action as runtime_run_pr_action,
+    run_project_action as runtime_run_project_action,
+    run_test_action as runtime_run_test_action,
+    selectors_from_passthrough as runtime_selectors_from_passthrough,
+)
+from envctl_engine.runtime.engine_runtime_cli_support import (
+    migrate_hooks as runtime_migrate_hooks,
+    print_help as runtime_print_help,
+    render_help_text as runtime_render_help_text,
+    run_config as runtime_run_config,
+    unsupported_command as runtime_unsupported_command,
+)
+from envctl_engine.runtime.engine_runtime_doctor_support import (
+    doctor as runtime_doctor,
+    doctor_readiness_gates as runtime_doctor_readiness_gates,
+    doctor_should_check_tests as runtime_doctor_should_check_tests,
+    enforce_runtime_readiness_contract as runtime_enforce_runtime_readiness_contract,
+    evaluate_runtime_shipability as runtime_evaluate_runtime_shipability,
+)
+from envctl_engine.runtime.engine_runtime_bookkeeping_support import (
+    add_emit_listener as runtime_add_emit_listener,
+    consume_project_startup_warnings as runtime_consume_project_startup_warnings,
+    ensure_legacy_lock_view as runtime_ensure_legacy_lock_view,
+    record_project_startup_warning as runtime_record_project_startup_warning,
+    reset_project_startup_warnings as runtime_reset_project_startup_warnings,
+)
+from envctl_engine.runtime.engine_runtime_dispatch import dispatch as runtime_dispatch
 from envctl_engine.runtime.engine_runtime_ui_bridge import (
+    can_interactive_tty as bridge_can_interactive_tty,
     current_ui_backend as bridge_current_ui_backend,
     dashboard as bridge_dashboard,
     flush_pending_interactive_input as bridge_flush_pending_interactive_input,
     parse_interactive_command as bridge_parse_interactive_command,
     read_interactive_command_line as bridge_read_interactive_command_line,
     recover_single_letter_command_from_escape_fragment as bridge_recover_single_letter_command_from_escape_fragment,
+    restore_terminal_after_input as bridge_restore_terminal_after_input,
     run_interactive_command as bridge_run_interactive_command,
     run_interactive_dashboard_loop as bridge_run_interactive_dashboard_loop,
     sanitize_interactive_input as bridge_sanitize_interactive_input,
     select_grouped_targets as bridge_select_grouped_targets,
     select_project_targets as bridge_select_project_targets,
 )
-from envctl_engine.runtime.hook_migration_support import run_hook_migration as runtime_run_hook_migration
 from envctl_engine.runtime.command_router import (
     MODE_FALSE_TOKENS,
     MODE_MAIN_TOKENS,
     MODE_TREE_TOKENS,
     Route,
 )
-from envctl_engine.runtime.help_text import render_help_text as runtime_render_help_text
-from envctl_engine.config.command_support import run_config_command
 from envctl_engine.config import EngineConfig
 from envctl_engine.shared.hooks import HookInvocationResult
 from envctl_engine.runtime.lifecycle_cleanup_orchestrator import LifecycleCleanupOrchestrator
@@ -224,7 +262,6 @@ from envctl_engine.shared.process_probe import (
 )
 from envctl_engine.shared.process_runner import ProcessRunner
 from envctl_engine.requirements.orchestrator import RequirementOutcome, RequirementsOrchestrator
-from envctl_engine.runtime.release_gate import evaluate_shipability
 from envctl_engine.startup.resume_orchestrator import ResumeOrchestrator
 from envctl_engine.startup.session import ProjectStartupResult
 from envctl_engine.runtime.runtime_context import RuntimeContext
@@ -565,64 +602,13 @@ class PythonEngineRuntime:
         )
 
     def _ensure_legacy_lock_view(self) -> None:
-        scoped_locks = self.runtime_root / "locks"
-        scoped_locks.mkdir(parents=True, exist_ok=True)
-        legacy_locks = self.runtime_legacy_root / "locks"
-        if legacy_locks.is_symlink():
-            if legacy_locks.resolve(strict=False) == scoped_locks.resolve(strict=False):
-                return
-            try:
-                legacy_locks.unlink()
-            except FileNotFoundError:
-                pass
-            except OSError:
-                return
-        if legacy_locks.exists():
-            return
-        try:
-            legacy_locks.symlink_to(scoped_locks, target_is_directory=True)
-        except FileExistsError:
-            return
-        except OSError:
-            if _os.path.lexists(legacy_locks):
-                return
-            try:
-                legacy_locks.mkdir(parents=True, exist_ok=True)
-            except FileExistsError:
-                return
+        runtime_ensure_legacy_lock_view(self)
 
     def add_emit_listener(self, listener: Callable[[str, dict[str, object]], None]) -> Callable[[], None]:
-        self._emit_listeners.append(listener)
-
-        def remove() -> None:
-            try:
-                self._emit_listeners.remove(listener)
-            except ValueError:
-                return
-
-        return remove
+        return runtime_add_emit_listener(self, listener)
 
     def dispatch(self, route: Route) -> int:
-        self.process_probe = ProcessProbe(self._build_process_probe_backend())
-        effective_mode = route.mode
-        if route.command in {"start", "plan", "restart"}:
-            effective_mode = self._effective_start_mode(route)
-
-        self._configure_debug_recorder(route)
-
-        self._emit(
-            "engine.mode.selected",
-            mode=route.mode,
-            effective_mode=effective_mode,
-            command=route.command,
-        )
-        self._emit(
-            "command.route.selected",
-            mode=route.mode,
-            effective_mode=effective_mode,
-            command=route.command,
-        )
-        return runtime_dispatch_command(self, route)
+        return runtime_dispatch(self, route)
 
     def _start(self, route: Route) -> int:
         return self.startup_orchestrator.execute(route)
@@ -763,16 +749,16 @@ class PythonEngineRuntime:
         runtime_print_summary(self, state, contexts)
 
     def _print_help(self, route: Route | None = None) -> None:
-        print(_render_help_text(route))
+        runtime_print_help(route)
 
     def _config(self, route: Route) -> int:
-        return run_config_command(self, route)
+        return runtime_run_config(self, route)
 
     def _migrate_hooks(self, route: Route) -> int:
-        return runtime_run_hook_migration(self, route)
+        return runtime_migrate_hooks(self, route)
 
     def _doctor(self) -> int:
-        return self.doctor_orchestrator.execute()
+        return runtime_doctor(self)
 
     def _debug_pack(self, route: Route) -> int:
         return runtime_debug_pack(self, route)
@@ -798,27 +784,23 @@ class PythonEngineRuntime:
         return runtime_debug_report(self, route)
 
     def _doctor_readiness_gates(self) -> dict[str, bool]:
-        return self.doctor_orchestrator.readiness_gates()
+        return runtime_doctor_readiness_gates(self)
 
     def _evaluate_shipability(
         self,
         *,
         enforce_runtime_readiness_contract: bool = True,
     ) -> object:
-        return evaluate_shipability(
-            repo_root=self.config.base_dir,
-            check_tests=self._doctor_should_check_tests(),
+        return runtime_evaluate_runtime_shipability(
+            self,
             enforce_runtime_readiness_contract=enforce_runtime_readiness_contract,
         )
 
     def _doctor_should_check_tests(self) -> bool:
-        return self.doctor_orchestrator.doctor_should_check_tests()
+        return runtime_doctor_should_check_tests(self)
 
     def _enforce_runtime_readiness_contract(self, *, scope: str, strict_required: bool | None = None) -> bool:
-        return self.doctor_orchestrator.enforce_runtime_readiness_contract(
-            scope=scope,
-            strict_required=strict_required,
-        )
+        return runtime_enforce_runtime_readiness_contract(self, scope=scope, strict_required=strict_required)
 
     def _parity_manifest_is_complete(self) -> bool:
         return runtime_parity_manifest_is_complete(self)
@@ -908,17 +890,11 @@ class PythonEngineRuntime:
 
     @staticmethod
     def _restore_terminal_after_input(*, fd: int, original_state: list[int] | None) -> None:
-        """Restore terminal state after raw input handling."""
-        from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
-
-        RuntimeTerminalUI.restore_terminal_after_input(fd=fd, original_state=original_state)
+        bridge_restore_terminal_after_input(fd=fd, original_state=original_state)
 
     @staticmethod
     def _can_interactive_tty() -> bool:
-        """Check if interactive TTY is available."""
-        from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
-
-        return RuntimeTerminalUI._can_interactive_tty()
+        return bridge_can_interactive_tty()
 
     def _build_process_probe_backend(self) -> ProbeBackend:
         return runtime_build_process_probe_backend(self)
@@ -955,10 +931,10 @@ class PythonEngineRuntime:
         return runtime_route_has_explicit_mode(route, explicit_mode_tokens=EXPLICIT_MODE_TOKENS)
 
     def _state_lookup_strict_mode_match(self, route: Route) -> bool:
-        return self._route_has_explicit_mode(route)
+        return runtime_state_lookup_strict_mode_match(self, route)
 
     def _state_action(self, route: Route) -> int:
-        return self.state_action_orchestrator.execute(route)
+        return runtime_state_action(self, route)
 
     def _recent_failure_messages(self, *, max_items: int = 5) -> list[str]:
         return runtime_recent_failure_messages(self, max_items=max_items)
@@ -1054,48 +1030,37 @@ class PythonEngineRuntime:
         runtime_assert_project_services_post_start_truth(self, context=context, services=services)
 
     def _run_action_command(self, route: Route) -> int:
-        return self.action_command_orchestrator.execute(route)
+        return runtime_run_action_command(self, route)
 
     def _resolve_action_targets(self, route: Route, *, trees_only: bool) -> tuple[list[ProjectContext], str | None]:
-        return self.action_command_orchestrator.resolve_targets(route, trees_only=trees_only)
+        targets, error = runtime_resolve_action_targets(self, route, trees_only=trees_only)
+        return targets, error  # type: ignore[return-value]
 
     @staticmethod
     def _selectors_from_passthrough(passthrough_args: Iterable[str]) -> set[str]:
-        selectors: set[str] = set()
-        for token in passthrough_args:
-            if token.startswith("-"):
-                continue
-            parts = [part.strip().lower() for part in token.split(",")]
-            selectors.update(part for part in parts if part)
-        return selectors
+        return runtime_selectors_from_passthrough(passthrough_args)
 
     def _projects_for_services(self, service_targets: list[object]) -> list[str]:
-        return self.action_command_orchestrator.projects_for_services(service_targets)
+        return runtime_projects_for_services(self, service_targets)
 
     @staticmethod
     def _project_name_from_service(service_name: str) -> str:
-        text = service_name.strip()
-        lowered = text.lower()
-        if lowered.endswith(" backend"):
-            return text[:-8].strip()
-        if lowered.endswith(" frontend"):
-            return text[:-9].strip()
-        return ""
+        return runtime_project_name_from_service(service_name)
 
     def _run_test_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return self.action_command_orchestrator.run_test_action(route, targets)
+        return runtime_run_test_action(self, route, targets)
 
     def _run_pr_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return self.action_command_orchestrator.run_pr_action(route, targets)
+        return runtime_run_pr_action(self, route, targets)
 
     def _run_commit_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return self.action_command_orchestrator.run_commit_action(route, targets)
+        return runtime_run_commit_action(self, route, targets)
 
     def _run_analyze_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return self.action_command_orchestrator.run_review_action(route, targets)
+        return runtime_run_analyze_action(self, route, targets)
 
     def _run_migrate_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return self.action_command_orchestrator.run_migrate_action(route, targets)
+        return runtime_run_migrate_action(self, route, targets)
 
     def _run_project_action(
         self,
@@ -1109,7 +1074,8 @@ class PythonEngineRuntime:
         default_append_project_path: bool,
         extra_env: Mapping[str, str],
     ) -> int:
-        return self.action_command_orchestrator.run_project_action(
+        return runtime_run_project_action(
+            self,
             route,
             targets,
             command_name=command_name,
@@ -1121,7 +1087,7 @@ class PythonEngineRuntime:
         )
 
     def _run_delete_worktree_action(self, route: Route) -> int:
-        return self.action_command_orchestrator.run_delete_worktree_action(route)
+        return runtime_run_delete_worktree_action(self, route)
 
     def _action_replacements(
         self,
@@ -1129,7 +1095,7 @@ class PythonEngineRuntime:
         *,
         target: ProjectContext | None,
     ) -> dict[str, str]:
-        return self.action_command_orchestrator.action_replacements(targets, target=target)
+        return runtime_action_replacements(self, targets, target=target)
 
     def _action_env(
         self,
@@ -1139,7 +1105,8 @@ class PythonEngineRuntime:
         target: ProjectContext | None,
         extra: Mapping[str, str] | None = None,
     ) -> dict[str, str]:
-        return self.action_command_orchestrator.action_env(
+        return runtime_action_env(
+            self,
             command_name,
             targets,
             target=target,
@@ -1148,11 +1115,10 @@ class PythonEngineRuntime:
 
     @staticmethod
     def _action_extra_env(route: Route) -> dict[str, str]:
-        return ActionCommandOrchestrator.action_extra_env(route)
+        return runtime_action_extra_env(route)
 
     def _unsupported_command(self, command: str) -> int:
-        print(f"Command is not yet fully implemented in the Python runtime: {command}.")
-        return 1
+        return runtime_unsupported_command(command)
 
     def _stop(self, route: Route) -> int:
         return self.lifecycle_cleanup_orchestrator.execute(route)
@@ -1376,24 +1342,13 @@ class PythonEngineRuntime:
         runtime_bind_debug_run_id(self, run_id)
 
     def _reset_project_startup_warnings(self) -> None:
-        with self._startup_warnings_lock:
-            self._startup_warnings_by_project = {}
+        runtime_reset_project_startup_warnings(self)
 
     def _record_project_startup_warning(self, project: str, message: str) -> None:
-        project_name = str(project).strip()
-        warning_text = str(message).strip()
-        if not project_name or not warning_text:
-            return
-        with self._startup_warnings_lock:
-            self._startup_warnings_by_project.setdefault(project_name, []).append(warning_text)
+        runtime_record_project_startup_warning(self, project, message)
 
     def _consume_project_startup_warnings(self, project: str) -> list[str]:
-        project_name = str(project).strip()
-        if not project_name:
-            return []
-        with self._startup_warnings_lock:
-            warnings = list(self._startup_warnings_by_project.pop(project_name, []))
-        return warnings
+        return runtime_consume_project_startup_warnings(self, project)
 
     def _conflict_count(self, suffix: str) -> int:
         return runtime_conflict_count(self, suffix)

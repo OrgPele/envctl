@@ -46,9 +46,10 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 
 ## Codex skills and envctl validation helpers
 - When this prompt is installed as a Codex skill or direct prompt, you may use available Codex skills named in the session, including `$browser` for browser validation when it is present. Follow the active AGENTS.md and skill instructions before invoking a skill.
-- Prefer `envctl endpoints --project <current-worktree-name> --json` to discover the canonical frontend, backend, and dependency addresses for an already-running target instead of hand-composing URLs.
-- Use `envctl qa-user ensure --project <current-worktree-name> --email <email> --password <password> --json` when browser or auth validation needs deterministic local QA credentials.
-- Use `envctl playwright --project <current-worktree-name> -- <command>` for Playwright or browser-test commands that should run against the active project frontend without starting a second dev server.
+- Resolve the actual envctl project target before project-scoped helpers. Prefer `envctl list-targets --json`, `envctl show-state --json`, or `envctl endpoints --project <candidate> --json`; generated worktree directory names are not always valid project names.
+- Prefer `envctl endpoints --project <actual-project-name> --json` to discover the canonical frontend, backend, and dependency addresses for an already-running target instead of hand-composing URLs.
+- Use `envctl qa-user ensure --project <actual-project-name> --email <email> --password <password> --json` when browser or auth validation needs deterministic local QA credentials.
+- Use `envctl playwright --project <actual-project-name> -- <executable> [args...]` for Playwright or browser-test commands against the active project frontend without starting a second dev server. Use `envctl playwright --help` for wrapper help; after `--`, the first token must be an executable such as `npx`, not a wrapper help flag.
 
 ## Context-gathering protocol (do this before coding)
 0. Run `git add .` and verify the baseline is staged (`git status --short`).

@@ -478,16 +478,17 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 }
             )
 
-            launch_config = launch_support.resolve_plan_agent_launch_config(
-                config,
-                {},
-                route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
-            )
-            prereqs = launch_support.plan_agent_launch_prereq_commands(
-                config,
-                {},
-                route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
-            )
+            with patch("envctl_engine.planning.plan_agent.config.shutil.which", return_value="/usr/local/bin/cmux"):
+                launch_config = launch_support.resolve_plan_agent_launch_config(
+                    config,
+                    {},
+                    route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+                )
+                prereqs = launch_support.plan_agent_launch_prereq_commands(
+                    config,
+                    {},
+                    route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+                )
 
         self.assertEqual(launch_config.transport, "cmux")
         self.assertEqual(launch_config.cli, "opencode")
@@ -627,7 +628,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             codex_config = launch_support.resolve_plan_agent_launch_config(
                 config,
-                {"ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4"},
+                {"ENVCTL_PLAN_AGENT_CODEX_CYCLES": "3"},
                 route=parse_route(["--plan", "features/example", "--tmux"], env={}),
             )
             codex_workflow = _build_plan_agent_workflow(
@@ -651,7 +652,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             omx_config = launch_support.resolve_plan_agent_launch_config(
                 config,
-                {"ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4"},
+                {"ENVCTL_PLAN_AGENT_CODEX_CYCLES": "3"},
                 route=parse_route(["--plan", "features/example", "--omx", "--ultragoal"], env={}),
             )
             omx_workflow = _build_plan_agent_workflow(
@@ -664,10 +665,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(codex_config.transport, "tmux")
         self.assertEqual(codex_config.cli, "codex")
         self.assertEqual(codex_config.preset, "implement_task")
-        self.assertEqual(codex_config.codex_cycles, 4)
+        self.assertEqual(codex_config.codex_cycles, 3)
         self.assertTrue(codex_config.pr_review_comments_followup_enable)
         self.assertEqual(codex_workflow.mode, "codex_cycles")
-        self.assertEqual(codex_workflow.codex_cycles, 4)
+        self.assertEqual(codex_workflow.codex_cycles, 3)
 
         self.assertEqual(opencode_config.transport, "tmux")
         self.assertEqual(opencode_config.cli, "opencode")
@@ -678,7 +679,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(omx_config.transport, "omx")
         self.assertEqual(omx_config.cli, "codex")
         self.assertEqual(omx_config.omx_workflow, "ultragoal")
-        self.assertEqual(omx_config.codex_cycles, 4)
+        self.assertEqual(omx_config.codex_cycles, 3)
         self.assertIsNone(omx_config.codex_cycles_warning)
         self.assertTrue(omx_config.pr_review_comments_followup_enable)
         self.assertEqual(omx_workflow.mode, "codex_cycles")
@@ -703,48 +704,51 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         self.assertEqual(cmux_config.transport, "cmux")
         self.assertEqual(cmux_config.cli, "codex")
 
-    def test_default_plan_agent_transport_prefers_cmux(self) -> None:
+    def test_default_plan_agent_transport_prefers_cmux_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             repo.mkdir(parents=True, exist_ok=True)
             config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime)})
 
-            default_config = launch_support.resolve_plan_agent_launch_config(
-                config,
-                {},
-                route=parse_route(["--plan", "feature-a"], env={}),
-            )
-            opencode_config = launch_support.resolve_plan_agent_launch_config(
-                config,
-                {},
-                route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
-            )
+            with patch("envctl_engine.planning.plan_agent.config.shutil.which", return_value="/usr/local/bin/cmux"):
+                default_config = launch_support.resolve_plan_agent_launch_config(
+                    config,
+                    {},
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                )
+                opencode_config = launch_support.resolve_plan_agent_launch_config(
+                    config,
+                    {},
+                    route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+                )
 
         self.assertEqual(default_config.transport, "cmux")
         self.assertEqual(opencode_config.transport, "cmux")
         self.assertEqual(opencode_config.cli, "opencode")
 
-    def test_default_plan_agent_transport_stays_cmux_without_cmux(self) -> None:
+    def test_default_plan_agent_transport_falls_back_to_tmux_without_cmux(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
             repo.mkdir(parents=True, exist_ok=True)
             config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime)})
 
-            default_config = launch_support.resolve_plan_agent_launch_config(
-                config,
-                {},
-                route=parse_route(["--plan", "feature-a"], env={}),
-            )
-            opencode_config = launch_support.resolve_plan_agent_launch_config(
-                config,
-                {},
-                route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
-            )
+            with patch("envctl_engine.planning.plan_agent.config.shutil.which", return_value=None):
+                default_config = launch_support.resolve_plan_agent_launch_config(
+                    config,
+                    {},
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                )
+                opencode_config = launch_support.resolve_plan_agent_launch_config(
+                    config,
+                    {},
+                    route=parse_route(["--plan", "feature-a", "--opencode"], env={}),
+                )
 
-        self.assertEqual(default_config.transport, "cmux")
-        self.assertEqual(opencode_config.transport, "cmux")
+        self.assertEqual(default_config.transport, "tmux")
+        self.assertFalse(default_config.enabled)
+        self.assertEqual(opencode_config.transport, "tmux")
         self.assertEqual(opencode_config.cli, "opencode")
 
     def test_resolve_plan_agent_launch_config_goal_defaults_and_route_overrides(self) -> None:
@@ -1607,16 +1611,6 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             self.assertEqual(send_text_mock.call_count, 0)
             self.assertEqual(send_prompt_mock.call_count, 12)
             self.assertEqual(queue_mock.call_count, 12)
-            sent_texts = [str(call.kwargs["text"]) for call in send_prompt_mock.call_args_list]
-            queued_texts = [str(call.kwargs["text"]) for call in queue_mock.call_args_list]
-            self.assertEqual(sum(text.startswith("/goal ") for text in sent_texts), 6)
-            self.assertEqual(sum(text.startswith("/goal ") for text in queued_texts), 6)
-            self.assertLess(
-                sent_texts.index(next(text for text in sent_texts if text.startswith("/goal "))),
-                sent_texts.index("resolved::queue_direct_prompt::continue_task"),
-            )
-            self.assertIn("resolved::queue_direct_prompt::implement_task", sent_texts)
-            self.assertIn("resolved::queue_direct_prompt::finalize_task", sent_texts)
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queued"),
                 [
@@ -3626,15 +3620,34 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                     "RUN_REPO_ROOT": str(repo),
                     "RUN_SH_RUNTIME_DIR": str(runtime),
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
-                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "3",
                     "CYCLES": "2",
                 }
             )
 
             launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
 
-        self.assertEqual(launch_config.codex_cycles, 4)
+        self.assertEqual(launch_config.codex_cycles, 3)
         self.assertIsNone(launch_config.codex_cycles_warning)
+
+    def test_resolve_plan_agent_launch_config_bounds_above_maximum_canonical_cycles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4",
+                }
+            )
+
+            launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
+
+        self.assertEqual(launch_config.codex_cycles, 3)
+        self.assertEqual(launch_config.codex_cycles_warning, "bounded_codex_cycles")
 
     def test_resolve_plan_agent_launch_config_reports_invalid_cycles_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3671,7 +3684,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
 
             launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
 
-        self.assertEqual(launch_config.codex_cycles, 10)
+        self.assertEqual(launch_config.codex_cycles, 3)
         self.assertEqual(launch_config.codex_cycles_warning, "bounded_codex_cycles")
 
     def test_resolve_plan_agent_launch_config_ignores_invalid_codex_cycles(self) -> None:
@@ -3729,16 +3742,17 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
-        self.assertEqual([step.requires_goal for step in workflow.steps], [True, True, True])
 
     def test_browser_e2e_followup_requires_main_task_browser_visible_validation_and_fix_loop(self) -> None:
         self.assertIsNotNone(_browser_e2e_instruction_text)
         prompt = _browser_e2e_instruction_text()
 
         self.assertIn("$browser", prompt)
-        self.assertIn("envctl endpoints --project <current-worktree-name> --json", prompt)
-        self.assertIn("envctl qa-user ensure --project <current-worktree-name>", prompt)
-        self.assertIn("envctl playwright --project <current-worktree-name> -- <command>", prompt)
+        self.assertIn("envctl list-targets --json", prompt)
+        self.assertIn("envctl endpoints --project <actual-project-name> --json", prompt)
+        self.assertIn("envctl qa-user ensure --project <actual-project-name>", prompt)
+        self.assertIn("envctl playwright --project <actual-project-name> -- <executable> [args...]", prompt)
+        self.assertIn("envctl playwright --help", prompt)
         self.assertIn("MAIN_TASK.md", prompt)
         self.assertIn("completely implemented end-to-end", prompt)
         self.assertIn("visible in the browser", prompt)
@@ -3772,6 +3786,20 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             "_plan_agent_pr_review_comments_followup.md",
         )
 
+    def test_build_plan_agent_workflow_uses_direct_submission_for_implement_task(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=0)
+
+        self.assertEqual(workflow.mode, "single_prompt")
+        self.assertEqual(
+            [(step.kind, step.text) for step in workflow.steps],
+            [
+                ("submit_direct_prompt", "implement_task"),
+                ("queue_message", _browser_e2e_instruction_text()),
+                ("queue_message", _pr_review_comments_instruction_text()),
+            ],
+        )
+
     def test_build_plan_agent_workflow_for_single_cycle_adds_finalization_and_browser_e2e_messages(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
         self.assertIsNotNone(_finalization_instruction_text)
@@ -3788,7 +3816,6 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
-        self.assertEqual([step.requires_goal for step in workflow.steps], [True, True, True, True])
 
     def test_build_plan_agent_workflow_for_multiple_cycles_queues_continue_and_implement_rounds(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
@@ -3810,7 +3837,6 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
-        self.assertEqual([step.requires_goal for step in workflow.steps], [True, True, True, True, True, True, True])
 
     def test_build_plan_agent_workflow_for_three_cycles_uses_commit_push_middle_round(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
@@ -3834,10 +3860,6 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 ("queue_message", _browser_e2e_instruction_text()),
                 ("queue_message", _pr_review_comments_instruction_text()),
             ],
-        )
-        self.assertEqual(
-            [step.requires_goal for step in workflow.steps],
-            [True, True, True, True, True, True, True, True, True, True],
         )
 
     def test_build_plan_agent_workflow_keeps_opencode_on_single_prompt_even_when_cycles_set(self) -> None:
@@ -4301,7 +4323,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             runtime,
             launch_config=_launch_config_for_tests(cli="codex"),
             cli="codex",
-            preset="merge_implementation_branches",
+            preset="review_worktree_imp",
         )
 
         self.assertIsNone(error)
@@ -4474,7 +4496,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=999)
 
         self.assertEqual(workflow.mode, "codex_cycles")
-        self.assertEqual(workflow.codex_cycles, 10)
+        self.assertEqual(workflow.codex_cycles, 3)
         self.assertEqual(len(workflow.steps), 3 + (1 + 3 * (workflow.codex_cycles - 1)))
 
     def test_codex_cycle_launch_queues_follow_up_messages_with_tab(self) -> None:
@@ -4671,41 +4693,29 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
             "│ directory: ~/repo                                 │\n"
             "• Working (32s • esc to interrupt)\n"
         )
-        typed_screen = (
-            "╭───────────────────────────────────────────────────╮\n"
-            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
-            "│ model:     gpt-5.4 high   fast   /model to change │\n"
-            "│ directory: ~/repo                                 │\n"
-            "  pasted content\n"
-            "  You are finalizing an implementation that should already be substantially complete in the current worktree.\n"
-            "  tab to queue message\n"
-        )
-        committed_screen = (
-            "╭───────────────────────────────────────────────────╮\n"
-            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
-            "│ model:     gpt-5.4 high   fast   /model to change │\n"
-            "│ directory: ~/repo                                 │\n"
-            "• Queued follow-up messages\n"
-        )
-        state = {"stage": "busy"}
+        state = {"typed": False, "text": ""}
+
+        def typed_screen() -> str:
+            first_line = next((line for line in state["text"].splitlines() if line.strip()), "")
+            return (
+                "╭───────────────────────────────────────────────────╮\n"
+                "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                "│ directory: ~/repo                                 │\n"
+                f"  {first_line}\n"
+                "  tab to queue message\n"
+            )
 
         def fake_paste_text(*_args, text, **_kwargs):  # noqa: ANN202, ANN001
             pasted_texts.append(text)
-            state["stage"] = "typed"
+            state["typed"] = True
+            state["text"] = text
             return None
 
         def fake_send_key(*_args, key, **_kwargs):  # noqa: ANN202, ANN001
             sent_keys.append(key)
-            if key == "tab":
-                state["stage"] = "committed"
+            state["typed"] = False
             return None
-
-        def fake_read_screen(*_args, **_kwargs):  # noqa: ANN202, ANN001
-            if state["stage"] == "typed":
-                return typed_screen
-            if state["stage"] == "committed":
-                return committed_screen
-            return busy_screen
 
         runtime = _RuntimeHarness(
             config=load_config(
@@ -4721,7 +4731,10 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
         with (
             patch("envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text", side_effect=fake_paste_text),
             patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", side_effect=fake_send_key),
-            patch("envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen", side_effect=fake_read_screen),
+            patch(
+                "envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen",
+                side_effect=lambda *_args, **_kwargs: typed_screen() if state["typed"] else busy_screen,
+            ),
             patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
             patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
         ):
@@ -4734,7 +4747,7 @@ class PlanAgentLaunchSupportTests(unittest.TestCase):
                 queued_steps=queued_steps,
                 launch_config=_launch_config_for_tests(cli="codex"),
                 cli="codex",
-            )
+        )
 
         self.assertIsNone(reason)
         self.assertEqual(len(pasted_texts), 2)

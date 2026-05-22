@@ -54,21 +54,19 @@ All Codex presets now install as explicit-only skills. Run `envctl install-promp
 - `$envctl-implement-task`
 - `$envctl-continue-task`
 - `$envctl-finalize-task`
-- `$envctl-review-task`
 - `$envctl-review-worktree`
 - `$envctl-create-plan`
 - `$envctl-create-plan-auto-codex`
 - `$envctl-create-plan-auto-opencode`
 - `$envctl-create-plan-auto-omx`
-- `$envctl-ship-release`
 
 Create-plan skill behavior:
 
 - `$envctl-create-plan` is plan-only and approval-first. It writes `todo/plans/<category>/<slug>.md` and asks before running envctl.
-- `$envctl-create-plan` records a recommended Codex cycle count from `0` through `8` in the plan and uses that recommendation in Codex follow-up command examples.
-- `$envctl-create-plan-auto-codex` writes the same kind of plan, derives `<category>/<slug>` from the plan file path, chooses a recommended Codex cycle count from `0` through `8`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --tmux --entire-system --headless --new-session`.
-- `$envctl-create-plan-auto-opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --new-session`. OpenCode ignores Codex cycle settings and prepends `/ulw-loop` by default.
-- `$envctl-create-plan-auto-omx` writes the plan, records the same `0` through `8` recommendation for visibility, derives `<selector>`, then runs `envctl --plan <selector> --omx --ultragoal --entire-system --headless --new-session`. OMX-managed launches are Codex-only: optional `/goal` framing is submitted first, Ultragoal wraps the initial prompt, and envctl may queue Codex follow-up cycles using the current cycle configuration. Use `--ralph` explicitly when you need the Ralph compatibility workflow.
+- `$envctl-create-plan` records a recommended Codex cycle count from `0` through `3` in the plan and uses that recommendation in Codex follow-up command examples.
+- `$envctl-create-plan-auto-codex` writes the same kind of plan, derives `<category>/<slug>` from the plan file path, chooses a recommended Codex cycle count from `0` through `3`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --cmux --preset implement_task --entire-system --headless --new-session`.
+- `$envctl-create-plan-auto-opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --cmux --opencode --entire-system --headless --new-session`. OpenCode ignores Codex cycle settings and prepends `/ulw-loop` by default.
+- `$envctl-create-plan-auto-omx` writes the plan, records the same `0` through `3` recommendation for visibility, derives `<selector>`, then runs `envctl --plan <selector> --omx --ultragoal --preset implement_task --entire-system --headless --new-session`. OMX-managed launches are Codex-only: optional `/goal` framing is submitted first, Ultragoal wraps the initial prompt, and envctl may queue Codex follow-up cycles using the current cycle configuration. Use `--ralph` explicitly when you need the Ralph compatibility workflow.
 - Keep the auto variants explicit-only; do not configure them for implicit invocation from generic planning language.
 - Rerun `envctl install-prompts --cli codex --yes`, `envctl install-prompts --cli opencode --yes`, or `envctl install-prompts --cli all --yes` to refresh installed prompt files.
 
@@ -141,16 +139,16 @@ Codex TUI cycle mode:
 - `CYCLES=<n>` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` submits the single implementation prompt and queues enabled browser-E2E and PR review-comments follow-ups for Codex/OMX surfaces
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues an `envctl ship` handoff follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` or more keep that first `ship` handoff follow-up, use `ship`-first follow-ups in the middle, and reserve `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues an `envctl ship` handoff after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` is the maximum: it keeps that first `ship` handoff, uses `ship`-first follow-ups in the middle, and reserves `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
 - OpenCode keeps the existing one-shot flow even when the cycle count is set
 - Superset keeps a one-shot Codex prompt even when the cycle count is set
-- create-plan prompts use a stricter recommendation policy of `0` through `8`; lower-level runtime parsing still applies the runtime implementation cap to direct env/config values
+- create-plan prompts and lower-level runtime parsing use the same `0` through `3` scale; values above `3` are bounded to `3`, and `3` is reserved for genuinely complex work
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` disables the `$browser` E2E follow-up when browser validation is not applicable
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false` disables the final PR review-comments follow-up when comment handling is manual
 - canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set
 - `CYCLES` does not enable plan-agent launch by itself; use `--cmux`, `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or a cmux workspace override to enable launch
-- envctl only appends messages in this mode; Codex still runs the actual `envctl ship` or fallback commit, push, and PR work itself
+- envctl only appends messages in this mode; Codex still runs `envctl ship` or the fallback commit, push, and PR flow itself
 
 Then run:
 
@@ -193,37 +191,10 @@ envctl errors --all
 ## Tight Loop for One Project
 
 ```bash
-envctl test-focused
-envctl ship --json
-```
-
-From outside the generated worktree, pass the project explicitly:
-
-```bash
-envctl test-focused --project api
 envctl test --project api
 envctl logs --project api --logs-follow
 envctl restart --project api
 ```
-
-Use `test-focused` to run the focused checks selected from the current changed
-files. At final handoff, prefer the narrow ship flow:
-
-```bash
-envctl ship --json
-```
-
-This commits with the same `.envctl-commit-message.md` behavior as
-`envctl commit`, pushes the branch, opens or reuses the PR, predicts merge
-conflicts, and reports GitHub check status with `failing_checks` and
-`pending_checks`. `ship` returns the current PR/check state instead of blocking
-on pending CI. In agent workflows, run it in a background/subagent lane when
-available; the shipping lane should surface commit, push, PR, merge-conflict,
-failed-check, or review-comment problems immediately while the main
-implementation lane continues non-overlapping work. Only return to the shipping
-lane if the subagent reports an issue or final check completion. Before final
-handoff, wait for required checks to finish.
-For generated worktrees, the project selector is the branch name.
 
 ## Multi-Repo Control
 

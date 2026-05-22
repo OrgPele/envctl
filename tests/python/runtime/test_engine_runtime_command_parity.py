@@ -316,7 +316,7 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
                 ),
             ),
             patch(
-                "envctl_engine.runtime.engine_runtime.evaluate_shipability",
+                "envctl_engine.runtime.engine_runtime_doctor_support.evaluate_shipability",
                 return_value=SimpleNamespace(passed=False, errors=["strict gate failed"], warnings=[]),
             ),
         ):

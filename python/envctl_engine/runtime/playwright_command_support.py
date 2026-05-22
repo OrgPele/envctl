@@ -25,6 +25,11 @@ def run_playwright_command(runtime: Any, route: Route) -> int:
             json_output=json_output,
             ok=False,
         )
+    if _passthrough_requests_help(command):
+        from envctl_engine.runtime.help_text import render_help_text
+
+        print(render_help_text(route))
+        return 0
     state = _load_state(runtime, route)
     if state is None:
         return _emit({"ok": False, "error": "state_not_found"}, json_output=json_output, ok=False)
@@ -94,7 +99,19 @@ def run_playwright_command(runtime: Any, route: Route) -> int:
     run = getattr(runner, "run", None)
     if not callable(run):
         return _emit({"ok": False, "error": "process_runner_unavailable"}, json_output=json_output, ok=False)
-    completed = run(command, cwd=cwd, env=env, stdin=subprocess.DEVNULL)
+    try:
+        completed = run(command, cwd=cwd, env=env, stdin=subprocess.DEVNULL)
+    except FileNotFoundError as exc:
+        return _emit(
+            {
+                "ok": False,
+                "error": "command_not_found",
+                "command": command[0],
+                "detail": str(exc),
+            },
+            json_output=json_output,
+            ok=False,
+        )
     exit_code = int(getattr(completed, "returncode", 1) or 0)
     metadata = {
         "project": project,
@@ -119,6 +136,9 @@ def run_playwright_command(runtime: Any, route: Route) -> int:
     }
     return _emit(payload, json_output=json_output, ok=exit_code == 0)
 
+
+def _passthrough_requests_help(command: list[str]) -> bool:
+    return len(command) == 1 and command[0] in {"--help", "-h", "help"}
 
 
 def _emit_resolution(runtime: Any, event: str, resolution: Any, state: Any) -> None:

@@ -153,13 +153,13 @@ Behavior:
 The installed create-plan skills connect planning documents to these launch paths:
 
 - `$envctl-create-plan` stays plan-only and approval-first.
-- `$envctl-create-plan` records a recommended Codex cycle count from `0` through `8` in the plan and uses that recommendation in Codex follow-up command examples.
-- `$envctl-create-plan-auto-codex` writes `todo/plans/<category>/<slug>.md`, derives `<category>/<slug>` from that path, chooses a recommended Codex cycle count from `0` through `8`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --tmux --entire-system --headless --new-session`.
-- `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --new-session`; OpenCode prepends `/ulw-loop` by default.
+- `$envctl-create-plan` records a recommended Codex cycle count from `0` through `3` in the plan and uses that recommendation in Codex follow-up command examples.
+- `$envctl-create-plan-auto-codex` writes `todo/plans/<category>/<slug>.md`, derives `<category>/<slug>` from that path, chooses a recommended Codex cycle count from `0` through `3`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --cmux --entire-system --headless --new-session`.
+- `$envctl-create-plan-auto-opencode` writes the plan, derives the selector, then runs `envctl --plan <selector> --cmux --opencode --entire-system --headless --new-session`; OpenCode prepends `/ulw-loop` by default.
 - `$envctl-create-plan-auto-omx` writes the plan, records the same recommendation for visibility, derives the selector, then runs `envctl --plan <selector> --omx --ultragoal --entire-system --headless --new-session`; optional `/goal` framing is submitted first, Ultragoal wraps the initial prompt, and envctl may queue Codex follow-up cycles using the current cycle configuration. Use `--ralph` explicitly when you need the Ralph compatibility workflow.
 
 The auto variants are explicit opt-ins for immediate implementation. Each uses the plan file path as the selector source and asks envctl to create a fresh headless session, so invoke them only when you want implementation work to start right after planning.
-Create-plan prompt recommendations use a `0` through `8` policy range even though direct `ENVCTL_PLAN_AGENT_CODEX_CYCLES` runtime parsing still follows the runtime implementation cap.
+Create-plan prompt recommendations and direct `ENVCTL_PLAN_AGENT_CODEX_CYCLES` runtime parsing use the same `0` through `3` scale; values above `3` are bounded to `3`, and `3` is reserved for genuinely complex, risky, cross-module, runtime-sensitive, or architecture-sensitive work.
 
 ## Selection Input
 When passing plan selections, you can use any of these forms:

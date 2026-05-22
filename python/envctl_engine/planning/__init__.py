@@ -6,6 +6,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
+from envctl_engine.planning.worktree_identity import worktree_project_name
+
 _ITERATION_RE = re.compile(r"^(?:\d+|iter[-_]?\d+)$", re.IGNORECASE)
 OMX_ARTIFACT_DIR_NAME = ".omx"
 ENVCTL_STATE_DIR_NAME = ".envctl-state"
@@ -38,8 +40,6 @@ class PlanProjectPrediction:
 
 @dataclass(frozen=True, slots=True)
 class GeneratedWorktreeIdentity:
-    feature: str
-    iteration: str
     project_name: str
     branch_name: str
     selector: str
@@ -47,16 +47,12 @@ class GeneratedWorktreeIdentity:
 
 
 def generated_worktree_identity(*, feature: str, iteration: str | int) -> GeneratedWorktreeIdentity:
-    normalized_feature = str(feature).strip()
-    normalized_iteration = str(iteration).strip()
-    name = f"{normalized_feature}-{normalized_iteration}"
+    project_name = worktree_project_name(feature=feature, iteration=iteration)
     return GeneratedWorktreeIdentity(
-        feature=normalized_feature,
-        iteration=normalized_iteration,
-        project_name=name,
-        branch_name=name,
-        selector=name,
-        path_segments=(normalized_feature, normalized_iteration),
+        project_name=project_name,
+        branch_name=project_name,
+        selector=project_name,
+        path_segments=(str(feature).strip(), str(iteration).strip()),
     )
 
 
@@ -263,8 +259,7 @@ def predict_plan_projects(
         for _ in range(missing):
             iteration = _next_available_iteration(existing_iterations)
             root = feature_root / str(iteration)
-            identity = generated_worktree_identity(feature=feature, iteration=iteration)
-            name = identity.project_name
+            name = worktree_project_name(feature=feature, iteration=iteration)
             dedupe_key = f"{name}|{root}"
             if dedupe_key in seen:
                 existing_iterations.add(iteration)
@@ -345,8 +340,10 @@ def _append_feature_projects(
         for iter_dir in nested_iters:
             if not _looks_like_tree_project_root(iter_dir):
                 continue
-            identity = generated_worktree_identity(feature=feature_name, iteration=iter_dir.name)
-            project_name = _branch_project_name_for_worktree(iter_dir) or identity.project_name
+            project_name = _branch_project_name_for_worktree(iter_dir) or worktree_project_name(
+                feature=feature_name,
+                iteration=iter_dir.name,
+            )
             dedupe_key = f"{project_name}|{iter_dir.resolve()}"
             if dedupe_key in seen:
                 continue
@@ -363,25 +360,25 @@ def _append_feature_projects(
     projects.append((feature_name, feature_dir))
 
 
-def _branch_project_name_for_worktree(path: Path) -> str:
-    if not ((path / ".git").is_file() or (path / ".git").is_dir()):
-        return ""
+def _branch_project_name_for_worktree(worktree_root: Path) -> str | None:
+    if not (worktree_root / ".git").exists():
+        return None
     try:
-        completed = subprocess.run(
+        result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=str(path),
+            cwd=worktree_root,
             text=True,
             capture_output=True,
             check=False,
-            timeout=5.0,
+            timeout=5,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    if completed.returncode != 0:
-        return ""
-    branch = completed.stdout.strip()
+    except (OSError, subprocess.SubprocessError, Exception):
+        return None
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
     if not branch or branch == "HEAD":
-        return ""
+        return None
     return branch
 
 

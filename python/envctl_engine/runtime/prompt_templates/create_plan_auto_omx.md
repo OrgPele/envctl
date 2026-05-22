@@ -6,7 +6,7 @@ This command must be run from Codex or another agent/runtime that can create the
 $ARGUMENTS
 
 ## Workflow
-1. Follow the full `create_plan` prompt contract: research the repo, write exactly one plan under `todo/plans/<category>/<slug>.md`, record launch scope, and choose an informational Codex-equivalent cycle count from `0` through `8`.
+1. Follow the full `create_plan` prompt contract: research the repo, write exactly one plan under `todo/plans/<category>/<slug>.md`, record launch scope, and choose an informational Codex-equivalent cycle count from `0` through `3`.
 2. Validate the plan path exists and derive `<category>/<slug>` by removing `todo/plans/` and `.md`.
 3. Launch OMX Ultragoal implementation from the repo root with the shared `implement_task` preset:
 

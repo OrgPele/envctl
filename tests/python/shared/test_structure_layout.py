@@ -74,6 +74,231 @@ class StructureLayoutTests(unittest.TestCase):
             with self.subTest(path=rel):
                 self.assertTrue((REPO_ROOT / rel).is_file())
 
+    def test_worktree_code_intelligence_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_code_intelligence.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_code_intelligence import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_provenance_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_provenance.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_provenance import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_git_hooks_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_git_hooks.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_git_hooks import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_main_task_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_main_task.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_main_task import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_selection_memory_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_selection_memory.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_selection_memory import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_project_catalog_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_project_catalog.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_project_catalog import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_shared_artifacts_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_shared_artifacts.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_shared_artifacts import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_creation_recovery_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_creation_recovery.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_creation_recovery import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_creation_commands_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_creation_commands.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_creation_commands import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_plan_selection_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_plan_selection.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_plan_selection import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_plan_project_selection_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_plan_project_selection.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_plan_project_selection import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_prompt_selection_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_prompt_selection.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_prompt_selection import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_planning_menu_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_planning_menu.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_planning_menu import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_setup_entries_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_setup_entries.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_setup_entries import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_setup_coordinator_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_setup_coordinator.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_setup_coordinator import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_sync_deletion_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_deletion.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_sync_deletion import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_sync_orchestration_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_orchestration.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_sync_orchestration import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_worktree_identity_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_identity.py"
+        creation_commands = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_creation_commands.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.planning.worktree_identity import",
+            creation_commands.read_text(encoding="utf-8"),
+        )
+
+    def test_python_engine_architecture_inventory_exists(self) -> None:
+        inventory = REPO_ROOT / "docs" / "reference" / "python-engine-architecture.md"
+
+        self.assertTrue(inventory.is_file())
+
+    def test_engine_runtime_action_support_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_action_support.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.runtime.engine_runtime_action_support import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_engine_runtime_cli_support_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_cli_support.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.runtime.engine_runtime_cli_support import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_engine_runtime_doctor_support_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_doctor_support.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.runtime.engine_runtime_doctor_support import",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_engine_runtime_bookkeeping_support_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_bookkeeping_support.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.runtime.engine_runtime_bookkeeping_support import",
+            facade.read_text(encoding="utf-8"),
+        )
+
     def test_repo_local_launcher_is_python_script(self) -> None:
         launcher = REPO_ROOT / "bin" / "envctl"
         self.assertTrue(launcher.is_file())

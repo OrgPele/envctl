@@ -1802,9 +1802,9 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
                 yield _SpinnerStub()
 
             with (
-                patch("envctl_engine.planning.worktree_domain.spinner", side_effect=fake_spinner),
+                patch("envctl_engine.planning.worktree_setup_coordinator.spinner", side_effect=fake_spinner),
                 patch(
-                    "envctl_engine.planning.worktree_domain.resolve_spinner_policy",
+                    "envctl_engine.planning.worktree_setup_coordinator.resolve_spinner_policy",
                     return_value=SpinnerPolicy(
                         mode="auto",
                         enabled=True,
@@ -1866,9 +1866,9 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
                 yield _SpinnerStub()
 
             with (
-                patch("envctl_engine.planning.worktree_domain.spinner", side_effect=fake_spinner),
+                patch("envctl_engine.planning.worktree_sync_orchestration.spinner", side_effect=fake_spinner),
                 patch(
-                    "envctl_engine.planning.worktree_domain.resolve_spinner_policy",
+                    "envctl_engine.planning.worktree_sync_orchestration.resolve_spinner_policy",
                     return_value=SpinnerPolicy(
                         mode="auto",
                         enabled=True,
@@ -1935,9 +1935,9 @@ class PlanningWorktreeSetupTests(unittest.TestCase):
             raw_projects = [(ctx.name, ctx.root) for ctx in engine._discover_projects(mode="trees")]  # noqa: SLF001
 
             with (
-                patch("envctl_engine.planning.worktree_domain.spinner", side_effect=fake_spinner),
+                patch("envctl_engine.planning.worktree_sync_orchestration.spinner", side_effect=fake_spinner),
                 patch(
-                    "envctl_engine.planning.worktree_domain.resolve_spinner_policy",
+                    "envctl_engine.planning.worktree_sync_orchestration.resolve_spinner_policy",
                     return_value=SpinnerPolicy(
                         mode="auto",
                         enabled=True,

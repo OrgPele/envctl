@@ -5,12 +5,16 @@ from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from envctl_engine.requirements.core import dependency_ids
 from envctl_engine.requirements.external import dependency_external_mode
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.shared.services import service_project_name, service_slug_from_record
 from envctl_engine.state.models import RunState
+from envctl_engine.startup.startup_selection_support import (
+    _restart_service_types_for_project,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +82,89 @@ def mark_run_reused(metadata: Mapping[str, object] | None, *, reason: str) -> di
     updated["last_reopened_at"] = datetime.now(tz=UTC).isoformat()
     updated["last_reuse_reason"] = reason
     return updated
+
+
+def dashboard_stopped_service_entries(state: object) -> list[dict[str, str]]:
+    raw = getattr(state, "metadata", {}).get("dashboard_stopped_services")
+    if not isinstance(raw, list):
+        return []
+    entries: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        project = str(item.get("project", "") or "").strip()
+        service_type = str(item.get("type", "") or "").strip().lower()
+        name = str(item.get("name", "") or "").strip()
+        if not project or service_type not in {"backend", "frontend"}:
+            continue
+        entries.append(
+            {
+                "project": project,
+                "type": service_type,
+                "name": name or f"{project} {service_type.title()}",
+            }
+        )
+    return entries
+
+
+def metadata_without_dashboard_stopped_services(
+    metadata: Mapping[str, object],
+    *,
+    restored_service_names: set[str],
+) -> dict[str, object]:
+    updated = dict(metadata)
+    raw = updated.get("dashboard_stopped_services")
+    if not isinstance(raw, list):
+        return updated
+    remaining: list[object] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            remaining.append(item)
+            continue
+        name = str(item.get("name", "") or "").strip()
+        if name in restored_service_names:
+            continue
+        remaining.append(dict(item))
+    if remaining:
+        updated["dashboard_stopped_services"] = remaining
+    else:
+        updated.pop("dashboard_stopped_services", None)
+    return updated
+
+
+def fresh_start_replacement_services(
+    *,
+    route: Route,
+    selected_contexts: list[object],
+    candidate_state: object,
+    configured_service_types: set[str],
+    additional_services: tuple[object, ...],
+    project_name_from_service: Callable[[str], str],
+) -> set[str]:
+    target_projects = {str(context.name).strip().lower() for context in selected_contexts}
+    target_projects.discard("")
+    if not target_projects:
+        return set()
+    selected_by_project = {
+        str(context.name).strip().lower(): _restart_service_types_for_project(
+            route=route,
+            project_name=str(context.name),
+            default_service_types=configured_service_types,
+            additional_services=additional_services,
+        )
+        for context in selected_contexts
+        if str(context.name).strip()
+    }
+    selected: set[str] = set()
+    for service_name, service in getattr(candidate_state, "services", {}).items():
+        project = service_project_name(service) or project_name_from_service(service_name)
+        project_key = str(project).strip().lower()
+        if project_key not in target_projects:
+            continue
+        service_type = service_slug_from_record(service)
+        if service_type and service_type in selected_by_project.get(project_key, set()):
+            selected.add(service_name)
+    return selected
 
 
 def evaluate_run_reuse(

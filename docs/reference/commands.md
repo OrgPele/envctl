@@ -133,8 +133,8 @@ Behavior:
 Auto-launch create-plan presets:
 
 - `create_plan` remains plan-only and approval-first; `$envctl-create-plan` writes the plan and asks before running envctl.
-- `create_plan_auto_codex` writes the plan, derives `<selector>` from `todo/plans/<category>/<slug>.md`, chooses a recommended Codex cycle count from `0` through `8`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --tmux --entire-system --headless --new-session`.
-- `create_plan_auto_opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --new-session`; OpenCode launches prepend `/ulw-loop` by default.
+- `create_plan_auto_codex` writes the plan, derives `<selector>` from `todo/plans/<category>/<slug>.md`, chooses a recommended Codex cycle count from `0` through `3`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --cmux --entire-system --headless --new-session`.
+- `create_plan_auto_opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --cmux --opencode --entire-system --headless --new-session`; OpenCode launches prepend `/ulw-loop` by default.
 - `create_plan_auto_omx` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --omx --ultragoal --entire-system --headless --new-session`.
 - Each auto preset creates/syncs implementation worktrees and starts a fresh implementation session; use it only when you want implementation to start immediately.
 - Refresh installed prompt files with `envctl install-prompts --cli codex --yes`, `envctl install-prompts --cli opencode --yes`, or `envctl install-prompts --cli all --yes`.
@@ -472,7 +472,7 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true` submits Codex `/goal` session framing before the initial implementation prompt; local Superset Codex launches use an envctl Superset host-agent wrapper that types `/goal`, presses Enter, waits for `Goal active`, then submits the implementation prompt; `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex TUI queued cycle workflow for cmux, tmux, and OMX-managed Codex sessions; the default is `2`
-- `$envctl-create-plan-auto-codex` computes a `0` through `8` recommendation and uses that command-scoped count for its launch command; the global default remains `2`
+- `$envctl-create-plan-auto-codex` computes a `0` through `3` recommendation and uses that command-scoped count for its launch command; the global default remains `2`, and values above `3` are bounded to `3`
 - OpenCode cmux and tmux launches submit the rendered prompt body directly and prepend `/ulw-loop` by default, so ULW/direct-prompt flows do not depend on an installed slash command. Use `--no-ulw-loop` to submit the rendered OpenCode prompt without that prefix for one launch.
 - For `--plan --tmux --opencode`, envctl considers the AI launch successful only after the tmux pane shows a usable OpenCode prompt and the implementation prompt can be submitted. If tmux starts but OpenCode exits, stays on a loading screen, reports a shell/config error, or leaves a stale non-OpenCode pane behind, envctl reports an AI launch failure instead of printing implementation-session attach guidance.
 - Codex installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`; envctl still resolves the shipped prompt body directly when it needs to submit a preset itself

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence, cast
+
+from envctl_engine.runtime.command_router import Route
+from envctl_engine.ui.selection_types import TargetSelection
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,123 @@ def emit_action_output(
         printer(line)
         emit_status(line)
     return True
+
+
+def projects_for_services(runtime: Any, service_targets: list[object]) -> list[str]:
+    normalized_targets = [
+        str(target).strip().lower().removeprefix("service:")
+        for target in service_targets
+        if str(target).strip()
+    ]
+    if not normalized_targets:
+        return []
+
+    state = runtime.load_existing_state(mode="trees") or runtime.load_existing_state(mode="main")
+    resolved: list[str] = []
+    for target in normalized_targets:
+        matched = False
+        if state is not None:
+            for service_name, service in state.services.items():
+                service_type = str(getattr(service, "type", "") or "").strip().lower()
+                if service_name.lower() == target or service_type == target:
+                    project = runtime.project_name_from_service(service_name)
+                    if project:
+                        resolved.append(project)
+                        matched = True
+        if matched:
+            continue
+        project = runtime.project_name_from_service(target)
+        if project:
+            resolved.append(project)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for project in resolved:
+        lowered = project.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped.append(project)
+    return deduped
+
+
+def resolve_action_targets(
+    *,
+    runtime: Any,
+    route: Route,
+    trees_only: bool,
+    resolve_current_worktree_target: Callable[..., object | None],
+    interactive_selection_allowed: Callable[[Route], bool],
+    no_target_selected_message: Callable[[Route], str],
+) -> tuple[list[object], str | None]:
+    if trees_only and route.command == "self-destruct-worktree":
+        current = resolve_current_worktree_target()
+        if current is not None:
+            return [current], None
+        return [], "self-destruct-worktree must be run from inside a discovered worktree."
+    current_worktree_commands = {"commit", "pr", "ship", "test", "test-focused"}
+    if not trees_only and route.mode == "main" and route.command in current_worktree_commands:
+        current = resolve_current_worktree_target(require_configured_main_root=True)
+        if current is not None:
+            return [current], None
+    if trees_only:
+        candidates = runtime.discover_projects(mode="trees")
+    else:
+        candidates = runtime.discover_projects(mode=route.mode)
+        if not candidates and route.mode == "main":
+            candidates = runtime.discover_projects(mode="trees")
+
+    run_all = bool(route.flags.get("all"))
+    untested_selected = bool(route.flags.get("untested"))
+    project_selectors = {name.lower() for name in route.projects}
+    project_selectors.update(runtime.selectors_from_passthrough(route.passthrough_args))
+
+    services = route.flags.get("services")
+    if isinstance(services, list):
+        for project in projects_for_services(runtime, services):
+            project_selectors.add(project.lower())
+
+    if run_all:
+        if not candidates:
+            return [], "No projects discovered for selected mode."
+        return candidates, None
+
+    if not project_selectors and not run_all:
+        if len(candidates) == 1:
+            return candidates, None
+        if interactive_selection_allowed(route):
+            selection = cast(
+                TargetSelection,
+                runtime.select_project_targets(
+                    prompt=f"Select {route.command} target",
+                    projects=candidates,
+                    allow_all=True,
+                    allow_untested=route.command == "test",
+                    multi=True,
+                ),
+            )
+            if selection.cancelled:
+                return [], no_target_selected_message(route)
+            selection.apply_to_route(route)
+            run_all = bool(route.flags.get("all"))
+            project_selectors = {name.lower() for name in route.projects}
+            untested_selected = bool(route.flags.get("untested"))
+        else:
+            return [], no_target_selected_message(route)
+
+    if not project_selectors and not run_all and not untested_selected:
+        return [], no_target_selected_message(route)
+    if run_all:
+        if not candidates:
+            return [], "No projects discovered for selected mode."
+        return candidates, None
+    selected = [candidate for candidate in candidates if candidate.name.lower() in project_selectors]
+    if not selected:
+        if route.command == "test" and untested_selected:
+            return [], None
+        requested = ", ".join(sorted(project_selectors))
+        return [], f"No matching targets found for: {requested}"
+    return selected, None
 
 
 def execute_targeted_action(

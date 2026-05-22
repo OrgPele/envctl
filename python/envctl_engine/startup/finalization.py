@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+import shlex
+import sys
 from typing import cast
 
 from envctl_engine.dashboard_metadata import (
@@ -9,10 +12,14 @@ from envctl_engine.dashboard_metadata import (
 )
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
+from envctl_engine.shared.services import service_display_name
 from envctl_engine.startup.run_reuse_support import build_startup_identity_metadata
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
 from envctl_engine.state.models import RunState
+from envctl_engine.ui.color_policy import colors_enabled
+from envctl_engine.ui.path_links import local_paths_in_text, render_paths_in_terminal_text
+from envctl_engine.ui.status_symbols import STATUS_FAILURE
 
 
 def build_success_run_state(runtime: StartupRuntime, session: StartupSession) -> RunState:
@@ -24,6 +31,242 @@ def build_failure_run_state(runtime: StartupRuntime, session: StartupSession, er
     run_state.metadata["failed"] = True
     run_state.metadata["failure_message"] = error
     return run_state
+
+
+def emit_preserved_service_merge(runtime: StartupRuntime, session: StartupSession) -> None:
+    if not session.preserved_services:
+        return
+    replaced = sorted(name for project_services in session.services_by_project.values() for name in project_services)
+    runtime._emit(
+        "runtime.state.merge_preserved_services",
+        preserved_services=sorted(session.preserved_services),
+        replaced_services=replaced,
+        preserved_requirements=sorted(session.preserved_requirements),
+        replaced_requirements=sorted(session.requirements_by_project),
+    )
+
+
+def plan_dry_run_preview_lines(session: StartupSession, *, created_names: set[str]) -> list[str]:
+    lines = ["Dry run: no worktrees, git state, or services were modified."]
+    for context in session.selected_contexts:
+        action = "create" if context.name in created_names else "reuse"
+        lines.append(f"{context.name}: {action}")
+    return lines
+
+
+def restart_port_rebound_summary_lines(
+    session: StartupSession,
+    events: list[dict[str, object]],
+) -> list[str]:
+    route = session.effective_route
+    if session.requested_command != "restart" or not bool(route.flags.get("interactive_command")):
+        return []
+    lines: list[str] = []
+    seen: set[tuple[str, str, int, int]] = set()
+    for event in events[session.startup_event_index :]:
+        if event.get("event") != "port.rebound":
+            continue
+        previous = event.get("restart_preferred_port")
+        current = event.get("port")
+        project = str(event.get("project") or "").strip()
+        service = str(event.get("service") or "").strip()
+        if not project or not service:
+            continue
+        if not isinstance(previous, int) or previous <= 0:
+            continue
+        if not isinstance(current, int) or current <= 0 or current == previous:
+            continue
+        key = (project, service, previous, current)
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(
+            f"Port changed: {project} {service_display_name(service)} "
+            f"{previous} -> {current} (previous port still in use)"
+        )
+    return lines
+
+
+def render_project_startup_warnings(
+    runtime: StartupRuntime,
+    *,
+    context: ProjectContextLike,
+    warnings: list[str],
+    suppress_progress: bool,
+    project_spinner_group: object | None,
+) -> None:
+    warning_lines = [str(line).strip() for line in warnings if str(line).strip()]
+    if not warning_lines:
+        return
+    if project_spinner_group is not None and hasattr(project_spinner_group, "print_detail"):
+        for line in warning_lines:
+            getattr(project_spinner_group, "print_detail")(context.name, line)
+        return
+    if suppress_progress:
+        for line in warning_lines:
+            runtime._emit("ui.status", message=line)  # type: ignore[attr-defined]
+        return
+    link_mode = str(runtime.env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
+    for line in warning_lines:
+        print(
+            render_paths_in_terminal_text(
+                line,
+                paths=local_paths_in_text(line),
+                env=runtime.env,
+                stream=sys.stdout,
+                interactive_tty=(True if link_mode == "on" else None),
+            )
+        )
+
+
+def render_final_failure_status(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    final_error: str,
+    *,
+    interactive_tty: bool | None,
+) -> str:
+    symbol = STATUS_FAILURE
+    if colors_enabled(runtime.env, stream=sys.stdout, interactive_tty=bool(interactive_tty)):
+        symbol = f"\033[31m{STATUS_FAILURE}\033[0m"
+    rendered = f"{symbol} {final_error}"
+    context_label = failure_context_label(session, final_error)
+    if context_label and context_label not in rendered:
+        rendered = f"{rendered} ({context_label})"
+    return rendered
+
+
+def plan_session_summary_lines(
+    session: StartupSession,
+    *,
+    attach_target: object | None = None,
+) -> list[str]:
+    resolved_target = attach_target or session.plan_agent_attach_target
+    if resolved_target is None:
+        return []
+    lines: list[str] = []
+    attach_command = " ".join(
+        str(part).strip() for part in getattr(resolved_target, "attach_command", ()) if str(part).strip()
+    )
+    new_session_command = " ".join(
+        str(part).strip() for part in getattr(resolved_target, "new_session_command", ()) if str(part).strip()
+    )
+    session_name = str(getattr(resolved_target, "session_name", "")).strip()
+    if new_session_command:
+        lines.append(
+            "existing session: envctl did not create a new AI session because one already exists for this "
+            "plan/workspace/CLI."
+        )
+    if attach_command:
+        lines.append(f"attach: {attach_command}")
+    if new_session_command:
+        lines.append(f"new session: {new_session_command}")
+    if session_name:
+        lines.append(f"kill: tmux kill-session -t {shlex.quote(session_name)}")
+    return lines
+
+
+def headless_plan_session_summary_lines(
+    session: StartupSession,
+    *,
+    attach_target: object | None = None,
+) -> list[str]:
+    lines = plan_session_summary_lines(session, attach_target=attach_target)
+    if attach_target is not None or session.plan_agent_attach_target is not None:
+        return lines
+    reason = str(session.plan_agent_handoff_validation_reason or "").strip()
+    if not reason:
+        return lines
+    lines.append("Plan agent launch did not leave an attachable AI session.")
+    lines.append(f"reason: {reason}")
+    stale_name = str(session.plan_agent_stale_session_name or "").strip()
+    if stale_name:
+        lines.append(f"stale_session: {stale_name}")
+    recovery_command = str(session.plan_agent_recovery_command or "").strip()
+    if recovery_command:
+        lines.append(f"recovery: {recovery_command}")
+    return lines
+
+
+def plan_agent_degraded_handoff_text(session: StartupSession) -> str:
+    lines = [
+        "Implementation session is running, but local app startup failed.",
+        "",
+        "AI session:",
+    ]
+    session_lines = plan_session_summary_lines(session)
+    if session_lines:
+        lines.extend(f"  {line}" for line in session_lines)
+    else:
+        lines.append("  status: running (attach guidance unavailable for this launch transport)")
+    failures = list(session.local_startup_failures)
+    if failures:
+        lines.append("")
+        if len(failures) == 1:
+            failure = failures[0]
+            lines.extend(
+                [
+                    "Local app startup:",
+                    f"  project: {failure.project}",
+                    f"  error: {failure.error}",
+                    (
+                        "  effect: backend/frontend services were not started; the AI implementation session "
+                        "can continue."
+                    ),
+                    (
+                        "  next: configure ENVCTL_BACKEND_START_CMD / ENVCTL_FRONTEND_START_CMD if this "
+                        "worktree should start services, or disable tree startup when you only want AI "
+                        "implementation sessions."
+                    ),
+                ]
+            )
+        else:
+            lines.append("Local app startup:")
+            for failure in failures:
+                lines.extend(
+                    [
+                        f"  project: {failure.project}",
+                        f"  error: {failure.error}",
+                        (
+                            "  effect: backend/frontend services were not started; the AI implementation "
+                            "session can continue."
+                        ),
+                    ]
+                )
+            lines.append(
+                "  next: configure ENVCTL_BACKEND_START_CMD / ENVCTL_FRONTEND_START_CMD if these worktrees "
+                "should start services, or disable tree startup when you only want AI implementation sessions."
+            )
+    return "\n".join(lines)
+
+
+def failure_context_label(session: StartupSession, final_error: str) -> str | None:
+    contexts: list[ProjectContextLike] = []
+    seen_names: set[str] = set()
+    for context in [*session.selected_contexts, *session.contexts_to_start]:
+        name = str(getattr(context, "name", "") or "").strip()
+        if not name or name in seen_names:
+            continue
+        contexts.append(context)
+        seen_names.add(name)
+    if not contexts:
+        return None
+    error_text = str(final_error or "")
+    matches = [context for context in contexts if str(getattr(context, "name", "") or "").strip() in error_text]
+    if matches:
+        return format_failure_context_label(
+            sorted(matches, key=lambda context: len(str(getattr(context, "name", "") or "")), reverse=True)[0]
+        )
+    if len(contexts) == 1:
+        return format_failure_context_label(contexts[0])
+    return None
+
+
+def format_failure_context_label(context: ProjectContextLike) -> str:
+    name = str(getattr(context, "name", "") or "").strip()
+    root = Path(str(getattr(context, "root", "") or ""))
+    kind = "worktree" if any(part == "trees" or part.startswith("trees-") for part in root.parts) else "project"
+    return f"{kind}: {name}"
 
 
 def build_planning_dashboard_state(

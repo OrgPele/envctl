@@ -627,7 +627,8 @@ class PromptInstallSupportTests(unittest.TestCase):
         body = _load_template("create_plan").body
 
         self.assertIn("Codex cycle recommendation", body)
-        self.assertIn("exactly one integer from `0` through `8`", body)
+        self.assertIn("exactly one integer from `0` through `3`", body)
+        self.assertNotIn("exactly one integer from `0` through `8`", body)
         self.assertIn("Prefer the smallest number", body)
         self.assertIn("Rollout / verification", body)
 
@@ -677,9 +678,9 @@ class PromptInstallSupportTests(unittest.TestCase):
         self.assertIn("Codex skills and envctl validation helpers", codex)
         self.assertIn("$browser", codex)
         self.assertNotIn("$browser-use", codex)
-        self.assertIn("envctl endpoints --project <current-worktree-name> --json", codex)
-        self.assertIn("envctl qa-user ensure --project <current-worktree-name>", codex)
-        self.assertIn("envctl playwright --project <current-worktree-name> -- <command>", codex)
+        self.assertIn("envctl endpoints --project <actual-project-name> --json", codex)
+        self.assertIn("envctl qa-user ensure --project <actual-project-name>", codex)
+        self.assertIn("envctl playwright --project <actual-project-name> -- <executable> [args...]", codex)
         self.assertIn("Default to `envctl --entire-system --headless`", codex)
         self.assertIn("Use `envctl --fullstack --headless` only", codex)
         self.assertIn("Use backend only", codex)

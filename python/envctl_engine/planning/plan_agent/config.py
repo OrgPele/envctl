@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -78,44 +79,18 @@ def resolve_plan_agent_launch_config(
     route_flags = getattr(route, "flags", {}) or {}
     cmux_launch_requested = bool(route_flags.get("cmux"))
     opencode_launch_requested = bool(route_flags.get("opencode"))
-    config_explicit_keys = set(getattr(config, "explicit_keys", ()) or ())
-    config_surface_transport = config.raw.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
-    terminal_enable_raw = (
-        env_map.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
-        or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
-    )
-    terminal_enable_explicit = (
-        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE" in env_map
-        or "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE" in config_explicit_keys
-    )
+    cmux_alias_requested = parse_bool(env_map.get("CMUX") or config.raw.get("CMUX"), False)
     cmux_workspace = str(
         env_map.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
         or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
         or ""
     ).strip()
-    cmux_alias_enabled = parse_bool(
-        env_map.get("CMUX") or config.raw.get("CMUX"),
-        False,
-    )
-    implicit_cmux_enable = (
-        bool(cmux_workspace)
-        or ("CMUX" in config_explicit_keys and cmux_alias_enabled)
-        or (terminal_enable_explicit and parse_bool(terminal_enable_raw, False))
-    )
-    explicit_surface_transport = (
-        env_map.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
-        or (
-            config_surface_transport
-            if "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT" in config_explicit_keys
-            else None
-        )
-        or ("cmux" if implicit_cmux_enable else None)
-    )
     configured_surface_transport = str(
-        explicit_surface_transport
-        if explicit_surface_transport is not None
-        else _default_plan_agent_surface_transport()
+        env_map.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
+        or config.raw.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
+        or _default_plan_agent_surface_transport()
     ).strip().lower() or _default_plan_agent_surface_transport()
+    configured_surface_transport = _resolve_available_plan_agent_surface_transport(configured_surface_transport)
     surface_transport_warning = None
     if configured_surface_transport not in {"cmux", "tmux", "superset"}:
         surface_transport_warning = "invalid_surface_transport"
@@ -125,7 +100,7 @@ def resolve_plan_agent_launch_config(
         transport = "omx"
     elif bool(route_flags.get("tmux")):
         transport = "tmux"
-    elif cmux_launch_requested:
+    elif cmux_launch_requested or cmux_alias_requested or bool(cmux_workspace):
         transport = "cmux"
     elif opencode_launch_requested:
         transport = _default_plan_agent_surface_transport()
@@ -185,17 +160,17 @@ def resolve_plan_agent_launch_config(
         or ""
     )
     enabled = parse_bool(
-        terminal_enable_raw,
+        env_map.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
+        or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
         False,
     ) or any(
         (
             bool(cmux_workspace),
+            cmux_alias_requested,
             cmux_launch_requested,
             opencode_launch_requested,
             bool(superset_project or superset_workspace),
-            bool(route_flags.get("tmux")),
-            bool(route_flags.get("omx")),
-            (explicit_surface_transport or "") in {"tmux", "omx", "superset"},
+            bool(route_flags.get("tmux")) or bool(route_flags.get("omx")),
         )
     )
     direct_prompt_enabled = parse_bool(
@@ -294,7 +269,14 @@ def _default_plan_agent_cli_command(cli: str, *, codex_yolo_enabled: bool = True
 
 
 def _default_plan_agent_surface_transport() -> Literal["cmux", "tmux"]:
-    return "cmux"
+    return "cmux" if shutil.which("cmux") else "tmux"
+
+
+def _resolve_available_plan_agent_surface_transport(raw: str) -> str:
+    normalized = str(raw or "").strip().lower()
+    if normalized == "cmux" and not shutil.which("cmux"):
+        return "tmux"
+    return normalized
 
 
 def _route_requests_ulw(route: object | None) -> bool:

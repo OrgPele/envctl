@@ -589,7 +589,8 @@ class CommandExitCodeTests(unittest.TestCase):
             written = target.read_text(encoding="utf-8")
             self.assertIn("$envctl-create-plan-auto-codex", written)
             self.assertIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles>", written)
-            self.assertIn("--preset implement_task", written)
+            self.assertIn("from `0` through `3`", written)
+            self.assertNotIn("exactly one integer from `0` through `8`", written)
             self.assertNotIn("ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <category>/<slug>", written)
             self.assertIn("--new-session", written)
 
@@ -624,6 +625,40 @@ class CommandExitCodeTests(unittest.TestCase):
                 written,
             )
             self.assertIn("OpenCode plan-agent launches use the `/ulw-loop` prefix by default", written)
+
+    def test_install_prompts_cli_run_keeps_with_codex_skills_as_compatibility_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            home = Path(tmpdir) / "home"
+            target = self._codex_skill_target(home=home, preset="implement_task")
+            repo.mkdir(parents=True, exist_ok=True)
+            stdout = StringIO()
+
+            with patch("envctl_engine.runtime.cli.ensure_local_config") as bootstrap, redirect_stdout(stdout):
+                code = cli.run(
+                    [
+                        "install-prompts",
+                        "--cli",
+                        "codex",
+                        "--preset",
+                        "implement_task",
+                        "--with-codex-skills",
+                        "--json",
+                    ],
+                    env={
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "HOME": str(home),
+                    },
+                )
+
+            self.assertEqual(code, 0)
+            bootstrap.assert_not_called()
+            payload = json.loads(stdout.getvalue())
+            self.assertIn("skill_results", payload)
+            self.assertEqual(payload["skill_results"][0]["path"], str(target))
+            self.assertTrue(target.exists())
 
     def test_doctor_repo_resolves_root_without_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
