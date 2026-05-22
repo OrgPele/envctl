@@ -59,6 +59,9 @@ from envctl_engine.actions.action_test_summary_support import (
 from envctl_engine.actions.action_test_service_support import (
     additional_service_test_execution_specs as additional_service_test_execution_specs_impl,
 )
+from envctl_engine.actions.action_test_plan_support import (
+    build_test_execution_specs_for_route as build_test_execution_specs_for_route_impl,
+)
 from envctl_engine.actions.project_action_report_support import (
     first_output_line as first_output_line_impl,
     persist_project_action_result as persist_project_action_result_impl,
@@ -80,7 +83,6 @@ from envctl_engine.actions.action_test_support import (
     TestExecutionSpec as _TestExecutionSpec,
     TestSuiteSpinnerGroup as _TestSuiteSpinnerGroup,
     TestTargetContext,
-    build_test_execution_specs,
     build_test_target_contexts,
     is_backend_only_selection,
     rich_progress_available as _rich_progress_available,
@@ -663,59 +665,20 @@ if result.returncode != 0:
         untested: bool,
     ) -> list["_TestExecutionSpec"]:
         rt = self.runtime
-        if bool(route.flags.get("failed")):
-            return self._build_failed_test_execution_specs(
-                route=route,
-                target_contexts=target_contexts,
-            )
-        shared_raw = (
-            str(
-                rt.env.get("ENVCTL_ACTION_TEST_CMD")  # type: ignore[attr-defined]
-                or rt.config.raw.get("ENVCTL_ACTION_TEST_CMD", "")  # type: ignore[attr-defined]
-            ).strip()
-            or None
-        )
-        backend_raw = (
-            str(
-                rt.env.get("ENVCTL_BACKEND_TEST_CMD")  # type: ignore[attr-defined]
-                or rt.config.raw.get("ENVCTL_BACKEND_TEST_CMD", "")  # type: ignore[attr-defined]
-            ).strip()
-            or None
-        )
-        frontend_raw = (
-            str(
-                rt.env.get("ENVCTL_FRONTEND_TEST_CMD")  # type: ignore[attr-defined]
-                or rt.config.raw.get("ENVCTL_FRONTEND_TEST_CMD", "")  # type: ignore[attr-defined]
-            ).strip()
-            or None
-        )
-        service_specs = self._additional_service_test_execution_specs(
+        return build_test_execution_specs_for_route_impl(
             route=route,
             targets=targets,
             target_contexts=target_contexts,
-        )
-        if service_specs:
-            return service_specs
-        return build_test_execution_specs(
-            shared_raw_command=shared_raw,
-            backend_raw_command=backend_raw,
-            frontend_raw_command=frontend_raw,
-            target_contexts=target_contexts,
-            repo_root=rt.config.base_dir,  # type: ignore[attr-defined]
             include_backend=include_backend,
             include_frontend=include_frontend,
-            frontend_test_path=(
-                getattr(rt.config, "frontend_test_path", "")
-                or rt.env.get("ENVCTL_FRONTEND_TEST_PATH")  # type: ignore[attr-defined]
-                or rt.config.raw.get("ENVCTL_FRONTEND_TEST_PATH", "")  # type: ignore[attr-defined]
-            ),
             run_all=run_all,
             untested=untested,
-            split_command=lambda command_raw, replacements: rt.split_command(
-                command_raw,
-                replacements=dict(replacements),
-            ),
-            replacements_for_target=lambda target: self.action_replacements(targets, target=target),
+            env=rt.env,
+            config=rt.config,
+            action_replacements_builder=self.action_replacements,
+            split_command=lambda command_raw, replacements: rt.split_command(command_raw, replacements=replacements),
+            failed_spec_builder=self._build_failed_test_execution_specs,
+            additional_service_spec_builder=self._additional_service_test_execution_specs,
             is_legacy_tree_test_script=self._is_legacy_tree_test_script,
         )
 
