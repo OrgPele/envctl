@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+import sys
 from typing import cast
 
 from envctl_engine.dashboard_metadata import (
@@ -13,6 +15,8 @@ from envctl_engine.startup.run_reuse_support import build_startup_identity_metad
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
 from envctl_engine.state.models import RunState
+from envctl_engine.ui.color_policy import colors_enabled
+from envctl_engine.ui.status_symbols import STATUS_FAILURE
 
 
 def build_success_run_state(runtime: StartupRuntime, session: StartupSession) -> RunState:
@@ -24,6 +28,52 @@ def build_failure_run_state(runtime: StartupRuntime, session: StartupSession, er
     run_state.metadata["failed"] = True
     run_state.metadata["failure_message"] = error
     return run_state
+
+
+def render_final_failure_status(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    final_error: str,
+    *,
+    interactive_tty: bool | None,
+) -> str:
+    symbol = STATUS_FAILURE
+    if colors_enabled(runtime.env, stream=sys.stdout, interactive_tty=bool(interactive_tty)):
+        symbol = f"\033[31m{STATUS_FAILURE}\033[0m"
+    rendered = f"{symbol} {final_error}"
+    context_label = failure_context_label(session, final_error)
+    if context_label and context_label not in rendered:
+        rendered = f"{rendered} ({context_label})"
+    return rendered
+
+
+def failure_context_label(session: StartupSession, final_error: str) -> str | None:
+    contexts: list[ProjectContextLike] = []
+    seen_names: set[str] = set()
+    for context in [*session.selected_contexts, *session.contexts_to_start]:
+        name = str(getattr(context, "name", "") or "").strip()
+        if not name or name in seen_names:
+            continue
+        contexts.append(context)
+        seen_names.add(name)
+    if not contexts:
+        return None
+    error_text = str(final_error or "")
+    matches = [context for context in contexts if str(getattr(context, "name", "") or "").strip() in error_text]
+    if matches:
+        return format_failure_context_label(
+            sorted(matches, key=lambda context: len(str(getattr(context, "name", "") or "")), reverse=True)[0]
+        )
+    if len(contexts) == 1:
+        return format_failure_context_label(contexts[0])
+    return None
+
+
+def format_failure_context_label(context: ProjectContextLike) -> str:
+    name = str(getattr(context, "name", "") or "").strip()
+    root = Path(str(getattr(context, "root", "") or ""))
+    kind = "worktree" if any(part == "trees" or part.startswith("trees-") for part in root.parts) else "project"
+    return f"{kind}: {name}"
 
 
 def build_planning_dashboard_state(

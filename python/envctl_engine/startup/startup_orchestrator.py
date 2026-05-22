@@ -31,6 +31,9 @@ from envctl_engine.startup.finalization import (
     build_failure_run_state,
     build_planning_dashboard_state,
     build_success_run_state,
+    failure_context_label as finalization_failure_context_label,
+    format_failure_context_label as finalization_format_failure_context_label,
+    render_final_failure_status as finalization_render_final_failure_status,
 )
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
 from envctl_engine.startup.run_reuse_support import RunReuseDecision
@@ -65,12 +68,10 @@ from envctl_engine.startup.startup_execution_support import (
     start_requirements_for_project as start_requirements_for_project_impl,
     startup_breakdown_enabled as startup_breakdown_enabled_impl,
 )
-from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.debug_snapshot import emit_plan_handoff_snapshot, snapshot_enabled
 from envctl_engine.ui.path_links import local_paths_in_text, render_paths_in_terminal_text
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
-from envctl_engine.ui.status_symbols import STATUS_FAILURE
 
 _MODE_TREE_TOKENS_NORMALIZED = {str(token).strip().lower() for token in MODE_TREE_TOKENS}
 _ProjectSpinnerGroup = ProjectSpinnerGroup
@@ -1875,43 +1876,20 @@ class StartupOrchestrator:
         *,
         interactive_tty: bool | None,
     ) -> str:
-        symbol = STATUS_FAILURE
-        if colors_enabled(self.runtime.env, stream=sys.stdout, interactive_tty=bool(interactive_tty)):
-            symbol = f"\033[31m{STATUS_FAILURE}\033[0m"
-        rendered = f"{symbol} {final_error}"
-        context_label = self._failure_context_label(session, final_error)
-        if context_label and context_label not in rendered:
-            rendered = f"{rendered} ({context_label})"
-        return rendered
+        return finalization_render_final_failure_status(
+            self.runtime,
+            session,
+            final_error,
+            interactive_tty=interactive_tty,
+        )
 
     @staticmethod
     def _failure_context_label(session: StartupSession, final_error: str) -> str | None:
-        contexts: list[ProjectContextLike] = []
-        seen_names: set[str] = set()
-        for context in [*session.selected_contexts, *session.contexts_to_start]:
-            name = str(getattr(context, "name", "") or "").strip()
-            if not name or name in seen_names:
-                continue
-            contexts.append(context)
-            seen_names.add(name)
-        if not contexts:
-            return None
-        error_text = str(final_error or "")
-        matches = [context for context in contexts if str(getattr(context, "name", "") or "").strip() in error_text]
-        if matches:
-            return StartupOrchestrator._format_failure_context_label(
-                sorted(matches, key=lambda context: len(str(getattr(context, "name", "") or "")), reverse=True)[0]
-            )
-        if len(contexts) == 1:
-            return StartupOrchestrator._format_failure_context_label(contexts[0])
-        return None
+        return finalization_failure_context_label(session, final_error)
 
     @staticmethod
     def _format_failure_context_label(context: ProjectContextLike) -> str:
-        name = str(getattr(context, "name", "") or "").strip()
-        root = Path(str(getattr(context, "root", "") or ""))
-        kind = "worktree" if any(part == "trees" or part.startswith("trees-") for part in root.parts) else "project"
-        return f"{kind}: {name}"
+        return finalization_format_failure_context_label(context)
 
     def _record_project_startup(
         self,
