@@ -18,6 +18,7 @@ from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.color_policy import colors_enabled
+from envctl_engine.ui.path_links import local_paths_in_text, render_paths_in_terminal_text
 from envctl_engine.ui.status_symbols import STATUS_FAILURE
 
 
@@ -84,6 +85,38 @@ def restart_port_rebound_summary_lines(
             f"{previous} -> {current} (previous port still in use)"
         )
     return lines
+
+
+def render_project_startup_warnings(
+    runtime: StartupRuntime,
+    *,
+    context: ProjectContextLike,
+    warnings: list[str],
+    suppress_progress: bool,
+    project_spinner_group: object | None,
+) -> None:
+    warning_lines = [str(line).strip() for line in warnings if str(line).strip()]
+    if not warning_lines:
+        return
+    if project_spinner_group is not None and hasattr(project_spinner_group, "print_detail"):
+        for line in warning_lines:
+            getattr(project_spinner_group, "print_detail")(context.name, line)
+        return
+    if suppress_progress:
+        for line in warning_lines:
+            runtime._emit("ui.status", message=line)  # type: ignore[attr-defined]
+        return
+    link_mode = str(runtime.env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
+    for line in warning_lines:
+        print(
+            render_paths_in_terminal_text(
+                line,
+                paths=local_paths_in_text(line),
+                env=runtime.env,
+                stream=sys.stdout,
+                interactive_tty=(True if link_mode == "on" else None),
+            )
+        )
 
 
 def render_final_failure_status(

@@ -39,6 +39,7 @@ from envctl_engine.startup.finalization import (
     plan_dry_run_preview_lines,
     plan_session_summary_lines as finalization_plan_session_summary_lines,
     render_final_failure_status as finalization_render_final_failure_status,
+    render_project_startup_warnings as finalization_render_project_startup_warnings,
     restart_port_rebound_summary_lines,
 )
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
@@ -2021,29 +2022,13 @@ class StartupOrchestrator:
         route: Route,
         project_spinner_group: object | None,
     ) -> None:
-        warning_lines = [str(line).strip() for line in warnings if str(line).strip()]
-        if not warning_lines:
-            return
-        rt = self.runtime
-        if project_spinner_group is not None and hasattr(project_spinner_group, "print_detail"):
-            for line in warning_lines:
-                getattr(project_spinner_group, "print_detail")(context.name, line)
-            return
-        if self._suppress_progress_output(route):
-            for line in warning_lines:
-                rt._emit("ui.status", message=line)  # type: ignore[attr-defined]
-            return
-        link_mode = str(rt.env.get("ENVCTL_UI_HYPERLINK_MODE", "")).strip().lower()
-        for line in warning_lines:
-            print(
-                render_paths_in_terminal_text(
-                    line,
-                    paths=local_paths_in_text(line),
-                    env=rt.env,
-                    stream=sys.stdout,
-                    interactive_tty=(True if link_mode == "on" else None),
-                )
-            )
+        finalization_render_project_startup_warnings(
+            self.runtime,
+            context=context,
+            warnings=warnings,
+            suppress_progress=self._suppress_progress_output(route),
+            project_spinner_group=project_spinner_group,
+        )
 
     def _trees_start_selection_required(self, *, route: Route, runtime_mode: str) -> bool:
         return trees_start_selection_required_impl(self, route=route, runtime_mode=runtime_mode)

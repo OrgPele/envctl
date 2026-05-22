@@ -13,6 +13,7 @@ from envctl_engine.startup.finalization import (
     plan_agent_degraded_handoff_text,
     plan_session_summary_lines,
     render_final_failure_status,
+    render_project_startup_warnings,
     restart_port_rebound_summary_lines,
 )
 from envctl_engine.startup.session import LocalStartupFailure, StartupSession
@@ -204,6 +205,43 @@ class StartupFinalizationTests(unittest.TestCase):
         self.assertEqual(
             lines,
             ["Port changed: feature-a-1 Backend 8000 -> 8100 (previous port still in use)"],
+        )
+
+    def test_render_project_startup_warnings_prefers_spinner_detail(self) -> None:
+        details: list[tuple[str, str]] = []
+        spinner = SimpleNamespace(print_detail=lambda project, line: details.append((project, line)))
+        runtime = SimpleNamespace(env={}, _emit=lambda *_args, **_kwargs: None)
+        context = SimpleNamespace(name="feature-a-1")
+
+        render_project_startup_warnings(
+            runtime,
+            context=context,
+            warnings=["  first warning  ", "", "second warning"],
+            suppress_progress=False,
+            project_spinner_group=spinner,
+        )
+
+        self.assertEqual(details, [("feature-a-1", "first warning"), ("feature-a-1", "second warning")])
+
+    def test_render_project_startup_warnings_emits_status_when_progress_is_suppressed(self) -> None:
+        emitted: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(env={}, _emit=lambda event, **payload: emitted.append((event, payload)))
+        context = SimpleNamespace(name="feature-a-1")
+
+        render_project_startup_warnings(
+            runtime,
+            context=context,
+            warnings=["first warning", "second warning"],
+            suppress_progress=True,
+            project_spinner_group=None,
+        )
+
+        self.assertEqual(
+            emitted,
+            [
+                ("ui.status", {"message": "first warning"}),
+                ("ui.status", {"message": "second warning"}),
+            ],
         )
 
 
