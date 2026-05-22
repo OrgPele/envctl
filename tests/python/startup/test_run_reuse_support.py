@@ -8,6 +8,7 @@ from envctl_engine.startup.run_reuse_support import (
     dashboard_stopped_service_entries,
     fresh_start_replacement_services,
     prepare_dashboard_stopped_service_restore,
+    replace_existing_project_services_for_fresh_start,
     metadata_without_dashboard_stopped_services,
     run_reuse_debug_orch_groups,
 )
@@ -192,6 +193,75 @@ class RunReuseSupportTests(unittest.TestCase):
             ),
             {"Main Backend"},
         )
+
+    def test_replace_existing_project_services_for_fresh_start_terminates_selected_services_and_orphans(self) -> None:
+        route = Route(command="start", mode="trees", raw_args=["start"], flags={})
+        session = SimpleNamespace(effective_route=route, runtime_mode="trees")
+        candidate_state = SimpleNamespace(run_id="run-existing")
+        events: list[tuple[str, dict[str, object]]] = []
+        announced: list[object] = []
+        progress: list[tuple[Route, str]] = []
+        terminated: list[tuple[object, set[str], bool, bool]] = []
+        orphaned: list[tuple[object, set[str], bool]] = []
+        runtime = SimpleNamespace(
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _terminate_services_from_state=lambda state, *, selected_services, aggressive, verify_ownership: terminated.append(
+                (state, set(selected_services), aggressive, verify_ownership)
+            ),
+        )
+
+        replace_existing_project_services_for_fresh_start(
+            runtime=runtime,
+            session=session,
+            candidate_state=candidate_state,
+            reason="startup_fingerprint_mismatch",
+            fresh_start_replacement_services=lambda session, *, candidate_state: {"Main Backend", "Main Frontend"},
+            announce_session_identifiers=announced.append,
+            report_progress=lambda route, message: progress.append((route, message)),
+            terminate_restart_orphan_listeners=lambda *, state, selected_services, aggressive: orphaned.append(
+                (state, set(selected_services), aggressive)
+            ),
+        )
+
+        self.assertEqual(announced, [session])
+        self.assertEqual(progress, [(route, "Startup selection changed; replacing 2 existing service(s)...")])
+        self.assertEqual(
+            events,
+            [
+                (
+                    "state.run_reuse.replace_existing_services",
+                    {
+                        "run_id": "run-existing",
+                        "mode": "trees",
+                        "reason": "startup_fingerprint_mismatch",
+                        "selected_services": ["Main Backend", "Main Frontend"],
+                    },
+                )
+            ],
+        )
+        self.assertEqual(terminated, [(candidate_state, {"Main Backend", "Main Frontend"}, False, True)])
+        self.assertEqual(orphaned, [(candidate_state, {"Main Backend", "Main Frontend"}, True)])
+
+    def test_replace_existing_project_services_for_fresh_start_skips_non_mismatch_or_dependencies_scope(self) -> None:
+        runtime = SimpleNamespace(_emit=lambda *args, **kwargs: self.fail("replace should not emit"))
+        candidate_state = SimpleNamespace(run_id="run-existing")
+
+        for reason, flags in (
+            ("no_matching_state", {}),
+            ("startup_fingerprint_mismatch", {"runtime_scope": "dependencies"}),
+        ):
+            route = Route(command="start", mode="trees", raw_args=["start"], flags=flags)
+            session = SimpleNamespace(effective_route=route, runtime_mode="trees")
+            replace_existing_project_services_for_fresh_start(
+                runtime=runtime,
+                session=session,
+                candidate_state=candidate_state,
+                reason=reason,
+                fresh_start_replacement_services=lambda session, *, candidate_state: self.fail("selection should skip"),
+                announce_session_identifiers=lambda session: self.fail("announce should skip"),
+                report_progress=lambda route, message: self.fail("progress should skip"),
+                terminate_restart_orphan_listeners=lambda **kwargs: self.fail("orphan cleanup should skip"),
+            )
 
     def test_fresh_start_replacement_services_honors_restart_service_type_filters(self) -> None:
         route = Route(

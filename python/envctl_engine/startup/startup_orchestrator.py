@@ -41,6 +41,7 @@ from envctl_engine.startup.run_reuse_support import (
     fresh_start_replacement_services as fresh_start_replacement_services_impl,
     metadata_without_dashboard_stopped_services as metadata_without_dashboard_stopped_services_impl,
     prepare_dashboard_stopped_service_restore as prepare_dashboard_stopped_service_restore_impl,
+    replace_existing_project_services_for_fresh_start as replace_existing_project_services_for_fresh_start_impl,
 )
 from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse
 from envctl_engine.startup.plan_agent_handoff import (
@@ -357,40 +358,15 @@ class StartupOrchestrator:
         candidate_state,
         reason: str,
     ) -> None:
-        if reason != "startup_fingerprint_mismatch":
-            return
-        route = session.effective_route
-        if route.flags.get("runtime_scope") == "dependencies":
-            return
-        selected_services = self._fresh_start_replacement_services(
-            session,
+        replace_existing_project_services_for_fresh_start_impl(
+            runtime=self.runtime,
+            session=session,
             candidate_state=candidate_state,
-        )
-        if not selected_services:
-            return
-        rt = self.runtime
-        self._announce_session_identifiers(session)
-        self._report_progress(
-            route,
-            f"Startup selection changed; replacing {len(selected_services)} existing service(s)...",
-        )
-        rt._emit(
-            "state.run_reuse.replace_existing_services",
-            run_id=candidate_state.run_id,
-            mode=session.runtime_mode,
             reason=reason,
-            selected_services=sorted(selected_services),
-        )
-        rt._terminate_services_from_state(
-            candidate_state,
-            selected_services=selected_services,
-            aggressive=False,
-            verify_ownership=True,
-        )
-        self._terminate_restart_orphan_listeners(
-            state=candidate_state,
-            selected_services=selected_services,
-            aggressive=True,
+            fresh_start_replacement_services=self._fresh_start_replacement_services,
+            announce_session_identifiers=self._announce_session_identifiers,
+            report_progress=self._report_progress,
+            terminate_restart_orphan_listeners=self._terminate_restart_orphan_listeners,
         )
 
     def _fresh_start_replacement_services(self, session: StartupSession, *, candidate_state) -> set[str]:

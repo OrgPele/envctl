@@ -252,6 +252,50 @@ def fresh_start_replacement_services(
     return selected
 
 
+def replace_existing_project_services_for_fresh_start(
+    *,
+    runtime: Any,
+    session: Any,
+    candidate_state: Any,
+    reason: str,
+    fresh_start_replacement_services: Callable[..., set[str]],
+    announce_session_identifiers: Callable[[Any], None],
+    report_progress: Callable[[Route, str], None],
+    terminate_restart_orphan_listeners: Callable[..., None],
+) -> None:
+    if reason != "startup_fingerprint_mismatch":
+        return
+    route = session.effective_route
+    if route.flags.get("runtime_scope") == "dependencies":
+        return
+    selected_services = fresh_start_replacement_services(session, candidate_state=candidate_state)
+    if not selected_services:
+        return
+    announce_session_identifiers(session)
+    report_progress(
+        route,
+        f"Startup selection changed; replacing {len(selected_services)} existing service(s)...",
+    )
+    runtime._emit(
+        "state.run_reuse.replace_existing_services",
+        run_id=candidate_state.run_id,
+        mode=session.runtime_mode,
+        reason=reason,
+        selected_services=sorted(selected_services),
+    )
+    runtime._terminate_services_from_state(
+        candidate_state,
+        selected_services=selected_services,
+        aggressive=False,
+        verify_ownership=True,
+    )
+    terminate_restart_orphan_listeners(
+        state=candidate_state,
+        selected_services=selected_services,
+        aggressive=True,
+    )
+
+
 def evaluate_run_reuse(
     runtime: Any,
     *,
