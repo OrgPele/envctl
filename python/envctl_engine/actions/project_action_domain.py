@@ -355,6 +355,19 @@ def run_ship_action(context: ActionProjectContext) -> int:
         )
         return _print_ship_result(payload, json_output=json_output, ok=True)
 
+    existing_conflicts = _existing_merge_conflict_report(git_root, branch=branch)
+    if existing_conflicts.get("state") == "conflicts":
+        payload = _ship_payload(
+            context=context,
+            git_root=git_root,
+            branch=branch,
+            status="merge_conflicts",
+            started=started,
+            merge_conflicts=existing_conflicts,
+            step_statuses=["merge_conflicts"],
+        )
+        return _print_ship_result(payload, json_output=json_output, ok=False)
+
     before_sha = _git_output(git_root, ["rev-parse", "HEAD"]).strip()
     protected_paths = _ship_protected_paths(git_root)
     pre_commit_dirty = probe_dirty_worktree(
@@ -408,6 +421,27 @@ def run_ship_action(context: ActionProjectContext) -> int:
     else:
         step_statuses.append("pr_exists")
 
+    merge_conflicts = _predicted_merge_conflict_report(context, git_root, branch=branch)
+    if merge_conflicts.get("state") == "conflicts":
+        step_statuses.append("merge_conflicts")
+        payload = _ship_payload(
+            context=context,
+            git_root=git_root,
+            branch=branch,
+            status="merge_conflicts",
+            started=started,
+            commit_sha=after_sha,
+            committed=committed,
+            pushed=committed,
+            pr_url=pr_url,
+            pr_created=pr_created,
+            protected_paths=protected_paths,
+            checks={"state": "merge_conflicts", "failing_checks": [], "pending_checks": []},
+            step_statuses=step_statuses,
+            merge_conflicts=merge_conflicts,
+        )
+        return _print_ship_result(payload, json_output=json_output, ok=False)
+
     checks = _github_pr_checks(git_root, branch=branch, pr_url=pr_url)
     status = str(checks.get("state") or ("pr_created" if pr_created else "pr_exists"))
     if status:
@@ -426,6 +460,7 @@ def run_ship_action(context: ActionProjectContext) -> int:
         protected_paths=protected_paths,
         checks=checks,
         step_statuses=step_statuses,
+        merge_conflicts=merge_conflicts,
     )
     ok = status not in {"checks_failed", "commit_failed", "pr_failed"}
     return _print_ship_result(payload, json_output=json_output, ok=ok)
@@ -435,6 +470,159 @@ def _ship_protected_paths(git_root: Path) -> list[str]:
     status_output = _git_output(git_root, ["status", "--porcelain", "--untracked-files=all"])
     partition = _partition_envctl_protected_paths(status_output)
     return _ordered_unique_paths(partition.protected_staged_paths, partition.protected_skipped_paths)
+
+
+def _existing_merge_conflict_report(git_root: Path, *, branch: str) -> dict[str, object]:
+    paths = [path for path in _git_output(git_root, ["diff", "--name-only", "--diff-filter=U"]).splitlines() if path]
+    if not paths:
+        return {
+            "state": "clean",
+            "type": "unmerged_index",
+            "base_ref": "",
+            "head_ref": branch or "HEAD",
+            "merge_base": "",
+            "conflicting_files": [],
+            "resolution_steps": [],
+            "messages": [],
+        }
+    stage_entries = _unmerged_stage_entries(git_root)
+    files: list[dict[str, object]] = []
+    for path in paths:
+        entries = stage_entries.get(path, [])
+        stages = sorted({str(entry.get("stage", "")) for entry in entries if entry.get("stage")})
+        files.append(
+            {
+                "path": path,
+                "kind": "unmerged_index",
+                "stages": stages,
+                "stage_entries": entries,
+                "messages": [f"Unmerged index entries exist for {path}."],
+            }
+        )
+    return {
+        "state": "conflicts",
+        "type": "unmerged_index",
+        "base_ref": "",
+        "head_ref": branch or "HEAD",
+        "merge_base": "",
+        "conflicting_files": files,
+        "resolution_steps": [
+            "Open each conflicting file and resolve conflict markers.",
+            "git add <resolved-file>",
+            "rerun envctl ship --project <name> --json",
+        ],
+        "messages": ["The worktree already has unresolved merge conflicts."],
+    }
+
+
+def _predicted_merge_conflict_report(
+    context: ActionProjectContext,
+    git_root: Path,
+    *,
+    branch: str,
+) -> dict[str, object]:
+    base_branch = _resolve_pr_base_branch(context, git_root)
+    base_ref = _pr_base_ref(git_root, base_branch)
+    if not base_ref:
+        return {
+            "state": "unknown",
+            "type": "predicted_merge",
+            "base_branch": base_branch,
+            "base_ref": "",
+            "head_ref": "HEAD",
+            "merge_base": "",
+            "conflicting_files": [],
+            "resolution_steps": [],
+            "messages": [f"Unable to resolve PR base branch '{base_branch}' for conflict prediction."],
+        }
+    merge_base = _git_output(git_root, ["merge-base", "HEAD", base_ref]).strip()
+    completed = _run_git(git_root, ["merge-tree", "--write-tree", "--messages", "--name-only", "HEAD", base_ref])
+    if completed.returncode == 0:
+        return {
+            "state": "clean",
+            "type": "predicted_merge",
+            "base_branch": base_branch,
+            "base_ref": base_ref,
+            "head_ref": "HEAD",
+            "merge_base": merge_base,
+            "conflicting_files": [],
+            "resolution_steps": [],
+            "messages": [],
+        }
+    if completed.returncode == 1:
+        conflict_files = _parse_merge_tree_conflicts(completed.stdout)
+        return {
+            "state": "conflicts",
+            "type": "predicted_merge",
+            "base_branch": base_branch,
+            "base_ref": base_ref,
+            "head_ref": "HEAD",
+            "merge_base": merge_base,
+            "conflicting_files": conflict_files,
+            "resolution_steps": [
+                f"git fetch origin {base_branch}",
+                f"git merge {base_ref}",
+                "Resolve each file listed in merge_conflicts.conflicting_files.",
+                "git add <resolved-file>",
+                "rerun envctl ship --project <name> --json",
+            ],
+            "messages": [line for line in completed.stdout.splitlines() if line.strip().startswith("CONFLICT")],
+        }
+    return {
+        "state": "unknown",
+        "type": "predicted_merge",
+        "base_branch": base_branch,
+        "base_ref": base_ref,
+        "head_ref": "HEAD",
+        "merge_base": merge_base,
+        "conflicting_files": [],
+        "resolution_steps": [],
+        "messages": [(completed.stderr or completed.stdout).strip()],
+    }
+
+
+def _unmerged_stage_entries(git_root: Path) -> dict[str, list[dict[str, str]]]:
+    entries: dict[str, list[dict[str, str]]] = {}
+    for line in _git_output(git_root, ["ls-files", "-u"]).splitlines():
+        left, sep, path = line.partition("\t")
+        if not sep or not path:
+            continue
+        parts = left.split()
+        if len(parts) < 3:
+            continue
+        entry = {"mode": parts[0], "object": parts[1], "stage": parts[2], "path": path}
+        entries.setdefault(path, []).append(entry)
+    return entries
+
+
+def _parse_merge_tree_conflicts(output: str) -> list[dict[str, object]]:
+    lines = output.splitlines()
+    path_lines: list[str] = []
+    message_lines: list[str] = []
+    reading_paths = False
+    for index, line in enumerate(lines):
+        if index == 0:
+            reading_paths = True
+            continue
+        if reading_paths and not line.strip():
+            reading_paths = False
+            continue
+        if reading_paths:
+            path_lines.append(line.strip())
+        elif line.strip():
+            message_lines.append(line.strip())
+    files: list[dict[str, object]] = []
+    for path in path_lines:
+        messages = [line for line in message_lines if path in line]
+        messages = sorted(messages, key=lambda line: 0 if line.startswith("CONFLICT") else 1)
+        files.append(
+            {
+                "path": path,
+                "kind": "predicted_merge",
+                "messages": messages or list(message_lines),
+            }
+        )
+    return files
 
 
 def _github_pr_checks(git_root: Path, *, branch: str, pr_url: str) -> dict[str, object]:
@@ -502,6 +690,7 @@ def _ship_payload(
     protected_paths: list[str] | None = None,
     checks: Mapping[str, object] | None = None,
     step_statuses: list[str] | None = None,
+    merge_conflicts: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     checks_payload = dict(checks or {})
     return {
@@ -521,6 +710,7 @@ def _ship_payload(
         "checks_state": checks_payload.get("state", ""),
         "failing_checks": checks_payload.get("failing_checks", []),
         "pending_checks": checks_payload.get("pending_checks", []),
+        "merge_conflicts": dict(merge_conflicts or {}),
         "monitor_duration_seconds": checks_payload.get("duration_seconds", 0.0),
         "duration_seconds": round(time.monotonic() - started, 3),
         "protected_local_artifacts_skipped": protected_paths or [],
