@@ -44,8 +44,12 @@ from envctl_engine.startup.finalization import (
 )
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
 from envctl_engine.startup.run_reuse_support import RunReuseDecision
+from envctl_engine.startup.plan_agent_handoff import (
+    local_startup_failure_reason as plan_agent_local_startup_failure_reason,
+    record_plan_agent_handoff_local_startup_failure as record_plan_agent_handoff_local_startup_failure_impl,
+)
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
-from envctl_engine.startup.session import LocalStartupFailure, ProjectStartupResult, StartupSession
+from envctl_engine.startup.session import ProjectStartupResult, StartupSession
 from envctl_engine.startup.startup_progress import (
     ProjectSpinnerGroup,
     report_progress,
@@ -1898,9 +1902,7 @@ class StartupOrchestrator:
 
     @staticmethod
     def _local_startup_failure_reason(error: str) -> str | None:
-        if "missing_service_start_command" in error:
-            return "missing_service_start_command"
-        return None
+        return plan_agent_local_startup_failure_reason(error)
 
     def _record_plan_agent_handoff_local_startup_failure(
         self,
@@ -1909,46 +1911,11 @@ class StartupOrchestrator:
         project_name: str,
         error: str,
     ) -> None:
-        reason = self._local_startup_failure_reason(error) or "local_startup_failed"
-        failure = LocalStartupFailure(project=project_name, error=error, reason=reason)
-        session.local_startup_failures.append(failure)
-        session.plan_agent_handoff_degraded = True
-        warning = f"Implementation session is running, but local app startup failed for {project_name}: {error}"
-        session.warnings.append(warning)
-        launch_result = session.plan_agent_launch_result
-        attach_target = session.plan_agent_attach_target
-        session_name = str(getattr(attach_target, "session_name", "")).strip() if attach_target is not None else ""
-        route = session.effective_route
-        route_transport = (
-            "omx" if bool(route.flags.get("omx")) else ("tmux" if bool(route.flags.get("tmux")) else "cmux")
-        )
-        if bool(route.flags.get("ultragoal")):
-            omx_workflow = "ultragoal"
-        elif bool(route.flags.get("ralph")):
-            omx_workflow = "ralph"
-        elif bool(route.flags.get("team")):
-            omx_workflow = "team"
-        else:
-            omx_workflow = None
-        self.runtime._emit(
-            "startup.project.warning",
-            project=project_name,
-            warning=warning,
-            reason="plan_agent_handoff_local_startup_failed",
-            implementation_session_running=True,
-            local_startup_failed=True,
-            session_name=session_name or None,
-        )
-        self.runtime._emit(
-            "startup.plan_agent_handoff.degraded",
-            project=project_name,
+        record_plan_agent_handoff_local_startup_failure_impl(
+            self.runtime,
+            session,
+            project_name=project_name,
             error=error,
-            reason=reason,
-            implementation_session_running=True,
-            session_name=session_name or None,
-            route_transport=route_transport,
-            omx_workflow=omx_workflow,
-            launch_status=str(getattr(launch_result, "status", "")).strip() if launch_result is not None else None,
         )
 
     def _emit_plan_agent_launch_state(self, session: StartupSession, launch_result: object) -> None:
