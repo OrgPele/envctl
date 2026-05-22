@@ -12,6 +12,7 @@ from envctl_engine.startup.finalization import (
     failure_context_label,
     finalize_failed_startup,
     finalize_plan_agent_degraded_handoff,
+    finalize_plan_agent_degraded_handoff_artifacts,
     finalize_successful_startup,
     format_degraded_handoff_text_for_terminal,
     headless_plan_output_only,
@@ -269,6 +270,32 @@ class StartupFinalizationTests(unittest.TestCase):
         self.assertEqual(rendered, [session])
         self.assertEqual(headless_checks, [session])
         self.assertEqual(attach_checks, [session])
+
+    def test_finalize_plan_agent_degraded_handoff_artifacts_returns_run_state(self) -> None:
+        session = _session(contexts=[])
+        session.errors.append("local startup failed")
+        run_state = RunState(run_id="run-finalization", mode="trees")
+        writes: list[tuple[RunState, list[object], list[str]]] = []
+        events: list[tuple[str, dict[str, object]]] = []
+
+        result = finalize_plan_agent_degraded_handoff_artifacts(
+            runtime=SimpleNamespace(
+                _write_artifacts=lambda state, contexts, *, errors: writes.append(
+                    (state, list(contexts), list(errors))
+                )
+            ),
+            session=session,
+            ensure_run_id=lambda session: events.append(("ensure", {})),
+            validate_plan_agent_handoff=lambda session, *, phase: events.append(("validate", {"phase": phase})),
+            build_success_run_state=lambda runtime, session: run_state,
+            emit_phase=lambda session, phase, started_at, **extra: events.append((f"phase:{phase}", dict(extra))),
+        )
+
+        self.assertIs(result, run_state)
+        self.assertEqual(writes, [(run_state, [], ["local startup failed"])])
+        self.assertEqual(events[0], ("ensure", {}))
+        self.assertIn(("validate", {"phase": "degraded_finalization"}), events)
+        self.assertIn(("phase:artifacts_write", {"status": "degraded"}), events)
 
     def test_failure_context_label_prefers_named_context_from_error(self) -> None:
         alpha = SimpleNamespace(name="alpha", root=Path("/repo/trees/alpha/1"))

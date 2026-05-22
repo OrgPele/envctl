@@ -160,12 +160,14 @@ def finalize_plan_agent_degraded_handoff(
     headless_plan_output_only: Callable[[StartupSession], bool],
     maybe_attach_plan_agent_terminal: Callable[[StartupSession], int | None],
 ) -> int:
-    ensure_run_id(session)
-    validate_plan_agent_handoff(session, phase="degraded_finalization")
-    run_state = build_success_run_state(runtime, session)
-    artifacts_started = time.monotonic()
-    runtime._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
-    emit_phase(session, "artifacts_write", artifacts_started, status="degraded")
+    finalize_plan_agent_degraded_handoff_artifacts(
+        runtime=runtime,
+        session=session,
+        ensure_run_id=ensure_run_id,
+        validate_plan_agent_handoff=validate_plan_agent_handoff,
+        build_success_run_state=build_success_run_state,
+        emit_phase=emit_phase,
+    )
     render_plan_agent_degraded_handoff(session)
     if headless_plan_output_only(session):
         return 0
@@ -173,6 +175,24 @@ def finalize_plan_agent_degraded_handoff(
     if attach_code is not None:
         return attach_code
     return 0
+
+
+def finalize_plan_agent_degraded_handoff_artifacts(
+    *,
+    runtime: StartupRuntime,
+    session: StartupSession,
+    ensure_run_id: Callable[[StartupSession], None],
+    validate_plan_agent_handoff: Callable[..., None],
+    build_success_run_state: Callable[[StartupRuntime, StartupSession], RunState],
+    emit_phase: Callable[..., None],
+) -> RunState:
+    ensure_run_id(session)
+    validate_plan_agent_handoff(session, phase="degraded_finalization")
+    run_state = build_success_run_state(runtime, session)
+    artifacts_started = time.monotonic()
+    runtime._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
+    emit_phase(session, "artifacts_write", artifacts_started, status="degraded")
+    return run_state
 
 
 def finalize_failed_startup(
