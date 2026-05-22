@@ -23,6 +23,7 @@ from envctl_engine.startup.finalization import (
     print_plan_dry_run_preview,
     print_restart_port_rebound_summary,
     render_final_failure_status,
+    render_project_startup_warnings_for_route,
     render_project_startup_warnings,
     restart_port_rebound_summary_lines,
 )
@@ -673,6 +674,25 @@ class StartupFinalizationTests(unittest.TestCase):
                 ("ui.status", {"message": "second warning"}),
             ],
         )
+
+    def test_render_project_startup_warnings_for_route_resolves_suppression(self) -> None:
+        emitted: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(env={}, _emit=lambda event, **payload: emitted.append((event, payload)))
+        context = SimpleNamespace(name="feature-a-1")
+        route = parse_route(["start", "--headless"], env={})
+        checked_routes: list[object] = []
+
+        render_project_startup_warnings_for_route(
+            runtime,
+            context=context,
+            warnings=["first warning"],
+            route=route,
+            project_spinner_group=None,
+            suppress_progress_output=lambda route: checked_routes.append(route) or True,
+        )
+
+        self.assertEqual(checked_routes, [route])
+        self.assertEqual(emitted, [("ui.status", {"message": "first warning"})])
 
 
 if __name__ == "__main__":

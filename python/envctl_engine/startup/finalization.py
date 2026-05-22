@@ -338,6 +338,24 @@ def render_project_startup_warnings(
         )
 
 
+def render_project_startup_warnings_for_route(
+    runtime: StartupRuntime,
+    *,
+    context: ProjectContextLike,
+    warnings: list[str],
+    route: Route,
+    project_spinner_group: object | None,
+    suppress_progress_output: Callable[[Route], bool],
+) -> None:
+    render_project_startup_warnings(
+        runtime,
+        context=context,
+        warnings=warnings,
+        suppress_progress=suppress_progress_output(route),
+        project_spinner_group=project_spinner_group,
+    )
+
+
 def render_final_failure_status(
     runtime: StartupRuntime,
     session: StartupSession,

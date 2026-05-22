@@ -34,7 +34,7 @@ from envctl_engine.startup.finalization import (
     print_restart_port_rebound_summary as print_restart_port_rebound_summary_impl,
     plan_session_summary_lines as finalization_plan_session_summary_lines,
     render_final_failure_status as finalization_render_final_failure_status,
-    render_project_startup_warnings as finalization_render_project_startup_warnings,
+    render_project_startup_warnings_for_route as finalization_render_project_startup_warnings_for_route,
 )
 from envctl_engine.startup.execution_preparation import prepare_startup_execution
 from envctl_engine.startup.run_reuse_support import (
@@ -663,12 +663,13 @@ class StartupOrchestrator:
         route: Route,
         project_spinner_group: object | None,
     ) -> None:
-        finalization_render_project_startup_warnings(
+        finalization_render_project_startup_warnings_for_route(
             self.runtime,
             context=context,
             warnings=warnings,
-            suppress_progress=self._suppress_progress_output(route),
+            route=route,
             project_spinner_group=project_spinner_group,
+            suppress_progress_output=self._suppress_progress_output,
         )
 
     def _trees_start_selection_required(self, *, route: Route, runtime_mode: str) -> bool:
