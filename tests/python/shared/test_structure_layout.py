@@ -168,6 +168,25 @@ class StructureLayoutTests(unittest.TestCase):
         legacy = planning_tests / "test_plan_agent_launch_support.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_planning_worktree_setup_tests_are_split_by_owner(self) -> None:
+        planning_tests = REPO_ROOT / "tests" / "python" / "planning"
+        expected = [
+            "planning_worktree_setup_test_support.py",
+            "test_planning_worktree_setup_archival.py",
+            "test_planning_worktree_setup_code_intelligence.py",
+            "test_planning_worktree_setup_fresh_ai_spinner.py",
+            "test_planning_worktree_setup_git_hooks_recovery.py",
+            "test_planning_worktree_setup_provenance.py",
+            "test_planning_worktree_setup_selection.py",
+        ]
+
+        for filename in expected:
+            with self.subTest(path=filename):
+                self.assertTrue((planning_tests / filename).is_file())
+
+        legacy = planning_tests / "test_planning_worktree_setup.py"
+        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
+
     def test_startup_orchestrator_flow_tests_are_split_by_phase_owner(self) -> None:
         startup_tests = REPO_ROOT / "tests" / "python" / "startup"
         expected = [
