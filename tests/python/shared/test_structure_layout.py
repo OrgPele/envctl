@@ -98,6 +98,20 @@ class StructureLayoutTests(unittest.TestCase):
         legacy = actions_tests / "test_actions_cli.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_action_command_orchestrator_has_facade_mixins(self) -> None:
+        test_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_command_test_facade.py"
+        project_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_command_project_facade.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_command_orchestrator.py"
+
+        self.assertTrue(test_owner.is_file())
+        self.assertTrue(project_owner.is_file())
+        self.assertIn("ActionCommandTestFacadeMixin", test_owner.read_text(encoding="utf-8"))
+        self.assertIn("ActionCommandProjectFacadeMixin", project_owner.read_text(encoding="utf-8"))
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("ActionCommandTestFacadeMixin", facade_text)
+        self.assertIn("ActionCommandProjectFacadeMixin", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 180)
+
     def test_runtime_lifecycle_parity_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
         expected = [
