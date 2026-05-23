@@ -1024,6 +1024,12 @@ class ActionsParityTests(unittest.TestCase):
                 msg=fake_runner.run_calls,
             )
 
+    def test_git_action_methods_delegate_to_owner_module(self) -> None:
+        self.assertNotIn("default_pr_command", ActionCommandOrchestrator.run_pr_action.__code__.co_names)
+        self.assertNotIn("default_commit_command", ActionCommandOrchestrator.run_commit_action.__code__.co_names)
+        self.assertNotIn("default_ship_command", ActionCommandOrchestrator.run_ship_action.__code__.co_names)
+        self.assertNotIn("default_review_command", ActionCommandOrchestrator.run_review_action.__code__.co_names)
+
     def test_interactive_review_prints_action_output_details(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

@@ -5,11 +5,15 @@ from pathlib import Path
 import sys
 from typing import Any, Callable, Mapping
 
-from envctl_engine.actions.actions_analysis import default_review_command
-from envctl_engine.actions.actions_git import default_commit_command, default_pr_command, default_ship_command
 from envctl_engine.actions.action_command_support import service_types_from_route_services
 from envctl_engine.actions.action_command_execution_support import (
     execute_action_command as execute_action_command_impl,
+)
+from envctl_engine.actions.action_git_command_support import (
+    run_commit_action_with_owner,
+    run_pr_action_with_owner,
+    run_review_action_with_owner,
+    run_ship_action_with_owner,
 )
 from envctl_engine.actions.action_migrate_support import (
     MigrateProjectContext as _MigrateProjectContext,
@@ -246,43 +250,13 @@ class ActionCommandOrchestrator:
         )
 
     def run_pr_action(self, route: Route, targets: list[object]) -> int:
-        rt = self.runtime
-        return self.run_project_action(
-            route,
-            targets,
-            command_name="pr",
-            env_key="ENVCTL_ACTION_PR_CMD",
-            default_command=default_pr_command(rt.config.base_dir),  # type: ignore[attr-defined]
-            default_cwd=rt.config.base_dir,  # type: ignore[attr-defined]
-            default_append_project_path=False,
-            extra_env=self.action_extra_env(route),
-        )
+        return run_pr_action_with_owner(self, route, targets, extra_env=self.action_extra_env(route))
 
     def run_commit_action(self, route: Route, targets: list[object]) -> int:
-        rt = self.runtime
-        return self.run_project_action(
-            route,
-            targets,
-            command_name="commit",
-            env_key="ENVCTL_ACTION_COMMIT_CMD",
-            default_command=default_commit_command(rt.config.base_dir),  # type: ignore[attr-defined]
-            default_cwd=rt.config.base_dir,  # type: ignore[attr-defined]
-            default_append_project_path=False,
-            extra_env=self.action_extra_env(route),
-        )
+        return run_commit_action_with_owner(self, route, targets, extra_env=self.action_extra_env(route))
 
     def run_ship_action(self, route: Route, targets: list[object]) -> int:
-        rt = self.runtime
-        return self.run_project_action(
-            route,
-            targets,
-            command_name="ship",
-            env_key="ENVCTL_ACTION_SHIP_CMD",
-            default_command=default_ship_command(rt.config.base_dir),  # type: ignore[attr-defined]
-            default_cwd=rt.config.base_dir,  # type: ignore[attr-defined]
-            default_append_project_path=False,
-            extra_env=self.action_extra_env(route),
-        )
+        return run_ship_action_with_owner(self, route, targets, extra_env=self.action_extra_env(route))
 
     def run_test_plan_action(self, route: Route, targets: list[object]) -> int:
         json_output = bool(route.flags.get("json"))
@@ -303,17 +277,7 @@ class ActionCommandOrchestrator:
         return 0
 
     def run_review_action(self, route: Route, targets: list[object]) -> int:
-        rt = self.runtime
-        return self.run_project_action(
-            route,
-            targets,
-            command_name="review",
-            env_key="ENVCTL_ACTION_ANALYZE_CMD",
-            default_command=default_review_command(rt.config.base_dir),  # type: ignore[attr-defined]
-            default_cwd=rt.config.base_dir,  # type: ignore[attr-defined]
-            default_append_project_path=False,
-            extra_env=self.action_extra_env(route),
-        )
+        return run_review_action_with_owner(self, route, targets, extra_env=self.action_extra_env(route))
 
     def run_migrate_action(self, route: Route, targets: list[object]) -> int:
         interactive_command = bool(route.flags.get("interactive_command"))
