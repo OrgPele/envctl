@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Callable
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
-from envctl_engine.shared.services import service_display_name, service_project_name, service_slug_from_record
+from envctl_engine.shared.services import service_display_name, service_project_name
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.selection_support import route_has_explicit_target
 
@@ -88,12 +88,14 @@ def apply_restart_resource_selection(
     *,
     restart_resource_items_fn: Any,
     apply_restart_resource_tokens_fn: Any,
+    selector_fn: Callable[..., list[str] | None] | None = None,
 ) -> Route | None:
     items = restart_resource_items_fn(state, runtime)
     if not items:
         return route
-    from envctl_engine.ui.textual.screens.selector import _run_selector_with_impl
-    values = _run_selector_with_impl(
+    if selector_fn is None:
+        from envctl_engine.ui.textual.screens.selector import _run_selector_with_impl as selector_fn
+    values = selector_fn(
         prompt=(
             "Choose services/dependencies to restart or start "
             "(Space toggles, a selects all visible; Enter runs selected)"
@@ -258,7 +260,12 @@ def has_dashboard_stopped_services(state: RunState, *, dashboard_stopped_service
     return bool(dashboard_stopped_services_by_project_fn(state))
 
 
-def has_restartable_inactive_services(state: RunState, *, dashboard_stopped_services_by_project_fn: Any, dashboard_configured_missing_services_by_project_fn: Any) -> bool:
+def has_restartable_inactive_services(
+    state: RunState,
+    *,
+    dashboard_stopped_services_by_project_fn: Any,
+    dashboard_configured_missing_services_by_project_fn: Any,
+) -> bool:
     if dashboard_stopped_services_by_project_fn(state):
         return True
     return bool(dashboard_configured_missing_services_by_project_fn(state))
@@ -286,6 +293,7 @@ def restart_project_order(
 
 
 def restart_services_by_project(state: RunState, runtime: Any) -> dict[str, list[tuple[str, str, bool]]]:
+    from envctl_engine.dashboard_metadata import DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY
     from envctl_engine.ui.dashboard.stop_scope_support import stop_service_type
     services_by_project: dict[str, list[tuple[str, str, bool]]] = {}
     for service_name, service in state.services.items():
@@ -300,14 +308,38 @@ def restart_services_by_project(state: RunState, runtime: Any) -> dict[str, list
         if not service_type:
             continue
         services_by_project.setdefault(project_name, []).append((service_name, service_type, False))
+    active_names = set(state.services)
     stopped = dashboard_stopped_services_by_project(state)
     for project_name, services in stopped.items():
         for service_type, service_name in services.items():
-            existing = {name for name, _type, _stopped in services_by_project.get(project_name, [])}
-            if service_name not in existing:
-                services_by_project.setdefault(project_name, []).append((service_name, service_type, True))
+            if service_name in active_names:
+                continue
+            services_by_project.setdefault(project_name, []).append((service_name, service_type, True))
+    configured_missing_services = dashboard_configured_missing_services_by_project(state)
+    for project_name, service_types in configured_missing_services.items():
+        existing = {
+            service_name
+            for service_name, _service_type, _stopped in services_by_project.get(project_name, [])
+        }
+        for service_type in service_types:
+            service_name = f"{project_name} {service_display_name(service_type)}"
+            if service_name in active_names or service_name in existing:
+                continue
+            services_by_project.setdefault(project_name, []).append((service_name, service_type, True))
+    if any(configured_missing_services.values()):
+        emit = getattr(runtime, "_emit", None)
+        if callable(emit):
+            emit(
+                "dashboard.restart.configured_missing_offered",
+                run_id=state.run_id,
+                services={
+                    project: sorted(service_types)
+                    for project, service_types in configured_missing_services.items()
+                },
+                metadata_key=DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
+            )
     for services in services_by_project.values():
-        services.sort(key=lambda item: (0 if item[1] == "backend" else 1, item[0].casefold()))
+        services.sort(key=lambda item: (0 if item[1] == "backend" else 1, item[2], item[0].casefold()))
     return services_by_project
 
 

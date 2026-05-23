@@ -30,10 +30,10 @@ def print_interactive_failure_details(
     if route.command == "test":
         if bool(route.flags.get("interactive_command")) and test_failure_details_available_fn(route, state):
             return
-        printed = print_test_failure_details_fn(route, state, runtime=runtime)
+        printed = print_test_failure_details_fn(route, state)
         if printed:
             return
-    printed = print_project_action_failure_details_fn(route, state, runtime=runtime)
+    printed = print_project_action_failure_details_fn(route, state)
     if printed:
         return
     print(f"Command failed (exit {code}).")

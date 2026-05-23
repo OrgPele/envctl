@@ -1,29 +1,11 @@
 from __future__ import annotations
 
-from contextlib import suppress
-import hashlib
 from pathlib import Path
-import subprocess
-import sys
 from typing import Any, Literal, Mapping, cast
 
-from envctl_engine.actions.action_migrate_support import (
-    migrate_failure_headline,
-    migrate_result_record,
-    print_migrate_result_records,
-)
-from envctl_engine.dashboard_metadata import (
-    DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
-    dashboard_configured_missing_services_by_project,
-    dashboard_project_configured_services_from_metadata,
-    normalize_dashboard_service_types,
-)
-from envctl_engine.actions.actions_test import default_test_commands
 from envctl_engine.actions.project_action_domain import (
     DirtyWorktreeReport,
-    detect_default_branch,
     probe_dirty_worktree,
-    resolve_git_root,
 )
 from envctl_engine.planning.plan_agent.cmux_transport import launch_review_agent_terminal, review_agent_launch_readiness
 from envctl_engine.runtime.command_router import Route, parse_route
@@ -32,13 +14,6 @@ from envctl_engine.state.models import RunState
 from envctl_engine.startup.startup_selection_support import (
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
 )
-from envctl_engine.shared.services import (
-    project_name_from_service_name,
-    service_display_name,
-    service_project_name,
-    service_slug_from_record,
-)
-from envctl_engine.test_output.failure_summary import summary_excerpt_from_entry
 from envctl_engine.ui.command_parsing import (
     parse_interactive_command,
     recover_single_letter_command_from_escape_fragment,
@@ -47,16 +22,8 @@ from envctl_engine.ui.command_parsing import (
 )
 from envctl_engine.ui.command_aliases import normalize_interactive_command
 from envctl_engine.ui.debug_anomaly_rules import detect_dispatch_anomaly
-from envctl_engine.ui.dashboard.pr_flow import run_pr_flow
-from envctl_engine.ui.dashboard.failure_detail_support import (
-    ensure_short_test_summary_path,
-    print_interactive_failure_details,
-    print_project_action_failure_details,
-    print_test_failure_details,
-    print_migrate_result_details,
-    failure_details_available,
-    summary_display_path,
-)
+from envctl_engine.ui.dashboard import pr_and_target_support
+from envctl_engine.ui.dashboard import target_selection_support
 from envctl_engine.ui.dashboard.failure_detail_support import (
     ensure_short_test_summary_path,
     print_interactive_failure_details,
@@ -68,7 +35,6 @@ from envctl_engine.ui.dashboard.failure_detail_support import (
 )
 from envctl_engine.ui.dashboard.stop_scope_support import (
     apply_stop_scope_selection,
-    apply_stop_resource_tokens,
     stop_resource_items,
     stop_project_order,
     stop_services_by_project,
@@ -92,18 +58,9 @@ from envctl_engine.ui.dashboard.restart_selection_support import (
 )
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.dashboard_loop_support import run_legacy_dashboard_loop
-from envctl_engine.ui.path_links import render_path_for_terminal
-from envctl_engine.ui.selection_support import (
-    no_target_selected_message,
-    project_names_from_state,
-    route_has_explicit_target,
-    service_types_from_service_names,
-)
-from envctl_engine.ui.selection_support import SimpleProject
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.textual.screens.selector import _run_selector_with_impl
 from envctl_engine.ui.textual.screens.text_input_dialog import run_text_input_dialog_textual
-from envctl_engine.requirements.core import dependency_definitions
 
 
 DirtyPrDecision = Literal["commit", "skip", "cancel"]
@@ -112,6 +69,12 @@ _REVIEW_TAB_SKIP_TOKEN = "__REVIEW_TAB_SKIP__"
 _REVIEW_TAB_LAUNCH_FLAG = "dashboard_review_tab_launch"
 _RETURN_TO_DASHBOARD_PROMPT = "Press Enter to return to dashboard (manual confirmation required): "
 _PAUSE_BEFORE_DASHBOARD_COMMANDS = {"test", "review", "logs", "errors", "health", "clear-logs"}
+
+_DASHBOARD_PR_COMPAT_SYMBOLS = (
+    probe_dirty_worktree,
+    launch_review_agent_terminal,
+    review_agent_launch_readiness,
+)
 
 
 class DashboardOrchestrator:
@@ -311,7 +274,9 @@ class DashboardOrchestrator:
 
     def _failure_details_available(self, route: Route, state: RunState) -> bool:
         return failure_details_available(
-            route, state, project_names_from_state_fn=lambda s: self._project_names_from_state(s, cast(Any, self.runtime))
+            route,
+            state,
+            project_names_from_state_fn=lambda s: self._project_names_from_state(s, cast(Any, self.runtime)),
         )
 
     def _print_test_failure_details(self, route: Route, state: RunState) -> bool:
@@ -417,6 +382,7 @@ class DashboardOrchestrator:
             route, state, cast(Any, rt),
             stop_resource_items_fn=self._stop_resource_items,
             apply_stop_resource_tokens_fn=self._apply_stop_resource_tokens,
+            selector_fn=_run_selector_with_impl,
         )
 
     @staticmethod
@@ -631,487 +597,74 @@ class DashboardOrchestrator:
         return None
 
     def _apply_pr_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
-        runtime_any = cast(Any, rt)
-        default_branch = self._default_pr_base_branch(runtime_any)
-        if self._route_has_explicit_target(route, runtime_any):
-            route.flags = {**route.flags, "pr_base": route.flags.get("pr_base") or default_branch}
-            return route
-
-        projects = self._project_names_from_state(state, runtime_any)
-        single_project = self._single_project_name(projects)
-        if single_project:
-            route.projects = [single_project]
-            runtime_any._emit(
-                "dashboard.target_scope.defaulted",
-                command="pr",
-                mode=state.mode,
-                scope="single_project",
-                project_count=1,
-                projects=[single_project],
-            )
-        selection_raw = self._run_pr_selection_flow(
-            projects=projects,
-            initial_project_names=[single_project] if single_project else (),
-            default_branch=default_branch,
-            runtime=runtime_any,
-        )
-        if selection_raw is None:
-            print(self._no_target_selected_message(route.command))
-            return None
-        selection = cast(Any, selection_raw)
-        if selection.cancelled:
-            if str(getattr(selection, "cancelled_step", "")).strip().lower() == "branch":
-                print("No PR base branch selected.")
-            else:
-                print(self._no_target_selected_message(route.command))
-            return None
-        if selection.project_names:
-            route.projects = list(selection.project_names)
-        else:
-            print(self._no_target_selected_message(route.command))
-            return None
-        if not isinstance(selection.base_branch, str) or not selection.base_branch.strip():
-            print("No PR base branch selected.")
-            return None
-        base_branch = selection.base_branch.strip()
-        route.flags = {**route.flags, "pr_base": base_branch}
-        runtime_any._emit(
-            "dashboard.pr_base.selected",
-            command="pr",
-            base_branch=base_branch,
-            explicit=base_branch != default_branch,
-        )
-        raw = self._prompt_pr_message(runtime_any)
-        if raw is None:
-            print(self._no_target_selected_message(route.command))
-            return None
-        message = str(raw).strip()
-        if message:
-            route.flags = {**route.flags, "pr_body": message}
-            runtime_any._emit(
-                "dashboard.pr_body.selected",
-                command="pr",
-                explicit=True,
-                length=len(message),
-            )
-        return route
+        return pr_and_target_support.apply_pr_selection(self, route, state, rt)
 
     def _maybe_prepare_pr_commit(self, route: Route, state: RunState, rt: object) -> tuple[Route | None, RunState]:
-        runtime_any = cast(Any, rt)
-        dirty_reports = self._dirty_pr_reports(route, state, runtime_any)
-        dirty_targets = [report for report in dirty_reports if report.dirty]
-        runtime_any._emit(
-            "dashboard.pr_dirty_state",
-            command="pr",
-            selected_project_count=len(dirty_reports),
-            dirty_project_count=len(dirty_targets),
-            staged=any(report.staged for report in dirty_targets),
-            unstaged=any(report.unstaged for report in dirty_targets),
-            untracked=any(report.untracked for report in dirty_targets),
-        )
-        if not dirty_targets:
-            return route, state
-
-        prompt = self._dirty_pr_prompt(dirty_targets)
-        runtime_any._emit(
-            "dashboard.pr_dirty_commit.prompt",
-            command="pr",
-            dirty_project_count=len(dirty_targets),
-            staged=any(report.staged for report in dirty_targets),
-            unstaged=any(report.unstaged for report in dirty_targets),
-            untracked=any(report.untracked for report in dirty_targets),
-        )
-        decision = self._prompt_dirty_pr_menu(
-            runtime_any,
-            title="Commit dirty changes before PR?",
-            prompt=prompt,
-        )
-        if decision == "cancel":
-            runtime_any._emit(
-                "dashboard.pr_dirty_commit.cancelled",
-                command="pr",
-                dirty_project_count=len(dirty_targets),
-            )
-            print("Cancelled PR creation.")
-            return None, state
-        if decision == "skip":
-            runtime_any._emit(
-                "dashboard.pr_dirty_commit.declined",
-                command="pr",
-                dirty_project_count=len(dirty_targets),
-            )
-            return route, state
-
-        runtime_any._emit("dashboard.pr_dirty_commit.accepted", command="pr", dirty_project_count=len(dirty_targets))
-        commit_route = Route(
-            command="commit",
-            mode=route.mode,
-            raw_args=["commit"],
-            passthrough_args=[],
-            projects=[report.project_name for report in dirty_targets],
-            flags={"batch": True, "interactive_command": True},
-        )
-        commit_route = self._apply_commit_selection(commit_route, state, runtime_any)
-        if commit_route is None:
-            runtime_any._emit(
-                "dashboard.pr_dirty_commit.cancelled",
-                command="pr",
-                dirty_project_count=len(dirty_targets),
-            )
-            return None, state
-        code = runtime_any.dispatch(commit_route)
-        refreshed = runtime_any._try_load_existing_state(mode=state.mode, strict_mode_match=True)
-        next_state = refreshed if refreshed is not None else state
-        if code != 0:
-            runtime_any._emit("dashboard.pr_dirty_commit.failed", command="pr", dirty_project_count=len(dirty_targets))
-            self._print_interactive_failure_details(commit_route, next_state, code=code)
-            return None, next_state
-        runtime_any._emit("dashboard.pr_dirty_commit.completed", command="pr", dirty_project_count=len(dirty_targets))
-        return route, next_state
+        return pr_and_target_support.maybe_prepare_pr_commit(self, route, state, rt)
 
     def _dirty_pr_reports(self, route: Route, state: RunState, runtime: Any) -> list[DirtyWorktreeReport]:
-        repo_root = self._repo_root(runtime)
-        project_roots = self._project_roots_for_route(route, state, runtime)
-        reports_by_git_root: dict[str, DirtyWorktreeReport] = {}
-        for project_name in route.projects or []:
-            project_root = project_roots.get(project_name)
-            if project_root is None:
-                continue
-            report = probe_dirty_worktree(project_root, repo_root, project_name=project_name)
-            git_root_key = str(report.git_root.resolve())
-            existing = reports_by_git_root.get(git_root_key)
-            if existing is None:
-                reports_by_git_root[git_root_key] = report
-        return list(reports_by_git_root.values())
+        pr_and_target_support.probe_dirty_worktree = probe_dirty_worktree
+        return pr_and_target_support.dirty_pr_reports(self, route, state, runtime)
 
     def _dedupe_route_projects_by_git_root(self, route: Route, state: RunState, rt: object) -> Route:
-        runtime_any = cast(Any, rt)
-        if len(route.projects) <= 1:
-            return route
-        repo_root = self._repo_root(runtime_any)
-        project_roots = self._project_roots_for_route(route, state, runtime_any)
-        unique_projects: list[str] = []
-        seen_git_roots: set[str] = set()
-        collapsed = False
-        for project_name in route.projects:
-            project_root = project_roots.get(project_name)
-            if project_root is None:
-                unique_projects.append(project_name)
-                continue
-            git_root = resolve_git_root(project_root, repo_root)
-            git_root_key = str(git_root.resolve())
-            if git_root_key in seen_git_roots:
-                collapsed = True
-                continue
-            seen_git_roots.add(git_root_key)
-            unique_projects.append(project_name)
-        if collapsed:
-            route.projects = unique_projects
-            runtime_any._emit(
-                "dashboard.pr_target_scope.deduped_git_roots",
-                command="pr",
-                original_project_count=len(project_roots) if project_roots else len(route.projects),
-                deduped_project_count=len(unique_projects),
-                projects=list(unique_projects),
-            )
-        return route
+        return pr_and_target_support.dedupe_route_projects_by_git_root(self, route, state, rt)
 
     @staticmethod
     def _repo_root(runtime: Any) -> Path:
-        base_dir = getattr(getattr(runtime, "config", None), "base_dir", Path.cwd())
-        return Path(str(base_dir)).resolve()
+        return pr_and_target_support.repo_root_from_runtime(runtime)
 
     def _project_roots_for_route(self, route: Route, state: RunState, runtime: Any) -> dict[str, Path]:
-        repo_root = self._repo_root(runtime)
-        metadata = state.metadata if isinstance(state.metadata, dict) else {}
-        raw_project_roots = metadata.get("project_roots")
-        project_roots: dict[str, Path] = {}
-        if isinstance(raw_project_roots, dict):
-            for name, root in raw_project_roots.items():
-                project_name = str(name).strip()
-                root_raw = str(root or "").strip()
-                if not project_name or not root_raw:
-                    continue
-                resolved = Path(root_raw)
-                if not resolved.is_absolute():
-                    resolved = repo_root / resolved
-                project_roots[project_name] = resolved.resolve()
-        for project_name in route.projects or []:
-            if project_name in project_roots:
-                continue
-            if str(project_name).strip().casefold() == "main":
-                project_roots[project_name] = repo_root
-        return project_roots
+        return pr_and_target_support.project_roots_for_route(self, route, state, runtime)
 
     def _maybe_offer_review_tab_launch(self, route: Route, state: RunState, rt: object) -> None:
-        runtime_any = cast(Any, rt)
-        if not bool(route.flags.get(_REVIEW_TAB_LAUNCH_FLAG)):
-            return
-        target = self._review_tab_target(route, state, runtime_any)
-        if target is None:
-            runtime_any._emit("dashboard.review_tab.skipped", command="review", reason="ineligible_target_scope")
-            return
-        project_name, project_root = target
-        launch_review_agent_terminal(
-            runtime_any,
-            repo_root=self._repo_root(runtime_any),
-            project_name=project_name,
-            project_root=project_root,
-            review_bundle_path=self._review_bundle_path(state, project_name=project_name),
-        )
+        pr_and_target_support.launch_review_agent_terminal = launch_review_agent_terminal
+        pr_and_target_support.maybe_offer_review_tab_launch(self, route, state, rt)
 
     def _apply_review_tab_launch_selection(self, route: Route, state: RunState, rt: object) -> Route:
-        runtime_any = cast(Any, rt)
-        route.flags = {key: value for key, value in route.flags.items() if key != _REVIEW_TAB_LAUNCH_FLAG}
-        target = self._review_tab_target(route, state, runtime_any)
-        runtime_any._emit(
-            "dashboard.review_tab.evaluate",
-            command="review",
-            project_count=len(route.projects or []),
-            eligible=target is not None,
-        )
-        if target is None:
-            runtime_any._emit("dashboard.review_tab.skipped", command="review", reason="ineligible_target_scope")
-            return route
-        project_name, _project_root = target
-        readiness = review_agent_launch_readiness(runtime_any)
-        if not readiness.ready:
-            runtime_any._emit(
-                "dashboard.review_tab.skipped",
-                command="review",
-                reason=readiness.reason,
-                project=project_name,
-                cli=readiness.cli,
-                missing=list(readiness.missing),
-            )
-            message = self._review_tab_unavailable_message(readiness.reason, readiness.missing)
-            if message:
-                print(message)
-            return route
-        runtime_any._emit("dashboard.review_tab.prompt", command="review", project=project_name, cli=readiness.cli)
-        decision = self._prompt_review_tab_menu(runtime_any, project_name=project_name)
-        if decision != "commit":
-            runtime_any._emit(
-                "dashboard.review_tab.declined",
-                command="review",
-                project=project_name,
-                cli=readiness.cli,
-            )
-            return route
-        runtime_any._emit("dashboard.review_tab.accepted", command="review", project=project_name, cli=readiness.cli)
-        route.flags = {**route.flags, _REVIEW_TAB_LAUNCH_FLAG: True}
-        return route
+        pr_and_target_support.review_agent_launch_readiness = review_agent_launch_readiness
+        return pr_and_target_support.apply_review_tab_launch_selection(self, route, state, rt)
 
     def _review_tab_target(self, route: Route, state: RunState, runtime: Any) -> tuple[str, Path] | None:
-        repo_root = self._repo_root(runtime)
-        project_roots = self._project_roots_for_route(route, state, runtime)
-        distinct_targets: list[tuple[str, Path]] = []
-        seen_git_roots: set[str] = set()
-        for project_name in route.projects or []:
-            project_root = project_roots.get(project_name)
-            if project_root is None:
-                continue
-            git_root = resolve_git_root(project_root, repo_root)
-            if git_root == repo_root and project_root != repo_root and not (project_root / ".git").exists():
-                git_root = project_root
-            git_root_key = str(git_root.resolve())
-            if git_root_key in seen_git_roots:
-                continue
-            seen_git_roots.add(git_root_key)
-            distinct_targets.append((project_name, project_root))
-        if len(distinct_targets) != 1:
-            return None
-        project_name, project_root = distinct_targets[0]
-        if str(project_name).strip().casefold() == "main":
-            return None
-        if project_root.resolve() == repo_root:
-            return None
-        return project_name, project_root
+        return pr_and_target_support.review_tab_target(self, route, state, runtime)
 
     @staticmethod
     def _review_tab_unavailable_message(reason: str, missing: tuple[str, ...]) -> str:
-        if reason == "missing_executables" and missing:
-            return f"Origin review tab unavailable: missing required executables: {', '.join(missing)}."
-        if reason in {"missing_cmux_context", "workspace_unavailable"}:
-            return "Origin review tab unavailable: current cmux workspace context is unavailable."
-        return ""
+        return pr_and_target_support.review_tab_unavailable_message(reason, missing)
 
     @staticmethod
     def _review_bundle_path(state: RunState, *, project_name: str) -> Path | None:
-        metadata = state.metadata if isinstance(state.metadata, dict) else {}
-        reports = metadata.get("project_action_reports")
-        if not isinstance(reports, dict):
-            return None
-        project_entry = reports.get(project_name)
-        if not isinstance(project_entry, dict):
-            return None
-        review_entry = project_entry.get("review")
-        if not isinstance(review_entry, dict):
-            return None
-        if str(review_entry.get("status", "")).strip().lower() != "success":
-            return None
-        raw_path = str(review_entry.get("bundle_path", "") or "").strip()
-        if not raw_path:
-            return None
-        return Path(raw_path).expanduser()
+        return pr_and_target_support.review_bundle_path(state, project_name=project_name)
 
     @staticmethod
     def _dirty_pr_prompt(dirty_targets: list[DirtyWorktreeReport]) -> str:
-        if len(dirty_targets) == 1:
-            target = dirty_targets[0]
-            return f"UNSTAGED CODE IN WORKTREE {target.project_name} - DO YOU WANT TO STAGE IT?"
-        return "UNSTAGED CODE IN SELECTED WORKTREES - DO YOU WANT TO STAGE IT?"
+        return pr_and_target_support.dirty_pr_prompt(dirty_targets)
 
     @staticmethod
     def _prompt_review_tab_menu(runtime: Any, *, project_name: str) -> DirtyPrDecision:
-        prompt = f"Open an origin-side AI review tab for {project_name}?"
-        values = _run_selector_with_impl(
-            prompt=prompt,
-            options=[
-                SelectorItem(
-                    id="review-tab:open",
-                    label="Yes",
-                    kind="",
-                    token=_REVIEW_TAB_OPEN_TOKEN,
-                    scope_signature=("review-tab:open",),
-                ),
-                SelectorItem(
-                    id="review-tab:skip",
-                    label="No",
-                    kind="",
-                    token=_REVIEW_TAB_SKIP_TOKEN,
-                    scope_signature=("review-tab:skip",),
-                ),
-            ],
-            multi=False,
-            initial_tokens=[_REVIEW_TAB_SKIP_TOKEN],
-            emit=getattr(runtime, "_emit", None),
-        )
-        if not values:
-            return "skip"
-        chosen = str(values[0]).strip()
-        if chosen == _REVIEW_TAB_OPEN_TOKEN:
-            return "commit"
-        if chosen == _REVIEW_TAB_SKIP_TOKEN:
-            return "skip"
-        return DashboardOrchestrator._prompt_yes_no_dialog(runtime, title="Open origin review tab?", prompt=prompt)
+        pr_and_target_support._run_selector_with_impl = _run_selector_with_impl
+        return pr_and_target_support.prompt_review_tab_menu(runtime, project_name=project_name)
 
     @staticmethod
     def _dirty_categories(report: DirtyWorktreeReport) -> list[str]:
-        categories: list[str] = []
-        if bool(getattr(report, "staged", False)):
-            categories.append("staged changes")
-        if bool(getattr(report, "unstaged", False)):
-            categories.append("unstaged changes")
-        if bool(getattr(report, "untracked", False)):
-            categories.append("untracked files")
-        return categories
+        return pr_and_target_support.dirty_categories(report)
 
     @staticmethod
     def _prompt_dirty_pr_menu(runtime: Any, *, title: str, prompt: str) -> DirtyPrDecision:
-        values = _run_selector_with_impl(
-            prompt=prompt,
-            options=[
-                SelectorItem(
-                    id="dirty-pr:commit",
-                    label="Commit",
-                    kind="",
-                    token="__DIRTY_PR_COMMIT__",
-                    scope_signature=("dirty-pr:commit",),
-                ),
-                SelectorItem(
-                    id="dirty-pr:skip",
-                    label="Do nothing",
-                    kind="",
-                    token="__DIRTY_PR_SKIP__",
-                    scope_signature=("dirty-pr:skip",),
-                ),
-            ],
-            multi=False,
-            initial_tokens=["__DIRTY_PR_COMMIT__"],
-            emit=getattr(runtime, "_emit", None),
-        )
-        if not values:
-            return "cancel"
-        chosen = str(values[0]).strip()
-        if chosen == "__DIRTY_PR_COMMIT__":
-            return "commit"
-        if chosen == "__DIRTY_PR_SKIP__":
-            return "skip"
-        return DashboardOrchestrator._prompt_yes_no_dialog(runtime, title=title, prompt=prompt)
+        pr_and_target_support._run_selector_with_impl = _run_selector_with_impl
+        return pr_and_target_support.prompt_dirty_pr_menu(runtime, title=title, prompt=prompt)
 
     @staticmethod
     def _prompt_yes_no_dialog(runtime: Any, *, title: str, prompt: str) -> DirtyPrDecision:
-        confirm = getattr(runtime, "_prompt_yes_no", None)
-        if callable(confirm):
-            try:
-                result = confirm(title=title, prompt=prompt)
-            except TypeError:
-                result = confirm(prompt)
-            if result is None:
-                return "cancel"
-            return "commit" if bool(result) else "skip"
-        response = DashboardOrchestrator._read_interactive_line(runtime, prompt).strip().lower()
-        if response in {"y", "yes"}:
-            return "commit"
-        if response in {"", "n", "no"}:
-            return "skip"
-        if response in {"c", "cancel", "q", "quit", "esc", "escape"}:
-            return "cancel"
-        return "skip"
+        return pr_and_target_support.prompt_yes_no_dialog(runtime, title=title, prompt=prompt)
 
     def _default_pr_base_branch(self, runtime: Any) -> str:
-        git_root = self._pr_git_root(runtime)
-        try:
-            default_branch = detect_default_branch(git_root).strip()
-        except Exception:
-            default_branch = ""
-        return default_branch or "main"
+        return pr_and_target_support.default_pr_base_branch(self, runtime)
 
     def _pr_base_branch_options(self, runtime: Any, *, default_branch: str) -> list[SelectorItem]:
-        git_root = self._pr_git_root(runtime)
-        command = ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads"]
-        listed = subprocess.run(
-            command,
-            cwd=str(git_root),
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        branch_names = (
-            [line.strip() for line in listed.stdout.splitlines() if line.strip()] if listed.returncode == 0 else []
-        )
-        if default_branch and default_branch not in branch_names:
-            branch_names.append(default_branch)
-        if not branch_names:
-            branch_names = [default_branch or "main"]
-        seen: set[str] = set()
-        items: list[SelectorItem] = []
-        for branch_name in sorted(branch_names, key=str.casefold):
-            lowered = branch_name.casefold()
-            if lowered in seen:
-                continue
-            seen.add(lowered)
-            items.append(
-                SelectorItem(
-                    id=f"branch:{branch_name}",
-                    label=branch_name,
-                    kind="branch",
-                    token=branch_name,
-                    scope_signature=(f"branch:{branch_name}",),
-                    section="Branches",
-                )
-            )
-        return items
+        return pr_and_target_support.pr_base_branch_options(self, runtime, default_branch=default_branch)
 
     def _pr_git_root(self, runtime: Any) -> Path:
-        base_dir = getattr(getattr(runtime, "config", None), "base_dir", None)
-        if isinstance(base_dir, Path):
-            return resolve_git_root(base_dir, base_dir)
-        if isinstance(base_dir, str) and base_dir.strip():
-            candidate = Path(base_dir).resolve()
-            return resolve_git_root(candidate, candidate)
-        return Path.cwd()
+        return pr_and_target_support.pr_git_root(self, runtime)
 
     def _run_pr_selection_flow(
         self,
@@ -1121,44 +674,25 @@ class DashboardOrchestrator:
         default_branch: str,
         runtime: Any,
     ):
-        return run_pr_flow(
+        return pr_and_target_support.run_pr_selection_flow(
+            self,
             projects=projects,
             initial_project_names=initial_project_names,
-            branch_options=self._pr_base_branch_options(runtime, default_branch=default_branch),
             default_branch=default_branch,
-            emit=getattr(runtime, "_emit", None),
+            runtime=runtime,
         )
 
     @staticmethod
     def _single_project_name(projects: list[object]) -> str:
-        names = [
-            str(getattr(project, "name", "")).strip()
-            for project in projects
-            if str(getattr(project, "name", "")).strip()
-        ]
-        if len(names) != 1:
-            return ""
-        return names[0]
+        return pr_and_target_support.single_project_name(projects)
 
     @staticmethod
     def _interactive_target_prompt(command: str) -> str:
-        label_map = {
-            "stop": "Stop services",
-            "test": "Run tests for",
-            "logs": "Tail logs for",
-            "clear-logs": "Clear logs for",
-            "errors": "Errors for",
-            "pr": "Create PR for",
-            "commit": "Commit changes for",
-            "review": "Review changes for",
-            "migrate": "Run migrations for",
-            "blast-worktree": "Blast and delete worktree for",
-        }
-        return label_map.get(command, f"Select {command} target")
+        return pr_and_target_support.interactive_target_prompt(command)
 
     @staticmethod
     def _no_target_selected_message(command: str) -> str:
-        return no_target_selected_message(command, route=None, interactive_allowed=True)
+        return pr_and_target_support.no_target_selected_message(command)
 
     def _apply_restart_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         runtime_any = cast(Any, rt)
@@ -1180,6 +714,7 @@ class DashboardOrchestrator:
             route, state, runtime,
             restart_resource_items_fn=self._restart_resource_items,
             apply_restart_resource_tokens_fn=self._apply_restart_resource_tokens,
+            selector_fn=_run_selector_with_impl,
         )
 
     def _restart_resource_items(self, state: RunState, runtime: Any) -> list[SelectorItem]:
@@ -1196,7 +731,10 @@ class DashboardOrchestrator:
 
     @staticmethod
     def _has_dashboard_stopped_services(state: RunState) -> bool:
-        return has_dashboard_stopped_services(state, dashboard_stopped_services_by_project_fn=dashboard_stopped_services_by_project)
+        return has_dashboard_stopped_services(
+            state,
+            dashboard_stopped_services_by_project_fn=dashboard_stopped_services_by_project,
+        )
 
     @staticmethod
     def _has_restartable_inactive_services(state: RunState) -> bool:
@@ -1243,41 +781,27 @@ class DashboardOrchestrator:
         return dashboard_configured_missing_services_by_project(state)
 
     def _default_interactive_targets(self, route: Route, state: RunState, rt: object) -> Route:
-        _ = state, rt
-        return route
+        return target_selection_support.default_interactive_targets(route, state, rt)
 
     @staticmethod
     def _route_has_explicit_target(route: Route, runtime: object) -> bool:
-        return route_has_explicit_target(route, cast(Any, runtime))
+        return target_selection_support.route_has_explicit_target(route, runtime)
 
     @staticmethod
     def _restart_service_types_from_service_names(service_names: list[str]) -> list[str]:
-        types: list[str] = []
-        seen: set[str] = set()
-        for name in service_names:
-            normalized = str(name).strip().lower()
-            if normalized.endswith(" backend"):
-                service_type = "backend"
-            elif normalized.endswith(" frontend"):
-                service_type = "frontend"
-            else:
-                service_type = str(name).strip().lower().removeprefix("service:")
-            if service_type and service_type not in seen:
-                seen.add(service_type)
-                types.append(service_type)
-        return types
+        return target_selection_support.restart_service_types_from_service_names(service_names)
 
     @staticmethod
     def _service_types_from_service_names(service_names: list[str]) -> set[str]:
-        return service_types_from_service_names(service_names)
+        return target_selection_support.service_types_from_service_names(service_names)
 
     @staticmethod
     def _project_names_from_state(state: RunState, rt: object) -> list[object]:
-        return project_names_from_state(cast(Any, rt), state)
+        return target_selection_support.project_names_from_state(state, rt)
 
     @staticmethod
     def _project_name_list(projects: list[object]) -> list[str]:
-        return [name for name in (str(getattr(project, "name", "")).strip() for project in projects) if name]
+        return target_selection_support.project_name_list(projects)
 
     def _select_dashboard_projects(
         self,
@@ -1287,35 +811,13 @@ class DashboardOrchestrator:
         projects: list[object],
         runtime: Any,
     ) -> list[str] | None:
-        project_names = self._project_name_list(projects)
-        single_project = self._single_project_name(projects)
-        if single_project:
-            runtime._emit(
-                "dashboard.target_scope.defaulted",
-                command=command,
-                mode=state.mode,
-                scope="single_project",
-                project_count=1,
-                projects=[single_project],
-            )
-            return [single_project]
-        initial_project_names = self._dashboard_preselected_projects(
+        return target_selection_support.select_dashboard_projects(
+            self,
+            command=command,
             state=state,
             projects=projects,
             runtime=runtime,
         )
-        selection = runtime._select_project_targets(
-            prompt=self._worktree_prompt(command),
-            projects=projects,
-            allow_all=False,
-            allow_untested=False,
-            multi=True,
-            initial_project_names=initial_project_names,
-        )
-        if selection.cancelled:
-            return None
-        selected = [name for name in selection.project_names if name]
-        return selected or project_names
 
     @staticmethod
     def _dashboard_preselected_projects(
@@ -1324,20 +826,14 @@ class DashboardOrchestrator:
         projects: list[object],
         runtime: Any,
     ) -> list[str]:
-        if str(state.mode).strip().lower() != "trees":
-            return []
-        startup = getattr(runtime, "startup_orchestrator", None)
-        if startup is None:
-            return []
-        try:
-            return list(
-                _tree_preselected_projects_from_state_impl(
-                    runtime=runtime,
-                    project_contexts=cast(Any, projects),
-                )
-            )
-        except Exception:
-            return []
+        target_selection_support._tree_preselected_projects_from_state_impl = (
+            _tree_preselected_projects_from_state_impl
+        )
+        return target_selection_support.dashboard_preselected_projects(
+            state=state,
+            projects=projects,
+            runtime=runtime,
+        )
 
     def _select_dashboard_service_types(
         self,
@@ -1347,64 +843,13 @@ class DashboardOrchestrator:
         selected_projects: list[str],
         runtime: Any,
     ) -> list[str] | None:
-        if command == "test":
-            return self._select_dashboard_test_scope(
-                state=state,
-                selected_projects=selected_projects,
-                runtime=runtime,
-            )
-        available_types = self._available_service_types_for_projects(
-            state,
-            runtime,
-            project_names=selected_projects,
+        return target_selection_support.select_dashboard_service_types(
+            self,
+            command=command,
+            state=state,
+            selected_projects=selected_projects,
+            runtime=runtime,
         )
-        all_tests_available = command == "test" and self._all_tests_scope_available(
-            state,
-            runtime,
-            project_names=selected_projects,
-        )
-        failed_scope_available = command == "test" and self._failed_test_scope_available(
-            state,
-            project_names=selected_projects,
-        )
-        if (
-            len(available_types) <= 1
-            and not failed_scope_available
-            and not (all_tests_available and not available_types)
-        ):
-            return list(available_types)
-        default_service_names = [service_type.title() for service_type in available_types]
-        initial_service_names = list(default_service_names)
-        if all_tests_available and not available_types:
-            default_service_names.append("All tests")
-            initial_service_names.append("All tests")
-        if failed_scope_available:
-            default_service_names.append("All failed tests")
-            if not initial_service_names:
-                initial_service_names.append("All failed tests")
-        selection = runtime._select_project_targets(
-            prompt=self._service_prompt(command),
-            projects=[SimpleProject(name=label) for label in default_service_names],
-            allow_all=False,
-            allow_untested=False,
-            multi=True,
-            initial_project_names=initial_service_names,
-        )
-        if selection.cancelled:
-            return None
-        selected_types: list[str] = []
-        for name in selection.project_names:
-            normalized = name.strip().lower()
-            if not normalized:
-                continue
-            if normalized == "all tests":
-                selected_types.append("all")
-                continue
-            if normalized == "all failed tests":
-                selected_types.append("failed")
-                continue
-            selected_types.append(normalized)
-        return selected_types or list(available_types)
 
     def _select_dashboard_test_scope(
         self,
@@ -1413,65 +858,12 @@ class DashboardOrchestrator:
         selected_projects: list[str],
         runtime: Any,
     ) -> list[str] | None:
-        available_types = self._available_service_types_for_projects(
-            state,
-            runtime,
-            project_names=selected_projects,
+        return target_selection_support.select_dashboard_test_scope(
+            self,
+            state=state,
+            selected_projects=selected_projects,
+            runtime=runtime,
         )
-        all_tests_available = self._all_tests_scope_available(
-            state,
-            runtime,
-            project_names=selected_projects,
-        )
-        failed_scope_available = self._failed_test_scope_available(
-            state,
-            project_names=selected_projects,
-        )
-        if (
-            len(available_types) <= 1
-            and not failed_scope_available
-            and not (all_tests_available and not available_types)
-        ):
-            return list(available_types)
-        options: list[str] = []
-        initial_names: list[str] = []
-        for service_type in available_types:
-            label = service_type.title()
-            options.append(label)
-            initial_names.append(label)
-        if all_tests_available and not available_types:
-            options.append("All tests")
-            initial_names.append("All tests")
-        if failed_scope_available:
-            options.append("Failed tests")
-        if not options:
-            return []
-        if len(options) == 1:
-            only = options[0].strip().lower()
-            if only == "all tests":
-                return ["all"]
-            if only == "failed tests":
-                return ["failed"]
-            return [only]
-        selection = runtime._select_project_targets(
-            prompt=self._service_prompt("test"),
-            projects=[SimpleProject(name=label) for label in options],
-            allow_all=False,
-            allow_untested=False,
-            multi=True,
-            initial_project_names=initial_names,
-            exclusive_project_name="Failed tests" if failed_scope_available else None,
-        )
-        if selection.cancelled:
-            return None
-        chosen_types = [str(name).strip().lower() for name in selection.project_names if str(name).strip()]
-        if not chosen_types:
-            return None
-        if "failed tests" in chosen_types:
-            return ["failed"]
-        if "all tests" in chosen_types:
-            return ["all"]
-        return [name for name in chosen_types if name in {"backend", "frontend"}]
 
     @staticmethod
     def _all_tests_scope_available(
@@ -1480,54 +872,11 @@ class DashboardOrchestrator:
         *,
         project_names: list[str],
     ) -> bool:
-        if not project_names:
-            return False
-        metadata = state.metadata if isinstance(state.metadata, dict) else {}
-        project_roots_raw = metadata.get("project_roots")
-        project_roots = project_roots_raw if isinstance(project_roots_raw, dict) else {}
-        repo_root = Path(str(getattr(getattr(runtime, "config", None), "base_dir", Path.cwd())))
-        for project_name in project_names:
-            root_raw = str(project_roots.get(project_name, "") or "").strip()
-            project_root = repo_root if not root_raw else Path(root_raw)
-            if not project_root.is_absolute():
-                project_root = repo_root / project_root
-            try:
-                if default_test_commands(project_root):
-                    return True
-            except Exception:
-                continue
-        return False
+        return target_selection_support.all_tests_scope_available(state, runtime, project_names=project_names)
 
     @staticmethod
     def _failed_test_scope_available(state: RunState, *, project_names: list[str]) -> bool:
-        metadata = state.metadata.get("project_test_summaries")
-        if not isinstance(metadata, dict):
-            return False
-        requested = {name.casefold() for name in project_names}
-        for project_name, entry in metadata.items():
-            if requested and str(project_name).casefold() not in requested:
-                continue
-            if not isinstance(entry, dict):
-                continue
-            status = str(entry.get("status", "") or "").strip().lower()
-            if status == "passed":
-                continue
-            for key in ("failed_tests", "failed_manifest_entries"):
-                raw_count = entry.get(key)
-                with suppress(TypeError, ValueError):
-                    if int(str(raw_count)) > 0:
-                        return True
-            if summary_excerpt_from_entry(entry, max_lines=1):
-                return True
-            if str(entry.get("manifest_path", "") or "").strip():
-                return True
-            if str(entry.get("short_summary_path", "") or "").strip():
-                return True
-            if str(entry.get("summary_path", "") or "").strip():
-                return True
-            if status == "failed":
-                return True
-        return False
+        return target_selection_support.failed_test_scope_available(state, project_names=project_names)
 
     @staticmethod
     def _available_service_types_for_projects(
@@ -1536,37 +885,11 @@ class DashboardOrchestrator:
         *,
         project_names: list[str],
     ) -> list[str]:
-        requested = {name.casefold() for name in project_names}
-        ordered: list[str] = []
-        seen: set[str] = set()
-        for service_name, service in state.services.items():
-            project_name = service_project_name(service)
-            if not project_name:
-                project_name = str(runtime._project_name_from_service(service_name) or "").strip()
-            if not project_name:
-                project_name = str(project_name_from_service_name(str(service_name))).strip()
-            if requested and project_name.casefold() not in requested:
-                continue
-            service_type = service_slug_from_record(service) if service is not None else ""
-            if service_type and service_type not in seen:
-                seen.add(service_type)
-                ordered.append(service_type)
-        for project_name, service_types in DashboardOrchestrator._dashboard_project_configured_services(state).items():
-            if requested and project_name.casefold() not in requested:
-                continue
-            for normalized in sorted(service_types):
-                if normalized in seen:
-                    continue
-                seen.add(normalized)
-                ordered.append(normalized)
-        if ordered:
-            return ordered
-        for normalized in normalize_dashboard_service_types(state.metadata.get("dashboard_configured_service_types")):
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            ordered.append(normalized)
-        return ordered
+        return target_selection_support.available_service_types_for_projects(
+            state,
+            runtime,
+            project_names=project_names,
+        )
 
     @staticmethod
     def _service_names_for_projects_and_types(
@@ -1576,51 +899,20 @@ class DashboardOrchestrator:
         project_names: list[str],
         service_types: list[str],
     ) -> list[str]:
-        requested_projects = {name.casefold() for name in project_names}
-        requested_types = {name.casefold() for name in service_types}
-        selected: list[str] = []
-        seen_names: set[str] = set()
-        for service_name, service in state.services.items():
-            project_name = service_project_name(service)
-            if not project_name:
-                project_name = str(runtime._project_name_from_service(service_name) or "").strip()
-            if not project_name:
-                project_name = str(project_name_from_service_name(str(service_name))).strip()
-            if requested_projects and project_name.casefold() not in requested_projects:
-                continue
-            service_type = service_slug_from_record(service) if service is not None else ""
-            if service_type and service_type.casefold() in requested_types:
-                selected.append(service_name)
-                seen_names.add(str(service_name))
-        configured_missing_services = DashboardOrchestrator._dashboard_configured_missing_services_by_project(state)
-        for project_name, missing_service_types in configured_missing_services.items():
-            if requested_projects and project_name.casefold() not in requested_projects:
-                continue
-            for service_type in sorted(missing_service_types):
-                if service_type.casefold() not in requested_types:
-                    continue
-                service_name = f"{project_name} {service_display_name(service_type)}"
-                if service_name in seen_names:
-                    continue
-                selected.append(service_name)
-                seen_names.add(service_name)
-        return selected
+        return target_selection_support.service_names_for_projects_and_types(
+            state,
+            runtime,
+            project_names=project_names,
+            service_types=service_types,
+        )
 
     @staticmethod
     def _worktree_prompt(command: str) -> str:
-        prompt_map = {
-            "test": "Choose worktrees to test",
-            "restart": "Choose worktrees",
-        }
-        return prompt_map.get(command, "Choose worktrees")
+        return target_selection_support.worktree_prompt(command)
 
     @staticmethod
     def _service_prompt(command: str) -> str:
-        prompt_map = {
-            "test": "Choose test scope",
-            "restart": "Choose services",
-        }
-        return prompt_map.get(command, "Choose services")
+        return target_selection_support.service_prompt(command)
 
     @staticmethod
     def _read_interactive_line(runtime: Any, prompt: str) -> str:

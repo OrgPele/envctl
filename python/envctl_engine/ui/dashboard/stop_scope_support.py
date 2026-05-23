@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Callable
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
@@ -22,6 +22,7 @@ def apply_stop_scope_selection(
     *,
     stop_resource_items_fn: Any,
     apply_stop_resource_tokens_fn: Any,
+    selector_fn: Callable[..., list[str] | None] | None = None,
 ) -> Route | None:
     if stop_route_has_explicit_scope(route, runtime):
         return route
@@ -30,8 +31,9 @@ def apply_stop_scope_selection(
     if not items:
         return route
 
-    from envctl_engine.ui.textual.screens.selector import _run_selector_with_impl
-    values = _run_selector_with_impl(
+    if selector_fn is None:
+        from envctl_engine.ui.textual.screens.selector import _run_selector_with_impl as selector_fn
+    values = selector_fn(
         prompt="Choose services/dependencies to stop (Space toggles, a selects all visible; Enter stops selected)",
         options=items,
         multi=True,
@@ -55,7 +57,16 @@ def stop_route_has_explicit_scope(route: Route, runtime: Any) -> bool:
     return route_has_explicit_target(route, runtime)
 
 
-def stop_resource_items(state: RunState, runtime: Any, *, project_names_from_state_fn: Any, stop_project_order_fn: Any, stop_services_by_project_fn: Any, stop_dependencies_by_project_fn: Any, stop_service_detail_fn: Any) -> list[SelectorItem]:
+def stop_resource_items(
+    state: RunState,
+    runtime: Any,
+    *,
+    project_names_from_state_fn: Any,
+    stop_project_order_fn: Any,
+    stop_services_by_project_fn: Any,
+    stop_dependencies_by_project_fn: Any,
+    stop_service_detail_fn: Any,
+) -> list[SelectorItem]:
     project_order = stop_project_order_fn(state, runtime)
     many_projects = len(project_order) > 1
     service_lookup = stop_services_by_project_fn(state, runtime)
