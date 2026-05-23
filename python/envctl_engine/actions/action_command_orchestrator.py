@@ -100,6 +100,7 @@ from envctl_engine.actions.action_test_plan_support import (
     parallel_tests_enabled as parallel_tests_enabled_impl,
     render_test_execution_status as render_test_execution_status_impl,
     render_test_scope_status as render_test_scope_status_impl,
+    run_test_plan_action_for_targets as run_test_plan_action_for_targets_impl,
     select_test_services as select_test_services_impl,
     suite_spinner_policy_enabled as suite_spinner_policy_enabled_impl,
 )
@@ -132,7 +133,6 @@ from envctl_engine.actions.action_test_support import (
     rich_progress_available as _rich_progress_available,
 )
 from envctl_engine.actions.action_test_runner import run_test_action as run_test_action_impl
-from envctl_engine.actions.test_plan_action import run_test_plan_action as run_test_plan_action_impl
 from envctl_engine.actions.action_worktree_runner import (
     main_repo_root_for_worktree as main_repo_root_for_worktree_impl,
     repo_root_from_worktree_layout as repo_root_from_worktree_layout_impl,
@@ -261,22 +261,7 @@ class ActionCommandOrchestrator:
         return run_ship_action_with_owner(self, route, targets, extra_env=self.action_extra_env(route))
 
     def run_test_plan_action(self, route: Route, targets: list[object]) -> int:
-        json_output = bool(route.flags.get("json"))
-        dry_run = bool(route.flags.get("dry_run"))
-        for target in targets:
-            context = type(
-                "TestPlanActionContext",
-                (),
-                {
-                    "repo_root": self.runtime.config.base_dir,
-                    "project_root": Path(str(getattr(target, "root"))).resolve(),
-                    "project_name": str(getattr(target, "name")),
-                },
-            )()
-            code = run_test_plan_action_impl(context, json_output=json_output, dry_run=dry_run)
-            if code != 0:
-                return code
-        return 0
+        return run_test_plan_action_for_targets_impl(self, route, targets)
 
     def run_review_action(self, route: Route, targets: list[object]) -> int:
         return run_review_action_with_owner(self, route, targets, extra_env=self.action_extra_env(route))

@@ -202,6 +202,22 @@ class ActionCommandTargetTests(unittest.TestCase):
 
         self.assertEqual(projects, ["Main"])
 
+    def test_test_plan_action_delegates_to_owner(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.config = SimpleNamespace(base_dir=Path("/tmp/repo"), raw={})
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="test-focused", mode="main", flags={"json": True, "dry_run": True})
+        targets = [SimpleNamespace(name="Main", root=Path("/tmp/repo"))]
+
+        with patch(
+            "envctl_engine.actions.action_command_orchestrator.run_test_plan_action_for_targets_impl",
+            return_value=7,
+        ) as run_test_plan:
+            code = orchestrator.run_test_plan_action(route, targets)
+
+        self.assertEqual(code, 7)
+        run_test_plan.assert_called_once_with(orchestrator, route, targets)
+
     def test_build_test_execution_specs_uses_additional_service_test_command(self) -> None:
         runtime = _RuntimeStub()
         runtime.config = SimpleNamespace(

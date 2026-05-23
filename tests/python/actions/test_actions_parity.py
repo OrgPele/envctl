@@ -951,7 +951,7 @@ class ActionsParityTests(unittest.TestCase):
 
             route = parse_route(["test-focused"], env={"ENVCTL_DEFAULT_MODE": "main"})
             with patch(
-                "envctl_engine.actions.action_command_orchestrator.run_test_plan_action_impl",
+                "envctl_engine.actions.action_test_plan_support.run_test_plan_action",
                 side_effect=fake_test_focused,
             ):
                 code = engine.dispatch(route)

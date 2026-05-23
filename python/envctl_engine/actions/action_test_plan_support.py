@@ -6,8 +6,29 @@ from typing import Callable, Mapping
 from envctl_engine.actions.action_command_support import service_types_from_route_services
 from envctl_engine.actions.action_test_support import TestExecutionSpec, TestTargetContext, build_test_execution_specs
 from envctl_engine.actions.action_test_support import is_backend_only_selection
+from envctl_engine.actions.test_plan_action import run_test_plan_action
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
+
+
+def run_test_plan_action_for_targets(orchestrator: object, route: Route, targets: list[object]) -> int:
+    json_output = bool(route.flags.get("json"))
+    dry_run = bool(route.flags.get("dry_run"))
+    runtime = getattr(orchestrator, "runtime")
+    for target in targets:
+        context = type(
+            "TestPlanActionContext",
+            (),
+            {
+                "repo_root": runtime.config.base_dir,
+                "project_root": Path(str(getattr(target, "root"))).resolve(),
+                "project_name": str(getattr(target, "name")),
+            },
+        )()
+        code = run_test_plan_action(context, json_output=json_output, dry_run=dry_run)
+        if code != 0:
+            return code
+    return 0
 
 
 def build_test_execution_specs_for_route(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 import unittest
 
 from envctl_engine.actions.action_test_plan_support import build_test_execution_specs_for_route
@@ -9,6 +10,7 @@ from envctl_engine.actions.action_test_plan_support import command_start_status
 from envctl_engine.actions.action_test_plan_support import parallel_test_worker_count, parallel_tests_enabled
 from envctl_engine.actions.action_test_plan_support import render_test_execution_status
 from envctl_engine.actions.action_test_plan_support import render_test_scope_status
+from envctl_engine.actions.action_test_plan_support import run_test_plan_action_for_targets
 from envctl_engine.actions.action_test_plan_support import suite_spinner_policy_enabled
 from envctl_engine.actions.action_test_plan_support import is_legacy_tree_test_script, select_test_services
 from envctl_engine.actions.action_test_support import TestExecutionSpec as ExecutionSpec
@@ -39,6 +41,25 @@ class ActionTestPlanSupportTests(unittest.TestCase):
             ),
             "Running tree test matrix for 2 selected project(s)...",
         )
+
+    def test_run_test_plan_action_for_targets_builds_contexts_and_stops_on_failure(self) -> None:
+        orchestrator = SimpleNamespace(runtime=SimpleNamespace(config=SimpleNamespace(base_dir=Path("/repo"))))
+        route = parse_route(["test-focused", "--json"], env={})
+        targets = [
+            SimpleNamespace(name="api", root=Path("/repo/trees/api/1")),
+            SimpleNamespace(name="web", root=Path("/repo/trees/web/1")),
+        ]
+        calls: list[tuple[str, Path, bool, bool]] = []
+
+        def fake_run(context, *, json_output: bool = False, dry_run: bool = False):  # noqa: ANN001, ANN202
+            calls.append((str(context.project_name), Path(context.project_root), json_output, dry_run))
+            return 3 if context.project_name == "api" else 0
+
+        with patch("envctl_engine.actions.action_test_plan_support.run_test_plan_action", side_effect=fake_run):
+            code = run_test_plan_action_for_targets(orchestrator, route, targets)
+
+        self.assertEqual(code, 3)
+        self.assertEqual(calls, [("api", Path("/repo/trees/api/1"), True, False)])
 
     def test_test_parallel_policy_uses_flags_env_config_and_legacy_tree_safety(self) -> None:
         route = parse_route(["test"], env={"ENVCTL_DEFAULT_MODE": "trees"})
