@@ -19,7 +19,10 @@ PYTHON_ROOT = REPO_ROOT / "python"
 actions_test_module = importlib.import_module("envctl_engine.actions.actions_test")
 action_test_support_module = importlib.import_module("envctl_engine.actions.action_test_support")
 action_command_orchestrator_module = importlib.import_module("envctl_engine.actions.action_command_orchestrator")
-from envctl_engine.actions.action_test_summary_support import default_git_state_components
+from envctl_engine.actions.action_test_summary_support import (
+    collect_failed_test_manifest_entries,
+    default_git_state_components,
+)
 action_test_summary_support_module = importlib.import_module("envctl_engine.actions.action_test_summary_support")
 action_migrate_support_module = importlib.import_module("envctl_engine.actions.action_migrate_support")
 command_router_module = importlib.import_module("envctl_engine.runtime.command_router")
@@ -2735,7 +2738,7 @@ class ActionsParityTests(unittest.TestCase):
             )
         )
         orchestrator = ActionCommandOrchestrator(SimpleNamespace())
-        entries = orchestrator._collect_failed_test_manifest_entries(
+        entries = collect_failed_test_manifest_entries(
             [
                 {
                     "index": 0,

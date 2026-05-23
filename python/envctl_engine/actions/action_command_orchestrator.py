@@ -29,9 +29,6 @@ from envctl_engine.actions.action_output_support import (
     action_colors_enabled as action_colors_enabled_impl,
     colorize_action_text as colorize_action_text_impl,
 )
-from envctl_engine.actions.action_failed_rerun_support import (
-    summary_indicates_extraction_failure as summary_indicates_extraction_failure_impl,
-)
 from envctl_engine.actions.action_target_support import (
     ActionTargetContext,
     execute_targeted_action,
@@ -43,14 +40,9 @@ from envctl_engine.actions.action_spinner_support import (
     noop_restore as noop_restore_impl,
 )
 from envctl_engine.actions.action_test_summary_support import (
-    collect_failed_test_manifest_entries as collect_failed_test_manifest_entries_impl,
-    collect_failed_tests as collect_failed_tests_impl,
-    collect_generic_suite_failures as collect_generic_suite_failures_impl,
-    collect_suite_failure_contexts as collect_suite_failure_contexts_impl,
     new_test_results_run_dir_path as new_test_results_run_dir_path_impl,
     persist_test_summary_artifacts_for_orchestrator,
     print_test_suite_overview_for_orchestrator,
-    resolve_failed_test_error as resolve_failed_test_error_impl,
     short_failed_summary_path as short_failed_summary_path_impl,
     write_failed_tests_summary_for_orchestrator,
 )
@@ -59,7 +51,6 @@ from envctl_engine.actions.action_test_plan_support import (
     build_failed_test_execution_specs_for_orchestrator,
     build_test_execution_specs_for_orchestrator,
     command_start_status as command_start_status_impl,
-    is_legacy_tree_test_script as is_legacy_tree_test_script_impl,
     parallel_test_worker_count as parallel_test_worker_count_impl,
     parallel_tests_enabled as parallel_tests_enabled_impl,
     render_test_execution_status as render_test_execution_status_impl,
@@ -67,10 +58,6 @@ from envctl_engine.actions.action_test_plan_support import (
     run_test_plan_action_for_targets as run_test_plan_action_for_targets_impl,
     select_test_services as select_test_services_impl,
     suite_spinner_policy_enabled as suite_spinner_policy_enabled_impl,
-)
-from envctl_engine.actions.project_action_report_support import (
-    first_output_line as first_output_line_impl,
-    project_action_success_status as project_action_success_status_impl,
 )
 from envctl_engine.actions.action_project_report_owner import (
     persist_project_action_result_with_owner,
@@ -295,10 +282,6 @@ class ActionCommandOrchestrator:
             target_contexts=target_contexts,
         )
 
-    @staticmethod
-    def _summary_indicates_extraction_failure(entry: Mapping[str, object]) -> bool:
-        return summary_indicates_extraction_failure_impl(entry)
-
     def run_project_action(
         self,
         route: Route,
@@ -501,14 +484,6 @@ class ActionCommandOrchestrator:
         if isinstance(cache, dict):
             cache.clear()
 
-    @staticmethod
-    def _first_output_line(output: object) -> str:
-        return first_output_line_impl(output)
-
-    @classmethod
-    def _project_action_success_status(cls, *, command_name: str, completed: Any) -> str:
-        return project_action_success_status_impl(command_name=command_name, completed=completed)
-
     def _colors_enabled(self) -> bool:
         return action_colors_enabled_impl(self.runtime)
 
@@ -583,51 +558,11 @@ class ActionCommandOrchestrator:
             previous_entry=previous_entry,
         )
 
-    def _collect_failed_tests(
-        self,
-        outcomes: list[dict[str, object]],
-        *,
-        project_name: str | None = None,
-    ) -> list[tuple[str, str, str]]:
-        return collect_failed_tests_impl(outcomes, project_name=project_name)
-
-    def _collect_failed_test_manifest_entries(
-        self,
-        outcomes: list[dict[str, object]],
-        *,
-        project_name: str | None = None,
-    ) -> list[dict[str, object]]:
-        return collect_failed_test_manifest_entries_impl(outcomes, project_name=project_name)
-
-    def _collect_generic_suite_failures(
-        self,
-        outcomes: list[dict[str, object]],
-        *,
-        project_name: str | None = None,
-    ) -> list[tuple[str, str]]:
-        return collect_generic_suite_failures_impl(outcomes, project_name=project_name)
-
-    def _collect_suite_failure_contexts(
-        self,
-        outcomes: list[dict[str, object]],
-        *,
-        project_name: str | None = None,
-    ) -> list[tuple[str, str]]:
-        return collect_suite_failure_contexts_impl(outcomes, project_name=project_name)
-
-    @staticmethod
-    def _resolve_failed_test_error(error_details: dict[str, object], test_name: str) -> str:
-        return resolve_failed_test_error_impl(error_details, test_name)
-
     @staticmethod
     def _suite_display_name(source: str, *, failed_only: bool = False) -> str:
         from envctl_engine.actions.action_test_summary_support import suite_display_name
 
         return suite_display_name(source, failed_only=failed_only)
-
-    @staticmethod
-    def _is_legacy_tree_test_script(command: list[str]) -> bool:
-        return is_legacy_tree_test_script_impl(command)
 
     def _test_target_contexts(self, targets: list[object]) -> list[TestTargetContext]:
         rt = self.runtime
