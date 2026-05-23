@@ -168,6 +168,24 @@ class StructureLayoutTests(unittest.TestCase):
         legacy = planning_tests / "test_plan_agent_launch_support.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_startup_orchestrator_flow_tests_are_split_by_phase_owner(self) -> None:
+        startup_tests = REPO_ROOT / "tests" / "python" / "startup"
+        expected = [
+            "startup_orchestrator_flow_test_support.py",
+            "test_startup_orchestrator_flow_bootstrap.py",
+            "test_startup_orchestrator_flow_disabled.py",
+            "test_startup_orchestrator_flow_failure.py",
+            "test_startup_orchestrator_flow_handoff.py",
+            "test_startup_orchestrator_flow_reuse.py",
+        ]
+
+        for filename in expected:
+            with self.subTest(path=filename):
+                self.assertTrue((startup_tests / filename).is_file())
+
+        legacy = startup_tests / "test_startup_orchestrator_flow.py"
+        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
+
     def test_runtime_service_facade_wrappers_have_owned_mixin(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_service_facade.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
