@@ -487,7 +487,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
             compose_path.write_text("services:\n  supabase-db: {}\n", encoding="utf-8")
             (root / ".env").write_text("SUPABASE_DB_PORT=5432\n", encoding="utf-8")
 
-            with mock.patch("envctl_engine.requirements.supabase._compose_up_handoff", side_effect=_capture_handoff):
+            with mock.patch("envctl_engine.requirements.supabase_lifecycle.compose._compose_up_handoff", side_effect=_capture_handoff):
                 result = _compose_run(
                     process_runner=runner,
                     compose_root=root,
@@ -510,7 +510,7 @@ class RequirementsAdaptersRealContractsTests(unittest.TestCase):
 
             lock_context = mock.MagicMock()
             lock_context.__enter__.side_effect = TimeoutError("busy")
-            with mock.patch("envctl_engine.requirements.supabase.file_lock", return_value=lock_context):
+            with mock.patch("envctl_engine.requirements.supabase_lifecycle.compose.file_lock", return_value=lock_context):
                 result = _compose_run(
                     process_runner=runner,
                     compose_root=root,

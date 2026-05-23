@@ -57,3 +57,9 @@ def _native_db_start_enabled(env: Mapping[str, str] | None) -> bool:
     return env_bool(env, "ENVCTL_SUPABASE_DB_START_NATIVE", False)
 
 
+
+def _supabase_startup_budget_seconds(env: Mapping[str, str] | None) -> float:
+    parsed = env_float(env, "ENVCTL_SUPABASE_STARTUP_TIMEOUT_SECONDS", 120.0, minimum=0.5)
+    return parsed if parsed > 0 else 120.0
+
+
