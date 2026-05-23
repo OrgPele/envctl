@@ -25,6 +25,7 @@ from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.shared.services import service_display_name
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.path_links import render_path_for_terminal
+from envctl_engine.ui.dashboard.failure_detail_support import summary_display_path
 from envctl_engine.ui.status_symbols import (
     STATUS_NEUTRAL,
     dependency_status_badge,
@@ -645,9 +646,8 @@ def _print_dashboard_tests_row(
     entry = metadata.get(project)
     if not isinstance(entry, dict):
         return
-    from envctl_engine.ui.dashboard.orchestrator import DashboardOrchestrator
 
-    summary_raw = DashboardOrchestrator._test_summary_display_path(project_name=project, entry=entry)
+    summary_raw = summary_display_path(project_name=project, entry=entry)
     if not summary_raw.strip():
         return
     summary_path = Path(summary_raw).expanduser()

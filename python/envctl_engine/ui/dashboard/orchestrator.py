@@ -48,6 +48,15 @@ from envctl_engine.ui.command_parsing import (
 from envctl_engine.ui.command_aliases import normalize_interactive_command
 from envctl_engine.ui.debug_anomaly_rules import detect_dispatch_anomaly
 from envctl_engine.ui.dashboard.pr_flow import run_pr_flow
+from envctl_engine.ui.dashboard.failure_detail_support import (
+    ensure_short_test_summary_path,
+    print_interactive_failure_details,
+    print_project_action_failure_details,
+    print_test_failure_details,
+    print_migrate_result_details,
+    failure_details_available,
+    summary_display_path,
+)
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.dashboard_loop_support import run_legacy_dashboard_loop
 from envctl_engine.ui.path_links import render_path_for_terminal
@@ -257,190 +266,48 @@ class DashboardOrchestrator:
         return True, refreshed
 
     def _print_interactive_failure_details(self, route: Route, state: RunState, *, code: int) -> None:
-        if route.command == "test":
-            if bool(route.flags.get("interactive_command")) and self._test_failure_details_available(route, state):
-                return
-            printed = self._print_test_failure_details(route, state)
-            if printed:
-                return
-        printed = self._print_project_action_failure_details(route, state)
-        if printed:
-            return
-        print(f"Command failed (exit {code}).")
+        print_interactive_failure_details(
+            route=route,
+            state=state,
+            code=code,
+            runtime=self.runtime,
+            test_failure_details_available_fn=self._failure_details_available,
+            print_test_failure_details_fn=self._print_test_failure_details,
+            print_project_action_failure_details_fn=self._print_project_action_failure_details,
+        )
 
-    def _test_failure_details_available(self, route: Route, state: RunState) -> bool:
-        metadata = state.metadata.get("project_test_summaries")
-        if not isinstance(metadata, dict):
-            return False
-        project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
-        for project_name_raw in project_names:
-            project_name = str(project_name_raw).strip()
-            entry = metadata.get(project_name)
-            if not isinstance(entry, dict):
-                continue
-            status = str(entry.get("status", "")).strip().lower()
-            if status and status != "failed":
-                continue
-            if self._test_summary_display_path(project_name=project_name, entry=entry):
-                return True
-            if summary_excerpt_from_entry(entry, max_lines=3):
-                return True
-        return False
+    def _failure_details_available(self, route: Route, state: RunState) -> bool:
+        return failure_details_available(
+            route, state, project_names_from_state_fn=lambda s: self._project_names_from_state(s, cast(Any, self.runtime))
+        )
 
     def _print_test_failure_details(self, route: Route, state: RunState) -> bool:
-        metadata = state.metadata.get("project_test_summaries")
-        if not isinstance(metadata, dict):
-            return False
-        project_names = route.projects or self._project_names_from_state(state, cast(Any, self.runtime))
-        printed = False
-        for project_name_raw in project_names:
-            project_name = str(project_name_raw).strip()
-            entry = metadata.get(project_name)
-            if not isinstance(entry, dict):
-                continue
-            status = str(entry.get("status", "")).strip().lower()
-            if status and status != "failed":
-                continue
-            summary_path = self._test_summary_display_path(project_name=project_name, entry=entry)
-            excerpt_lines = summary_excerpt_from_entry(entry, max_lines=3)
-            if not summary_path and not excerpt_lines:
-                continue
-            print(f"Test failure summary for {project_name}:")
-            for line in excerpt_lines:
-                print(line)
-            if summary_path:
-                print(
-                    render_path_for_terminal(
-                        summary_path,
-                        env=getattr(self.runtime, "env", {}),
-                        stream=sys.stdout,
-                        interactive_tty=True,
-                    )
-                )
-            printed = True
-        return printed
+        return print_test_failure_details(
+            route, state, runtime=self.runtime,
+            project_names_from_state_fn=lambda s: self._project_names_from_state(s, cast(Any, self.runtime))
+        )
 
     @staticmethod
-    def _test_summary_display_path(*, project_name: str, entry: dict[str, object]) -> str:
-        short_path = str(entry.get("short_summary_path", "") or "").strip()
-        if short_path:
-            resolved = DashboardOrchestrator._ensure_short_test_summary_path(
-                project_name=project_name,
-                summary_path=short_path,
-            )
-            return resolved or short_path
-        summary_path = str(entry.get("summary_path", "") or "").strip()
-        if not summary_path:
-            return ""
-        resolved = DashboardOrchestrator._ensure_short_test_summary_path(
-            project_name=project_name, summary_path=summary_path
-        )
-        return resolved or summary_path
+    def _summary_display_path(*, project_name: str, entry: dict[str, object]) -> str:
+        return summary_display_path(project_name=project_name, entry=entry)
 
     @staticmethod
     def _ensure_short_test_summary_path(*, project_name: str, summary_path: str) -> str:
-        path = Path(summary_path).expanduser()
-        if not path.is_file():
-            return summary_path
-        if path.name.startswith("ft_") and path.suffix == ".txt":
-            return str(path)
-        parents = path.parents
-        if len(parents) < 4:
-            return summary_path
-        run_root = parents[3]
-        digest = hashlib.sha1(project_name.encode("utf-8")).hexdigest()[:10]
-        short_path = run_root / f"ft_{digest}.txt"
-        if not short_path.exists():
-            with suppress(OSError):
-                short_path.write_text(path.read_text(encoding="utf-8", errors="ignore"), encoding="utf-8")
-        return str(short_path) if short_path.exists() else summary_path
+        return ensure_short_test_summary_path(project_name=project_name, summary_path=summary_path)
 
     def _print_project_action_failure_details(self, route: Route, state: RunState) -> bool:
-        if route.command == "migrate":
-            return self._print_migrate_result_details(route, state)
-        metadata = state.metadata.get("project_action_reports")
-        if not isinstance(metadata, dict):
-            return False
-        project_names = route.projects or self._project_name_list(
-            self._project_names_from_state(state, cast(Any, self.runtime))
+        return print_project_action_failure_details(
+            route, state, runtime=self.runtime,
+            project_names_from_state_fn=lambda s: self._project_names_from_state(s, cast(Any, self.runtime)),
+            project_name_list_fn=self._project_name_list,
         )
-        printed = False
-        for project_name_raw in project_names:
-            project_name = str(project_name_raw).strip()
-            project_entry = metadata.get(project_name)
-            if not isinstance(project_entry, dict):
-                continue
-            action_entry = project_entry.get(route.command)
-            if not isinstance(action_entry, dict):
-                continue
-            if str(action_entry.get("status", "")).strip().lower() != "failed":
-                continue
-            summary = str(action_entry.get("summary", "")).strip()
-            report_path = str(action_entry.get("report_path", "")).strip()
-            if summary:
-                summary_lines = [line.strip() for line in summary.splitlines() if line.strip()]
-                first_line = summary_lines[0] if summary_lines else ""
-                hint_lines = [line for line in summary_lines[1:] if line.lower().startswith("hint:")]
-                if len(summary_lines) == 1 and len(first_line) <= 220:
-                    print(f"{route.command} failed for {project_name}: {first_line}")
-                else:
-                    if first_line:
-                        print(f"{route.command} failed for {project_name}: {first_line}")
-                    for hint in hint_lines:
-                        print(hint)
-                    if report_path:
-                        print(f"{route.command} failure log for {project_name}:")
-                        print(
-                            render_path_for_terminal(
-                                report_path,
-                                env=getattr(self.runtime, "env", {}),
-                                stream=sys.stdout,
-                                interactive_tty=True,
-                            )
-                        )
-                printed = True
-                continue
-            if report_path:
-                print(f"{route.command} failure log for {project_name}:")
-                print(
-                    render_path_for_terminal(
-                        report_path,
-                        env=getattr(self.runtime, "env", {}),
-                        stream=sys.stdout,
-                        interactive_tty=True,
-                    )
-                )
-                printed = True
-        return printed
 
     def _print_migrate_result_details(self, route: Route, state: RunState) -> bool:
-        metadata = state.metadata.get("project_action_reports")
-        if not isinstance(metadata, dict):
-            return False
-        project_names = route.projects or self._project_name_list(
-            self._project_names_from_state(state, cast(Any, self.runtime))
+        return print_migrate_result_details(
+            route, state, runtime=self.runtime,
+            project_names_from_state_fn=lambda s: self._project_names_from_state(s, cast(Any, self.runtime)),
+            project_name_list_fn=self._project_name_list,
         )
-        records = []
-        for project_name_raw in project_names:
-            project_name = str(project_name_raw).strip()
-            project_entry = metadata.get(project_name)
-            action_entry = project_entry.get("migrate") if isinstance(project_entry, dict) else None
-            record = migrate_result_record(
-                failure_headline=migrate_failure_headline,
-                project_name=project_name,
-                action_entry=action_entry,
-            )
-            if record is None:
-                continue
-            records.append(record)
-        if not records:
-            return False
-        print_migrate_result_records(
-            records=records,
-            env=getattr(self.runtime, "env", {}),
-            interactive_tty=True,
-        )
-        return True
 
     def _apply_interactive_target_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         if route.command == "restart":

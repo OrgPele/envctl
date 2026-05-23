@@ -19,6 +19,7 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import load_config
 from envctl_engine.requirements.common import build_container_name
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.ui.dashboard.failure_detail_support import summary_display_path
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.test_output.parser_base import strip_ansi
@@ -1713,7 +1714,7 @@ class DashboardRenderingParityTests(unittest.TestCase):
             visible = strip_ansi(output)
             from envctl_engine.ui.dashboard.orchestrator import DashboardOrchestrator
 
-            expected_summary = DashboardOrchestrator._test_summary_display_path(
+            expected_summary = summary_display_path(
                 project_name="Main",
                 entry=state.metadata["project_test_summaries"]["Main"],
             )
