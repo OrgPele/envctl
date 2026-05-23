@@ -1215,44 +1215,7 @@ class DashboardOrchestrator:
         )
 
     def _restart_services_by_project(self, state: RunState, runtime: Any) -> dict[str, list[tuple[str, str, bool]]]:
-        services_by_project: dict[str, list[tuple[str, str, bool]]] = {}
-        active_by_project = self._stop_services_by_project(state, runtime)
-        for project_name, services in active_by_project.items():
-            services_by_project.setdefault(project_name, []).extend(
-                (service_name, service_type, False) for service_name, service_type in services
-            )
-        active_names = set(state.services)
-        for project_name, stopped_services in self._dashboard_stopped_services_by_project(state).items():
-            for service_type, service_name in stopped_services.items():
-                if service_name in active_names:
-                    continue
-                services_by_project.setdefault(project_name, []).append((service_name, service_type, True))
-        configured_missing_services = self._dashboard_configured_missing_services_by_project(state)
-        for project_name, service_types in configured_missing_services.items():
-            existing = {
-                service_name
-                for service_name, _service_type, _stopped in services_by_project.get(project_name, [])
-            }
-            for service_type in service_types:
-                service_name = f"{project_name} {service_display_name(service_type)}"
-                if service_name in active_names or service_name in existing:
-                    continue
-                services_by_project.setdefault(project_name, []).append((service_name, service_type, True))
-        if any(configured_missing_services.values()):
-            emit = getattr(runtime, "_emit", None)
-            if callable(emit):
-                emit(
-                    "dashboard.restart.configured_missing_offered",
-                    run_id=state.run_id,
-                    services={
-                        project: sorted(service_types)
-                        for project, service_types in configured_missing_services.items()
-                    },
-                    metadata_key=DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
-                )
-        for services in services_by_project.values():
-            services.sort(key=lambda item: (0 if item[1] == "backend" else 1, item[2], item[0].casefold()))
-        return services_by_project
+        return restart_services_by_project(state, runtime)
 
     @staticmethod
     def _dashboard_stopped_services_by_project(state: RunState) -> dict[str, dict[str, str]]:
