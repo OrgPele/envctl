@@ -42,7 +42,7 @@ from envctl_engine.actions.action_migrate_support import (
     visible_migrate_hint_lines as visible_migrate_hint_lines_impl,
 )
 from envctl_engine.actions.action_migrate_execution_support import (
-    run_migrate_action as run_migrate_action_impl,
+    run_migrate_action_with_owner,
 )
 from envctl_engine.actions.action_runtime_facade import ActionRuntimeFacade
 from envctl_engine.actions.action_output_support import (
@@ -173,6 +173,7 @@ class ActionCommandOrchestrator:
     def __init__(self, runtime: Any) -> None:
         self.runtime = ActionRuntimeFacade(runtime)
         self._migrate_env_contracts: dict[str, dict[str, object]] = {}
+        self.execute_targeted_action_fn = execute_targeted_action
         self._deferred_post_action_output: Callable[[], None] | None = None
 
     @staticmethod
@@ -267,24 +268,7 @@ class ActionCommandOrchestrator:
         return run_review_action_with_owner(self, route, targets, extra_env=self.action_extra_env(route))
 
     def run_migrate_action(self, route: Route, targets: list[object]) -> int:
-        interactive_command = bool(route.flags.get("interactive_command"))
-        return run_migrate_action_impl(
-            runtime=self.runtime,
-            route=route,
-            targets=targets,
-            extra_env=self.action_extra_env(route),
-            action_replacements_builder=self.action_replacements,
-            migrate_action_env_builder=self.migrate_action_env,
-            success_handler=self._project_action_success_handler("migrate", route.mode, interactive_command),
-            failure_handler=self._project_action_failure_handler("migrate", route.mode),
-            emit_status=self._emit_status,
-            failure_summary_lines=self._project_action_failure_summary_lines,
-            failure_headline=self._migrate_failure_headline,
-            print_result_summary=self._print_migrate_result_summary,
-            set_deferred_output=lambda callback: setattr(self, "_deferred_post_action_output", callback),
-            execute_targeted_action_fn=execute_targeted_action,
-            migrate_env_contracts=self._migrate_env_contracts,
-        )
+        return run_migrate_action_with_owner(self, route, targets, extra_env=self.action_extra_env(route))
 
     def _no_target_selected_message(self, route: Route) -> str:
         interactive_allowed = self._interactive_selection_allowed(route)

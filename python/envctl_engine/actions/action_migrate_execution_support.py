@@ -9,6 +9,33 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.test_output.parser_base import strip_ansi
 
 
+def run_migrate_action_with_owner(
+    orchestrator: Any,
+    route: Route,
+    targets: list[object],
+    *,
+    extra_env: Mapping[str, str],
+) -> int:
+    interactive_command = bool(route.flags.get("interactive_command"))
+    return run_migrate_action(
+        runtime=orchestrator.runtime,
+        route=route,
+        targets=targets,
+        extra_env=extra_env,
+        action_replacements_builder=orchestrator.action_replacements,
+        migrate_action_env_builder=orchestrator.migrate_action_env,
+        success_handler=orchestrator._project_action_success_handler("migrate", route.mode, interactive_command),
+        failure_handler=orchestrator._project_action_failure_handler("migrate", route.mode),
+        emit_status=orchestrator._emit_status,
+        failure_summary_lines=orchestrator._project_action_failure_summary_lines,
+        failure_headline=orchestrator._migrate_failure_headline,
+        print_result_summary=orchestrator._print_migrate_result_summary,
+        set_deferred_output=lambda callback: setattr(orchestrator, "_deferred_post_action_output", callback),
+        execute_targeted_action_fn=orchestrator.execute_targeted_action_fn,
+        migrate_env_contracts=orchestrator._migrate_env_contracts,
+    )
+
+
 def run_migrate_action(
     *,
     runtime: Any,

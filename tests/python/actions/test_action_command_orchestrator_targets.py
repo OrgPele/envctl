@@ -218,6 +218,21 @@ class ActionCommandTargetTests(unittest.TestCase):
         self.assertEqual(code, 7)
         run_test_plan.assert_called_once_with(orchestrator, route, targets)
 
+    def test_migrate_action_delegates_to_owner(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="migrate", mode="trees")
+        targets = [SimpleNamespace(name="alpha", root=Path("/tmp/alpha"))]
+
+        with patch(
+            "envctl_engine.actions.action_command_orchestrator.run_migrate_action_with_owner",
+            return_value=11,
+        ) as run_migrate:
+            code = orchestrator.run_migrate_action(route, targets)
+
+        self.assertEqual(code, 11)
+        run_migrate.assert_called_once_with(orchestrator, route, targets, extra_env=orchestrator.action_extra_env(route))
+
     def test_build_test_execution_specs_uses_additional_service_test_command(self) -> None:
         runtime = _RuntimeStub()
         runtime.config = SimpleNamespace(
