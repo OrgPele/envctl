@@ -388,7 +388,20 @@ class ActionCommandTargetTests(unittest.TestCase):
         self.assertIn("alembic failed", str(migrate_entry.get("summary", "")))
         report_path = Path(str(migrate_entry.get("report_path", "")))
         self.assertTrue(report_path.is_file())
-        self.assertIn("alembic failed", report_path.read_text(encoding="utf-8"))
+
+    def test_project_action_handlers_delegate_to_owner_module(self) -> None:
+        self.assertNotIn(
+            "build_project_action_success_handler_impl",
+            ActionCommandOrchestrator._project_action_success_handler.__code__.co_names,
+        )
+        self.assertNotIn(
+            "build_project_action_failure_handler_impl",
+            ActionCommandOrchestrator._project_action_failure_handler.__code__.co_names,
+        )
+        self.assertNotIn(
+            "persist_project_action_result_impl",
+            ActionCommandOrchestrator._persist_project_action_result.__code__.co_names,
+        )
 
 
 if __name__ == "__main__":

@@ -104,13 +104,15 @@ from envctl_engine.actions.action_test_plan_support import (
     suite_spinner_policy_enabled as suite_spinner_policy_enabled_impl,
 )
 from envctl_engine.actions.project_action_report_support import (
-    build_project_action_failure_handler as build_project_action_failure_handler_impl,
-    build_project_action_success_handler as build_project_action_success_handler_impl,
     first_output_line as first_output_line_impl,
-    persist_project_action_result as persist_project_action_result_impl,
     project_action_success_status as project_action_success_status_impl,
     review_success_artifact_paths as review_success_artifact_paths_impl,
     write_project_action_failure_report as write_project_action_failure_report_impl,
+)
+from envctl_engine.actions.action_project_report_owner import (
+    persist_project_action_result_with_owner,
+    project_action_failure_handler as project_action_failure_handler_impl,
+    project_action_success_handler as project_action_success_handler_impl,
 )
 from envctl_engine.actions.project_action_env_support import (
     action_env as action_env_impl,
@@ -546,28 +548,14 @@ class ActionCommandOrchestrator:
         mode: str,
         interactive_command: bool,
     ) -> Callable[[ActionTargetContext, Any], None] | None:
-        return build_project_action_success_handler_impl(
-            command_name=command_name,
-            mode=mode,
-            interactive_command=interactive_command,
-            clear_dashboard_pr_cache=self._clear_dashboard_pr_cache,
-            project_action_success_status_fn=self._project_action_success_status,
-            review_success_artifact_paths_fn=self._review_success_artifact_paths,
-            persist_project_action_result_fn=self._persist_project_action_result,
-            first_output_line_fn=self._first_output_line,
-            emit_status=self._emit_status,
-        )
+        return project_action_success_handler_impl(self, command_name, mode, interactive_command)
 
     def _project_action_failure_handler(
         self,
         command_name: str,
         mode: str,
     ) -> Callable[[ActionTargetContext, str], None]:
-        return build_project_action_failure_handler_impl(
-            command_name=command_name,
-            mode=mode,
-            persist_project_action_result_fn=self._persist_project_action_result,
-        )
+        return project_action_failure_handler_impl(self, command_name, mode)
 
     def _persist_project_action_result(
         self,
@@ -579,17 +567,13 @@ class ActionCommandOrchestrator:
         error_output: str,
         extra_entry: Mapping[str, object] | None = None,
     ) -> None:
-        persist_project_action_result_impl(
-            runtime=self.runtime,
+        persist_project_action_result_with_owner(
+            self,
             command_name=command_name,
             mode=mode,
             project_name=project_name,
             status=status,
             error_output=error_output,
-            migrate_env_contracts=self._migrate_env_contracts,
-            failure_summary_lines=self._project_action_failure_summary_lines,
-            failure_headline=self._migrate_failure_headline,
-            runtime_map_builder=build_runtime_map,
             extra_entry=extra_entry,
         )
 
