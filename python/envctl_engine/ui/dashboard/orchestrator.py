@@ -1784,7 +1784,6 @@ class DashboardOrchestrator:
         try:
             return list(
                 _tree_preselected_projects_from_state_impl(
-                    startup,
                     runtime=runtime,
                     project_contexts=cast(Any, projects),
                 )

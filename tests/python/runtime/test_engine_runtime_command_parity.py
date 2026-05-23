@@ -557,6 +557,48 @@ class EngineRuntimeCommandParityTests(unittest.TestCase):
 
         self.assertEqual(code, expected_code)
 
+    def test_action_entrypoint_methods_delegate_to_action_support(self) -> None:
+        for method_name in (
+            "_run_action_command",
+            "_resolve_action_targets",
+            "_run_test_action",
+            "_run_pr_action",
+            "_run_commit_action",
+            "_run_analyze_action",
+            "_run_migrate_action",
+            "_run_project_action",
+            "_action_replacements",
+            "_action_env",
+            "_action_extra_env",
+        ):
+            with self.subTest(method=method_name):
+                self.assertLessEqual(len(getattr(PythonEngineRuntime, method_name).__code__.co_names), 3)
+
+    def test_service_policy_and_command_methods_delegate_to_runtime_owners(self) -> None:
+        for method_name in (
+            "_service_rebound_max_delta",
+            "_service_listener_timeout",
+            "_service_startup_progress_timeout",
+            "_dashboard_truth_refresh_seconds",
+            "_dashboard_reconcile_for_snapshot",
+            "_service_truth_timeout",
+            "_service_startup_grace_seconds",
+            "_service_within_startup_grace",
+            "_requirement_command",
+            "_requirement_command_source",
+            "_requirement_command_resolved",
+            "_service_start_command",
+            "_service_command_source",
+            "_service_start_command_resolved",
+            "_command_override_value",
+            "_split_command",
+            "_command_env",
+            "_default_python_executable",
+            "_command_exists",
+        ):
+            with self.subTest(method=method_name):
+                self.assertLessEqual(len(getattr(PythonEngineRuntime, method_name).__code__.co_names), 3)
+
     def test_run_migrate_action_method_delegates_to_action_command_orchestrator(self) -> None:
         runtime = self._runtime()
         route = parse_route(["migrate"], env={})
