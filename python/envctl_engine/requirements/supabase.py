@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import time
 from pathlib import Path
 
@@ -693,6 +695,7 @@ from envctl_engine.requirements.supabase_lifecycle.compose import (
     _compose_up_timeout_seconds,
     _is_compose_port_publish_stall,
     _compose_timeout_recovered,
+    _compose_services_started,
 )
 
 # Re-export gateway symbols for backwards compatibility
@@ -719,6 +722,16 @@ from envctl_engine.requirements.supabase_lifecycle.probe import (
     _record_compose_network_recovery_stage,
     _is_compose_network_recovery_marker,
     _probe_supabase_auth_health_with_attempts,
+    _probe_supabase_auth_health,
+    _condense_probe_error,
 )
 
 # Re-export reliability contract symbols for backwards compatibility
+from envctl_engine.requirements.supabase_lifecycle.reliability_contract import (
+    evaluate_managed_supabase_reliability_contract,
+    evaluate_supabase_reliability_contract,
+    read_fingerprint,
+    write_fingerprint,
+    SupabaseReliabilityContract,
+)
+

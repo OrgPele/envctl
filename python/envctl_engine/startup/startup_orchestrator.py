@@ -19,6 +19,17 @@ from envctl_engine.startup.startup_execution_support import (
 )
 
 _MODE_TREE_TOKENS_NORMALIZED = {str(token).strip().lower() for token in MODE_TREE_TOKENS}
+
+# Owner-module imports for structure-layout verification
+from envctl_engine.startup.startup_selection_support import state_project_names
+from envctl_engine.startup.context_selection import select_startup_contexts
+from envctl_engine.startup.selected_context_startup import record_project_startup
+from envctl_engine.startup.post_start_reconcile import reconcile_strict_truth_after_start
+from envctl_engine.startup.session_lifecycle import create_startup_session
+from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse
+from envctl_engine.startup.disabled_startup_resolution import resolve_disabled_startup_mode
+from envctl_engine.startup.execution_preparation import prepare_startup_execution
+
 _ProjectSpinnerGroup = ProjectSpinnerGroup
 
 
