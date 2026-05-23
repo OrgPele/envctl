@@ -7,6 +7,11 @@ import subprocess
 import sys
 from typing import Any, Literal, Mapping, cast
 
+from envctl_engine.actions.action_migrate_support import (
+    migrate_failure_headline,
+    migrate_result_record,
+    print_migrate_result_records,
+)
 from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator
 from envctl_engine.dashboard_metadata import (
     DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
@@ -421,7 +426,8 @@ class DashboardOrchestrator:
             project_name = str(project_name_raw).strip()
             project_entry = metadata.get(project_name)
             action_entry = project_entry.get("migrate") if isinstance(project_entry, dict) else None
-            record = ActionCommandOrchestrator._migrate_result_record(
+            record = migrate_result_record(
+                failure_headline=migrate_failure_headline,
                 project_name=project_name,
                 action_entry=action_entry,
             )
@@ -430,7 +436,7 @@ class DashboardOrchestrator:
             records.append(record)
         if not records:
             return False
-        ActionCommandOrchestrator._print_migrate_result_records(
+        print_migrate_result_records(
             records=records,
             env=getattr(self.runtime, "env", {}),
             interactive_tty=True,
