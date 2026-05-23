@@ -19,6 +19,7 @@ PYTHON_ROOT = REPO_ROOT / "python"
 actions_test_module = importlib.import_module("envctl_engine.actions.actions_test")
 action_test_support_module = importlib.import_module("envctl_engine.actions.action_test_support")
 action_command_orchestrator_module = importlib.import_module("envctl_engine.actions.action_command_orchestrator")
+from envctl_engine.actions.action_test_summary_support import default_git_state_components
 action_test_summary_support_module = importlib.import_module("envctl_engine.actions.action_test_summary_support")
 action_migrate_support_module = importlib.import_module("envctl_engine.actions.action_migrate_support")
 command_router_module = importlib.import_module("envctl_engine.runtime.command_router")
@@ -2778,7 +2779,7 @@ class ActionsParityTests(unittest.TestCase):
                     )
                 },
             )
-            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            head, status_hash, status_lines = default_git_state_components(repo)
             manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_100000" / "Main"
             manifest_dir.mkdir(parents=True, exist_ok=True)
             manifest_path = manifest_dir / "failed_tests_manifest.json"
@@ -2874,7 +2875,7 @@ class ActionsParityTests(unittest.TestCase):
                     )
                 },
             )
-            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            head, status_hash, status_lines = default_git_state_components(repo)
             manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_100500" / "Main"
             manifest_dir.mkdir(parents=True, exist_ok=True)
             manifest_path = manifest_dir / "failed_tests_manifest.json"
@@ -2969,7 +2970,7 @@ class ActionsParityTests(unittest.TestCase):
                     )
                 },
             )
-            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            head, status_hash, status_lines = default_git_state_components(repo)
             manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_101000" / "Main"
             manifest_dir.mkdir(parents=True, exist_ok=True)
             manifest_path = manifest_dir / "failed_tests_manifest.json"
@@ -3073,7 +3074,7 @@ class ActionsParityTests(unittest.TestCase):
                     )
                 },
             )
-            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            head, status_hash, status_lines = default_git_state_components(repo)
             manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_101500" / "Main"
             manifest_dir.mkdir(parents=True, exist_ok=True)
             manifest_path = manifest_dir / "failed_tests_manifest.json"
@@ -3172,7 +3173,7 @@ class ActionsParityTests(unittest.TestCase):
                     )
                 },
             )
-            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            head, status_hash, status_lines = default_git_state_components(repo)
             manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260313_031100" / "Main"
             manifest_dir.mkdir(parents=True, exist_ok=True)
             manifest_path = manifest_dir / "failed_tests_manifest.json"
@@ -3353,7 +3354,7 @@ class ActionsParityTests(unittest.TestCase):
                 },
                 metadata={},
             )
-            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            head, status_hash, status_lines = default_git_state_components(repo)
             manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_103500" / "Main"
             manifest_dir.mkdir(parents=True, exist_ok=True)
             manifest_path = manifest_dir / "failed_tests_manifest.json"
@@ -3429,7 +3430,7 @@ class ActionsParityTests(unittest.TestCase):
                     )
                 },
             )
-            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            head, status_hash, status_lines = default_git_state_components(repo)
             manifest_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_104000" / "Main"
             manifest_dir.mkdir(parents=True, exist_ok=True)
             manifest_path = manifest_dir / "failed_tests_manifest.json"
@@ -4105,7 +4106,7 @@ class ActionsParityTests(unittest.TestCase):
                     )
                 },
             )
-            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            head, status_hash, status_lines = default_git_state_components(repo)
             previous_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260312_100000" / "Main"
             previous_dir.mkdir(parents=True, exist_ok=True)
             previous_manifest_path = previous_dir / "failed_tests_manifest.json"
@@ -5651,7 +5652,7 @@ class ActionsParityTests(unittest.TestCase):
                     )
                 },
             )
-            head, status_hash, status_lines = ActionCommandOrchestrator._git_state_components(repo)
+            head, status_hash, status_lines = default_git_state_components(repo)
             previous_dir = engine.runtime_root / "runs" / state.run_id / "test-results" / "run_20260319_120000" / "Main"
             previous_dir.mkdir(parents=True, exist_ok=True)
             previous_manifest_path = previous_dir / "failed_tests_manifest.json"

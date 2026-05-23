@@ -47,7 +47,6 @@ from envctl_engine.actions.action_test_summary_support import (
     collect_failed_tests as collect_failed_tests_impl,
     collect_generic_suite_failures as collect_generic_suite_failures_impl,
     collect_suite_failure_contexts as collect_suite_failure_contexts_impl,
-    default_git_state_components as git_state_components_impl,
     new_test_results_run_dir_path as new_test_results_run_dir_path_impl,
     persist_test_summary_artifacts_for_orchestrator,
     print_test_suite_overview_for_orchestrator,
@@ -619,10 +618,6 @@ class ActionCommandOrchestrator:
     @staticmethod
     def _resolve_failed_test_error(error_details: dict[str, object], test_name: str) -> str:
         return resolve_failed_test_error_impl(error_details, test_name)
-
-    @staticmethod
-    def _git_state_components(project_root: Path) -> tuple[str, str, int]:
-        return git_state_components_impl(project_root)
 
     @staticmethod
     def _suite_display_name(source: str, *, failed_only: bool = False) -> str:
