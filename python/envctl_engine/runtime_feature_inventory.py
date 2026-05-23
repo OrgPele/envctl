@@ -252,7 +252,9 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         user_visible=True,
         shell_source_of_truth=(),
         python_source_of_truth=(
+            "python/envctl_engine/actions/action_pr_message_support.py",
             "python/envctl_engine/actions/action_protected_artifacts.py",
+            "python/envctl_engine/actions/action_ship_support.py",
             "python/envctl_engine/actions/project_action_domain.py",
             "python/envctl_engine/actions/actions_git.py",
         ),
@@ -276,6 +278,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         user_visible=True,
         shell_source_of_truth=(),
         python_source_of_truth=(
+            "python/envctl_engine/actions/action_pr_message_support.py",
             "python/envctl_engine/actions/action_protected_artifacts.py",
             "python/envctl_engine/actions/project_action_domain.py",
             "python/envctl_engine/actions/actions_git.py",

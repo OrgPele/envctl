@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-23T23:37:37+00:00",
+  "generated_at": "2026-05-23T23:52:01+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -496,6 +496,7 @@
       "user_visible": true,
       "shell_source_of_truth": [],
       "python_source_of_truth": [
+        "python/envctl_engine/actions/action_pr_message_support.py",
         "python/envctl_engine/actions/action_protected_artifacts.py",
         "python/envctl_engine/actions/project_action_domain.py",
         "python/envctl_engine/actions/actions_git.py"
@@ -958,7 +959,9 @@
       "user_visible": true,
       "shell_source_of_truth": [],
       "python_source_of_truth": [
+        "python/envctl_engine/actions/action_pr_message_support.py",
         "python/envctl_engine/actions/action_protected_artifacts.py",
+        "python/envctl_engine/actions/action_ship_support.py",
         "python/envctl_engine/actions/project_action_domain.py",
         "python/envctl_engine/actions/actions_git.py"
       ],

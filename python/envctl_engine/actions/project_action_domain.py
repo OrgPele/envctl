@@ -14,6 +14,8 @@ import tempfile
 import time
 from typing import Mapping
 
+import envctl_engine.actions.action_pr_message_support as pr_message_support
+import envctl_engine.actions.action_ship_support as ship_support
 from envctl_engine.actions.action_protected_artifacts import (
     EnvctlProtectedPathPartition,
     ordered_unique_paths as _ordered_unique_paths,
@@ -51,11 +53,24 @@ __all__ = [
     "ReviewBaseResolution",
     "ReviewBaseResolutionError",
     "_display_path",
+    "_latest_changelog_commit_message",
+    "_main_task_title",
+    "_normalize_text_block",
+    "_normalize_title_text",
+    "_parse_merge_tree_conflicts",
     "_partition_envctl_protected_paths",
+    "_pr_body",
+    "_pr_commit_messages",
+    "_pr_diff_stat",
+    "_pr_title",
     "_print_review_completion",
     "_print_review_completion_rich",
+    "_read_text",
     "_review_colorizer",
     "_status_candidate_path",
+    "_truncate_pr_body",
+    "_unmerged_stage_entries",
+    "_write_pr_body_file",
     "detect_default_branch",
     "existing_pr_url",
     "probe_dirty_worktree",
@@ -226,6 +241,109 @@ def run_commit_action(context: ActionProjectContext) -> int:
 
 def _unstage_envctl_protected_paths(git_root: Path, paths: list[str]) -> subprocess.CompletedProcess[str]:
     return _run_git(git_root, ["reset", "-q", "--", *paths])
+
+
+def _pr_title(context: ActionProjectContext, git_root: Path, head_branch: str) -> str:
+    return pr_message_support.pr_title(
+        context,
+        git_root,
+        head_branch,
+        git_output=_git_output,
+        max_chars=PR_TITLE_MAX_CHARS,
+    )
+
+
+def _pr_body(context: ActionProjectContext, git_root: Path, head_branch: str, base_branch: str) -> str:
+    return pr_message_support.pr_body(
+        context,
+        git_root,
+        head_branch,
+        base_branch,
+        git_output=_git_output,
+        max_chars=PR_BODY_MAX_CHARS,
+    )
+
+
+def _pr_commit_messages(git_root: Path, *, head_branch: str, base_branch: str) -> str:
+    return pr_message_support.pr_commit_messages(
+        git_root,
+        head_branch=head_branch,
+        base_branch=base_branch,
+        git_output=_git_output,
+        max_chars=PR_BODY_MAX_CHARS,
+    )
+
+
+def _pr_diff_stat(git_root: Path, *, head_branch: str, base_branch: str) -> str:
+    return pr_message_support.pr_diff_stat(
+        git_root,
+        head_branch=head_branch,
+        base_branch=base_branch,
+        git_output=_git_output,
+    )
+
+
+def _pr_commit_range(git_root: Path, *, head_branch: str, base_branch: str) -> str:
+    return pr_message_support.pr_commit_range(
+        git_root,
+        head_branch=head_branch,
+        base_branch=base_branch,
+        git_output=_git_output,
+    )
+
+
+def _pr_compare_range(git_root: Path, *, head_branch: str, base_branch: str) -> str:
+    return pr_message_support.pr_compare_range(
+        git_root,
+        head_branch=head_branch,
+        base_branch=base_branch,
+        git_output=_git_output,
+    )
+
+
+def _pr_base_ref(git_root: Path, base_branch: str) -> str:
+    return pr_message_support.pr_base_ref(git_root, base_branch, git_output=_git_output)
+
+
+def _existing_merge_conflict_report(git_root: Path, *, branch: str) -> dict[str, object]:
+    return ship_support.existing_merge_conflict_report(git_root, branch=branch, git_output=_git_output)
+
+
+def _predicted_merge_conflict_report(
+    context: ActionProjectContext,
+    git_root: Path,
+    *,
+    branch: str,
+) -> dict[str, object]:
+    return ship_support.predicted_merge_conflict_report(
+        context,
+        git_root,
+        branch=branch,
+        resolve_base_branch=_resolve_pr_base_branch,
+        resolve_base_ref=_pr_base_ref,
+        run_git=_run_git,
+        git_output=_git_output,
+    )
+
+
+def _unmerged_stage_entries(git_root: Path) -> dict[str, list[dict[str, str]]]:
+    return ship_support.unmerged_stage_entries(git_root, git_output=_git_output)
+
+
+_parse_merge_tree_conflicts = ship_support.parse_merge_tree_conflicts
+_github_pr_checks = ship_support.github_pr_checks
+_ship_payload = ship_support.ship_payload
+_print_ship_result = ship_support.print_ship_result
+_recent_text_excerpt = pr_message_support.recent_text_excerpt
+_truncate_recent_entries = pr_message_support.truncate_recent_entries
+_latest_changelog_commit_message = pr_message_support.latest_changelog_commit_message
+_select_changelog_subject = pr_message_support.select_changelog_subject
+_main_task_title = pr_message_support.main_task_title_from_project
+_normalize_title_text = pr_message_support.normalize_title_text
+_truncate_pr_body = pr_message_support.truncate_pr_body
+_normalize_text_block = pr_message_support.normalize_text_block
+_read_text = pr_message_support.read_text
+_write_pr_body_file = pr_message_support.write_pr_body_file
 
 
 def run_pr_action(context: ActionProjectContext) -> int:
@@ -433,261 +551,6 @@ def _ship_protected_paths(git_root: Path) -> list[str]:
     status_output = _git_output(git_root, ["status", "--porcelain", "--untracked-files=all"])
     partition = _partition_envctl_protected_paths(status_output)
     return _ordered_unique_paths(partition.protected_staged_paths, partition.protected_skipped_paths)
-
-
-def _existing_merge_conflict_report(git_root: Path, *, branch: str) -> dict[str, object]:
-    paths = [path for path in _git_output(git_root, ["diff", "--name-only", "--diff-filter=U"]).splitlines() if path]
-    if not paths:
-        return {
-            "state": "clean",
-            "type": "unmerged_index",
-            "base_ref": "",
-            "head_ref": branch or "HEAD",
-            "merge_base": "",
-            "conflicting_files": [],
-            "resolution_steps": [],
-            "messages": [],
-        }
-    stage_entries = _unmerged_stage_entries(git_root)
-    files: list[dict[str, object]] = []
-    for path in paths:
-        entries = stage_entries.get(path, [])
-        stages = sorted({str(entry.get("stage", "")) for entry in entries if entry.get("stage")})
-        files.append(
-            {
-                "path": path,
-                "kind": "unmerged_index",
-                "stages": stages,
-                "stage_entries": entries,
-                "messages": [f"Unmerged index entries exist for {path}."],
-            }
-        )
-    return {
-        "state": "conflicts",
-        "type": "unmerged_index",
-        "base_ref": "",
-        "head_ref": branch or "HEAD",
-        "merge_base": "",
-        "conflicting_files": files,
-        "resolution_steps": [
-            "Open each conflicting file and resolve conflict markers.",
-            "git add <resolved-file>",
-            "rerun envctl ship --project <name> --json",
-        ],
-        "messages": ["The worktree already has unresolved merge conflicts."],
-    }
-
-
-def _predicted_merge_conflict_report(
-    context: ActionProjectContext,
-    git_root: Path,
-    *,
-    branch: str,
-) -> dict[str, object]:
-    base_branch = _resolve_pr_base_branch(context, git_root)
-    base_ref = _pr_base_ref(git_root, base_branch)
-    if not base_ref:
-        return {
-            "state": "unknown",
-            "type": "predicted_merge",
-            "base_branch": base_branch,
-            "base_ref": "",
-            "head_ref": "HEAD",
-            "merge_base": "",
-            "conflicting_files": [],
-            "resolution_steps": [],
-            "messages": [f"Unable to resolve PR base branch '{base_branch}' for conflict prediction."],
-        }
-    merge_base = _git_output(git_root, ["merge-base", "HEAD", base_ref]).strip()
-    completed = _run_git(git_root, ["merge-tree", "--write-tree", "--messages", "--name-only", "HEAD", base_ref])
-    if completed.returncode == 0:
-        return {
-            "state": "clean",
-            "type": "predicted_merge",
-            "base_branch": base_branch,
-            "base_ref": base_ref,
-            "head_ref": "HEAD",
-            "merge_base": merge_base,
-            "conflicting_files": [],
-            "resolution_steps": [],
-            "messages": [],
-        }
-    if completed.returncode == 1:
-        conflict_files = _parse_merge_tree_conflicts(completed.stdout)
-        return {
-            "state": "conflicts",
-            "type": "predicted_merge",
-            "base_branch": base_branch,
-            "base_ref": base_ref,
-            "head_ref": "HEAD",
-            "merge_base": merge_base,
-            "conflicting_files": conflict_files,
-            "resolution_steps": [
-                f"git fetch origin {base_branch}",
-                f"git merge {base_ref}",
-                "Resolve each file listed in merge_conflicts.conflicting_files.",
-                "git add <resolved-file>",
-                "rerun envctl ship --project <name> --json",
-            ],
-            "messages": [line for line in completed.stdout.splitlines() if line.strip().startswith("CONFLICT")],
-        }
-    return {
-        "state": "unknown",
-        "type": "predicted_merge",
-        "base_branch": base_branch,
-        "base_ref": base_ref,
-        "head_ref": "HEAD",
-        "merge_base": merge_base,
-        "conflicting_files": [],
-        "resolution_steps": [],
-        "messages": [(completed.stderr or completed.stdout).strip()],
-    }
-
-
-def _unmerged_stage_entries(git_root: Path) -> dict[str, list[dict[str, str]]]:
-    entries: dict[str, list[dict[str, str]]] = {}
-    for line in _git_output(git_root, ["ls-files", "-u"]).splitlines():
-        left, sep, path = line.partition("\t")
-        if not sep or not path:
-            continue
-        parts = left.split()
-        if len(parts) < 3:
-            continue
-        entry = {"mode": parts[0], "object": parts[1], "stage": parts[2], "path": path}
-        entries.setdefault(path, []).append(entry)
-    return entries
-
-
-def _parse_merge_tree_conflicts(output: str) -> list[dict[str, object]]:
-    lines = output.splitlines()
-    path_lines: list[str] = []
-    message_lines: list[str] = []
-    reading_paths = False
-    for index, line in enumerate(lines):
-        if index == 0:
-            reading_paths = True
-            continue
-        if reading_paths and not line.strip():
-            reading_paths = False
-            continue
-        if reading_paths:
-            path_lines.append(line.strip())
-        elif line.strip():
-            message_lines.append(line.strip())
-    files: list[dict[str, object]] = []
-    for path in path_lines:
-        messages = [line for line in message_lines if path in line]
-        messages = sorted(messages, key=lambda line: 0 if line.startswith("CONFLICT") else 1)
-        files.append(
-            {
-                "path": path,
-                "kind": "predicted_merge",
-                "messages": messages or list(message_lines),
-            }
-        )
-    return files
-
-
-def _github_pr_checks(git_root: Path, *, branch: str, pr_url: str) -> dict[str, object]:
-    del pr_url
-    gh_path = shutil.which("gh")
-    if gh_path is None:
-        return {
-            "state": "gh_unavailable",
-            "failing_checks": [],
-            "pending_checks": [],
-            "duration_seconds": 0.0,
-        }
-    started = time.monotonic()
-    completed = subprocess.run(
-        [gh_path, "pr", "checks", branch, "--json", "name,state,workflow,link"],
-        cwd=str(git_root),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    duration = round(time.monotonic() - started, 3)
-    if completed.returncode != 0:
-        return {
-            "state": "checks_pending_timeout",
-            "failing_checks": [],
-            "pending_checks": [],
-            "duration_seconds": duration,
-            "error": (completed.stderr or completed.stdout).strip(),
-        }
-    try:
-        loaded = json.loads(completed.stdout or "[]")
-    except json.JSONDecodeError:
-        loaded = []
-    checks = loaded if isinstance(loaded, list) else []
-    failing_states = {"FAILURE", "FAILED", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
-    passing_states = {"SUCCESS", "PASSED", "COMPLETED", "NEUTRAL", "SKIPPED"}
-    failing = [check for check in checks if str(check.get("state", "")).upper() in failing_states]
-    pending = [check for check in checks if str(check.get("state", "")).upper() not in failing_states | passing_states]
-    if failing:
-        state = "checks_failed"
-    elif pending:
-        state = "checks_pending_timeout"
-    else:
-        state = "checks_passed"
-    return {
-        "state": state,
-        "failing_checks": failing,
-        "pending_checks": pending,
-        "duration_seconds": duration,
-    }
-
-
-def _ship_payload(
-    *,
-    context: ActionProjectContext,
-    git_root: Path,
-    branch: str,
-    status: str,
-    started: float,
-    commit_sha: str = "",
-    committed: bool = False,
-    pushed: bool = False,
-    pr_url: str = "",
-    pr_created: bool = False,
-    protected_paths: list[str] | None = None,
-    checks: Mapping[str, object] | None = None,
-    step_statuses: list[str] | None = None,
-    merge_conflicts: Mapping[str, object] | None = None,
-) -> dict[str, object]:
-    checks_payload = dict(checks or {})
-    return {
-        "contract_version": "envctl.ship.v1",
-        "project": context.project_name,
-        "project_root": str(context.project_root.resolve()),
-        "repo_root": str(context.repo_root.resolve()),
-        "git_root": str(git_root.resolve()),
-        "branch": branch,
-        "status": status,
-        "step_statuses": step_statuses or [],
-        "commit_sha": commit_sha,
-        "committed": committed,
-        "pushed": pushed,
-        "pr_url": pr_url,
-        "pr_created": pr_created,
-        "checks_state": checks_payload.get("state", ""),
-        "failing_checks": checks_payload.get("failing_checks", []),
-        "pending_checks": checks_payload.get("pending_checks", []),
-        "merge_conflicts": dict(merge_conflicts or {}),
-        "monitor_duration_seconds": checks_payload.get("duration_seconds", 0.0),
-        "duration_seconds": round(time.monotonic() - started, 3),
-        "protected_local_artifacts_skipped": protected_paths or [],
-    }
-
-
-def _print_ship_result(payload: Mapping[str, object], *, json_output: bool, ok: bool) -> int:
-    if json_output:
-        print(json.dumps(dict(payload), indent=2, sort_keys=True))
-    else:
-        status = str(payload.get("status") or "ship_complete")
-        pr_url = str(payload.get("pr_url") or "").strip()
-        print(f"ship: {status}" + (f" {pr_url}" if pr_url else ""))
-    return 0 if ok else 1
 
 
 def run_review_action(context: ActionProjectContext) -> int:
@@ -1228,235 +1091,6 @@ def _load_worktree_provenance(project_root: Path) -> Mapping[str, object] | None
     if schema_version > WORKTREE_PROVENANCE_SCHEMA_VERSION:
         return None
     return loaded
-
-
-def _pr_title(context: ActionProjectContext, git_root: Path, head_branch: str) -> str:
-    explicit = _normalize_title_text(str(context.env.get("ENVCTL_PR_TITLE", "")))
-    if explicit:
-        return explicit[:PR_TITLE_MAX_CHARS].rstrip() or head_branch
-    main_task_title = _main_task_title(context.project_root)
-    if main_task_title:
-        return main_task_title[:PR_TITLE_MAX_CHARS].rstrip() or head_branch
-    subject = _git_output(git_root, ["log", "-1", "--pretty=%s"]).strip()
-    title = subject or f"{context.project_name}: {head_branch}"
-    title = " ".join(title.split())
-    return title[:PR_TITLE_MAX_CHARS].rstrip() or head_branch
-
-
-def _pr_body(context: ActionProjectContext, git_root: Path, head_branch: str, base_branch: str) -> str:
-    explicit_body = _normalize_text_block(str(context.env.get("ENVCTL_PR_BODY", "")))
-    if explicit_body:
-        return _truncate_pr_body(explicit_body, max_chars=PR_BODY_MAX_CHARS)
-
-    main_task = context.project_root / "MAIN_TASK.md"
-    if main_task.is_file() and _file_has_text(main_task):
-        return _truncate_pr_body(_read_text(main_task), max_chars=PR_BODY_MAX_CHARS)
-
-    commits = _pr_commit_messages(git_root, head_branch=head_branch, base_branch=base_branch)
-    if commits:
-        return _truncate_pr_body(commits, max_chars=PR_BODY_MAX_CHARS)
-    return ""
-
-
-def _pr_commit_messages(git_root: Path, *, head_branch: str, base_branch: str) -> str:
-    range_spec = _pr_commit_range(git_root, head_branch=head_branch, base_branch=base_branch)
-    raw = _git_output(git_root, ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", range_spec])
-    entries: list[str] = []
-    for chunk in raw.split("\x1e"):
-        normalized = chunk.strip()
-        if not normalized:
-            continue
-        parts = normalized.split("\x1f", 2)
-        short_hash = parts[0].strip() if len(parts) > 0 else ""
-        subject = " ".join((parts[1] if len(parts) > 1 else "").split()).strip()
-        body = _normalize_text_block(parts[2] if len(parts) > 2 else "")
-        if not short_hash and not subject and not body:
-            continue
-        header = f"- {subject or short_hash}"
-        if short_hash and subject:
-            header = f"- {subject} ({short_hash})"
-        entry_lines = [header]
-        if body:
-            entry_lines.append("")
-            entry_lines.extend(f"  {line}" if line else "" for line in body.splitlines())
-        entries.append("\n".join(entry_lines).strip())
-    if not entries:
-        return ""
-    return _truncate_recent_entries(
-        entries, max_chars=PR_BODY_MAX_CHARS - 8_000, notice="[truncated to most recent commit messages]"
-    )
-
-
-def _pr_diff_stat(git_root: Path, *, head_branch: str, base_branch: str) -> str:
-    diff_args = ["diff", "--stat"]
-    if base_branch:
-        diff_args.append(_pr_compare_range(git_root, head_branch=head_branch, base_branch=base_branch))
-    diff_stat = _git_output(git_root, diff_args).strip()
-    return _truncate_pr_body(diff_stat, max_chars=8_000) if diff_stat else ""
-
-
-def _pr_commit_range(git_root: Path, *, head_branch: str, base_branch: str) -> str:
-    head_ref = head_branch or "HEAD"
-    if not base_branch:
-        return head_ref
-    base_ref = _pr_base_ref(git_root, base_branch)
-    merge_base = _git_output(git_root, ["merge-base", head_ref, base_ref]).strip()
-    if merge_base:
-        return f"{merge_base}..{head_ref}"
-    return f"{base_ref}..{head_ref}"
-
-
-def _pr_compare_range(git_root: Path, *, head_branch: str, base_branch: str) -> str:
-    head_ref = head_branch or "HEAD"
-    if not base_branch:
-        return head_ref
-    base_ref = _pr_base_ref(git_root, base_branch)
-    return f"{base_ref}...{head_ref}"
-
-
-def _pr_base_ref(git_root: Path, base_branch: str) -> str:
-    remote_candidate = f"origin/{base_branch}"
-    if _git_output(git_root, ["rev-parse", "--verify", remote_candidate]).strip():
-        return remote_candidate
-    if _git_output(git_root, ["rev-parse", "--verify", base_branch]).strip():
-        return base_branch
-    return base_branch
-
-
-def _recent_text_excerpt(text: str, *, max_chars: int) -> str:
-    cleaned = _normalize_text_block(text)
-    if len(cleaned) <= max_chars:
-        return cleaned
-    notice = "[truncated to most recent changelog content]\n\n"
-    tail_limit = max(0, max_chars - len(notice))
-    tail = cleaned[-tail_limit:] if tail_limit else ""
-    if "\n" in tail:
-        tail = tail.split("\n", 1)[1]
-    return f"{notice}{tail}".strip()
-
-
-def _truncate_recent_entries(entries: list[str], *, max_chars: int, notice: str) -> str:
-    cleaned_entries = [entry.strip() for entry in entries if entry.strip()]
-    if not cleaned_entries:
-        return ""
-    full_text = "\n\n".join(cleaned_entries).strip()
-    if len(full_text) <= max_chars:
-        return full_text
-    notice_block = f"{notice}\n\n"
-    keep_limit = max(0, max_chars - len(notice_block))
-    kept: list[str] = []
-    current_len = 0
-    for entry in reversed(cleaned_entries):
-        extra = len(entry) + (2 if kept else 0)
-        if current_len + extra > keep_limit:
-            break
-        kept.append(entry)
-        current_len += extra
-    if not kept:
-        tail = full_text[-keep_limit:] if keep_limit else ""
-        if "\n" in tail:
-            tail = tail.split("\n", 1)[1]
-        return f"{notice_block}{tail}".strip()
-    kept.reverse()
-    return f"{notice_block}{'\n\n'.join(kept)}".strip()
-
-
-def _latest_changelog_commit_message(text: str, *, max_chars: int) -> str:
-    normalized = _normalize_text_block(text)
-    if not normalized:
-        return ""
-    lines = normalized.splitlines()
-    latest_heading = ""
-    section_lines: list[str] = []
-    inside_latest_section = False
-    for line in lines:
-        if line.startswith("## "):
-            if inside_latest_section:
-                break
-            latest_heading = line[3:].strip()
-            inside_latest_section = True
-            continue
-        if inside_latest_section:
-            section_lines.append(line)
-    if not inside_latest_section:
-        return _truncate_pr_body(normalized, max_chars=max_chars)
-    body = _normalize_text_block("\n".join(section_lines))
-    if body:
-        subject, remainder = _select_changelog_subject(body, fallback=latest_heading)
-        if not subject:
-            subject = latest_heading
-        commit_message = subject if not remainder else f"{subject}\n\n{remainder}"
-        return _truncate_pr_body(commit_message, max_chars=max_chars)
-    if latest_heading:
-        return _truncate_pr_body(latest_heading, max_chars=max_chars)
-    return ""
-
-
-def _select_changelog_subject(body: str, *, fallback: str) -> tuple[str, str]:
-    lines = body.splitlines()
-    subject_index = -1
-    for index, raw_line in enumerate(lines):
-        line = raw_line.strip()
-        if not line:
-            continue
-        if re.match(r"^#{1,6}\s+", line):
-            continue
-        subject_index = index
-        break
-    if subject_index == -1:
-        return fallback.strip(), ""
-    subject = lines[subject_index].strip()
-    remainder = "\n".join(lines[subject_index + 1 :]).strip()
-    return subject, remainder
-
-
-def _main_task_title(project_root: Path) -> str:
-    main_task = project_root / "MAIN_TASK.md"
-    if not main_task.is_file():
-        return ""
-    text = _read_text(main_task)
-    if not text.strip():
-        return ""
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line.startswith("# "):
-            continue
-        return _normalize_title_text(line[2:])
-    return ""
-
-
-def _normalize_title_text(text: str) -> str:
-    cleaned = text.replace("`", " ")
-    cleaned = " ".join(cleaned.split())
-    return cleaned.strip()
-
-
-def _truncate_pr_body(text: str, *, max_chars: int) -> str:
-    cleaned = _normalize_text_block(text)
-    if len(cleaned) <= max_chars:
-        return cleaned
-    notice = "\n\n[truncated]"
-    keep = max(0, max_chars - len(notice))
-    return f"{cleaned[:keep].rstrip()}{notice}".strip()
-
-
-def _normalize_text_block(text: str) -> str:
-    normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
-    lines = [line.rstrip() for line in normalized.splitlines()]
-    return "\n".join(lines).strip()
-
-
-def _read_text(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except OSError:
-        return ""
-
-
-def _write_pr_body_file(body: str) -> Path:
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, suffix=".md") as handle:
-        handle.write(body)
-        return Path(handle.name)
 
 
 def _write_commit_message_file(message: str) -> Path:
