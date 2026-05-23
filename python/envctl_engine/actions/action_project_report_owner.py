@@ -11,6 +11,10 @@ from envctl_engine.actions.project_action_report_support import (
     review_success_artifact_paths,
 )
 from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.actions.action_migrate_support import (
+    migrate_failure_headline,
+    project_action_failure_summary_lines,
+)
 
 
 def project_action_success_handler(
@@ -68,8 +72,8 @@ def persist_project_action_result_with_owner(
         status=status,
         error_output=error_output,
         migrate_env_contracts=orchestrator._migrate_env_contracts,
-        failure_summary_lines=orchestrator._project_action_failure_summary_lines,
-        failure_headline=orchestrator._migrate_failure_headline,
+        failure_summary_lines=project_action_failure_summary_lines,
+        failure_headline=migrate_failure_headline,
         runtime_map_builder=build_runtime_map,
         extra_entry=extra_entry,
     )

@@ -16,30 +16,10 @@ from envctl_engine.actions.action_git_command_support import (
     run_ship_action_with_owner,
 )
 from envctl_engine.actions.action_migrate_support import (
-    MigrateProjectContext as _MigrateProjectContext,
-    MigrateResultRecord as _MigrateResultRecord,
-    is_migrate_env_source_hint as is_migrate_env_source_hint_impl,
     migrate_backend_cwd as migrate_backend_cwd_impl,
-    migrate_component_port as migrate_component_port_impl,
-    migrate_env_source_hint_lines as migrate_env_source_hint_lines_impl,
-    migrate_failure_headline as migrate_failure_headline_impl,
-    migrate_failure_headline_from_lines as migrate_failure_headline_from_lines_impl,
-    migrate_failure_hint_lines as migrate_failure_hint_lines_impl,
     migrate_project_context as migrate_project_context_impl,
     migrate_requirements_for_target as migrate_requirements_for_target_impl,
-    migrate_result_record as migrate_result_record_impl,
-    migrate_result_records as migrate_result_records_impl,
-    print_compact_migrate_failure_logs as print_compact_migrate_failure_logs_impl,
-    print_migrate_failure_logs as print_migrate_failure_logs_impl,
-    print_migrate_result_records as print_migrate_result_records_impl,
-    print_migrate_result_summary as print_migrate_result_summary_impl,
-    project_action_failure_summary_lines as project_action_failure_summary_lines_impl,
-    record_index as record_index_impl,
-    render_migrate_project_name as render_migrate_project_name_impl,
-    render_migrate_symbol as render_migrate_symbol_impl,
-    shared_migrate_hint_lines as shared_migrate_hint_lines_impl,
-    shared_report_parent as shared_report_parent_impl,
-    visible_migrate_hint_lines as visible_migrate_hint_lines_impl,
+    MigrateProjectContext as _MigrateProjectContext,
 )
 from envctl_engine.actions.action_migrate_execution_support import (
     run_migrate_action_with_owner,
@@ -67,15 +47,12 @@ from envctl_engine.actions.action_test_summary_support import (
     collect_failed_tests as collect_failed_tests_impl,
     collect_generic_suite_failures as collect_generic_suite_failures_impl,
     collect_suite_failure_contexts as collect_suite_failure_contexts_impl,
-    compact_summary_line as compact_summary_line_impl,
     default_git_state_components as git_state_components_impl,
-    format_summary_error_lines as format_summary_error_lines_impl,
     new_test_results_run_dir_path as new_test_results_run_dir_path_impl,
     persist_test_summary_artifacts_for_orchestrator,
     print_test_suite_overview_for_orchestrator,
     resolve_failed_test_error as resolve_failed_test_error_impl,
     short_failed_summary_path as short_failed_summary_path_impl,
-    structured_summary_lines as structured_summary_lines_impl,
     write_failed_tests_summary_for_orchestrator,
 )
 from envctl_engine.actions.action_test_plan_support import (
@@ -95,8 +72,6 @@ from envctl_engine.actions.action_test_plan_support import (
 from envctl_engine.actions.project_action_report_support import (
     first_output_line as first_output_line_impl,
     project_action_success_status as project_action_success_status_impl,
-    review_success_artifact_paths as review_success_artifact_paths_impl,
-    write_project_action_failure_report as write_project_action_failure_report_impl,
 )
 from envctl_engine.actions.action_project_report_owner import (
     persist_project_action_result_with_owner,
@@ -434,6 +409,34 @@ class ActionCommandOrchestrator:
             resolve_backend_env_contract=_resolve_backend_env_contract,
         )
 
+    @staticmethod
+    def _migrate_backend_cwd(target_root: Path) -> Path:
+        return migrate_backend_cwd_impl(target_root)
+
+    def _migrate_requirements_for_target(
+        self,
+        *,
+        route: Route | None,
+        project_name: str,
+    ) -> RequirementsResult | None:
+        return migrate_requirements_for_target_impl(runtime=self.runtime, route=route, project_name=project_name)
+
+    @staticmethod
+    def _migrate_project_context(
+        *,
+        project_name: str,
+        project_root: Path,
+        requirements: RequirementsResult,
+    ) -> _MigrateProjectContext:
+        return migrate_project_context_impl(
+            project_name=project_name,
+            project_root=project_root,
+            requirements=requirements,
+        )
+    @staticmethod
+    def _noop_restore() -> None:
+        return noop_restore_impl()
+
     def run_delete_worktree_action(self, route: Route) -> int:
         return run_delete_worktree_action_impl(self, route)
 
@@ -491,141 +494,6 @@ class ActionCommandOrchestrator:
             status=status,
             error_output=error_output,
             extra_entry=extra_entry,
-        )
-
-    def _print_migrate_result_summary(
-        self,
-        *,
-        mode: str,
-        project_names: list[str],
-        fallback_entries: Mapping[str, Mapping[str, object]] | None = None,
-    ) -> None:
-        print_migrate_result_summary_impl(
-            runtime=self.runtime,
-            mode=mode,
-            project_names=project_names,
-            fallback_entries=fallback_entries,
-            failure_headline=ActionCommandOrchestrator._migrate_failure_headline,
-        )
-
-    def _migrate_result_records(
-        self,
-        *,
-        mode: str,
-        project_names: list[str],
-        fallback_entries: Mapping[str, Mapping[str, object]] | None = None,
-    ) -> list[_MigrateResultRecord]:
-        return migrate_result_records_impl(
-            runtime=self.runtime,
-            mode=mode,
-            project_names=project_names,
-            fallback_entries=fallback_entries,
-            failure_headline=ActionCommandOrchestrator._migrate_failure_headline,
-        )
-
-    @staticmethod
-    def _migrate_result_record(
-        *,
-        project_name: str,
-        action_entry: Mapping[str, object] | None,
-    ) -> _MigrateResultRecord | None:
-        return migrate_result_record_impl(
-            project_name=project_name,
-            action_entry=action_entry,
-            failure_headline=ActionCommandOrchestrator._migrate_failure_headline,
-        )
-
-    @staticmethod
-    def _print_migrate_result_records(
-        *,
-        records: list[_MigrateResultRecord],
-        env: Mapping[str, str],
-        interactive_tty: bool | None = None,
-    ) -> None:
-        print_migrate_result_records_impl(records=records, env=env, interactive_tty=interactive_tty)
-
-    @staticmethod
-    def _shared_migrate_hint_lines(records: list[_MigrateResultRecord]) -> tuple[str, ...]:
-        return shared_migrate_hint_lines_impl(records)
-
-    @staticmethod
-    def _visible_migrate_hint_lines(hint_lines: tuple[str, ...]) -> tuple[str, ...]:
-        return visible_migrate_hint_lines_impl(hint_lines)
-
-    @staticmethod
-    def _is_migrate_env_source_hint(hint_line: str) -> bool:
-        return is_migrate_env_source_hint_impl(hint_line)
-
-    @staticmethod
-    def _print_migrate_failure_logs(
-        records: list[_MigrateResultRecord],
-        *,
-        env: Mapping[str, str],
-        interactive_tty: bool | None,
-        compact: bool,
-        use_color: bool,
-        ordered_records: list[_MigrateResultRecord],
-    ) -> None:
-        print_migrate_failure_logs_impl(
-            records,
-            env=env,
-            interactive_tty=interactive_tty,
-            compact=compact,
-            use_color=use_color,
-            ordered_records=ordered_records,
-        )
-
-    @staticmethod
-    def _print_compact_migrate_failure_logs(
-        records: list[_MigrateResultRecord],
-        *,
-        env: Mapping[str, str],
-        interactive_tty: bool | None,
-        use_color: bool,
-        ordered_records: list[_MigrateResultRecord],
-    ) -> None:
-        print_compact_migrate_failure_logs_impl(
-            records,
-            env=env,
-            interactive_tty=interactive_tty,
-            use_color=use_color,
-            ordered_records=ordered_records,
-        )
-
-    @staticmethod
-    def _shared_report_parent(records: list[_MigrateResultRecord]) -> str:
-        return shared_report_parent_impl(records)
-
-    @staticmethod
-    def _record_index(records: list[_MigrateResultRecord], project_name: str) -> int:
-        return record_index_impl(records, project_name)
-
-    @staticmethod
-    def _render_migrate_symbol(symbol: str, *, status: str, use_color: bool) -> str:
-        return render_migrate_symbol_impl(symbol, status=status, use_color=use_color)
-
-    @staticmethod
-    def _render_migrate_project_name(project_name: str, *, index: int, use_color: bool) -> str:
-        return render_migrate_project_name_impl(project_name, index=index, use_color=use_color)
-
-    @staticmethod
-    def _review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str, object]:
-        return review_success_artifact_paths_impl(stdout=stdout, stderr=stderr)
-
-    def _write_project_action_failure_report(
-        self,
-        *,
-        run_id: str,
-        project_name: str,
-        command_name: str,
-        output: str,
-    ) -> Path:
-        return write_project_action_failure_report_impl(
-            self.runtime,
-            run_id=run_id,
-            project_name=project_name,
-            command_name=command_name,
-            output=output,
         )
 
     def _clear_dashboard_pr_cache(self) -> None:
@@ -690,6 +558,14 @@ class ActionCommandOrchestrator:
     def _new_test_results_run_dir(self, run_id: str) -> Path:
         return new_test_results_run_dir_path_impl(self.runtime, run_id)
 
+    def _print_test_suite_overview(
+        self,
+        outcomes: list[dict[str, object]],
+        *,
+        summary_metadata: dict[str, dict[str, object]] | None = None,
+    ) -> None:
+        print_test_suite_overview_for_orchestrator(self, outcomes, summary_metadata=summary_metadata)
+
     def _write_failed_tests_summary(
         self,
         *,
@@ -753,92 +629,6 @@ class ActionCommandOrchestrator:
         from envctl_engine.actions.action_test_summary_support import suite_display_name
 
         return suite_display_name(source, failed_only=failed_only)
-
-    def _project_action_failure_summary_lines(
-        self,
-        *,
-        command_name: str,
-        error_output: str,
-        migrate_env_metadata: Mapping[str, object] | None = None,
-    ) -> list[str]:
-        return project_action_failure_summary_lines_impl(
-            command_name=command_name,
-            error_output=error_output,
-            migrate_env_metadata=migrate_env_metadata,
-            format_summary_error_lines=self._format_summary_error_lines,
-        )
-
-    @staticmethod
-    def _migrate_failure_headline(error_output: str) -> str:
-        return migrate_failure_headline_impl(
-            error_output,
-            format_summary_error_lines=ActionCommandOrchestrator._format_summary_error_lines,
-        )
-
-    @staticmethod
-    def _migrate_failure_headline_from_lines(lines: list[str]) -> str:
-        return migrate_failure_headline_from_lines_impl(lines)
-
-    @staticmethod
-    def _migrate_failure_hint_lines(error_output: str) -> list[str]:
-        return migrate_failure_hint_lines_impl(error_output)
-
-    @staticmethod
-    def _migrate_env_source_hint_lines(migrate_env_metadata: Mapping[str, object] | None) -> list[str]:
-        return migrate_env_source_hint_lines_impl(migrate_env_metadata)
-
-    def _migrate_requirements_for_target(
-        self,
-        *,
-        route: Route | None,
-        project_name: str,
-    ) -> RequirementsResult | None:
-        return migrate_requirements_for_target_impl(runtime=self.runtime, route=route, project_name=project_name)
-
-    @staticmethod
-    def _migrate_backend_cwd(target_root: Path) -> Path:
-        return migrate_backend_cwd_impl(target_root)
-
-    @staticmethod
-    def _migrate_project_context(
-        *,
-        project_name: str,
-        project_root: Path,
-        requirements: RequirementsResult,
-    ) -> _MigrateProjectContext:
-        return migrate_project_context_impl(
-            project_name=project_name,
-            project_root=project_root,
-            requirements=requirements,
-        )
-
-    @staticmethod
-    def _migrate_component_port(component: Mapping[str, object]) -> int:
-        return migrate_component_port_impl(component)
-
-    @staticmethod
-    def _format_summary_error_lines(error_text: str) -> list[str]:
-        return format_summary_error_lines_impl(error_text)
-
-    @staticmethod
-    def _compact_summary_line(line: str) -> str:
-        return compact_summary_line_impl(line)
-
-    @staticmethod
-    def _structured_summary_lines(lines: list[str]) -> list[str]:
-        return structured_summary_lines_impl(lines)
-
-    @staticmethod
-    def _noop_restore() -> None:
-        return noop_restore_impl()
-
-    def _print_test_suite_overview(
-        self,
-        outcomes: list[dict[str, object]],
-        *,
-        summary_metadata: dict[str, dict[str, object]] | None = None,
-    ) -> None:
-        print_test_suite_overview_for_orchestrator(self, outcomes, summary_metadata=summary_metadata)
 
     @staticmethod
     def _is_legacy_tree_test_script(command: list[str]) -> bool:

@@ -19,6 +19,8 @@ PYTHON_ROOT = REPO_ROOT / "python"
 actions_test_module = importlib.import_module("envctl_engine.actions.actions_test")
 action_test_support_module = importlib.import_module("envctl_engine.actions.action_test_support")
 action_command_orchestrator_module = importlib.import_module("envctl_engine.actions.action_command_orchestrator")
+action_test_summary_support_module = importlib.import_module("envctl_engine.actions.action_test_summary_support")
+action_migrate_support_module = importlib.import_module("envctl_engine.actions.action_migrate_support")
 command_router_module = importlib.import_module("envctl_engine.runtime.command_router")
 config_module = importlib.import_module("envctl_engine.config")
 engine_runtime_module = importlib.import_module("envctl_engine.runtime.engine_runtime")
@@ -4177,7 +4179,7 @@ class ActionsParityTests(unittest.TestCase):
             self.assertTrue(bool(project_entry.get("preserved_after_failed_only_extraction_failure")))
 
     def test_failed_test_summary_omits_terminal_chrome_and_separator_noise(self) -> None:
-        lines = ActionCommandOrchestrator._format_summary_error_lines(
+        lines = action_test_summary_support_module.format_summary_error_lines(
             "\n".join(
                 [
                     "----------------------------------------------------------------------",
@@ -4199,7 +4201,7 @@ class ActionsParityTests(unittest.TestCase):
         self.assertNotIn("RESULT_SERVICES=", rendered)
 
     def test_failed_test_summary_keeps_relevant_traceback_tail(self) -> None:
-        lines = ActionCommandOrchestrator._format_summary_error_lines(
+        lines = action_test_summary_support_module.format_summary_error_lines(
             "\n".join(
                 [
                     "Traceback (most recent call last):",
@@ -4224,7 +4226,7 @@ class ActionsParityTests(unittest.TestCase):
         self.assertIn("AssertionError: None != ['beta']", rendered)
 
     def test_failed_test_summary_keeps_captured_output_sections(self) -> None:
-        lines = ActionCommandOrchestrator._format_summary_error_lines(
+        lines = action_test_summary_support_module.format_summary_error_lines(
             "\n".join(
                 [
                     "Traceback (most recent call last):",
@@ -4246,7 +4248,7 @@ class ActionsParityTests(unittest.TestCase):
         self.assertIn("mouse event propagated", rendered)
 
     def test_failed_test_summary_keeps_multiline_exception_body(self) -> None:
-        lines = ActionCommandOrchestrator._format_summary_error_lines(
+        lines = action_test_summary_support_module.format_summary_error_lines(
             "\n".join(
                 [
                     "Traceback (most recent call last):",
@@ -4264,7 +4266,7 @@ class ActionsParityTests(unittest.TestCase):
         self.assertIn("details: expected token=beta", rendered)
 
     def test_failed_test_summary_keeps_multiple_user_frames_and_exception_context(self) -> None:
-        lines = ActionCommandOrchestrator._format_summary_error_lines(
+        lines = action_test_summary_support_module.format_summary_error_lines(
             "\n".join(
                 [
                     "Traceback (most recent call last):",
@@ -4294,9 +4296,7 @@ class ActionsParityTests(unittest.TestCase):
         self.assertIn("RuntimeError: wrapper failed", rendered)
 
     def test_migrate_failure_summary_prefers_actionable_exception_headline(self) -> None:
-        orchestrator = ActionCommandOrchestrator(SimpleNamespace())
-
-        lines = orchestrator._project_action_failure_summary_lines(  # noqa: SLF001
+        lines = action_migrate_support_module.project_action_failure_summary_lines(
             command_name="migrate",
             error_output="\n".join(
                 [

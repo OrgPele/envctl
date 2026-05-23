@@ -7,6 +7,11 @@ from envctl_engine.actions.actions_analysis import default_migrate_command
 from envctl_engine.actions.action_target_support import ActionCommandResolution
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.test_output.parser_base import strip_ansi
+from envctl_engine.actions.action_migrate_support import (
+    migrate_failure_headline,
+    print_migrate_result_summary,
+    project_action_failure_summary_lines,
+)
 
 
 def run_migrate_action_with_owner(
@@ -27,9 +32,11 @@ def run_migrate_action_with_owner(
         success_handler=orchestrator._project_action_success_handler("migrate", route.mode, interactive_command),
         failure_handler=orchestrator._project_action_failure_handler("migrate", route.mode),
         emit_status=orchestrator._emit_status,
-        failure_summary_lines=orchestrator._project_action_failure_summary_lines,
-        failure_headline=orchestrator._migrate_failure_headline,
-        print_result_summary=orchestrator._print_migrate_result_summary,
+        failure_summary_lines=project_action_failure_summary_lines,
+        failure_headline=migrate_failure_headline,
+        print_result_summary=lambda **kwargs: print_migrate_result_summary(
+            runtime=orchestrator.runtime, failure_headline=migrate_failure_headline, **kwargs
+        ),
         set_deferred_output=lambda callback: setattr(orchestrator, "_deferred_post_action_output", callback),
         execute_targeted_action_fn=orchestrator.execute_targeted_action_fn,
         migrate_env_contracts=orchestrator._migrate_env_contracts,
