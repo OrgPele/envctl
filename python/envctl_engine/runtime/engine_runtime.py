@@ -16,7 +16,6 @@ from envctl_engine.runtime.engine_runtime_diagnostics import (
     parity_manifest_info as runtime_parity_manifest_info,
     parity_manifest_is_complete as runtime_parity_manifest_is_complete,
     pointer_status_summary as runtime_pointer_status_summary,
-    read_parity_manifest as runtime_read_parity_manifest,
 )
 from envctl_engine.runtime.engine_runtime_debug_support import (
     debug_pack as runtime_debug_pack,
@@ -32,7 +31,6 @@ from envctl_engine.runtime.engine_runtime_misc_support import (
     build_process_probe_backend as runtime_build_process_probe_backend,
     is_truthy as runtime_is_truthy,
     listener_truth_enforced as runtime_listener_truth_enforced,
-    print_logs as runtime_print_logs,
     probe_psutil_enabled as runtime_probe_psutil_enabled,
     recent_failure_messages as runtime_recent_failure_messages,
     release_port_session as runtime_release_port_session,
@@ -43,23 +41,14 @@ from envctl_engine.runtime.engine_runtime_misc_support import (
     should_enter_post_start_interactive as runtime_should_enter_post_start_interactive,
     should_enter_resume_interactive as runtime_should_enter_resume_interactive,
     state_compat_mode as runtime_state_compat_mode,
-    status_color as runtime_status_color,
     tokens_set_mode as runtime_tokens_set_mode,
 )
 from envctl_engine.runtime.engine_runtime_event_support import (
-    auto_debug_pack as runtime_auto_debug_pack,
     bind_debug_run_id as runtime_bind_debug_run_id,
     configure_debug_recorder as runtime_configure_debug_recorder,
     current_session_id as runtime_current_session_id,
-    debug_mode_from_route as runtime_debug_mode_from_route,
-    debug_output_root as runtime_debug_output_root,
-    debug_recorder_config as runtime_debug_recorder_config,
-    debug_should_auto_pack as runtime_debug_should_auto_pack,
-    debug_trace_id_mode as runtime_debug_trace_id_mode,
     emit as runtime_emit,
-    event_trace_id as runtime_event_trace_id,
     persist_events_snapshot as runtime_persist_events_snapshot,
-    sanitize_emit_payload as runtime_sanitize_emit_payload,
 )
 from envctl_engine.runtime.engine_runtime_runtime_support import (
     conflict_count as runtime_conflict_count,
@@ -67,7 +56,6 @@ from envctl_engine.runtime.engine_runtime_runtime_support import (
     lock_inventory as runtime_lock_inventory,
     new_run_id as runtime_new_run_id,
     normalize_log_line as runtime_normalize_log_line,
-    ports_manifest_path as runtime_ports_manifest_path,
     probe_listener_support as runtime_probe_listener_support,
     run_dir_path as runtime_run_dir_path,
     run_state_path as runtime_run_state_path,
@@ -76,19 +64,16 @@ from envctl_engine.runtime.engine_runtime_runtime_support import (
 from envctl_engine.runtime.engine_runtime_lifecycle_support import (
     blast_worktree_before_delete as runtime_blast_worktree_before_delete,
     release_requirement_ports as runtime_release_requirement_ports,
-    requirement_key_for_project as runtime_requirement_key_for_project,
     service_port as runtime_service_port,
     terminate_service_record as runtime_terminate_service_record,
     terminate_services_from_state as runtime_terminate_services_from_state,
     terminate_started_services as runtime_terminate_started_services,
 )
 from envctl_engine.runtime.engine_runtime_startup_support import (
-    auto_resume_start_enabled as runtime_auto_resume_start_enabled,
     contexts_from_raw_projects as runtime_contexts_from_raw_projects,
     discover_projects as runtime_discover_projects,
     duplicate_project_context_error as runtime_duplicate_project_context_error,
     effective_start_mode as runtime_effective_start_mode,
-    load_auto_resume_state as runtime_load_auto_resume_state,
     reserve_project_ports as runtime_reserve_project_ports,
     sanitize_legacy_resume_state as runtime_sanitize_legacy_resume_state,
     set_plan_port as runtime_set_plan_port,
@@ -119,20 +104,16 @@ from envctl_engine.runtime.engine_runtime_commands import (
     split_command as runtime_split_command,
 )
 from envctl_engine.runtime.engine_runtime_env import (
-    effective_main_requirement_flags as runtime_effective_main_requirement_flags,
-    main_requirements_mode as runtime_main_requirements_mode,
     project_service_env as runtime_project_service_env,
     project_service_env_internal as runtime_project_service_env_internal,
     requirement_enabled_for_mode as runtime_requirement_enabled_for_mode,
     requirements_ready as runtime_requirements_ready,
-    service_env_overlays as runtime_service_env_overlays,
     service_enabled_for_mode as runtime_service_enabled_for_mode,
     runtime_env_overrides as runtime_env_overrides,
     skipped_requirement as runtime_skipped_requirement,
     validate_mode_toggles as runtime_validate_mode_toggles,
 )
 from envctl_engine.runtime.engine_runtime_hooks import (
-    hook_bridge_enabled as runtime_hook_bridge_enabled,
     invoke_envctl_hook as runtime_invoke_envctl_hook,
     requirements_result_from_hook_payload as runtime_requirements_result_from_hook_payload,
     startup_hook_contract_issue as runtime_startup_hook_contract_issue,
@@ -147,15 +128,12 @@ from envctl_engine.runtime.engine_runtime_service_truth import (
     command_result_error_text as runtime_command_result_error_text,
     detect_service_actual_port as runtime_detect_service_actual_port,
     listener_pids_for_port as runtime_listener_pids_for_port,
-    process_tree_probe_supported as runtime_process_tree_probe_supported,
     rebind_stale_service_pid as runtime_rebind_stale_service_pid,
     refresh_service_listener_pids as runtime_refresh_service_listener_pids,
     service_listener_failure_detail as runtime_service_listener_failure_detail,
     service_truth_discovery as runtime_service_truth_discovery,
     service_truth_fallback_enabled as runtime_service_truth_fallback_enabled,
     service_truth_status as runtime_service_truth_status,
-    tail_log_error_line as runtime_tail_log_error_line,
-    wait_for_service_listener as runtime_wait_for_service_listener,
     clear_service_listener_pids as runtime_clear_service_listener_pids,
 )
 from envctl_engine.runtime.engine_runtime_service_policy import (
@@ -180,10 +158,7 @@ from envctl_engine.runtime.engine_runtime_state_lookup import (
 )
 from envctl_engine.runtime.engine_runtime_state_truth import (
     reconcile_project_requirement_truth as runtime_reconcile_project_requirement_truth,
-    reconcile_requirements_truth as runtime_reconcile_requirements_truth,
     reconcile_state_truth as runtime_reconcile_state_truth,
-    requirement_component_port as runtime_requirement_component_port,
-    requirement_runtime_status as runtime_requirement_runtime_status,
     requirement_truth_issues as runtime_requirement_truth_issues,
     state_fingerprint as runtime_state_fingerprint,
 )
@@ -192,7 +167,6 @@ from envctl_engine.runtime.engine_runtime_action_support import (
     action_extra_env as runtime_action_extra_env,
     action_replacements as runtime_action_replacements,
     project_name_from_service as runtime_project_name_from_service,
-    projects_for_services as runtime_projects_for_services,
     resolve_action_targets as runtime_resolve_action_targets,
     run_action_command as runtime_run_action_command,
     run_analyze_action as runtime_run_analyze_action,
@@ -228,13 +202,11 @@ from envctl_engine.runtime.engine_runtime_bookkeeping_support import (
 from envctl_engine.runtime.engine_runtime_dispatch import dispatch as runtime_dispatch
 from envctl_engine.runtime.engine_runtime_ui_bridge import (
     can_interactive_tty as bridge_can_interactive_tty,
-    current_ui_backend as bridge_current_ui_backend,
     dashboard as bridge_dashboard,
     flush_pending_interactive_input as bridge_flush_pending_interactive_input,
     parse_interactive_command as bridge_parse_interactive_command,
     read_interactive_command_line as bridge_read_interactive_command_line,
     recover_single_letter_command_from_escape_fragment as bridge_recover_single_letter_command_from_escape_fragment,
-    restore_terminal_after_input as bridge_restore_terminal_after_input,
     run_interactive_command as bridge_run_interactive_command,
     run_interactive_dashboard_loop as bridge_run_interactive_dashboard_loop,
     sanitize_interactive_input as bridge_sanitize_interactive_input,
@@ -270,7 +242,7 @@ from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
 from envctl_engine.state.action_orchestrator import StateActionOrchestrator
 from envctl_engine.state.repository import RuntimeStateRepository
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
-from envctl_engine.ui.debug_flight_recorder import DebugFlightRecorder, DebugRecorderConfig
+from envctl_engine.ui.debug_flight_recorder import DebugFlightRecorder
 from envctl_engine.ui.backend import build_interactive_backend
 from envctl_engine.ui.backend_resolver import resolve_ui_backend
 from envctl_engine.ui.dashboard.rendering import (
@@ -616,13 +588,6 @@ class PythonEngineRuntime:
     def _effective_start_mode(self, route: Route) -> str:
         return runtime_effective_start_mode(self, route)
 
-    @staticmethod
-    def _auto_resume_start_enabled(route: Route) -> bool:
-        return runtime_auto_resume_start_enabled(route)
-
-    def _load_auto_resume_state(self, runtime_mode: str) -> RunState | None:
-        return runtime_load_auto_resume_state(self, runtime_mode)
-
     def _state_has_resumable_services(self, state: RunState) -> bool:
         return runtime_state_has_resumable_services(self, state)
 
@@ -662,9 +627,6 @@ class PythonEngineRuntime:
 
     def _sanitize_legacy_resume_state(self, state: RunState) -> None:
         runtime_sanitize_legacy_resume_state(self, state)
-
-    def _resume_restore_enabled(self, route: Route) -> bool:
-        return self.resume_orchestrator.restore_enabled(route)
 
     def _resume_restore_missing(
         self,
@@ -808,9 +770,6 @@ class PythonEngineRuntime:
     def _parity_manifest_info(self) -> dict[str, str]:
         return runtime_parity_manifest_info(self)
 
-    def _read_parity_manifest(self) -> dict[str, object] | None:
-        return runtime_read_parity_manifest(self)
-
     def _lock_health_summary(self) -> str:
         return runtime_lock_health_summary(self)
 
@@ -885,13 +844,6 @@ class PythonEngineRuntime:
             multi=multi,
         )
 
-    def _current_ui_backend(self):
-        return bridge_current_ui_backend(self)
-
-    @staticmethod
-    def _restore_terminal_after_input(*, fd: int, original_state: list[int] | None) -> None:
-        bridge_restore_terminal_after_input(fd=fd, original_state=original_state)
-
     @staticmethod
     def _can_interactive_tty() -> bool:
         return bridge_can_interactive_tty()
@@ -905,10 +857,6 @@ class PythonEngineRuntime:
     @staticmethod
     def _tokens_set_mode(tokens: Iterable[str]) -> bool:
         return runtime_tokens_set_mode(tokens)
-
-    @staticmethod
-    def _status_color(status: str, *, green: str, yellow: str, red: str) -> str:
-        return runtime_status_color(status, green=green, yellow=yellow, red=red)
 
     def _should_enter_post_start_interactive(self, route: Route) -> bool:
         return runtime_should_enter_post_start_interactive(self, route)
@@ -939,33 +887,12 @@ class PythonEngineRuntime:
     def _recent_failure_messages(self, *, max_items: int = 5) -> list[str]:
         return runtime_recent_failure_messages(self, max_items=max_items)
 
-    def _print_logs(
-        self,
-        state: RunState,
-        *,
-        tail: int,
-        follow: bool = False,
-        duration_seconds: float | None = None,
-        no_color: bool = False,
-    ) -> None:
-        runtime_print_logs(
-            self,
-            state,
-            tail=tail,
-            follow=follow,
-            duration_seconds=duration_seconds,
-            no_color=no_color,
-        )
-
     def _reconcile_state_truth(self, state: RunState) -> list[str]:
         return runtime_reconcile_state_truth(self, state)
 
     @staticmethod
     def _state_fingerprint(state: RunState) -> str:
         return runtime_state_fingerprint(state)
-
-    def _reconcile_requirements_truth(self, state: RunState) -> list[dict[str, object]]:
-        return runtime_reconcile_requirements_truth(self, state)
 
     def _reconcile_project_requirement_truth(
         self,
@@ -980,24 +907,6 @@ class PythonEngineRuntime:
             requirements,
             project_root=project_root,
         )
-
-    def _requirement_runtime_status(
-        self,
-        *,
-        component_name: str,
-        component_data: dict[str, object],
-        requirements: RequirementsResult,
-    ) -> str:
-        return runtime_requirement_runtime_status(
-            self,
-            component_name=component_name,
-            component_data=component_data,
-            requirements=requirements,
-        )
-
-    @staticmethod
-    def _requirement_component_port(component_data: dict[str, object]) -> object:
-        return runtime_requirement_component_port(component_data)
 
     def _requirement_truth_issues(self, state: RunState) -> list[dict[str, object]]:
         return runtime_requirement_truth_issues(self, state)
@@ -1039,9 +948,6 @@ class PythonEngineRuntime:
     @staticmethod
     def _selectors_from_passthrough(passthrough_args: Iterable[str]) -> set[str]:
         return runtime_selectors_from_passthrough(passthrough_args)
-
-    def _projects_for_services(self, service_targets: list[object]) -> list[str]:
-        return runtime_projects_for_services(self, service_targets)
 
     @staticmethod
     def _project_name_from_service(service_name: str) -> str:
@@ -1120,37 +1026,12 @@ class PythonEngineRuntime:
     def _unsupported_command(self, command: str) -> int:
         return runtime_unsupported_command(command)
 
-    def _stop(self, route: Route) -> int:
-        return self.lifecycle_cleanup_orchestrator.execute(route)
-
     def _clear_runtime_state(self, *, command: str, aggressive: bool = False, route: Route | None = None) -> None:
         self.lifecycle_cleanup_orchestrator.clear_runtime_state(
             command=command,
             aggressive=aggressive,
             route=route,
         )
-
-    def _blast_all_ecosystem_cleanup(self, *, route: Route | None) -> None:
-        self.lifecycle_cleanup_orchestrator.blast_all_ecosystem_cleanup(route=route)
-
-    @staticmethod
-    def _blast_all_process_patterns() -> tuple[str, ...]:
-        return LifecycleCleanupOrchestrator.blast_all_process_patterns()
-
-    def _blast_all_sweep_ports(self) -> None:
-        self.lifecycle_cleanup_orchestrator.blast_all_sweep_ports()
-
-    def _blast_all_sweep_ports_batched(self) -> bool:
-        return self.lifecycle_cleanup_orchestrator.blast_all_sweep_ports_batched()
-
-    def _blast_all_sweep_ports_by_port(self) -> None:
-        self.lifecycle_cleanup_orchestrator.blast_all_sweep_ports_by_port()
-
-    def _blast_all_handle_listener_pid_map(self, pid_port_map: dict[int, set[int]]) -> None:
-        self.lifecycle_cleanup_orchestrator.blast_all_handle_listener_pid_map(pid_port_map)
-
-    def _blast_all_process_command(self, pid: int) -> str:
-        return self.lifecycle_cleanup_orchestrator.blast_all_process_command(pid)
 
     def _blast_all_print_and_kill_listener_maps(
         self,
@@ -1163,71 +1044,14 @@ class PythonEngineRuntime:
             docker_pid_ports=docker_pid_ports,
         )
 
-    def _parse_blast_all_lsof_listeners(self, stdout: str) -> dict[int, set[int]] | None:
-        return self.lifecycle_cleanup_orchestrator.parse_blast_all_lsof_listeners(stdout)
-
     def _blast_all_port_range(self) -> list[int]:
         return self.lifecycle_cleanup_orchestrator.blast_all_port_range()
-
-    def _blast_all_scan_span(self, *, default: int, minimum: int) -> int:
-        return self.lifecycle_cleanup_orchestrator.blast_all_scan_span(default=default, minimum=minimum)
 
     def _blast_all_kill_orchestrator_processes(self) -> None:
         self.lifecycle_cleanup_orchestrator.blast_all_kill_orchestrator_processes()
 
-    def _blast_all_kill_pid_tree(self, root_pid: int, *, skip_pids: set[int] | None = None) -> None:
-        self.lifecycle_cleanup_orchestrator.blast_all_kill_pid_tree(root_pid, skip_pids=skip_pids)
-
-    def _blast_all_process_tree_kill_order(self, root_pid: int) -> list[int]:
-        return self.lifecycle_cleanup_orchestrator.blast_all_process_tree_kill_order(root_pid)
-
-    @staticmethod
-    def _blast_all_is_orchestrator_process(command_text: str) -> bool:
-        return LifecycleCleanupOrchestrator.blast_all_is_orchestrator_process(command_text)
-
-    @staticmethod
-    def _looks_like_docker_process(command_text: str) -> bool:
-        return LifecycleCleanupOrchestrator.looks_like_docker_process(command_text)
-
     def _blast_all_docker_cleanup(self, *, route: Route | None) -> int:
         return self.lifecycle_cleanup_orchestrator.blast_all_docker_cleanup(route=route)
-
-    @staticmethod
-    def _blast_all_matches_container(*, image: str, name: str) -> bool:
-        return LifecycleCleanupOrchestrator.blast_all_matches_container(image=image, name=name)
-
-    def _blast_all_volume_policy(self, route: Route | None) -> tuple[bool, bool]:
-        return self.lifecycle_cleanup_orchestrator.blast_all_volume_policy(route)
-
-    def _blast_all_is_main_container(self, name: str) -> bool:
-        return self.lifecycle_cleanup_orchestrator.blast_all_is_main_container(name)
-
-    def _blast_all_main_container_names(self) -> tuple[str, str]:
-        return self.lifecycle_cleanup_orchestrator.blast_all_main_container_names()
-
-    def _blast_all_main_supabase_project_name(self) -> str:
-        return self.lifecycle_cleanup_orchestrator.blast_all_main_supabase_project_name()
-
-    def _collect_container_volume_candidates(self, cid: str, volume_candidates: list[str]) -> None:
-        self.lifecycle_cleanup_orchestrator.collect_container_volume_candidates(cid, volume_candidates)
-
-    def _blast_all_purge_legacy_state_artifacts(self) -> None:
-        self.lifecycle_cleanup_orchestrator.blast_all_purge_legacy_state_artifacts()
-
-    @staticmethod
-    def _prompt_yes_no(prompt: str) -> bool:
-        return LifecycleCleanupOrchestrator.prompt_yes_no(prompt)
-
-    def _run_best_effort_command(
-        self,
-        cmd: list[str],
-        *,
-        timeout: float | None = None,
-    ) -> tuple[int, str, str]:
-        return self.lifecycle_cleanup_orchestrator.run_best_effort_command(cmd, timeout=timeout)
-
-    def _blast_all_ecosystem_enabled(self) -> bool:
-        return self.lifecycle_cleanup_orchestrator.blast_all_ecosystem_enabled()
 
     def _terminate_started_services(self, services: dict[str, object]) -> None:
         runtime_terminate_started_services(self, services)
@@ -1263,10 +1087,6 @@ class PythonEngineRuntime:
     def _release_requirement_ports(self, requirements: RequirementsResult) -> None:
         runtime_release_requirement_ports(self, requirements)
 
-    @staticmethod
-    def _requirement_key_for_project(state: RunState, project_name: str) -> str | None:
-        return runtime_requirement_key_for_project(state, project_name)
-
     def _blast_worktree_before_delete(
         self,
         *,
@@ -1281,23 +1101,8 @@ class PythonEngineRuntime:
             source_command=source_command,
         )
 
-    def _sanitize_emit_payload(self, event_name: str, payload: dict[str, object]) -> dict[str, object]:
-        return runtime_sanitize_emit_payload(self, event_name, payload)
-
     def _emit(self, event_name: str, **payload: object) -> None:
         runtime_emit(self, event_name, **payload)
-
-    def _event_trace_id(self, *, event_name: str, payload: Mapping[str, object]) -> str:
-        return runtime_event_trace_id(self, event_name=event_name, payload=payload)
-
-    def _debug_trace_id_mode(self) -> str:
-        return runtime_debug_trace_id_mode(self)
-
-    def _auto_debug_pack(self, *, reason: str) -> None:
-        runtime_auto_debug_pack(self, reason=reason)
-
-    def _debug_should_auto_pack(self, *, reason: str) -> bool:
-        return runtime_debug_should_auto_pack(self, reason=reason)
 
     def _persist_events_snapshot(self) -> None:
         runtime_persist_events_snapshot(self)
@@ -1308,15 +1113,6 @@ class PythonEngineRuntime:
     def _current_session_id(self) -> str | None:
         return runtime_current_session_id(self)
 
-    def _debug_mode_from_route(self, route: Route) -> str:
-        return runtime_debug_mode_from_route(self, route)
-
-    def _debug_recorder_config(self, *, mode: str) -> DebugRecorderConfig:
-        return runtime_debug_recorder_config(self, mode=mode)
-
-    def _debug_output_root(self) -> Path | None:
-        return runtime_debug_output_root(self)
-
     def _run_state_path(self) -> Path:
         return runtime_run_state_path(self)
 
@@ -1325,9 +1121,6 @@ class PythonEngineRuntime:
 
     def _runtime_map_path(self) -> Path:
         return runtime_runtime_map_path(self)
-
-    def _ports_manifest_path(self) -> Path:
-        return runtime_ports_manifest_path(self)
 
     def _error_report_path(self) -> Path:
         return runtime_error_report_path(self)
@@ -1401,26 +1194,14 @@ class PythonEngineRuntime:
     ) -> dict[str, str]:
         return runtime_project_service_env_internal(self, context, requirements=requirements, route=route)
 
-    def _service_env_overlays(self, *, service_name: str, base_env: Mapping[str, str]) -> dict[str, str]:
-        return runtime_service_env_overlays(self, service_name=service_name, base_env=base_env)
-
     def _runtime_env_overrides(self, route: Route | None) -> dict[str, str]:
         return runtime_env_overrides(route)
-
-    def _main_requirements_mode(self, route: Route | None) -> str | None:
-        return runtime_main_requirements_mode(route)
-
-    def _effective_main_requirement_flags(self, route: Route | None) -> dict[str, bool]:
-        return runtime_effective_main_requirement_flags(self, route)
 
     def _service_enabled_for_mode(self, mode: str, service_name: str) -> bool:
         return runtime_service_enabled_for_mode(self, mode, service_name)
 
     def _requirement_enabled_for_mode(self, mode: str, requirement_name: str, *, route: Route | None = None) -> bool:
         return runtime_requirement_enabled_for_mode(self, mode, requirement_name, route=route)
-
-    def _hook_bridge_enabled(self) -> bool:
-        return runtime_hook_bridge_enabled(self)
 
     def _invoke_envctl_hook(self, *, context: ProjectContext, hook_name: str) -> HookInvocationResult:
         return runtime_invoke_envctl_hook(self, context=context, hook_name=hook_name)
@@ -1468,16 +1249,6 @@ class PythonEngineRuntime:
 
     def _service_listener_failure_detail(self, *, log_path: str | None, pid: int | None) -> str | None:
         return runtime_service_listener_failure_detail(self, log_path=log_path, pid=pid)
-
-    @staticmethod
-    def _tail_log_error_line(log_path: str | None, *, max_chars: int = 240) -> str | None:
-        return runtime_tail_log_error_line(log_path, max_chars=max_chars)
-
-    def _wait_for_service_listener(self, pid: int, port: int, *, service_name: str) -> bool:
-        return runtime_wait_for_service_listener(self, pid, port, service_name=service_name)
-
-    def _process_tree_probe_supported(self) -> bool:
-        return runtime_process_tree_probe_supported(self)
 
     def _service_truth_fallback_enabled(self) -> bool:
         return runtime_service_truth_fallback_enabled(self)
