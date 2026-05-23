@@ -57,6 +57,15 @@ from envctl_engine.ui.dashboard.failure_detail_support import (
     failure_details_available,
     summary_display_path,
 )
+from envctl_engine.ui.dashboard.failure_detail_support import (
+    ensure_short_test_summary_path,
+    print_interactive_failure_details,
+    print_project_action_failure_details,
+    print_test_failure_details,
+    print_migrate_result_details,
+    failure_details_available,
+    summary_display_path,
+)
 from envctl_engine.ui.dashboard.stop_scope_support import (
     apply_stop_scope_selection,
     apply_stop_resource_tokens,
@@ -67,6 +76,19 @@ from envctl_engine.ui.dashboard.stop_scope_support import (
     stop_service_type,
     stop_service_detail,
     stop_route_has_explicit_scope,
+)
+from envctl_engine.ui.dashboard.restart_selection_support import (
+    apply_restart_selection,
+    apply_restart_resource_selection,
+    restart_resource_items,
+    apply_restart_resource_tokens,
+    has_dashboard_stopped_services,
+    has_restartable_inactive_services,
+    restart_project_order,
+    restart_services_by_project,
+    dashboard_stopped_services_by_project,
+    dashboard_project_configured_services,
+    dashboard_configured_missing_services_by_project,
 )
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.dashboard_loop_support import run_legacy_dashboard_loop
@@ -1140,237 +1162,57 @@ class DashboardOrchestrator:
 
     def _apply_restart_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         runtime_any = cast(Any, rt)
-        if self._route_has_explicit_target(route, runtime_any):
-            if bool(route.flags.get("all")):
-                route.flags = {**route.flags, "restart_include_requirements": True}
-            else:
-                route.flags = {**route.flags, "restart_include_requirements": False}
-            return route
-        if self._has_restartable_inactive_services(state) or self._stop_dependencies_by_project(state):
-            return self._apply_restart_resource_selection(route, state, runtime_any)
-        projects = self._project_names_from_state(state, runtime_any)
-        selected_projects = self._select_dashboard_projects(
-            command="restart",
-            state=state,
-            projects=projects,
-            runtime=runtime_any,
+        return apply_restart_selection(
+            route, state, runtime_any,
+            has_restartable_inactive_services_fn=self._has_restartable_inactive_services,
+            stop_dependencies_by_project_fn=self._stop_dependencies_by_project,
+            apply_restart_resource_selection_fn=self._apply_restart_resource_selection,
+            select_dashboard_projects_fn=self._select_dashboard_projects,
+            select_dashboard_service_types_fn=self._select_dashboard_service_types,
+            service_names_for_projects_and_types_fn=self._service_names_for_projects_and_types,
+            project_names_from_state_fn=self._project_names_from_state,
+            project_name_list_fn=self._project_name_list,
+            available_service_types_for_projects_fn=self._available_service_types_for_projects,
         )
-        if selected_projects is None:
-            print("No restart target selected.")
-            return None
-        route.projects = list(selected_projects)
-
-        selected_service_types = self._select_dashboard_service_types(
-            command="restart",
-            state=state,
-            selected_projects=selected_projects,
-            runtime=runtime_any,
-        )
-        if selected_service_types is None:
-            print("No restart target selected.")
-            return None
-        selected_service_names = self._service_names_for_projects_and_types(
-            state,
-            runtime_any,
-            project_names=selected_projects,
-            service_types=selected_service_types,
-        )
-        all_project_names = self._project_name_list(projects)
-        all_service_types = self._available_service_types_for_projects(
-            state,
-            runtime_any,
-            project_names=all_project_names,
-        )
-        include_requirements = set(selected_projects) == set(all_project_names) and set(selected_service_types) == set(
-            all_service_types
-        )
-        route.flags = {
-            **{
-                key: value
-                for key, value in route.flags.items()
-                if key not in {"all", "services", "restart_service_types"}
-            },
-            "services": selected_service_names,
-            "restart_service_types": list(selected_service_types),
-            "restart_include_requirements": include_requirements,
-        }
-        return route
 
     def _apply_restart_resource_selection(self, route: Route, state: RunState, runtime: Any) -> Route | None:
-        items = self._restart_resource_items(state, runtime)
-        if not items:
-            return route
-        values = _run_selector_with_impl(
-            prompt=(
-                "Choose services/dependencies to restart or start "
-                "(Space toggles, a selects all visible; Enter runs selected)"
-            ),
-            options=items,
-            multi=True,
-            emit=getattr(runtime, "_emit", None),
+        return apply_restart_resource_selection(
+            route, state, runtime,
+            restart_resource_items_fn=self._restart_resource_items,
+            apply_restart_resource_tokens_fn=self._apply_restart_resource_tokens,
         )
-        if values is None:
-            print("No restart target selected.")
-            return None
-        tokens = [str(value).strip() for value in values if str(value).strip()]
-        if not tokens:
-            print("No restart target selected.")
-            return None
-        self._apply_restart_resource_tokens(route, state, runtime, tokens)
-        return route
 
     def _restart_resource_items(self, state: RunState, runtime: Any) -> list[SelectorItem]:
-        project_order = self._restart_project_order(state, runtime)
-        many_projects = len(project_order) > 1
-        service_lookup = self._restart_services_by_project(state, runtime)
-        dependency_lookup = self._stop_dependencies_by_project(state)
-        items: list[SelectorItem] = []
-
-        for project_name in project_order:
-            services = service_lookup.get(project_name, [])
-            dependencies = dependency_lookup.get(project_name, [])
-            if not services and not dependencies:
-                continue
-            section = f"▸ {project_name}" if many_projects else "Resources"
-            scope = [
-                *(f"service:{service_name}" for service_name, _service_type, _stopped in services),
-                *(f"dependency:{project_name}:{dependency_id}" for dependency_id, _label in dependencies),
-            ]
-            if many_projects:
-                items.append(
-                    SelectorItem(
-                        id=f"restart:worktree:{project_name}",
-                        label=f"▸ {project_name} — entire worktree (apps + dependencies)",
-                        kind="worktree",
-                        token=f"__RESTART__:worktree:{project_name}",
-                        scope_signature=tuple(sorted(scope)) or (f"project:{project_name}",),
-                        section=section,
-                    )
-                )
-            elif len(scope) > 1:
-                items.append(
-                    SelectorItem(
-                        id=f"restart:worktree:{project_name}",
-                        label="All resources — apps + dependencies",
-                        kind="worktree",
-                        token=f"__RESTART__:worktree:{project_name}",
-                        scope_signature=tuple(sorted(scope)) or (f"project:{project_name}",),
-                        section=section,
-                    )
-                )
-
-            for service_name, service_type, stopped in services:
-                label_prefix = "  ↳ " if many_projects else ""
-                readable = service_display_name(service_type)
-                detail = service_name if many_projects else self._stop_service_detail(service_name, service_type)
-                label = f"{label_prefix}{readable}"
-                if detail:
-                    label = f"{label} — {detail}"
-                if stopped:
-                    label = f"{label} (stopped)"
-                items.append(
-                    SelectorItem(
-                        id=f"restart:service:{service_name}",
-                        label=label,
-                        kind="service",
-                        token=f"__RESTART__:service:{service_name}",
-                        scope_signature=(f"service:{service_name}",),
-                        section=section,
-                    )
-                )
-
-            for dependency_id, dependency_label in dependencies:
-                label_prefix = "  ↳ " if many_projects else ""
-                items.append(
-                    SelectorItem(
-                        id=f"restart:dependency:{project_name}:{dependency_id}",
-                        label=f"{label_prefix}{dependency_label}",
-                        kind="dependency",
-                        token=f"__RESTART__:dependency:{project_name}:{dependency_id}",
-                        scope_signature=(f"dependency:{project_name}:{dependency_id}",),
-                        section=section,
-                    )
-                )
-        return items
+        return restart_resource_items(
+            state, runtime,
+            restart_project_order_fn=self._restart_project_order,
+            restart_services_by_project_fn=self._restart_services_by_project,
+            stop_dependencies_by_project_fn=self._stop_dependencies_by_project,
+            stop_service_detail_fn=self._stop_service_detail,
+        )
 
     def _apply_restart_resource_tokens(self, route: Route, state: RunState, runtime: Any, values: list[str]) -> None:
-        service_lookup = self._restart_services_by_project(state, runtime)
-        dependency_lookup = self._stop_dependencies_by_project(state)
-        service_type_by_name = {
-            service_name: service_type
-            for services in service_lookup.values()
-            for service_name, service_type, _stopped in services
-        }
-        project_by_service = {
-            service_name: project_name
-            for project_name, services in service_lookup.items()
-            for service_name, _service_type, _stopped in services
-        }
-        selected_services: set[str] = set()
-        selected_dependencies: set[tuple[str, str]] = set()
-        selected_projects: set[str] = set()
-
-        for token in values:
-            if token.startswith("__RESTART__:worktree:"):
-                project_name = token.removeprefix("__RESTART__:worktree:")
-                selected_projects.add(project_name)
-                for service_name, _service_type, _stopped in service_lookup.get(project_name, []):
-                    selected_services.add(service_name)
-                for dependency_id, _label in dependency_lookup.get(project_name, []):
-                    selected_dependencies.add((project_name, dependency_id))
-                continue
-            if token.startswith("__RESTART__:service:"):
-                service_name = token.removeprefix("__RESTART__:service:")
-                if service_name in service_type_by_name:
-                    selected_services.add(service_name)
-                    project_name = project_by_service.get(service_name)
-                    if project_name:
-                        selected_projects.add(project_name)
-                continue
-            if token.startswith("__RESTART__:dependency:"):
-                _, _, project_name, dependency_id = token.split(":", 3)
-                if any(dependency_id == existing_id for existing_id, _label in dependency_lookup.get(project_name, [])):
-                    selected_dependencies.add((project_name, dependency_id))
-                    selected_projects.add(project_name)
-
-        if selected_dependencies:
-            selected_projects.update(project_name for project_name, _dependency_id in selected_dependencies)
-
-        selected_service_types = sorted({service_type_by_name[name] for name in selected_services})
-        selected_service_names = sorted(selected_services)
-        flags = {
-            key: value
-            for key, value in route.flags.items()
-            if key not in {"all", "services", "restart_service_types", "restart_include_requirements"}
-        }
-        flags["services"] = selected_service_names
-        flags["restart_service_types"] = selected_service_types
-        flags["restart_include_requirements"] = bool(selected_dependencies)
-        route.flags = flags
-        route.projects = sorted(selected_projects)
+        apply_restart_resource_tokens(route, state, runtime, values)
 
     @staticmethod
     def _has_dashboard_stopped_services(state: RunState) -> bool:
-        return bool(DashboardOrchestrator._dashboard_stopped_services_by_project(state))
+        return has_dashboard_stopped_services(state, dashboard_stopped_services_by_project_fn=dashboard_stopped_services_by_project)
 
     @staticmethod
     def _has_restartable_inactive_services(state: RunState) -> bool:
-        if DashboardOrchestrator._dashboard_stopped_services_by_project(state):
-            return True
-        return bool(DashboardOrchestrator._dashboard_configured_missing_services_by_project(state))
+        return has_restartable_inactive_services(
+            state,
+            dashboard_stopped_services_by_project_fn=dashboard_stopped_services_by_project,
+            dashboard_configured_missing_services_by_project_fn=dashboard_configured_missing_services_by_project,
+        )
 
     def _restart_project_order(self, state: RunState, runtime: Any) -> list[str]:
-        names = self._stop_project_order(state, runtime)
-        seen = {name.casefold() for name in names}
-        for project_name in (
-            *self._dashboard_stopped_services_by_project(state),
-            *self._dashboard_project_configured_services(state),
-        ):
-            if project_name.casefold() in seen:
-                continue
-            seen.add(project_name.casefold())
-            names.append(project_name)
-        return names
+        return restart_project_order(
+            state, runtime,
+            stop_project_order_fn=self._stop_project_order,
+            dashboard_stopped_services_by_project_fn=self._dashboard_stopped_services_by_project,
+            dashboard_project_configured_services_fn=self._dashboard_project_configured_services,
+        )
 
     def _restart_services_by_project(self, state: RunState, runtime: Any) -> dict[str, list[tuple[str, str, bool]]]:
         services_by_project: dict[str, list[tuple[str, str, bool]]] = {}
@@ -1431,15 +1273,11 @@ class DashboardOrchestrator:
 
     @staticmethod
     def _dashboard_project_configured_services(state: RunState) -> dict[str, set[str]]:
-        return dashboard_project_configured_services_from_metadata(state.metadata)
+        return dashboard_project_configured_services(state)
 
     @staticmethod
     def _dashboard_configured_missing_services_by_project(state: RunState) -> dict[str, set[str]]:
-        return dashboard_configured_missing_services_by_project(
-            configured_services=DashboardOrchestrator._dashboard_project_configured_services(state),
-            stopped_services=DashboardOrchestrator._dashboard_stopped_services_by_project(state),
-            active_service_names=set(state.services),
-        )
+        return dashboard_configured_missing_services_by_project(state)
 
     def _default_interactive_targets(self, route: Route, state: RunState, rt: object) -> Route:
         _ = state, rt
