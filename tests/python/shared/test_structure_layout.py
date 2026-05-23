@@ -153,6 +153,20 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("initialize_runtime_construction(self, config, env=env)", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 1050)
 
+    def test_runtime_planning_and_startup_facades_have_owned_mixins(self) -> None:
+        planning_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_planning_facade.py"
+        startup_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_startup_facade.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
+
+        self.assertTrue(planning_owner.is_file())
+        self.assertTrue(startup_owner.is_file())
+        self.assertIn("RuntimePlanningFacadeMixin", planning_owner.read_text(encoding="utf-8"))
+        self.assertIn("RuntimeStartupFacadeMixin", startup_owner.read_text(encoding="utf-8"))
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("RuntimePlanningFacadeMixin", facade_text)
+        self.assertIn("RuntimeStartupFacadeMixin", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 800)
+
     def test_dashboard_command_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_support.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator.py"
