@@ -50,7 +50,6 @@ from envctl_engine.actions.action_output_support import (
     colorize_action_text as colorize_action_text_impl,
 )
 from envctl_engine.actions.action_failed_rerun_support import (
-    build_failed_test_execution_specs_from_state as build_failed_test_execution_specs_from_state_impl,
     summary_indicates_extraction_failure as summary_indicates_extraction_failure_impl,
 )
 from envctl_engine.actions.action_target_support import (
@@ -89,11 +88,10 @@ from envctl_engine.actions.action_test_summary_support import (
     user_code_frame_blocks as user_code_frame_blocks_impl,
     write_failed_tests_summary as write_failed_tests_summary_impl,
 )
-from envctl_engine.actions.action_test_service_support import (
-    additional_service_test_execution_specs as additional_service_test_execution_specs_impl,
-)
 from envctl_engine.actions.action_test_plan_support import (
-    build_test_execution_specs_for_route as build_test_execution_specs_for_route_impl,
+    additional_service_test_execution_specs_for_orchestrator,
+    build_failed_test_execution_specs_for_orchestrator,
+    build_test_execution_specs_for_orchestrator,
     command_start_status as command_start_status_impl,
     is_legacy_tree_test_script as is_legacy_tree_test_script_impl,
     parallel_test_worker_count as parallel_test_worker_count_impl,
@@ -297,8 +295,8 @@ class ActionCommandOrchestrator:
         run_all: bool,
         untested: bool,
     ) -> list["_TestExecutionSpec"]:
-        rt = self.runtime
-        return build_test_execution_specs_for_route_impl(
+        return build_test_execution_specs_for_orchestrator(
+            self,
             route=route,
             targets=targets,
             target_contexts=target_contexts,
@@ -306,13 +304,6 @@ class ActionCommandOrchestrator:
             include_frontend=include_frontend,
             run_all=run_all,
             untested=untested,
-            env=rt.env,
-            config=rt.config,
-            action_replacements_builder=self.action_replacements,
-            split_command=lambda command_raw, replacements: rt.split_command(command_raw, replacements=replacements),
-            failed_spec_builder=self._build_failed_test_execution_specs,
-            additional_service_spec_builder=self._additional_service_test_execution_specs,
-            is_legacy_tree_test_script=self._is_legacy_tree_test_script,
         )
 
     def _additional_service_test_execution_specs(
@@ -322,17 +313,11 @@ class ActionCommandOrchestrator:
         targets: list[object],
         target_contexts: list[TestTargetContext],
     ) -> list["_TestExecutionSpec"]:
-        rt = self.runtime
-        return additional_service_test_execution_specs_impl(
+        return additional_service_test_execution_specs_for_orchestrator(
+            self,
             route=route,
             targets=targets,
             target_contexts=target_contexts,
-            config=rt.config,
-            split_command=lambda raw_command, replacements: rt.split_command(
-                raw_command,
-                replacements=replacements,
-            ),
-            action_replacements_builder=self.action_replacements,
         )
 
     def _build_failed_test_execution_specs(
@@ -341,37 +326,10 @@ class ActionCommandOrchestrator:
         route: Route,
         target_contexts: list[TestTargetContext],
     ) -> list["_TestExecutionSpec"]:
-        rt = self.runtime
-        shared_raw = (
-            str(
-                rt.env.get("ENVCTL_ACTION_TEST_CMD")  # type: ignore[attr-defined]
-                or rt.config.raw.get("ENVCTL_ACTION_TEST_CMD", "")  # type: ignore[attr-defined]
-            ).strip()
-            or None
-        )
-        backend_raw = (
-            str(
-                rt.env.get("ENVCTL_BACKEND_TEST_CMD")  # type: ignore[attr-defined]
-                or rt.config.raw.get("ENVCTL_BACKEND_TEST_CMD", "")  # type: ignore[attr-defined]
-            ).strip()
-            or None
-        )
-        frontend_raw = (
-            str(
-                rt.env.get("ENVCTL_FRONTEND_TEST_CMD")  # type: ignore[attr-defined]
-                or rt.config.raw.get("ENVCTL_FRONTEND_TEST_CMD", "")  # type: ignore[attr-defined]
-            ).strip()
-            or None
-        )
-        state = rt.load_existing_state(mode=route.mode)
-        return build_failed_test_execution_specs_from_state_impl(
-            state=state,
+        return build_failed_test_execution_specs_for_orchestrator(
+            self,
+            route=route,
             target_contexts=target_contexts,
-            repo_root=rt.config.base_dir,  # type: ignore[attr-defined]
-            shared_raw_command=shared_raw,
-            backend_raw_command=backend_raw,
-            frontend_raw_command=frontend_raw,
-            emit_status=self._emit_status,
         )
 
     @staticmethod

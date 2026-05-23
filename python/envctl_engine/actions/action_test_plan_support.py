@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from envctl_engine.actions.action_command_support import service_types_from_route_services
+from envctl_engine.actions.action_failed_rerun_support import build_failed_test_execution_specs_from_state
+from envctl_engine.actions.action_test_service_support import additional_service_test_execution_specs
 from envctl_engine.actions.action_test_support import TestExecutionSpec, TestTargetContext, build_test_execution_specs
 from envctl_engine.actions.action_test_support import is_backend_only_selection
 from envctl_engine.actions.test_plan_action import run_test_plan_action
@@ -29,6 +31,94 @@ def run_test_plan_action_for_targets(orchestrator: object, route: Route, targets
         if code != 0:
             return code
     return 0
+
+
+def build_test_execution_specs_for_orchestrator(
+    orchestrator: object,
+    *,
+    route: Route,
+    targets: list[object],
+    target_contexts: list[TestTargetContext],
+    include_backend: bool,
+    include_frontend: bool,
+    run_all: bool,
+    untested: bool,
+) -> list[TestExecutionSpec]:
+    runtime = getattr(orchestrator, "runtime")
+    return build_test_execution_specs_for_route(
+        route=route,
+        targets=targets,
+        target_contexts=target_contexts,
+        include_backend=include_backend,
+        include_frontend=include_frontend,
+        run_all=run_all,
+        untested=untested,
+        env=runtime.env,
+        config=runtime.config,
+        action_replacements_builder=orchestrator.action_replacements,
+        split_command=lambda command_raw, replacements: runtime.split_command(command_raw, replacements=replacements),
+        failed_spec_builder=lambda **kwargs: build_failed_test_execution_specs_for_orchestrator(
+            orchestrator,
+            **kwargs,
+        ),
+        additional_service_spec_builder=lambda **kwargs: additional_service_test_execution_specs_for_orchestrator(
+            orchestrator,
+            **kwargs,
+        ),
+        is_legacy_tree_test_script=is_legacy_tree_test_script,
+    )
+
+
+def additional_service_test_execution_specs_for_orchestrator(
+    orchestrator: object,
+    *,
+    route: Route,
+    targets: list[object],
+    target_contexts: list[TestTargetContext],
+) -> list[TestExecutionSpec]:
+    runtime = getattr(orchestrator, "runtime")
+    return additional_service_test_execution_specs(
+        route=route,
+        targets=targets,
+        target_contexts=target_contexts,
+        config=runtime.config,
+        split_command=lambda raw_command, replacements: runtime.split_command(
+            raw_command,
+            replacements=replacements,
+        ),
+        action_replacements_builder=orchestrator.action_replacements,
+    )
+
+
+def build_failed_test_execution_specs_for_orchestrator(
+    orchestrator: object,
+    *,
+    route: Route,
+    target_contexts: list[TestTargetContext],
+) -> list[TestExecutionSpec]:
+    runtime = getattr(orchestrator, "runtime")
+    shared_raw = _first_non_empty(
+        runtime.env.get("ENVCTL_ACTION_TEST_CMD"),
+        runtime.config.raw.get("ENVCTL_ACTION_TEST_CMD", ""),
+    )
+    backend_raw = _first_non_empty(
+        runtime.env.get("ENVCTL_BACKEND_TEST_CMD"),
+        runtime.config.raw.get("ENVCTL_BACKEND_TEST_CMD", ""),
+    )
+    frontend_raw = _first_non_empty(
+        runtime.env.get("ENVCTL_FRONTEND_TEST_CMD"),
+        runtime.config.raw.get("ENVCTL_FRONTEND_TEST_CMD", ""),
+    )
+    state = runtime.load_existing_state(mode=route.mode)
+    return build_failed_test_execution_specs_from_state(
+        state=state,
+        target_contexts=target_contexts,
+        repo_root=runtime.config.base_dir,
+        shared_raw_command=shared_raw,
+        backend_raw_command=backend_raw,
+        frontend_raw_command=frontend_raw,
+        emit_status=orchestrator._emit_status,
+    )
 
 
 def build_test_execution_specs_for_route(

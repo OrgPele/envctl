@@ -233,6 +233,47 @@ class ActionCommandTargetTests(unittest.TestCase):
         self.assertEqual(code, 11)
         run_migrate.assert_called_once_with(orchestrator, route, targets, extra_env=orchestrator.action_extra_env(route))
 
+    def test_test_execution_spec_methods_delegate_to_test_plan_owner(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="test", mode="main")
+        target_contexts = [TestTargetContext(project_name="Main", project_root=Path("/tmp"), target_obj=object())]
+
+        with patch(
+            "envctl_engine.actions.action_command_orchestrator.build_test_execution_specs_for_orchestrator",
+            return_value=[SimpleNamespace(index=1)],
+        ) as build_specs:
+            specs = orchestrator._build_test_execution_specs(
+                route=route,
+                targets=[],
+                target_contexts=target_contexts,
+                include_backend=True,
+                include_frontend=False,
+                run_all=False,
+                untested=False,
+            )
+
+        self.assertEqual([spec.index for spec in specs], [1])
+        build_specs.assert_called_once_with(
+            orchestrator,
+            route=route,
+            targets=[],
+            target_contexts=target_contexts,
+            include_backend=True,
+            include_frontend=False,
+            run_all=False,
+            untested=False,
+        )
+
+        with patch(
+            "envctl_engine.actions.action_command_orchestrator.build_failed_test_execution_specs_for_orchestrator",
+            return_value=[SimpleNamespace(index=2)],
+        ) as build_failed:
+            failed_specs = orchestrator._build_failed_test_execution_specs(route=route, target_contexts=target_contexts)
+
+        self.assertEqual([spec.index for spec in failed_specs], [2])
+        build_failed.assert_called_once_with(orchestrator, route=route, target_contexts=target_contexts)
+
     def test_build_test_execution_specs_uses_additional_service_test_command(self) -> None:
         runtime = _RuntimeStub()
         runtime.config = SimpleNamespace(
