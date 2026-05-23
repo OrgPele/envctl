@@ -134,6 +134,15 @@ class StructureLayoutTests(unittest.TestCase):
         legacy = runtime_tests / "test_engine_runtime_command_parity.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_runtime_service_facade_wrappers_have_owned_mixin(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_service_facade.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn("RuntimeServiceFacadeMixin", owner.read_text(encoding="utf-8"))
+        self.assertIn("RuntimeServiceFacadeMixin", facade.read_text(encoding="utf-8"))
+        self.assertLessEqual(len(facade.read_text(encoding="utf-8").splitlines()), 1300)
+
     def test_dashboard_rendering_parity_tests_are_split_by_owner(self) -> None:
         ui_tests = REPO_ROOT / "tests" / "python" / "ui"
         expected = [
