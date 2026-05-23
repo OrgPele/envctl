@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import re
-from typing import cast
 
 
 def _format_auth_service_state(service_state: Mapping[str, object]) -> str:

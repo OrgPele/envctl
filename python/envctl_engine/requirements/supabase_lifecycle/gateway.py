@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping
 from pathlib import Path
 
 from ..common import run_docker
-from .compose import _compose_db_port, _compose_public_port, _compose_run
+from .compose import _compose_run
 from .formatting import _format_auth_service_state
 from .inspect import _inspect_auth_gateway_service
 

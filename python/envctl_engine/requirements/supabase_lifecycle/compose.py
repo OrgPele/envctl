@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 import signal
@@ -15,7 +14,7 @@ from envctl_engine.debug.debug_utils import file_lock
 from ..adapter_base import env_bool, env_float, timeout_error
 from ..common import run_result_error
 from .config import _supabase_startup_budget_seconds
-from ..common import docker_port_publish_lock, run_docker, run_result_error
+from ..common import docker_port_publish_lock, run_docker
 from .network_recovery import _is_docker_address_pool_exhaustion, _is_docker_network_missing, _recover_missing_supabase_network_for_project, _remove_empty_envctl_supabase_networks
 from .formatting import _supabase_compose_failure_detail
 from .workspace import _normalize_compose_error

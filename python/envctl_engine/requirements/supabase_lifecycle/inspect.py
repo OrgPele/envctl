@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
 
-from ..common import container_exists, container_status, run_docker, run_result_error
+from ..common import container_exists, run_docker, run_result_error
 from .formatting import _sanitize_service_state_text
 
 

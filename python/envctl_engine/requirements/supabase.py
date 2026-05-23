@@ -1,44 +1,16 @@
 from __future__ import annotations
 
-import hashlib
-import json
-import os
-import re
-import signal
-import sys
-import subprocess
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
 from collections.abc import Mapping
 
-from envctl_engine.debug.debug_utils import file_lock
 from envctl_engine.shared.protocols import ProcessRuntime
 
-from .adapter_base import env_bool, env_float, env_int, port_mismatch_policy, timeout_error
 from .common import (
     ContainerStartResult,
     RetryResult,
-    build_container_name,
-    container_exists,
-    container_host_port,
-    container_status,
-    docker_port_publish_lock,
-    ensure_docker_image_present,
-    is_bind_conflict,
-    run_docker,
-    run_result_error,
     run_with_retry,
-)
-from ..shared.dependency_compose_assets import (
-    DEFAULT_SUPABASE_JWT_SECRET,
-    default_supabase_anon_key,
-    default_supabase_service_role_key,
-    dependency_compose_asset_dir,
-    materialize_dependency_compose,
-    supabase_managed_env,
 )
 
 
@@ -670,10 +642,6 @@ def start_supabase_stack(
 
 
 # Re-export network recovery symbols for backwards compatibility
-from envctl_engine.requirements.supabase_lifecycle.network_recovery import (
-    _recover_missing_supabase_network_for_project,
-    _remove_empty_docker_networks,
-)
 
 # Re-export config symbols for backwards compatibility
 from envctl_engine.requirements.supabase_lifecycle.config import (
@@ -694,22 +662,12 @@ from envctl_engine.requirements.supabase_lifecycle.config import (
 # Re-export native DB symbols for backwards compatibility
 from envctl_engine.requirements.supabase_lifecycle.native_db import (
     _start_supabase_db_native,
-    _recover_native_db_start_timeout,
-    _recover_native_db_create_timeout,
-    _native_db_start_timeout_seconds,
-    _native_db_start_recovery_timeout_seconds,
-    _native_db_state_error,
-    _native_db_published_port,
-    _native_db_timeout_error_for_retry,
-    _force_remove_native_db_container,
 )
 
 # Re-export formatting helpers for backwards compatibility
 from envctl_engine.requirements.supabase_lifecycle.formatting import (
     _format_auth_service_state,
     _format_auth_service_states,
-    _sanitize_service_state_text,
-    _is_python_traceback_noise,
     _supabase_auth_failure_detail,
     _supabase_compose_failure_detail,
     _supabase_db_failure_detail,
@@ -720,18 +678,11 @@ from envctl_engine.requirements.supabase_lifecycle.formatting import (
 # Re-export inspect helpers for backwards compatibility
 from envctl_engine.requirements.supabase_lifecycle.inspect import (
     _inspect_auth_gateway_services,
-    _inspect_auth_gateway_service,
-    _inspect_compose_service_from_container_name,
-    _compose_container_name,
-    _populate_service_summary_from_state,
-    _inspect_compose_service_from_ps_json,
-    _parse_compose_ps_status,
 )
 
 # Re-export types for backwards compatibility
 from envctl_engine.requirements.supabase_lifecycle.types import (
     _SupabaseStartupBudget,
-    SupabaseAuthHealthProbeResult,
 )
 
 # Re-export compose lifecycle symbols for backwards compatibility
@@ -739,25 +690,8 @@ from envctl_engine.requirements.supabase_lifecycle.compose import (
     _compose_service_list,
     _resolve_service_name,
     _compose_run,
-    _compose_args_mutate_port_bindings,
-    _compose_run_locked,
-    _compose_project_lock_path,
-    _compose_lock_timeout_seconds,
     _compose_up_timeout_seconds,
-    _compose_up_handoff,
-    _compose_port_publish_stall_seconds,
-    _compose_unpublished_port_detail,
-    _compose_stalled_port_detail,
-    _published_container_port_for_service,
-    _expected_host_port_for_service,
-    _is_gateway_service_name,
     _is_compose_port_publish_stall,
-    _compose_services_started,
-    _compose_handoff_ready,
-    _compose_service_state_ready,
-    _terminate_compose_process,
-    _compose_db_port,
-    _compose_public_port,
     _compose_timeout_recovered,
 )
 
@@ -765,7 +699,6 @@ from envctl_engine.requirements.supabase_lifecycle.compose import (
 from envctl_engine.requirements.supabase_lifecycle.gateway import (
     _recreate_db_service,
     _gateway_public_port_mismatch,
-    _container_host_config_port,
     _format_gateway_port_mismatch,
     _recreate_auth_gateway_services,
     _remove_auth_gateway_services,
@@ -773,34 +706,19 @@ from envctl_engine.requirements.supabase_lifecycle.gateway import (
 
 # Re-export workspace symbols for backwards compatibility
 from envctl_engine.requirements.supabase_lifecycle.workspace import (
-    _normalize_compose_error,
-    _is_container_name_conflict,
-    _extract_conflicting_container_name,
     _resolve_supabase_compose_workspace,
     build_supabase_project_name,
 )
 
 # Re-export probe symbols for backwards compatibility
 from envctl_engine.requirements.supabase_lifecycle.probe import (
-    _compose_service_state_failed,
     _auth_services_progressing,
     _wait_for_auth_health_while_progressing,
-    _env_with_float_override,
     _probe_db_listener,
     _record_db_probe_stage,
     _record_compose_network_recovery_stage,
     _is_compose_network_recovery_marker,
-    _probe_supabase_auth_health,
     _probe_supabase_auth_health_with_attempts,
-    _probe_supabase_auth_health_once,
-    _condense_probe_error,
 )
 
 # Re-export reliability contract symbols for backwards compatibility
-from envctl_engine.requirements.supabase_lifecycle.reliability_contract import (
-    SupabaseReliabilityContract,
-    evaluate_supabase_reliability_contract,
-    evaluate_managed_supabase_reliability_contract,
-    read_fingerprint,
-    write_fingerprint,
-)

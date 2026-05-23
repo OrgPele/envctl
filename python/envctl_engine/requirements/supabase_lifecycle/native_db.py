@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import json
-import re
-import subprocess
 import time
 from pathlib import Path
-from typing import cast
 
 from collections.abc import Mapping
 
-from ..adapter_base import env_float, env_int, port_mismatch_policy, timeout_error
+from ..adapter_base import env_float, port_mismatch_policy, timeout_error
 from .config import _db_probe_timeout_seconds
-from ..common import build_container_name, container_exists, container_host_port, container_status, ContainerStartResult, ensure_docker_image_present, is_bind_conflict, run_docker, run_result_error
+from ..common import container_exists, container_host_port, container_status, ContainerStartResult, ensure_docker_image_present, is_bind_conflict, run_docker, run_result_error
 from envctl_engine.shared.dependency_compose_assets import DEFAULT_SUPABASE_JWT_SECRET, default_supabase_anon_key, default_supabase_service_role_key
 
 

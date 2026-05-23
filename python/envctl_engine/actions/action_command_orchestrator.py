@@ -5,7 +5,6 @@ from pathlib import Path
 import sys
 from typing import Any, Callable, Mapping
 
-from envctl_engine.actions.action_command_support import service_types_from_route_services
 from envctl_engine.actions.action_command_execution_support import (
     execute_action_command as execute_action_command_impl,
 )
@@ -44,8 +43,6 @@ from envctl_engine.actions.action_test_summary_support import (
     print_test_suite_overview_for_orchestrator,
 )
 from envctl_engine.actions.action_test_plan_support import (
-    additional_service_test_execution_specs_for_orchestrator,
-    build_failed_test_execution_specs_for_orchestrator,
     build_test_execution_specs_for_orchestrator,
     command_start_status as command_start_status_impl,
     parallel_test_worker_count as parallel_test_worker_count_impl,
