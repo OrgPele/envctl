@@ -2737,7 +2737,6 @@ class ActionsParityTests(unittest.TestCase):
                 ]
             )
         )
-        orchestrator = ActionCommandOrchestrator(SimpleNamespace())
         entries = collect_failed_test_manifest_entries(
             [
                 {

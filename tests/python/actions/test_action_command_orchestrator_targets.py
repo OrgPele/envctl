@@ -10,6 +10,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator
+import envctl_engine.actions.action_test_summary_support as action_test_summary_support_module
+from envctl_engine.actions.action_test_summary_support import (
+    write_failed_tests_summary_for_orchestrator,
+)
 from envctl_engine.actions.action_test_support import TestTargetContext
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState, ServiceRecord
@@ -291,10 +295,11 @@ class ActionCommandTargetTests(unittest.TestCase):
         persist.assert_called_once_with(orchestrator, route=route, targets=targets, outcomes=outcomes)
 
         with patch(
-            "envctl_engine.actions.action_command_orchestrator.write_failed_tests_summary_for_orchestrator",
+            "envctl_engine.actions.action_test_summary_support.write_failed_tests_summary",
             return_value={"status": "failed"},
         ) as write_summary:
-            summary = orchestrator._write_failed_tests_summary(
+            summary = write_failed_tests_summary_for_orchestrator(
+                orchestrator,
                 run_dir=Path("/tmp/run"),
                 project_name="Main",
                 project_root=Path("/tmp/repo"),
@@ -304,12 +309,14 @@ class ActionCommandTargetTests(unittest.TestCase):
 
         self.assertEqual(summary, {"status": "failed"})
         write_summary.assert_called_once_with(
-            orchestrator,
             run_dir=Path("/tmp/run"),
             project_name="Main",
             project_root=Path("/tmp/repo"),
             outcomes=outcomes,
             previous_entry={"status": "failed"},
+            short_failed_summary_path=action_test_summary_support_module.short_failed_summary_path,
+            format_summary_error_lines=action_test_summary_support_module.format_summary_error_lines,
+            git_state_components=action_test_summary_support_module.default_git_state_components,
         )
 
         with patch(

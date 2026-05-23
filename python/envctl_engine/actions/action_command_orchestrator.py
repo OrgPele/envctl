@@ -40,11 +40,8 @@ from envctl_engine.actions.action_spinner_support import (
     noop_restore as noop_restore_impl,
 )
 from envctl_engine.actions.action_test_summary_support import (
-    new_test_results_run_dir_path as new_test_results_run_dir_path_impl,
     persist_test_summary_artifacts_for_orchestrator,
     print_test_suite_overview_for_orchestrator,
-    short_failed_summary_path as short_failed_summary_path_impl,
-    write_failed_tests_summary_for_orchestrator,
 )
 from envctl_engine.actions.action_test_plan_support import (
     additional_service_test_execution_specs_for_orchestrator,
@@ -123,10 +120,6 @@ class ActionCommandOrchestrator:
         self._migrate_env_contracts: dict[str, dict[str, object]] = {}
         self.execute_targeted_action_fn = execute_targeted_action
         self._deferred_post_action_output: Callable[[], None] | None = None
-
-    @staticmethod
-    def _short_failed_summary_path(*, run_dir: Path, project_name: str) -> Path:
-        return short_failed_summary_path_impl(run_dir=run_dir, project_name=project_name)
 
     def execute(self, route: Route) -> int:
         return execute_action_command_impl(
@@ -529,9 +522,6 @@ class ActionCommandOrchestrator:
     ) -> dict[str, dict[str, object]]:
         return persist_test_summary_artifacts_for_orchestrator(self, route=route, targets=targets, outcomes=outcomes)
 
-    def _new_test_results_run_dir(self, run_id: str) -> Path:
-        return new_test_results_run_dir_path_impl(self.runtime, run_id)
-
     def _print_test_suite_overview(
         self,
         outcomes: list[dict[str, object]],
@@ -539,24 +529,6 @@ class ActionCommandOrchestrator:
         summary_metadata: dict[str, dict[str, object]] | None = None,
     ) -> None:
         print_test_suite_overview_for_orchestrator(self, outcomes, summary_metadata=summary_metadata)
-
-    def _write_failed_tests_summary(
-        self,
-        *,
-        run_dir: Path,
-        project_name: str,
-        project_root: Path,
-        outcomes: list[dict[str, object]],
-        previous_entry: dict[str, object] | None = None,
-    ) -> dict[str, object]:
-        return write_failed_tests_summary_for_orchestrator(
-            self,
-            run_dir=run_dir,
-            project_name=project_name,
-            project_root=project_root,
-            outcomes=outcomes,
-            previous_entry=previous_entry,
-        )
 
     @staticmethod
     def _suite_display_name(source: str, *, failed_only: bool = False) -> str:
