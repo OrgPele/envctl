@@ -41,7 +41,7 @@ def resolve_startup_run_reuse(
     maybe_attach_plan_agent_terminal: Callable[[StartupSession], int | None],
     print_headless_plan_session_summary: Callable[[StartupSession], None],
     print_plan_dry_run_preview: Callable[[StartupSession], None],
-    configured_service_types_for_mode: Callable[[str], set[str]],
+    configured_service_types_for_mode: Callable[[str], list[str]],
     emit_snapshot: Callable[..., None],
     replace_existing_project_services_for_fresh_start: Callable[..., None],
     print_fn: Callable[[str], None] = print,
@@ -267,7 +267,7 @@ def resolve_startup_run_reuse_with_runtime(
             session,
             print_fn=print_fn,
         ),
-        configured_service_types_for_mode=lambda runtime_mode: set(
+        configured_service_types_for_mode=lambda runtime_mode: list(
             configured_service_types_for_mode(runtime.config, runtime_mode)
         ),
         emit_snapshot=lambda *args, **kwargs: emit_startup_plan_handoff_snapshot(runtime, *args, **kwargs),
@@ -414,7 +414,7 @@ def _resume_dashboard_run(
     maybe_attach_plan_agent_terminal: Callable[[StartupSession], int | None],
     print_headless_plan_session_summary: Callable[[StartupSession], None],
     print_plan_dry_run_preview: Callable[[StartupSession], None],
-    configured_service_types_for_mode: Callable[[str], set[str]],
+    configured_service_types_for_mode: Callable[[str], list[str]],
     print_fn: Callable[[str], None],
 ) -> int | None:
     session.run_id = candidate_state.run_id

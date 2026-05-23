@@ -3279,7 +3279,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             launches: list[list[str]] = []
 
             with patch(
-                "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                "envctl_engine.startup.lifecycle.launch_plan_agent_terminals",
                 side_effect=lambda _runtime, *, route, created_worktrees: (
                     launches.append([item.name for item in created_worktrees]),
                     PlanAgentLaunchResult(status="launched", reason="launched", outcomes=()),
@@ -3331,7 +3331,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
                     ),
                 )
 
-            with patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals", side_effect=_fake_launch):
+            with patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", side_effect=_fake_launch):
                 code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
 
             self.assertEqual(code, 0)
@@ -3438,7 +3438,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
 
-            with patch("envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals") as launch_mock:
+            with patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals") as launch_mock:
                 code = engine.dispatch(parse_route(["--planning-prs", "feature-a", "--batch"], env={}))
 
             self.assertEqual(code, 0)
@@ -3469,7 +3469,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             launches: list[list[str]] = []
 
             with patch(
-                "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                "envctl_engine.startup.lifecycle.launch_plan_agent_terminals",
                 side_effect=lambda _runtime, *, route, created_worktrees: (
                     launches.append([item.name for item in created_worktrees]),
                     PlanAgentLaunchResult(status="launched", reason="launched", outcomes=()),
@@ -3506,7 +3506,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             )
 
             with patch(
-                "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                "envctl_engine.startup.lifecycle.launch_plan_agent_terminals",
                 return_value=PlanAgentLaunchResult(status="failed", reason="missing_executables", outcomes=()),
             ):
                 code = engine.dispatch(parse_route(["--plan", "feature/task", "--batch"], env={}))
@@ -3549,7 +3549,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             out = StringIO()
             with (
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    "envctl_engine.startup.lifecycle.launch_plan_agent_terminals",
                     return_value=launch_result,
                 ),
                 patch.object(engine, "_start_project_context", side_effect=RuntimeError("missing_service_start_command: autodetect_failed_backend")),
@@ -3621,7 +3621,7 @@ class EngineRuntimeRealStartupTests(unittest.TestCase):
             out = StringIO()
             with (
                 patch(
-                    "envctl_engine.startup.startup_orchestrator.launch_plan_agent_terminals",
+                    "envctl_engine.startup.lifecycle.launch_plan_agent_terminals",
                     return_value=launch_result,
                 ),
                 patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),

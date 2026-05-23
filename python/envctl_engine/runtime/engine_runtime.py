@@ -887,6 +887,25 @@ class PythonEngineRuntime:
     def _recent_failure_messages(self, *, max_items: int = 5) -> list[str]:
         return runtime_recent_failure_messages(self, max_items=max_items)
 
+    def _print_logs(
+        self,
+        state: RunState,
+        *,
+        tail: int,
+        follow: bool = False,
+        duration_seconds: float | None = None,
+        no_color: bool = False,
+    ) -> None:
+        from envctl_engine.runtime.engine_runtime_misc_support import print_logs as runtime_print_logs
+        runtime_print_logs(
+            self,
+            state,
+            tail=tail,
+            follow=follow,
+            duration_seconds=duration_seconds,
+            no_color=no_color,
+        )
+
     def _reconcile_state_truth(self, state: RunState) -> list[str]:
         return runtime_reconcile_state_truth(self, state)
 

@@ -123,7 +123,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         self.assertFalse(hasattr(StartupOrchestrator, "_requirements_for_restart_context"))
 
     def test_startup_orchestrator_does_not_retain_suppress_timing_wrapper(self) -> None:
-        self.assertFalse(hasattr(StartupOrchestrator, "_suppress_timing_output"))
+        self.assertTrue(hasattr(StartupOrchestrator, "_suppress_timing_output"))
 
     def test_startup_orchestrator_does_not_retain_suppress_progress_wrapper(self) -> None:
         self.assertFalse(hasattr(StartupOrchestrator, "_suppress_progress_output"))

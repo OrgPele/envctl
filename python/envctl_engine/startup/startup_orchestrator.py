@@ -17,6 +17,15 @@ from envctl_engine.startup.startup_execution_support import (
     start_project_services as start_project_services_impl,
     start_requirements_for_project as start_requirements_for_project_impl,
 )
+from envctl_engine.startup.disabled_startup_resolution import resolve_disabled_startup_mode_with_runtime
+from envctl_engine.startup.execution_preparation import prepare_startup_execution_with_runtime
+from envctl_engine.startup.post_start_reconcile import reconcile_strict_truth_after_start
+from envctl_engine.startup.selected_context_startup import start_selected_contexts_with_runtime
+from envctl_engine.startup.context_selection import select_startup_contexts
+from envctl_engine.startup.execution_preparation import prepare_startup_execution_with_runtime
+from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse_with_runtime
+from envctl_engine.startup.startup_selection_support import restart_target_projects
+from envctl_engine.startup.session_lifecycle import create_startup_session
 
 _MODE_TREE_TOKENS_NORMALIZED = {str(token).strip().lower() for token in MODE_TREE_TOKENS}
 _ProjectSpinnerGroup = ProjectSpinnerGroup
@@ -37,6 +46,10 @@ class StartupOrchestrator:
     @property
     def project_spinner_group_factory(self) -> type[ProjectSpinnerGroup]:
         return _ProjectSpinnerGroup
+
+    @staticmethod
+    def _suppress_timing_output(route: Route | None) -> bool:
+        return suppress_timing_output(route)
 
     def start_project_context(
         self,

@@ -4,8 +4,8 @@
   "source_ref": "origin/codex/reuse-cgc-worktree-context",
   "resolution_reason": "attached_branch",
   "created_from_repo": "/Users/kfiramar/projects/envctl",
-  "recorded_at": "2026-05-21T15:20:06.971434+00:00",
-  "plan_file": "features/envctl-workflow-efficiency-and-identity.md",
+  "recorded_at": "2026-05-20T21:44:43.443457+00:00",
+  "plan_file": "refactoring/envctl-deep-codebase-refactor.md",
   "created_for_fresh_ai_launch": true,
   "fresh_ai_launch_status": "launching",
   "launch_transport": "cmux"
