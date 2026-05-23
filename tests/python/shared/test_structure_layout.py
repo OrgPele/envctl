@@ -80,6 +80,42 @@ class StructureLayoutTests(unittest.TestCase):
         legacy_stack = requirements_tests / "test_requirements_supabase_stack_contracts.py"
         self.assertLessEqual(len(legacy_stack.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_action_cli_tests_are_split_by_owner(self) -> None:
+        actions_tests = REPO_ROOT / "tests" / "python" / "actions"
+        expected = [
+            "actions_cli_test_support.py",
+            "test_actions_cli_analyze.py",
+            "test_actions_cli_commit.py",
+            "test_actions_cli_pr.py",
+            "test_actions_cli_review_completion.py",
+            "test_actions_cli_ship.py",
+        ]
+
+        for filename in expected:
+            with self.subTest(path=filename):
+                self.assertTrue((actions_tests / filename).is_file())
+
+        legacy = actions_tests / "test_actions_cli.py"
+        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
+
+    def test_runtime_lifecycle_parity_tests_are_split_by_owner(self) -> None:
+        runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
+        expected = [
+            "lifecycle_parity_test_support.py",
+            "test_lifecycle_parity_blast.py",
+            "test_lifecycle_parity_mode_scope.py",
+            "test_lifecycle_parity_resume_restore.py",
+            "test_lifecycle_parity_state_actions.py",
+            "test_lifecycle_parity_stop_health.py",
+        ]
+
+        for filename in expected:
+            with self.subTest(path=filename):
+                self.assertTrue((runtime_tests / filename).is_file())
+
+        legacy = runtime_tests / "test_lifecycle_parity.py"
+        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
+
     def test_bats_harness_is_absent(self) -> None:
         self.assertFalse((REPO_ROOT / "tests" / "bats").exists())
 
