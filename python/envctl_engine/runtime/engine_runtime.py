@@ -2,15 +2,10 @@ from __future__ import annotations
 
 import shutil as _shutil
 import sys as _sys
-import uuid
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
-from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator
-from envctl_engine.ui.dashboard.orchestrator import DashboardOrchestrator
-from envctl_engine.debug.doctor_orchestrator import DoctorOrchestrator
 from envctl_engine.runtime.engine_runtime_diagnostics import (
     lock_health_summary as runtime_lock_health_summary,
     parity_manifest_info as runtime_parity_manifest_info,
@@ -153,6 +148,7 @@ from envctl_engine.runtime.engine_runtime_bookkeeping_support import (
     reset_project_startup_warnings as runtime_reset_project_startup_warnings,
 )
 from envctl_engine.runtime.engine_runtime_dispatch import dispatch as runtime_dispatch
+from envctl_engine.runtime.engine_runtime_construction import initialize_runtime_construction
 from envctl_engine.runtime.engine_runtime_service_facade import RuntimeServiceFacadeMixin
 from envctl_engine.runtime.engine_runtime_ui_bridge import (
     can_interactive_tty as bridge_can_interactive_tty,
@@ -174,30 +170,14 @@ from envctl_engine.runtime.command_router import (
     Route,
 )
 from envctl_engine.config import EngineConfig
-from envctl_engine.runtime.lifecycle_cleanup_orchestrator import LifecycleCleanupOrchestrator
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord as ServiceRecord
 from envctl_engine.state.runtime_map import build_runtime_map as build_runtime_map
-from envctl_engine.shared.ports import PortPlanner
-from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.shared.process_probe import (
-    ProcessProbe,
     ProbeBackend,
     PsutilProbeBackend as _PsutilProbeBackend,
-    psutil_available,
+    psutil_available as psutil_available,
 )
-from envctl_engine.shared.process_runner import ProcessRunner
-from envctl_engine.requirements.orchestrator import RequirementsOrchestrator
-from envctl_engine.startup.resume_orchestrator import ResumeOrchestrator
 from envctl_engine.startup.session import ProjectStartupResult
-from envctl_engine.runtime.runtime_context import RuntimeContext
-from envctl_engine.runtime.service_manager import ServiceManager
-from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
-from envctl_engine.state.action_orchestrator import StateActionOrchestrator
-from envctl_engine.state.repository import RuntimeStateRepository
-from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
-from envctl_engine.ui.debug_flight_recorder import DebugFlightRecorder
-from envctl_engine.ui.backend import build_interactive_backend
-from envctl_engine.ui.backend_resolver import resolve_ui_backend
 from envctl_engine.ui.dashboard.rendering import (
     _dashboard_palette as domain_dashboard_palette,
     _dashboard_status_badge as domain_dashboard_status_badge,
@@ -260,7 +240,6 @@ from envctl_engine.planning.worktree_domain import (
     _worktree_add_failure as domain_worktree_add_failure,
     _setup_worktree_requested as domain_setup_worktree_requested,
 )
-from envctl_engine.planning.worktree_orchestrator import PlanningWorktreeOrchestrator
 
 shutil = _shutil
 sys = _sys
@@ -361,108 +340,7 @@ class PythonEngineRuntime(RuntimeServiceFacadeMixin):
             object.__setattr__(runtime_context, context_attr, value)
 
     def __init__(self, config: EngineConfig, *, env: dict[str, str] | None = None) -> None:
-        self.config = config
-        self.env = dict(env or {})
-        self.runtime_legacy_root = config.runtime_dir / "python-engine"
-        self.runtime_root = config.runtime_scope_dir
-        self.runtime_legacy_root.mkdir(parents=True, exist_ok=True)
-        self.runtime_root.mkdir(parents=True, exist_ok=True)
-        self._ensure_legacy_lock_view()
-        self.port_planner = PortPlanner(
-            backend_base=config.backend_port_base,
-            frontend_base=config.frontend_port_base,
-            spacing=config.port_spacing,
-            db_base=config.db_port_base,
-            redis_base=config.redis_port_base,
-            n8n_base=config.n8n_port_base,
-            supabase_api_base=config.port_defaults.dependency_port("supabase", "api"),
-            additional_service_bases={
-                service.name: int(service.port_base)
-                for service in getattr(config, "additional_services", ())
-                if getattr(service, "port_base", None)
-            },
-            lock_dir=str(self.runtime_root / "locks"),
-            event_handler=self._on_port_event,
-            availability_mode=config.port_availability_mode,
-            preferred_port_strategy=self.env.get(
-                "ENVCTL_PORT_PREFERRED_STRATEGY",
-                config.raw.get("ENVCTL_PORT_PREFERRED_STRATEGY", "project_slot"),
-            ),
-            scope_key=config.runtime_scope_id,
-            dynamic_main_dependency_ports=parse_bool(
-                self.env.get("ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS")
-                or config.raw.get("ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS"),
-                config.db_port_base == 5432 and config.redis_port_base == 6379,
-            ),
-        )
-        self.requirements = RequirementsOrchestrator()
-        self.services = ServiceManager()
-        self.events: list[dict[str, object]] = []
-        self._emit_lock = threading.Lock()
-        self._emit_listeners: list[Callable[[str, dict[str, object]], None]] = []
-        self._startup_warnings_lock = threading.Lock()
-        self._startup_warnings_by_project: dict[str, list[str]] = {}
-        self._debug_hash_salt = uuid.uuid4().hex
-        self._debug_recorder: DebugFlightRecorder | None = None
-        self._active_command_id: str | None = None
-        self._last_debug_bundle_path: str | None = None
-        self.process_runner = ProcessRunner(emit=self._emit)
-        probe_backend_name = "psutil" if (self._probe_psutil_enabled() and psutil_available()) else "shell"
-        probe_backend = self._build_process_probe_backend()
-        self.process_probe = ProcessProbe(probe_backend)
-        self._emit("probe.backend", backend=probe_backend_name)
-        self.terminal_ui = RuntimeTerminalUI()
-        self._dashboard_truth_cache_run_id: str | None = None
-        self._dashboard_truth_cache_expires_at = 0.0
-        self._dashboard_truth_cache_missing_services: list[str] = []
-        self._listener_probe_supported = self._probe_listener_support()
-        self._conflict_remaining: dict[str, int] = {
-            "postgres": self._conflict_count("POSTGRES"),
-            "redis": self._conflict_count("REDIS"),
-            "supabase": self._conflict_count("SUPABASE"),
-            "n8n": self._conflict_count("N8N"),
-            "backend": self._conflict_count("BACKEND"),
-            "frontend": self._conflict_count("FRONTEND"),
-        }
-        self.state_repository = RuntimeStateRepository(
-            runtime_root=self.runtime_root,
-            runtime_legacy_root=self.runtime_legacy_root,
-            runtime_dir=self.config.runtime_dir,
-            runtime_scope_id=self.config.runtime_scope_id,
-            compat_mode=self._state_compat_mode(),
-        )
-        self.runtime_context = RuntimeContext(
-            config=self.config,
-            env=self.env,
-            process_runtime=self.process_runner,
-            port_allocator=self.port_planner,
-            state_repository=self.state_repository,
-            terminal_ui=self.terminal_ui,
-            emit=self._emit,
-        )
-        self.planning_worktree_orchestrator = PlanningWorktreeOrchestrator(self)
-        self.startup_orchestrator = StartupOrchestrator(self)
-        self.resume_orchestrator = ResumeOrchestrator(self)
-        self.doctor_orchestrator = DoctorOrchestrator(self)
-        self.lifecycle_cleanup_orchestrator = LifecycleCleanupOrchestrator(self)
-        self.dashboard_orchestrator = DashboardOrchestrator(self)
-        self.state_action_orchestrator = StateActionOrchestrator(self)
-        self.action_command_orchestrator = ActionCommandOrchestrator(self)
-        self.ui_backend_resolution = resolve_ui_backend(self.env)
-        self.ui_backend = build_interactive_backend(self.ui_backend_resolution)
-        self._emit(
-            "ui.backend.selected",
-            backend=self.ui_backend_resolution.backend,
-            requested_mode=self.ui_backend_resolution.requested_mode,
-            interactive=self.ui_backend_resolution.interactive,
-            reason=self.ui_backend_resolution.reason,
-        )
-        if not self.ui_backend_resolution.interactive:
-            self._emit(
-                "ui.fallback.non_interactive",
-                reason=self.ui_backend_resolution.reason,
-                backend=self.ui_backend_resolution.backend,
-            )
+        initialize_runtime_construction(self, config, env=env)
 
     def _apply_setup_worktree_selection(
         self, route: Route, project_contexts: list[ProjectContext]

@@ -143,6 +143,25 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("RuntimeServiceFacadeMixin", facade.read_text(encoding="utf-8"))
         self.assertLessEqual(len(facade.read_text(encoding="utf-8").splitlines()), 1300)
 
+    def test_runtime_construction_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_construction.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn("def initialize_runtime_construction", owner.read_text(encoding="utf-8"))
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("initialize_runtime_construction(self, config, env=env)", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 1050)
+
+    def test_dashboard_command_support_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_support.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator.py"
+
+        self.assertTrue(owner.is_file())
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("import envctl_engine.ui.dashboard.command_support as command_support", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 900)
+
     def test_dashboard_rendering_parity_tests_are_split_by_owner(self) -> None:
         ui_tests = REPO_ROOT / "tests" / "python" / "ui"
         expected = [
