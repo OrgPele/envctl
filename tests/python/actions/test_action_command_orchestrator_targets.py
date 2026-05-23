@@ -270,10 +270,13 @@ class ActionCommandTargetTests(unittest.TestCase):
         )
 
         with patch(
-            "envctl_engine.actions.action_command_orchestrator.build_failed_test_execution_specs_for_orchestrator",
+            "envctl_engine.actions.action_test_plan_support.build_failed_test_execution_specs_for_orchestrator",
             return_value=[SimpleNamespace(index=2)],
         ) as build_failed:
-            failed_specs = orchestrator._build_failed_test_execution_specs(route=route, target_contexts=target_contexts)
+            from envctl_engine.actions.action_test_plan_support import build_failed_test_execution_specs_for_orchestrator as build_failed_impl
+            failed_specs = build_failed_impl(
+                orchestrator, route=route, target_contexts=target_contexts,
+            )
 
         self.assertEqual([spec.index for spec in failed_specs], [2])
         build_failed.assert_called_once_with(orchestrator, route=route, target_contexts=target_contexts)

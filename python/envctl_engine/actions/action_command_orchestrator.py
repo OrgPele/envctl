@@ -215,10 +215,6 @@ class ActionCommandOrchestrator:
         interactive_allowed = self._interactive_selection_allowed(route)
         return no_target_selected_message(route.command, route=route, interactive_allowed=interactive_allowed)
 
-    @staticmethod
-    def _service_types_from_route_services(route: Route) -> set[str]:
-        return service_types_from_route_services(route)
-
     def _test_service_selection(
         self,
         route: Route,
@@ -247,32 +243,6 @@ class ActionCommandOrchestrator:
             include_frontend=include_frontend,
             run_all=run_all,
             untested=untested,
-        )
-
-    def _additional_service_test_execution_specs(
-        self,
-        *,
-        route: Route,
-        targets: list[object],
-        target_contexts: list[TestTargetContext],
-    ) -> list["_TestExecutionSpec"]:
-        return additional_service_test_execution_specs_for_orchestrator(
-            self,
-            route=route,
-            targets=targets,
-            target_contexts=target_contexts,
-        )
-
-    def _build_failed_test_execution_specs(
-        self,
-        *,
-        route: Route,
-        target_contexts: list[TestTargetContext],
-    ) -> list["_TestExecutionSpec"]:
-        return build_failed_test_execution_specs_for_orchestrator(
-            self,
-            route=route,
-            target_contexts=target_contexts,
         )
 
     def run_project_action(
