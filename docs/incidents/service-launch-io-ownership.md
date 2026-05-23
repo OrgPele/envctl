@@ -176,7 +176,7 @@ This path should eventually be routed through the explicit `interactive_child` A
 ### Remaining same-class hardening candidate
 
 Still worth hardening:
-- `_compose_up_handoff(...)` in [supabase.py](../../python/envctl_engine/requirements/supabase.py)
+- `_compose_up_handoff(...)` in [compose.py](../../python/envctl_engine/requirements/supabase_lifecycle/compose.py)
 
 That function still uses a raw `subprocess.Popen(...)` without an explicit `stdin=` override.
 

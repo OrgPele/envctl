@@ -969,6 +969,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         shell_source_of_truth=(),
         python_source_of_truth=(
             "python/envctl_engine/requirements/supabase.py",
+            "python/envctl_engine/requirements/supabase_lifecycle/orchestrator.py",
             "python/envctl_engine/requirements/common.py",
         ),
         evidence_tests=(
@@ -979,7 +980,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         notes="Supabase naming, cleanup, and repeated lifecycle behavior are covered by dedicated reliability and lifecycle tests.",
         current_behavior="Python Supabase support is real and tested, but legacy shell behavior is still the broader historical reference for repeated cleanup and naming edge cases.",
         missing_python_behavior="Fully prove long-name naming, stale-container cleanup, and repeated lifecycle behavior without needing shell as the fallback oracle.",
-        python_owner_module="python/envctl_engine/requirements/supabase.py",
+        python_owner_module="python/envctl_engine/requirements/supabase_lifecycle/orchestrator.py",
         proposed_tests=(
             "tests/python/requirements/test_supabase_requirements_reliability.py",
             "tests/python/runtime/test_engine_runtime_lifecycle_support.py",
@@ -995,6 +996,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         shell_source_of_truth=(),
         python_source_of_truth=(
             "python/envctl_engine/requirements/supabase.py",
+            "python/envctl_engine/requirements/supabase_lifecycle/orchestrator.py",
             "python/envctl_engine/runtime/command_router.py",
         ),
         evidence_tests=(
@@ -1005,7 +1007,7 @@ _EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         notes="Seed and copy-db-storage behavior is covered by runtime startup and requirements tests.",
         current_behavior="Seed/copy-db flags still carry shell-era expectations and are not yet expressed as a full Python-owned contract.",
         missing_python_behavior="Define the exact retained seeding behavior and cover it with Python and end-to-end tests so the feature is no longer implicitly shell-defined.",
-        python_owner_module="python/envctl_engine/requirements/supabase.py",
+        python_owner_module="python/envctl_engine/requirements/supabase_lifecycle/orchestrator.py",
         proposed_tests=("tests/python/requirements/test_requirements_orchestrator.py",),
         severity="high",
         rollout_risk="Incorrect seeding semantics can corrupt developer expectations and destroy trust in tree isolation.",

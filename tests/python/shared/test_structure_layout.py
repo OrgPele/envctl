@@ -44,6 +44,16 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertFalse((REPO_ROOT / "lib" / "engine" / "main.sh").exists())
         self.assertFalse((REPO_ROOT / "lib" / "envctl.sh").exists())
 
+    def test_supabase_startup_sequence_has_lifecycle_orchestrator(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "orchestrator.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertIn(
+            "from envctl_engine.requirements.supabase_lifecycle.orchestrator import start_supabase_stack",
+            facade.read_text(encoding="utf-8"),
+        )
+
     def test_bats_harness_is_absent(self) -> None:
         self.assertFalse((REPO_ROOT / "tests" / "bats").exists())
 
