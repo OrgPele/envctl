@@ -1197,15 +1197,6 @@ def _force_remove_native_db_container(
 
 
 @dataclass(slots=True)
-class SupabaseReliabilityContract:
-    ok: bool
-    fingerprint: str
-    errors: list[str]
-    compose_path: Path | None
-    compatible_fingerprints: tuple[str, ...] = ()
-
-
-@dataclass(slots=True)
 class _SupabaseStartupBudget:
     timeout_seconds: float
     started_at: float
@@ -1223,212 +1214,6 @@ class _SupabaseStartupBudget:
 
     def remaining_seconds(self) -> float:
         return max(0.0, self.timeout_seconds - self.elapsed_seconds())
-
-
-def evaluate_supabase_reliability_contract(project_root: Path) -> SupabaseReliabilityContract:
-    compose_root = project_root / "supabase"
-    compose_path = compose_root / "docker-compose.yml"
-    if not compose_path.is_file():
-        return SupabaseReliabilityContract(
-            ok=False,
-            fingerprint="missing",
-            errors=["missing supabase compose file: supabase/docker-compose.yml"],
-            compose_path=compose_path,
-        )
-
-    try:
-        compose_text = compose_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        return SupabaseReliabilityContract(
-            ok=False,
-            fingerprint="unreadable",
-            errors=[f"failed reading supabase compose file: {exc}"],
-            compose_path=compose_path,
-        )
-
-    errors: list[str] = []
-
-    if _has_static_network_name(compose_text):
-        errors.append("supabase compose defines static network name; use project-scoped network names instead")
-
-    if not _contains_search_path_contract(compose_text):
-        errors.append("missing GOTRUE_DB_DATABASE_URL search_path contract (?search_path=auth,public)")
-    if not _contains_auth_namespace_var(compose_text, "GOTRUE_DB_NAMESPACE"):
-        errors.append("missing GOTRUE_DB_NAMESPACE=auth")
-    if not _contains_auth_namespace_var(compose_text, "DB_NAMESPACE"):
-        errors.append("missing DB_NAMESPACE=auth")
-
-    if "02-bootstrap-gotrue-auth.sql" not in compose_text:
-        errors.append("missing mount for 02-bootstrap-gotrue-auth.sql")
-    if "01-create-n8n-db.sql" not in compose_text:
-        errors.append("missing mount for 01-create-n8n-db.sql")
-    if "kong.yml" not in compose_text:
-        errors.append("missing mount for kong.yml")
-
-    errors.extend(_unsafe_mount_path_errors(compose_text))
-
-    fingerprint = _fingerprint_contract_inputs(compose_root, compose_text=compose_text)
-    return SupabaseReliabilityContract(
-        ok=not errors,
-        fingerprint=fingerprint,
-        errors=errors,
-        compose_path=compose_path,
-        compatible_fingerprints=_compatible_contract_fingerprints(
-            compose_root,
-            compose_text=compose_text,
-            canonical_fingerprint=fingerprint,
-        ),
-    )
-
-
-def read_fingerprint(path: Path) -> str | None:
-    if not path.is_file():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    value = payload.get("fingerprint")
-    return str(value) if isinstance(value, str) and value.strip() else None
-
-
-def write_fingerprint(path: Path, *, fingerprint: str, project_root: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "fingerprint": fingerprint,
-        "project_root": str(project_root),
-    }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-
-
-def evaluate_managed_supabase_reliability_contract() -> SupabaseReliabilityContract:
-    compose_root = dependency_compose_asset_dir("supabase")
-    compose_path = compose_root / "docker-compose.yml"
-    if not compose_path.is_file():
-        return SupabaseReliabilityContract(
-            ok=False,
-            fingerprint="missing",
-            errors=[f"missing envctl managed supabase compose file: {compose_path}"],
-            compose_path=compose_path,
-        )
-    try:
-        compose_text = compose_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        return SupabaseReliabilityContract(
-            ok=False,
-            fingerprint="unreadable",
-            errors=[f"failed reading envctl managed supabase compose file: {exc}"],
-            compose_path=compose_path,
-        )
-    errors: list[str] = []
-    if _has_static_network_name(compose_text):
-        errors.append("supabase compose defines static network name; use project-scoped network names instead")
-    if not _contains_search_path_contract(compose_text):
-        errors.append("missing GOTRUE_DB_DATABASE_URL search_path contract (?search_path=auth,public)")
-    if not _contains_auth_namespace_var(compose_text, "GOTRUE_DB_NAMESPACE"):
-        errors.append("missing GOTRUE_DB_NAMESPACE=auth")
-    if not _contains_auth_namespace_var(compose_text, "DB_NAMESPACE"):
-        errors.append("missing DB_NAMESPACE=auth")
-    if "02-bootstrap-gotrue-auth.sql" not in compose_text:
-        errors.append("missing mount for 02-bootstrap-gotrue-auth.sql")
-    if "01-create-n8n-db.sql" not in compose_text:
-        errors.append("missing mount for 01-create-n8n-db.sql")
-    if "kong.yml" not in compose_text:
-        errors.append("missing mount for kong.yml")
-    errors.extend(_unsafe_mount_path_errors(compose_text))
-    fingerprint = _fingerprint_contract_inputs(compose_root, compose_text=compose_text)
-    return SupabaseReliabilityContract(
-        ok=not errors,
-        fingerprint=fingerprint,
-        errors=errors,
-        compose_path=compose_path,
-        compatible_fingerprints=_compatible_contract_fingerprints(
-            compose_root,
-            compose_text=compose_text,
-            canonical_fingerprint=fingerprint,
-        ),
-    )
-
-
-def _fingerprint_contract_inputs(compose_root: Path, *, compose_text: str) -> str:
-    return _fingerprint_contract_hash(compose_root, compose_text=_fingerprint_relevant_compose_text(compose_text))
-
-
-def _fingerprint_contract_hash(compose_root: Path, *, compose_text: str) -> str:
-    hasher = hashlib.sha256()
-    hasher.update(compose_text.encode("utf-8"))
-    for rel in (
-        Path("kong.yml"),
-        Path("init/01-create-n8n-db.sql"),
-        Path("init/02-bootstrap-gotrue-auth.sql"),
-    ):
-        path = compose_root / rel
-        hasher.update(str(rel).encode("utf-8"))
-        if path.is_file():
-            try:
-                hasher.update(path.read_bytes())
-            except OSError:
-                hasher.update(b"<unreadable>")
-        else:
-            hasher.update(b"<missing>")
-    return hasher.hexdigest()
-
-
-def _compatible_contract_fingerprints(
-    compose_root: Path,
-    *,
-    compose_text: str,
-    canonical_fingerprint: str,
-) -> tuple[str, ...]:
-    candidates: list[str] = []
-    for candidate_text in (
-        compose_text,
-        _fingerprint_relevant_compose_text_legacy_pull_policy_only(compose_text),
-        _legacy_managed_supabase_healthcheck_text(compose_text),
-        _fingerprint_relevant_compose_text_legacy_pull_policy_only(
-            _legacy_managed_supabase_healthcheck_text(compose_text)
-        ),
-    ):
-        candidate = _fingerprint_contract_hash(compose_root, compose_text=candidate_text)
-        if candidate != canonical_fingerprint and candidate not in candidates:
-            candidates.append(candidate)
-    return tuple(candidates)
-
-
-def _fingerprint_relevant_compose_text(compose_text: str) -> str:
-    lines = []
-    skip_indent: int | None = None
-    for line in compose_text.splitlines():
-        stripped = line.strip()
-        indent = len(line) - len(line.lstrip(" "))
-        if skip_indent is not None:
-            if stripped and indent > skip_indent:
-                continue
-            skip_indent = None
-        if stripped.startswith("pull_policy:"):
-            continue
-        if stripped == "healthcheck:" or stripped.startswith("healthcheck: "):
-            skip_indent = indent
-            continue
-        lines.append(line.rstrip())
-    return "\n".join(lines) + "\n"
-
-
-def _fingerprint_relevant_compose_text_legacy_pull_policy_only(compose_text: str) -> str:
-    lines = []
-    for line in compose_text.splitlines():
-        if line.strip().startswith("pull_policy:"):
-            continue
-        lines.append(line.rstrip())
-    return "\n".join(lines) + "\n"
-
-
-def _legacy_managed_supabase_healthcheck_text(compose_text: str) -> str:
-    return (
-        compose_text.replace("interval: 1s", "interval: 10s")
-        .replace("timeout: 2s", "timeout: 5s")
-        .replace("retries: 30", "retries: 10")
-    )
 
 
 def _compose_service_list(
@@ -1909,180 +1694,9 @@ def _is_gateway_service_name(service_name: str) -> bool:
     return str(service_name or "").strip().lower() in {"supabase-kong", "kong", "gateway"}
 
 
-def _is_docker_address_pool_exhaustion(error: str | None) -> bool:
-    return "all predefined address pools have been fully subnetted" in str(error or "").lower()
-
-
-def _is_docker_network_missing(error: str | None) -> bool:
-    normalized = " ".join(str(error or "").lower().split())
-    if not normalized:
-        return False
-    if (
-        "failed to set up container networking" in normalized
-        and "network" in normalized
-        and "not found" in normalized
-    ):
-        return True
-    return bool(re.search(r"\bnetwork\s+[0-9a-f]{12,64}\s+not\s+found\b", normalized))
-
-
 def _is_compose_port_publish_stall(error: str | None) -> bool:
     normalized = " ".join(str(error or "").lower().split())
     return "docker compose stalled before publishing supabase" in normalized
-
-
-def _recover_missing_supabase_network_for_project(
-    *,
-    process_runner,
-    compose_root: Path,
-    compose_project_name: str,
-    compose_path: Path,
-    env: Mapping[str, str] | None,
-) -> tuple[bool, str | None]:
-    down_result, down_error = run_docker(
-        process_runner,
-        ["compose", "-p", compose_project_name, "-f", str(compose_path), "down", "--remove-orphans"],
-        cwd=compose_root,
-        env=env,
-        timeout=60.0,
-    )
-    if down_result is not None and getattr(down_result, "returncode", 1) == 0:
-        return True, "compose_down_remove_orphans"
-
-    down_detail = down_error
-    if down_result is not None and getattr(down_result, "returncode", 1) != 0:
-        down_detail = run_result_error(down_result, "docker compose down --remove-orphans failed")
-
-    removed_count, cleanup_error = _remove_empty_supabase_networks_for_project(
-        process_runner=process_runner,
-        compose_root=compose_root,
-        compose_project_name=compose_project_name,
-        env=env,
-    )
-    if removed_count > 0:
-        detail = f"current_project_empty_networks_removed={removed_count}"
-        if cleanup_error:
-            detail = f"{detail}; cleanup_error={cleanup_error}"
-        return True, detail
-
-    if cleanup_error:
-        return False, f"compose_down_error={down_detail}; network_cleanup_error={cleanup_error}"
-    if _global_empty_network_recovery_enabled(env):
-        global_count, global_error = _remove_empty_envctl_supabase_networks(
-            process_runner=process_runner,
-            compose_root=compose_root,
-            env=env,
-        )
-        if global_count > 0:
-            detail = f"global_empty_networks_removed={global_count}"
-            if global_error:
-                detail = f"{detail}; cleanup_error={global_error}"
-            return True, detail
-        if global_error:
-            return False, f"compose_down_error={down_detail}; global_cleanup_error={global_error}"
-    return False, f"compose_down_error={down_detail or 'unknown'}; no current-project empty Supabase networks removed"
-
-
-def _remove_empty_supabase_networks_for_project(
-    *,
-    process_runner,
-    compose_root: Path,
-    compose_project_name: str,
-    env: Mapping[str, str] | None,
-) -> tuple[int, str | None]:
-    def include_network(network_name: str) -> bool:
-        if not network_name.startswith(f"{compose_project_name}_"):
-            return False
-        suffix = network_name[len(compose_project_name) :]
-        return suffix in {"_default", "_supabase-net"}
-
-    return _remove_empty_docker_networks(
-        process_runner=process_runner,
-        compose_root=compose_root,
-        env=env,
-        include_network=include_network,
-    )
-
-
-def _global_empty_network_recovery_enabled(env: Mapping[str, str] | None) -> bool:
-    return env_bool(env, "ENVCTL_SUPABASE_NETWORK_RECOVERY_ALLOW_GLOBAL_EMPTY_CLEANUP", False)
-
-
-def _remove_empty_envctl_supabase_networks(
-    *,
-    process_runner,
-    compose_root: Path,
-    env: Mapping[str, str] | None,
-) -> tuple[int, str | None]:
-    return _remove_empty_docker_networks(
-        process_runner=process_runner,
-        compose_root=compose_root,
-        env=env,
-        include_network=lambda network_name: network_name.startswith("envctl-supabase-"),
-    )
-
-
-def _remove_empty_docker_networks(
-    *,
-    process_runner,
-    compose_root: Path,
-    env: Mapping[str, str] | None,
-    include_network,
-) -> tuple[int, str | None]:
-    result, run_error = run_docker(
-        process_runner,
-        ["network", "ls", "--format", "{{.Name}}"],
-        cwd=compose_root,
-        env=env,
-        timeout=20.0,
-    )
-    if result is None:
-        return 0, run_error or "docker network ls failed"
-    if getattr(result, "returncode", 1) != 0:
-        return 0, run_result_error(result, "docker network ls failed")
-
-    names = [line.strip() for line in str(getattr(result, "stdout", "") or "").splitlines() if line.strip()]
-    cleanup_errors: list[str] = []
-    removed_count = 0
-    for network_name in names:
-        if not bool(include_network(network_name)):
-            continue
-        inspect_result, inspect_error = run_docker(
-            process_runner,
-            ["network", "inspect", "-f", "{{len .Containers}}", network_name],
-            cwd=compose_root,
-            env=env,
-            timeout=20.0,
-        )
-        if inspect_result is None:
-            cleanup_errors.append(inspect_error or f"failed inspecting Docker network {network_name}")
-            continue
-        if getattr(inspect_result, "returncode", 1) != 0:
-            cleanup_errors.append(run_result_error(inspect_result, f"failed inspecting Docker network {network_name}"))
-            continue
-        try:
-            container_count = int(str(getattr(inspect_result, "stdout", "") or "").strip() or "0")
-        except ValueError:
-            cleanup_errors.append(f"failed inspecting Docker network {network_name}: invalid container count")
-            continue
-        if container_count != 0:
-            continue
-        rm_result, rm_error = run_docker(
-            process_runner,
-            ["network", "rm", network_name],
-            cwd=compose_root,
-            env=env,
-            timeout=20.0,
-        )
-        if rm_result is None:
-            cleanup_errors.append(rm_error or f"failed removing empty Docker network {network_name}")
-            continue
-        if getattr(rm_result, "returncode", 1) != 0:
-            cleanup_errors.append(run_result_error(rm_result, f"failed removing empty Docker network {network_name}"))
-            continue
-        removed_count += 1
-
-    return removed_count, "; ".join(cleanup_errors) if cleanup_errors else None
 
 
 def _compose_services_started(
@@ -2925,57 +2539,6 @@ def _resolve_supabase_compose_workspace(
     return materialized.stack_root, materialized.compose_file
 
 
-def _contains_search_path_contract(compose_text: str) -> bool:
-    pattern = re.compile(r"GOTRUE_DB_DATABASE_URL\s*[:=]\s*['\"]?[^'\"\n]*search_path=auth,public", re.IGNORECASE)
-    return bool(pattern.search(compose_text))
-
-
-def _contains_auth_namespace_var(compose_text: str, key: str) -> bool:
-    pattern = re.compile(rf"{re.escape(key)}\s*[:=]\s*['\"]?auth(?:['\"]|\s|$)", re.IGNORECASE)
-    return bool(pattern.search(compose_text))
-
-
-def _has_static_network_name(compose_text: str) -> bool:
-    lines = compose_text.splitlines()
-    in_networks = False
-    for raw in lines:
-        line = raw.rstrip()
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if not in_networks:
-            if stripped == "networks:":
-                in_networks = True
-            continue
-        if line and not line.startswith((" ", "\t")):
-            break
-        if re.search(r"^\s*name\s*:\s*[^$].+", line):
-            return True
-    return False
-
-
-def _unsafe_mount_path_errors(compose_text: str) -> list[str]:
-    errors: list[str] = []
-    for marker in ("kong.yml", "01-create-n8n-db.sql", "02-bootstrap-gotrue-auth.sql"):
-        for line in compose_text.splitlines():
-            if marker not in line:
-                continue
-            mount = _extract_mount_source(line)
-            if mount is None:
-                continue
-            if mount.startswith("/"):
-                errors.append(f"unsafe absolute mount for {marker}: {mount}")
-    return errors
-
-
-def _extract_mount_source(line: str) -> str | None:
-    # Matches compose short syntax: - ./path/file:/container/path[:mode]
-    match = re.search(r"^\s*-\s*([^:\s]+):", line)
-    if not match:
-        return None
-    return match.group(1).strip()
-
-
 def _supabase_auth_health_url(env: Mapping[str, str] | None, public_port: int) -> str:
     public_url = str((env or {}).get("SUPABASE_PUBLIC_URL") or f"http://localhost:{public_port}").rstrip("/")
     return f"{public_url}/auth/v1/health"
@@ -3288,61 +2851,40 @@ def _supabase_db_failure_detail(
     return " ".join(parts)
 
 
-def _auth_probe_timeout_seconds(env: Mapping[str, str] | None) -> float:
-    parsed = env_float(env, "ENVCTL_SUPABASE_AUTH_PROBE_TIMEOUT_SECONDS", 5.0, minimum=0.5)
-    return parsed if parsed > 0 else 5.0
-
-
-def _auth_restart_probe_attempts(env: Mapping[str, str] | None) -> int:
-    return env_int(env, "ENVCTL_SUPABASE_AUTH_RESTART_PROBE_ATTEMPTS", 2, minimum=1)
-
-
-def _auth_recreate_probe_attempts(env: Mapping[str, str] | None) -> int:
-    return env_int(env, "ENVCTL_SUPABASE_AUTH_RECREATE_PROBE_ATTEMPTS", 3, minimum=1)
-
-
-def _auth_restart_on_probe_failure_enabled(env: Mapping[str, str] | None) -> bool:
-    return env_bool(env, "ENVCTL_SUPABASE_AUTH_RESTART_ON_PROBE_FAILURE", True)
-
-
-def _auth_recreate_on_probe_failure_enabled(env: Mapping[str, str] | None) -> bool:
-    return env_bool(env, "ENVCTL_SUPABASE_AUTH_RECREATE_ON_PROBE_FAILURE", True)
-
-
-def _db_probe_attempts(env: Mapping[str, str] | None) -> int:
-    return env_int(env, "ENVCTL_SUPABASE_DB_PROBE_ATTEMPTS", 2, minimum=1)
-
-
-def _db_probe_timeout_seconds(env: Mapping[str, str] | None) -> float:
-    parsed = env_float(env, "ENVCTL_SUPABASE_DB_PROBE_TIMEOUT_SECONDS", 10.0)
-    if parsed <= 0:
-        return 30.0
-    return parsed
-
-
-def _db_restart_probe_attempts(env: Mapping[str, str] | None, *, default: int) -> int:
-    return env_int(env, "ENVCTL_SUPABASE_DB_RESTART_PROBE_ATTEMPTS", default, minimum=1)
-
-
-def _db_recreate_probe_attempts(env: Mapping[str, str] | None, *, default: int) -> int:
-    return env_int(env, "ENVCTL_SUPABASE_DB_RECREATE_PROBE_ATTEMPTS", default, minimum=1)
-
-
-def _db_restart_on_probe_failure_enabled(env: Mapping[str, str] | None) -> bool:
-    return env_bool(env, "ENVCTL_SUPABASE_DB_RESTART_ON_PROBE_FAILURE", True)
-
-
-def _db_recreate_on_probe_failure_enabled(env: Mapping[str, str] | None) -> bool:
-    return env_bool(env, "ENVCTL_SUPABASE_DB_RECREATE_ON_PROBE_FAILURE", True)
-
-
-def _native_db_start_enabled(env: Mapping[str, str] | None) -> bool:
-    return env_bool(env, "ENVCTL_SUPABASE_DB_START_NATIVE", False)
-
-
 def build_supabase_project_name(*, project_root: Path, project_name: str) -> str:
     return build_container_name(
         prefix="envctl-supabase",
         project_root=project_root,
         project_name=project_name,
     )
+
+# Re-export reliability contract symbols for backwards compatibility
+from envctl_engine.requirements.supabase_lifecycle.reliability_contract import (
+    SupabaseReliabilityContract,
+    evaluate_supabase_reliability_contract,
+    evaluate_managed_supabase_reliability_contract,
+    read_fingerprint,
+    write_fingerprint,
+)
+
+# Re-export network recovery symbols for backwards compatibility
+from envctl_engine.requirements.supabase_lifecycle.network_recovery import (
+    _recover_missing_supabase_network_for_project,
+    _remove_empty_docker_networks,
+)
+
+# Re-export config symbols for backwards compatibility
+from envctl_engine.requirements.supabase_lifecycle.config import (
+    _auth_probe_timeout_seconds,
+    _auth_restart_probe_attempts,
+    _auth_recreate_probe_attempts,
+    _auth_restart_on_probe_failure_enabled,
+    _auth_recreate_on_probe_failure_enabled,
+    _db_probe_attempts,
+    _db_probe_timeout_seconds,
+    _db_restart_probe_attempts,
+    _db_recreate_probe_attempts,
+    _db_restart_on_probe_failure_enabled,
+    _db_recreate_on_probe_failure_enabled,
+    _native_db_start_enabled,
+)
