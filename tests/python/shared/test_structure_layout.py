@@ -148,6 +148,26 @@ class StructureLayoutTests(unittest.TestCase):
         legacy = runtime_tests / "test_engine_runtime_command_parity.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_plan_agent_launch_tests_are_split_by_transport_owner(self) -> None:
+        planning_tests = REPO_ROOT / "tests" / "python" / "planning"
+        expected = [
+            "plan_agent_launch_support_test_support.py",
+            "test_plan_agent_launch_cmux.py",
+            "test_plan_agent_launch_omx.py",
+            "test_plan_agent_launch_options.py",
+            "test_plan_agent_launch_readiness.py",
+            "test_plan_agent_launch_superset.py",
+            "test_plan_agent_launch_tmux.py",
+            "test_plan_agent_launch_workflow.py",
+        ]
+
+        for filename in expected:
+            with self.subTest(path=filename):
+                self.assertTrue((planning_tests / filename).is_file())
+
+        legacy = planning_tests / "test_plan_agent_launch_support.py"
+        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
+
     def test_runtime_service_facade_wrappers_have_owned_mixin(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_service_facade.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
