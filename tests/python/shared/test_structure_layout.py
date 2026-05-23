@@ -64,6 +64,11 @@ class StructureLayoutTests(unittest.TestCase):
             "test_requirements_supabase_compose_contracts.py",
             "test_requirements_supabase_native_contracts.py",
             "test_requirements_supabase_stack_contracts.py",
+            "test_requirements_supabase_stack_auth_contracts.py",
+            "test_requirements_supabase_stack_core_contracts.py",
+            "test_requirements_supabase_stack_db_probe_contracts.py",
+            "test_requirements_supabase_stack_handoff_contracts.py",
+            "test_requirements_supabase_stack_network_contracts.py",
         ]
 
         for filename in expected:
@@ -72,6 +77,8 @@ class StructureLayoutTests(unittest.TestCase):
 
         legacy = requirements_tests / "test_requirements_adapters_real_contracts.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
+        legacy_stack = requirements_tests / "test_requirements_supabase_stack_contracts.py"
+        self.assertLessEqual(len(legacy_stack.read_text(encoding="utf-8").splitlines()), 20)
 
     def test_bats_harness_is_absent(self) -> None:
         self.assertFalse((REPO_ROOT / "tests" / "bats").exists())
