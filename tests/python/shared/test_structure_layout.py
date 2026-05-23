@@ -134,6 +134,23 @@ class StructureLayoutTests(unittest.TestCase):
         legacy = runtime_tests / "test_engine_runtime_command_parity.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_dashboard_rendering_parity_tests_are_split_by_owner(self) -> None:
+        ui_tests = REPO_ROOT / "tests" / "python" / "ui"
+        expected = [
+            "dashboard_rendering_parity_test_support.py",
+            "test_dashboard_rendering_parity_ai_sessions.py",
+            "test_dashboard_rendering_parity_dependencies.py",
+            "test_dashboard_rendering_parity_links.py",
+            "test_dashboard_rendering_parity_services.py",
+        ]
+
+        for filename in expected:
+            with self.subTest(path=filename):
+                self.assertTrue((ui_tests / filename).is_file())
+
+        legacy = ui_tests / "test_dashboard_rendering_parity.py"
+        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
+
     def test_bats_harness_is_absent(self) -> None:
         self.assertFalse((REPO_ROOT / "tests" / "bats").exists())
 
