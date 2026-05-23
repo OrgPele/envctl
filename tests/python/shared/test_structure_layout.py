@@ -112,6 +112,20 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("ActionCommandProjectFacadeMixin", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 180)
 
+    def test_project_action_domain_has_output_and_artifact_owners(self) -> None:
+        protected_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_protected_artifacts.py"
+        review_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_output_support.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_domain.py"
+
+        self.assertTrue(protected_owner.is_file())
+        self.assertTrue(review_owner.is_file())
+        self.assertIn("partition_envctl_protected_paths", protected_owner.read_text(encoding="utf-8"))
+        self.assertIn("print_review_completion", review_owner.read_text(encoding="utf-8"))
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("action_protected_artifacts", facade_text)
+        self.assertIn("action_review_output_support", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 1750)
+
     def test_runtime_lifecycle_parity_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
         expected = [

@@ -14,16 +14,24 @@ import tempfile
 import time
 from typing import Mapping
 
-from envctl_engine.planning import planning_feature_name
-from envctl_engine.config.local_artifacts import is_envctl_local_artifact_path
-from envctl_engine.shared.parsing import parse_bool
-from envctl_engine.ui.color_policy import colors_enabled
-from envctl_engine.ui.path_links import (
-    normalize_local_path_text,
-    render_path_for_terminal,
-    render_paths_in_terminal_text,
-    rich_path_text,
+from envctl_engine.actions.action_protected_artifacts import (
+    EnvctlProtectedPathPartition,
+    ordered_unique_paths as _ordered_unique_paths,
+    partition_envctl_protected_paths as _partition_envctl_protected_paths,
+    status_candidate_path as _status_candidate_path,
 )
+from envctl_engine.actions.action_review_output_support import (
+    display_path as _display_path,
+    parse_review_stats as _parse_review_stats,
+    print_review_completion as _print_review_completion,
+    print_review_completion_rich as _print_review_completion_rich,
+    print_review_failure as _print_review_failure,
+    prune_review_output_dir as _prune_review_output_dir,
+    review_colorizer as _review_colorizer,
+)
+from envctl_engine.planning import planning_feature_name
+from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.ui.path_links import render_paths_in_terminal_text
 
 PR_BODY_MAX_CHARS = 48_000
 PR_TITLE_MAX_CHARS = 240
@@ -34,6 +42,30 @@ PLANNING_ROOT = Path("todo") / "plans"
 DONE_PLANNING_ROOT = Path("todo") / "done"
 ENVCTL_COMMIT_LEDGER_NAME = ".envctl-commit-message.md"
 ENVCTL_COMMIT_POINTER_MARKER = "### Envctl pointer ###"
+
+__all__ = [
+    "ActionProjectContext",
+    "DirtyWorktreeReport",
+    "EnvctlProtectedPathPartition",
+    "OriginalPlanResolution",
+    "ReviewBaseResolution",
+    "ReviewBaseResolutionError",
+    "_display_path",
+    "_partition_envctl_protected_paths",
+    "_print_review_completion",
+    "_print_review_completion_rich",
+    "_review_colorizer",
+    "_status_candidate_path",
+    "detect_default_branch",
+    "existing_pr_url",
+    "probe_dirty_worktree",
+    "resolve_git_root",
+    "run_commit_action",
+    "run_pr_action",
+    "run_review_action",
+    "run_ship_action",
+    "sanitize_label",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,13 +110,6 @@ class DirtyWorktreeReport:
     @property
     def dirty(self) -> bool:
         return self.staged or self.unstaged or self.untracked
-
-
-@dataclass(frozen=True, slots=True)
-class EnvctlProtectedPathPartition:
-    protected_staged_paths: list[str]
-    protected_skipped_paths: list[str]
-    stageable_paths: list[str]
 
 
 def run_commit_action(context: ActionProjectContext) -> int:
@@ -199,70 +224,8 @@ def run_commit_action(context: ActionProjectContext) -> int:
     return 0
 
 
-def _partition_envctl_protected_paths(status_output: str) -> EnvctlProtectedPathPartition:
-    protected_staged_paths: list[str] = []
-    protected_skipped_paths: list[str] = []
-    stageable_paths: list[str] = []
-    seen_protected_staged: set[str] = set()
-    seen_protected_skipped: set[str] = set()
-    seen_stageable: set[str] = set()
-    for raw_line in str(status_output or "").splitlines():
-        line = raw_line.rstrip("\n")
-        if not line:
-            continue
-        if len(line) < 4:
-            continue
-        index_status = line[0]
-        candidate = _status_candidate_path(line)
-        if not candidate:
-            continue
-        if is_envctl_local_artifact_path(candidate):
-            if index_status not in {" ", "?"}:
-                if candidate not in seen_protected_staged:
-                    protected_staged_paths.append(candidate)
-                    seen_protected_staged.add(candidate)
-                if candidate in seen_protected_skipped:
-                    protected_skipped_paths = [path for path in protected_skipped_paths if path != candidate]
-                    seen_protected_skipped.remove(candidate)
-            elif candidate not in seen_protected_staged and candidate not in seen_protected_skipped:
-                protected_skipped_paths.append(candidate)
-                seen_protected_skipped.add(candidate)
-            continue
-        if candidate not in seen_stageable:
-            stageable_paths.append(candidate)
-            seen_stageable.add(candidate)
-    return EnvctlProtectedPathPartition(
-        protected_staged_paths=protected_staged_paths,
-        protected_skipped_paths=protected_skipped_paths,
-        stageable_paths=stageable_paths,
-    )
-
-
-def _ordered_unique_paths(*path_groups: list[str]) -> list[str]:
-    paths: list[str] = []
-    seen: set[str] = set()
-    for group in path_groups:
-        for path in group:
-            if path in seen:
-                continue
-            paths.append(path)
-            seen.add(path)
-    return paths
-
-
 def _unstage_envctl_protected_paths(git_root: Path, paths: list[str]) -> subprocess.CompletedProcess[str]:
     return _run_git(git_root, ["reset", "-q", "--", *paths])
-
-
-def _status_candidate_path(line: str) -> str:
-    if line.startswith("?? "):
-        return line[3:].strip()
-    payload = line[3:].strip()
-    if not payload:
-        return ""
-    if " -> " in payload:
-        return payload.split(" -> ", 1)[1].strip()
-    return payload
 
 
 def run_pr_action(context: ActionProjectContext) -> int:
@@ -1727,203 +1690,6 @@ def _first_existing_path(*paths: Path) -> Path:
         if path.is_file():
             return path
     return paths[0]
-
-
-def _print_review_completion(
-    context: ActionProjectContext,
-    *,
-    mode: str,
-    scope: str,
-    output_dir: Path,
-    summary_path: Path,
-    all_in_one_path: Path,
-    stats: list[tuple[str, str]],
-    tree_count: int,
-) -> None:
-    if parse_bool(context.env.get("ENVCTL_ACTION_FORCE_RICH"), False):
-        if _print_review_completion_rich(
-            context,
-            mode=mode,
-            scope=scope,
-            output_dir=output_dir,
-            summary_path=summary_path,
-            all_in_one_path=all_in_one_path,
-            stats=stats,
-            tree_count=tree_count,
-        ):
-            return
-    color = _review_colorizer(context)
-    print(color(f"Review Ready: {context.project_name}", fg="cyan", bold=True))
-    print(f"  Mode: {mode}")
-    print(f"  Scope: {scope}")
-    print(f"  Trees: {tree_count}")
-    print()
-    print(color("  Output directory", fg="blue", bold=True))
-    print(f"    {_display_path(output_dir, env=context.env)}")
-    print(color("  Summary file", fg="blue", bold=True))
-    print(f"    {_display_path(summary_path, env=context.env)}")
-    print(color("  Full review bundle", fg="blue", bold=True))
-    print(f"    {_display_path(all_in_one_path, env=context.env)}")
-    if stats:
-        print()
-        print(color("  Quick stats", fg="green", bold=True))
-        for label, value in stats:
-            print(f"    {label}: {value}")
-
-    print()
-    print(color("  Next steps", fg="green", bold=True))
-    print("    1. Start with the summary file.")
-    print("    2. Open the full review when you need the complete context.")
-
-
-def _print_review_completion_rich(
-    context: ActionProjectContext,
-    *,
-    mode: str,
-    scope: str,
-    output_dir: Path,
-    summary_path: Path,
-    all_in_one_path: Path,
-    stats: list[tuple[str, str]],
-    tree_count: int,
-) -> bool:
-    force_rich = parse_bool(context.env.get("ENVCTL_ACTION_FORCE_RICH"), False)
-    if not force_rich:
-        return False
-    try:
-        from rich import box
-        from rich.console import Console
-        from rich.panel import Panel
-        from rich.table import Table
-        from rich.text import Text
-    except Exception:
-        return False
-
-    console = Console(
-        file=sys.stdout,
-        no_color=not colors_enabled(context.env, stream=sys.stdout, interactive_tty=force_rich or sys.stdout.isatty()),
-        force_terminal=True,
-    )
-
-    details = Table.grid(padding=(0, 1))
-    details.add_column(style="bold")
-    details.add_column()
-    details.add_row("Mode", mode)
-    details.add_row("Scope", scope)
-    details.add_row("Trees", str(tree_count))
-    link_tty = force_rich or sys.stdout.isatty()
-    details.add_row(
-        "Output",
-        rich_path_text(output_dir, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
-    )
-    details.add_row(
-        "Summary",
-        rich_path_text(summary_path, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
-    )
-    details.add_row(
-        "Bundle",
-        rich_path_text(all_in_one_path, text_cls=Text, env=context.env, stream=sys.stdout, interactive_tty=link_tty),
-    )
-    for label, value in stats:
-        details.add_row(label, value)
-
-    steps = Table.grid(padding=(0, 1))
-    steps.add_column(width=3, style="bold")
-    steps.add_column()
-    steps.add_row("1.", "Start with the summary file.")
-    steps.add_row("2.", "Open the full review when you need the complete context.")
-
-    title = Text.assemble(("Review Ready", "bold"), (": ", "bold"), (context.project_name, "cyan"))
-    body = Table.grid(padding=(1, 0))
-    body.add_row(details)
-    body.add_row(Text(""))
-    body.add_row(Text("Next steps", style="bold"))
-    body.add_row(steps)
-    console.print(Panel(body, title=title, box=box.ROUNDED, expand=True))
-    return True
-
-
-def _print_review_failure(
-    context: ActionProjectContext,
-    *,
-    output_dir: Path,
-    result: subprocess.CompletedProcess[str],
-) -> None:
-    color = _review_colorizer(context)
-    print(color(f"Review failed: {context.project_name}", fg="red", bold=True))
-    print(color("  Output directory", fg="blue", bold=True))
-    print(f"    {_display_path(output_dir, env=context.env)}")
-    stderr = str(result.stderr or "").strip()
-    stdout = str(result.stdout or "").strip()
-    details = stderr or stdout or f"exit:{result.returncode}"
-    print(f"  Details: {details}")
-
-
-def _parse_review_stats(summary_short_path: Path | None) -> list[tuple[str, str]]:
-    if summary_short_path is None or not summary_short_path.is_file():
-        return []
-    wanted = {
-        "Trees analyzed": "Trees analyzed",
-        "Base branch": "Base branch",
-        "Trees with changes": "Trees with changes",
-        "Trees with no changes": "Trees with no changes",
-    }
-    rows: list[tuple[str, str]] = []
-    try:
-        for raw in summary_short_path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if ":" not in line:
-                continue
-            key, value = [part.strip() for part in line.split(":", 1)]
-            if key in wanted and value:
-                rows.append((wanted[key], value))
-    except OSError:
-        return []
-    return rows
-
-
-def _prune_review_output_dir(output_dir: Path, *, keep_names: set[str]) -> None:
-    for child in list(output_dir.iterdir()):
-        if child.name in keep_names:
-            continue
-        if child.is_dir():
-            shutil.rmtree(child, ignore_errors=True)
-            continue
-        try:
-            child.unlink()
-        except OSError:
-            continue
-
-
-def _review_colorizer(context: ActionProjectContext):
-    enabled = colors_enabled(context.env, stream=sys.stdout, interactive_tty=context.interactive)
-
-    def colorize(text: str, *, fg: str | None = None, bold: bool = False) -> str:
-        if not enabled:
-            return text
-        palette = {
-            "red": "31",
-            "green": "32",
-            "yellow": "33",
-            "blue": "34",
-            "magenta": "35",
-            "cyan": "36",
-            "gray": "90",
-        }
-        codes: list[str] = []
-        if bold:
-            codes.append("1")
-        if fg is not None and fg in palette:
-            codes.append(palette[fg])
-        if not codes:
-            return text
-        return f"\x1b[{';'.join(codes)}m{text}\x1b[0m"
-
-    return colorize
-
-
-def _display_path(path: Path, *, env: Mapping[str, str] | None = None) -> str:
-    return render_path_for_terminal(normalize_local_path_text(path), env=env, stream=sys.stdout)
 
 
 def _print_error(prefix: str, result: subprocess.CompletedProcess[str]) -> None:
