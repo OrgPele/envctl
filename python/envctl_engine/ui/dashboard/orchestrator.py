@@ -797,7 +797,7 @@ class DashboardOrchestrator:
 
     @staticmethod
     def _project_names_from_state(state: RunState, rt: object) -> list[object]:
-        return target_selection_support.project_names_from_state(state, rt)
+        return target_selection_support.dashboard_project_names_from_state(state, rt)
 
     @staticmethod
     def _project_name_list(projects: list[object]) -> list[str]:

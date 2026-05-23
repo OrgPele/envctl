@@ -34,3 +34,9 @@ This inventory is the ownership map for the Python engine refactor. Keep it alig
 - Transports: share launch vocabulary through `planning/plan_agent/models.py` and helper modules; keep transport-specific process/session behavior in the transport modules.
 - Requirements: split adapters behind stable adapter APIs. Supabase should be decomposed by configuration, lifecycle, readiness, database setup, auth users, repair, and reporting.
 - Dashboard: keep orchestration, rendering, backend resolution, command parsing, failure details, stop/restart selectors, PR/review-tab flow, and target/service/test-scope selection separate; protect each owner with focused UI tests and keep `DashboardOrchestrator` wrappers for compatibility callers.
+
+## Test Ownership
+
+- Runtime startup regression coverage is split by lifecycle owner: core startup, env-file projection, migration/bootstrap, service rebound, plan launch, plan resume, plan selection, plan parallelism, requirements, external requirements, interactive startup, resume, and setup-worktree flows. Shared startup fixtures live in `tests/python/runtime/engine_runtime_real_startup_test_support.py`.
+- Action parity coverage is split by action owner: core actions, git, migrate env contracts, migrate reporting, failed backend reruns, failed frontend reruns, failed-rerun validation/state, test discovery, execution, failure summaries, bootstrap, parallel execution, interrupts, spinner behavior, flags, service scope, and worktree actions. Shared action fixtures live in `tests/python/actions/actions_parity_test_support.py`.
+- Dashboard orchestrator coverage is split by behavior owner: restart selection, stop scope, PR flow, target selection, failure details, and review-tab launch. Shared dashboard fixtures live in `tests/python/ui/dashboard_orchestrator_test_support.py`.

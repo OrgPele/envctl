@@ -60,7 +60,7 @@ def service_types_from_service_names(service_names: list[str]) -> set[str]:
     return selection_service_types_from_service_names(service_names)
 
 
-def project_names_from_state(state: RunState, rt: object) -> list[object]:
+def dashboard_project_names_from_state(state: RunState, rt: object) -> list[object]:
     return selection_project_names_from_state(cast(Any, rt), state)
 
 
