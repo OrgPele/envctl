@@ -274,6 +274,55 @@ class ActionCommandTargetTests(unittest.TestCase):
         self.assertEqual([spec.index for spec in failed_specs], [2])
         build_failed.assert_called_once_with(orchestrator, route=route, target_contexts=target_contexts)
 
+    def test_test_summary_artifact_methods_delegate_to_summary_owner(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="test", mode="main")
+        targets = [SimpleNamespace(name="Main", root=Path("/tmp/repo"))]
+        outcomes = [{"project_name": "Main", "returncode": 0}]
+
+        with patch(
+            "envctl_engine.actions.action_command_orchestrator.persist_test_summary_artifacts_for_orchestrator",
+            return_value={"Main": {"status": "passed"}},
+        ) as persist:
+            summaries = orchestrator._persist_test_summary_artifacts(route=route, targets=targets, outcomes=outcomes)
+
+        self.assertEqual(summaries, {"Main": {"status": "passed"}})
+        persist.assert_called_once_with(orchestrator, route=route, targets=targets, outcomes=outcomes)
+
+        with patch(
+            "envctl_engine.actions.action_command_orchestrator.write_failed_tests_summary_for_orchestrator",
+            return_value={"status": "failed"},
+        ) as write_summary:
+            summary = orchestrator._write_failed_tests_summary(
+                run_dir=Path("/tmp/run"),
+                project_name="Main",
+                project_root=Path("/tmp/repo"),
+                outcomes=outcomes,
+                previous_entry={"status": "failed"},
+            )
+
+        self.assertEqual(summary, {"status": "failed"})
+        write_summary.assert_called_once_with(
+            orchestrator,
+            run_dir=Path("/tmp/run"),
+            project_name="Main",
+            project_root=Path("/tmp/repo"),
+            outcomes=outcomes,
+            previous_entry={"status": "failed"},
+        )
+
+        with patch(
+            "envctl_engine.actions.action_command_orchestrator.print_test_suite_overview_for_orchestrator"
+        ) as print_overview:
+            orchestrator._print_test_suite_overview(outcomes, summary_metadata={"Main": {"status": "passed"}})
+
+        print_overview.assert_called_once_with(
+            orchestrator,
+            outcomes,
+            summary_metadata={"Main": {"status": "passed"}},
+        )
+
     def test_build_test_execution_specs_uses_additional_service_test_command(self) -> None:
         runtime = _RuntimeStub()
         runtime.config = SimpleNamespace(

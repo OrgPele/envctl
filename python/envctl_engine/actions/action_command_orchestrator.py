@@ -63,30 +63,20 @@ from envctl_engine.actions.action_spinner_support import (
     noop_restore as noop_restore_impl,
 )
 from envctl_engine.actions.action_test_summary_support import (
-    captured_output_blocks as captured_output_blocks_impl,
     collect_failed_test_manifest_entries as collect_failed_test_manifest_entries_impl,
     collect_failed_tests as collect_failed_tests_impl,
     collect_generic_suite_failures as collect_generic_suite_failures_impl,
     collect_suite_failure_contexts as collect_suite_failure_contexts_impl,
     compact_summary_line as compact_summary_line_impl,
     default_git_state_components as git_state_components_impl,
-    exception_body_block as exception_body_block_impl,
-    exception_context_markers as exception_context_markers_impl,
     format_summary_error_lines as format_summary_error_lines_impl,
-    is_captured_output_header as is_captured_output_header_impl,
-    is_exception_context_marker as is_exception_context_marker_impl,
-    is_exception_start as is_exception_start_impl,
-    is_user_code_frame as is_user_code_frame_impl,
-    looks_like_terminal_chrome as looks_like_terminal_chrome_impl,
     new_test_results_run_dir_path as new_test_results_run_dir_path_impl,
-    persist_test_summary_artifacts as persist_test_summary_artifacts_impl,
-    print_test_suite_overview as print_test_suite_overview_impl,
+    persist_test_summary_artifacts_for_orchestrator,
+    print_test_suite_overview_for_orchestrator,
     resolve_failed_test_error as resolve_failed_test_error_impl,
     short_failed_summary_path as short_failed_summary_path_impl,
     structured_summary_lines as structured_summary_lines_impl,
-    suite_display_name as suite_display_name_impl,
-    user_code_frame_blocks as user_code_frame_blocks_impl,
-    write_failed_tests_summary as write_failed_tests_summary_impl,
+    write_failed_tests_summary_for_orchestrator,
 )
 from envctl_engine.actions.action_test_plan_support import (
     additional_service_test_execution_specs_for_orchestrator,
@@ -146,7 +136,6 @@ from envctl_engine.startup.service_bootstrap_domain import (
     _resolve_backend_env_contract,
 )
 from envctl_engine.state.models import RequirementsResult
-from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.test_output.test_runner import TestRunner
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
 from envctl_engine.ui.selection_support import interactive_selection_allowed, no_target_selected_message
@@ -696,15 +685,7 @@ class ActionCommandOrchestrator:
         targets: list[object],
         outcomes: list[dict[str, object]],
     ) -> dict[str, dict[str, object]]:
-        return persist_test_summary_artifacts_impl(
-            runtime=self.runtime,
-            route=route,
-            targets=targets,
-            outcomes=outcomes,
-            new_test_results_run_dir=lambda runtime, run_id: self._new_test_results_run_dir(run_id),
-            write_failed_tests_summary_fn=self._write_failed_tests_summary,
-            runtime_map_builder=build_runtime_map,
-        )
+        return persist_test_summary_artifacts_for_orchestrator(self, route=route, targets=targets, outcomes=outcomes)
 
     def _new_test_results_run_dir(self, run_id: str) -> Path:
         return new_test_results_run_dir_path_impl(self.runtime, run_id)
@@ -718,15 +699,13 @@ class ActionCommandOrchestrator:
         outcomes: list[dict[str, object]],
         previous_entry: dict[str, object] | None = None,
     ) -> dict[str, object]:
-        return write_failed_tests_summary_impl(
+        return write_failed_tests_summary_for_orchestrator(
+            self,
             run_dir=run_dir,
             project_name=project_name,
             project_root=project_root,
             outcomes=outcomes,
             previous_entry=previous_entry,
-            short_failed_summary_path=ActionCommandOrchestrator._short_failed_summary_path,
-            format_summary_error_lines=ActionCommandOrchestrator._format_summary_error_lines,
-            git_state_components=ActionCommandOrchestrator._git_state_components,
         )
 
     def _collect_failed_tests(
@@ -771,7 +750,9 @@ class ActionCommandOrchestrator:
 
     @staticmethod
     def _suite_display_name(source: str, *, failed_only: bool = False) -> str:
-        return suite_display_name_impl(source, failed_only=failed_only)
+        from envctl_engine.actions.action_test_summary_support import suite_display_name
+
+        return suite_display_name(source, failed_only=failed_only)
 
     def _project_action_failure_summary_lines(
         self,
@@ -848,42 +829,6 @@ class ActionCommandOrchestrator:
         return structured_summary_lines_impl(lines)
 
     @staticmethod
-    def _user_code_frame_blocks(lines: list[str]) -> list[list[str]]:
-        return user_code_frame_blocks_impl(lines)
-
-    @staticmethod
-    def _exception_body_block(lines: list[str]) -> list[str]:
-        return exception_body_block_impl(lines)
-
-    @staticmethod
-    def _captured_output_blocks(lines: list[str]) -> list[list[str]]:
-        return captured_output_blocks_impl(lines)
-
-    @staticmethod
-    def _exception_context_markers(lines: list[str]) -> list[str]:
-        return exception_context_markers_impl(lines)
-
-    @staticmethod
-    def _is_user_code_frame(line: str) -> bool:
-        return is_user_code_frame_impl(line)
-
-    @staticmethod
-    def _is_exception_start(line: str) -> bool:
-        return is_exception_start_impl(line)
-
-    @staticmethod
-    def _is_exception_context_marker(line: str) -> bool:
-        return is_exception_context_marker_impl(line)
-
-    @staticmethod
-    def _is_captured_output_header(line: str) -> bool:
-        return is_captured_output_header_impl(line)
-
-    @staticmethod
-    def _looks_like_terminal_chrome(line: str) -> bool:
-        return looks_like_terminal_chrome_impl(line)
-
-    @staticmethod
     def _noop_restore() -> None:
         return noop_restore_impl()
 
@@ -893,12 +838,7 @@ class ActionCommandOrchestrator:
         *,
         summary_metadata: dict[str, dict[str, object]] | None = None,
     ) -> None:
-        print_test_suite_overview_impl(
-            outcomes,
-            summary_metadata=summary_metadata,
-            env=dict(getattr(self.runtime, "env", {})),
-            colorize=self._colorize,
-        )
+        print_test_suite_overview_for_orchestrator(self, outcomes, summary_metadata=summary_metadata)
 
     @staticmethod
     def _is_legacy_tree_test_script(command: list[str]) -> bool:

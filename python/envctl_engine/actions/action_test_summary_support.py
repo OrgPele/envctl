@@ -756,3 +756,62 @@ def suite_display_name(source: str, *, failed_only: bool = False) -> str:
     if source == "configured":
         return "Test command (failed only)" if failed_only else "Test command"
     return source.replace("_", " ")
+
+
+def persist_test_summary_artifacts_for_orchestrator(
+    orchestrator: object,
+    *,
+    route: object,
+    targets: list[object],
+    outcomes: list[dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    return persist_test_summary_artifacts(
+        runtime=orchestrator.runtime,  # type: ignore[attr-defined]
+        route=route,
+        targets=targets,
+        outcomes=outcomes,
+        new_test_results_run_dir=lambda _runtime, run_id: new_test_results_run_dir_path(
+            orchestrator.runtime,  # type: ignore[attr-defined]
+            run_id,
+        ),
+        write_failed_tests_summary_fn=lambda **kwargs: write_failed_tests_summary_for_orchestrator(
+            orchestrator,
+            **kwargs,
+        ),
+        runtime_map_builder=build_runtime_map,
+    )
+
+
+def write_failed_tests_summary_for_orchestrator(
+    orchestrator: object,
+    *,
+    run_dir: Path,
+    project_name: str,
+    project_root: Path,
+    outcomes: list[dict[str, object]],
+    previous_entry: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return write_failed_tests_summary(
+        run_dir=run_dir,
+        project_name=project_name,
+        project_root=project_root,
+        outcomes=outcomes,
+        previous_entry=previous_entry,
+        short_failed_summary_path=short_failed_summary_path,
+        format_summary_error_lines=format_summary_error_lines,
+        git_state_components=default_git_state_components,
+    )
+
+
+def print_test_suite_overview_for_orchestrator(
+    orchestrator: object,
+    outcomes: list[dict[str, object]],
+    *,
+    summary_metadata: dict[str, dict[str, object]] | None = None,
+) -> None:
+    print_test_suite_overview(
+        outcomes,
+        summary_metadata=summary_metadata,
+        env=dict(getattr(orchestrator.runtime, "env", {})),  # type: ignore[attr-defined]
+        colorize=orchestrator._colorize,  # type: ignore[attr-defined]
+    )
