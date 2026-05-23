@@ -54,6 +54,25 @@ class StructureLayoutTests(unittest.TestCase):
             facade.read_text(encoding="utf-8"),
         )
 
+    def test_requirement_adapter_contract_tests_are_split_by_owner(self) -> None:
+        requirements_tests = REPO_ROOT / "tests" / "python" / "requirements"
+        expected = [
+            "requirements_adapter_contract_support.py",
+            "test_requirements_n8n_adapter_contracts.py",
+            "test_requirements_postgres_adapter_contracts.py",
+            "test_requirements_redis_adapter_contracts.py",
+            "test_requirements_supabase_compose_contracts.py",
+            "test_requirements_supabase_native_contracts.py",
+            "test_requirements_supabase_stack_contracts.py",
+        ]
+
+        for filename in expected:
+            with self.subTest(path=filename):
+                self.assertTrue((requirements_tests / filename).is_file())
+
+        legacy = requirements_tests / "test_requirements_adapters_real_contracts.py"
+        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
+
     def test_bats_harness_is_absent(self) -> None:
         self.assertFalse((REPO_ROOT / "tests" / "bats").exists())
 
