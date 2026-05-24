@@ -33,6 +33,7 @@ from envctl_engine.planning.plan_agent.terminal_screen import *
 from envctl_engine.planning.plan_agent.recovery import *
 from envctl_engine.planning.plan_agent.tmux_session import *
 from envctl_engine.planning.plan_agent import omx_attach_support
+from envctl_engine.planning.plan_agent import omx_launch_support
 from envctl_engine.planning.plan_agent import omx_lock_support
 from envctl_engine.planning.plan_agent import omx_spawn_support
 from envctl_engine.planning.plan_agent import omx_validation_support
@@ -49,273 +50,32 @@ def _launch_plan_agent_omx_terminals(
     prompt_on_existing: bool,
     run_tmux_existing_session_workflow: Any,
 ) -> PlanAgentLaunchResult:
-    if launch_config.cli != "codex":
-        runtime._emit("planning.agent_launch.failed", reason="unsupported_omx_cli", **base_payload)
-        return PlanAgentLaunchResult(status="failed", reason="unsupported_omx_cli")
-    repo_root = Path(runtime.config.base_dir).resolve()
-    attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
-    route_flags = getattr(route, "flags", {}) or {}
-    create_new_session = bool(route_flags.get("new_session"))
-    existing_attach_target = _find_existing_omx_attach_target(
+    return omx_launch_support.launch_omx_terminals(
         runtime,
-        repo_root=repo_root,
+        route=route,
+        launch_config=launch_config,
+        workflow=workflow,
         created_worktrees=created_worktrees,
-    )
-    if existing_attach_target is not None:
-        if not create_new_session and _should_prompt_existing_tmux_session(
-            runtime,
-            prompt_on_existing=prompt_on_existing,
-        ):
-            action = _prompt_existing_tmux_session_action(
-                runtime,
-                attach_target=existing_attach_target,
-            )
-            if action == "attach":
-                runtime._emit(
-                    "planning.agent_launch.skipped",
-                    reason="existing_omx_session_attach",
-                    session_name=existing_attach_target.session_name,
-                    attach_command=" ".join(existing_attach_target.attach_command),
-                    **base_payload,
-                )
-                return PlanAgentLaunchResult(
-                    status="failed",
-                    reason="existing_omx_session_attach",
-                    outcomes=(),
-                    attach_target=existing_attach_target,
-                )
-            create_new_session = True
-        attach_command = " ".join(existing_attach_target.attach_command)
-        if not create_new_session:
-            reason = f"An OMX-managed tmux session already exists for this plan. Attach with: {attach_command}"
-            runtime._emit(
-                "planning.agent_launch.skipped",
-                reason="existing_omx_session",
-                session_name=existing_attach_target.session_name,
-                attach_command=attach_command,
-                **base_payload,
-            )
-            return PlanAgentLaunchResult(
-                status="failed",
-                reason=reason,
-                outcomes=(),
-                attach_target=PlanAgentAttachTarget(
-                    repo_root=existing_attach_target.repo_root,
-                    session_name=existing_attach_target.session_name,
-                    window_name=existing_attach_target.window_name,
-                    attach_via=existing_attach_target.attach_via,
-                    attach_command=existing_attach_target.attach_command,
-                    new_session_command=_new_session_command_for_route(
-                        runtime,
-                        route=route,
-                        launch_config=launch_config,
-                        created_worktrees=created_worktrees,
-                    ),
-                ),
-            )
-    runtime._emit(
-        "planning.agent_launch.evaluate",
-        reason="ready",
-        preset=launch_config.preset,
-        **base_payload,
-    )
-    runtime._emit(
-        "planning.agent_launch.workflow_selected",
-        warning=launch_config.codex_cycles_warning,
-        **base_payload,
-    )
-    outcomes: list[PlanAgentLaunchOutcome] = []
-    first_attach_target: PlanAgentAttachTarget | None = None
-    for worktree in created_worktrees:
-        previous_session_id = _read_omx_session_id(runtime, worktree)
-        previous_session_ids = _read_omx_session_ids(runtime, worktree)
-        previous_tmux_session_names = (
-            tuple(session_name for session_name, _pane_id in _find_omx_tmux_panes_for_worktree(runtime, worktree))
-            if create_new_session
-            else ()
-        )
-        spawn_error = _spawn_omx_session_for_worktree(runtime, launch_config=launch_config, worktree=worktree)
-        if spawn_error is not None:
-            runtime._emit(
-                "planning.agent_launch.failed",
-                reason="omx_spawn_failed",
-                worktree=worktree.name,
-                error=spawn_error,
-                transport="omx",
-            )
-            outcomes.append(
-                PlanAgentLaunchOutcome(
-                    worktree_name=worktree.name,
-                    worktree_root=worktree.root,
-                    surface_id=None,
-                    status="failed",
-                    reason=spawn_error,
-                )
-            )
-            continue
-        attach_target = _wait_for_omx_attach_target(
-            runtime,
-            repo_root=repo_root,
-            worktree=worktree,
-            previous_session_id=previous_session_id,
-            previous_session_ids=previous_session_ids,
-            previous_tmux_session_names=previous_tmux_session_names,
-            attach_via=attach_via,
-        )
-        if attach_target is None:
-            diagnostics = _omx_attach_discovery_diagnostics(runtime, worktree)
-            runtime._emit(
-                "planning.agent_launch.failed",
-                reason="omx_session_unavailable",
-                worktree=worktree.name,
-                transport="omx",
-                **diagnostics,
-            )
-            outcomes.append(
-                PlanAgentLaunchOutcome(
-                    worktree_name=worktree.name,
-                    worktree_root=worktree.root,
-                    surface_id=None,
-                    status="failed",
-                    reason="omx_session_unavailable",
-                )
-            )
-            continue
-        error = run_tmux_existing_session_workflow(
-            runtime,
-            session_name=attach_target.session_name,
-            window_name=attach_target.window_name,
-            launch_config=launch_config,
-            workflow=workflow,
-            worktree=worktree,
-        )
-        if error is not None:
-            runtime._emit(
-                "planning.agent_launch.failed",
-                reason="bootstrap_failed",
-                session_name=attach_target.session_name,
-                window_name=attach_target.window_name,
-                worktree=worktree.name,
-                error=error,
-                transport="omx",
-            )
-            outcomes.append(
-                PlanAgentLaunchOutcome(
-                    worktree_name=worktree.name,
-                    worktree_root=worktree.root,
-                    surface_id=None,
-                    status="failed",
-                    reason=error,
-                )
-            )
-            continue
-        validation = validate_plan_agent_attach_target(
-            runtime,
-            attach_target,
-            worktree=worktree,
-            transport="omx",
-            phase="post_workflow_queue",
-        )
-        if not validation.ok:
-            runtime._emit(
-                "planning.agent_launch.failed",
-                reason=validation.reason,
-                session_name=attach_target.session_name,
-                window_name=attach_target.window_name,
-                worktree=worktree.name,
-                transport="omx",
-            )
-            outcomes.append(
-                PlanAgentLaunchOutcome(
-                    worktree_name=worktree.name,
-                    worktree_root=worktree.root,
-                    surface_id=None,
-                    status="failed",
-                    reason=validation.reason,
-                )
-            )
-            continue
-        _mark_worktree_plan_agent_launch(
-            worktree,
-            status="launched",
-            transport="omx",
-            session_name=attach_target.session_name,
-        )
-        runtime._emit(
-            "planning.agent_launch.surface_created",
-            session_name=attach_target.session_name,
-            window_name=attach_target.window_name,
-            worktree=worktree.name,
-            source="omx_session",
-            transport="omx",
-        )
-        runtime._emit(
-            "planning.agent_launch.command_sent",
-            session_name=attach_target.session_name,
-            window_name=attach_target.window_name,
-            worktree=worktree.name,
-            preset=launch_config.preset,
-            workflow_mode=workflow.mode,
-            codex_cycles=workflow.codex_cycles,
-            transport="omx",
-        )
-        outcomes.append(
-            PlanAgentLaunchOutcome(
-                worktree_name=worktree.name,
-                worktree_root=worktree.root,
-                surface_id=None,
-                status="launched",
-            )
-        )
-        if first_attach_target is None:
-            first_attach_target = attach_target
-    _persist_runtime_events_snapshot(runtime)
-    launched = [item for item in outcomes if item.status == "launched"]
-    failed = [item for item in outcomes if item.status == "failed"]
-    attach_target = first_attach_target or existing_attach_target
-    if failed and launched:
-        details = _summarize_failed_launch_outcomes(failed)
-        suffix = f" Details: {details}." if details else ""
-        _print_launch_summary(
-            f"Plan agent launch finished with partial success: launched {len(launched)}, failed {len(failed)}.{suffix}"
-        )
-        recovery_command = _plan_agent_recovery_command_text(
-            plan_agent_native_recovery_command(
-                runtime,
-                route=route,
-                launch_config=launch_config,
-                created_worktrees=created_worktrees,
-            )
-        )
-        if recovery_command:
-            _print_launch_summary(f"recovery: {recovery_command}")
-        return PlanAgentLaunchResult(
-            status="partial",
-            reason="partial_failure",
-            outcomes=tuple(outcomes),
-            attach_target=attach_target,
-        )
-    if failed:
-        details = _summarize_failed_launch_outcomes(failed)
-        suffix = f" Details: {details}." if details else ""
-        _print_launch_summary(f"Plan agent launch failed for {len(failed)} worktree(s).{suffix}")
-        recovery_command = _plan_agent_recovery_command_text(
-            plan_agent_native_recovery_command(
-                runtime,
-                route=route,
-                launch_config=launch_config,
-                created_worktrees=created_worktrees,
-            )
-        )
-        if recovery_command:
-            _print_launch_summary(f"recovery: {recovery_command}")
-        return PlanAgentLaunchResult(status="failed", reason="launch_failed", outcomes=tuple(outcomes))
-    _print_launch_summary(f"Plan agent launch prepared {len(launched)} OMX-managed tmux session(s).")
-    return PlanAgentLaunchResult(
-        status="launched",
-        reason="launched",
-        outcomes=tuple(outcomes),
-        attach_target=attach_target,
+        base_payload=base_payload,
+        prompt_on_existing=prompt_on_existing,
+        find_existing_attach_target_fn=_find_existing_omx_attach_target,
+        should_prompt_existing_session_fn=_should_prompt_existing_tmux_session,
+        prompt_existing_session_action_fn=_prompt_existing_tmux_session_action,
+        new_session_command_for_route_fn=_new_session_command_for_route,
+        read_omx_session_id_fn=_read_omx_session_id,
+        read_omx_session_ids_fn=_read_omx_session_ids,
+        find_omx_tmux_panes_for_worktree_fn=_find_omx_tmux_panes_for_worktree,
+        spawn_omx_session_for_worktree_fn=_spawn_omx_session_for_worktree,
+        wait_for_omx_attach_target_fn=_wait_for_omx_attach_target,
+        attach_discovery_diagnostics_fn=_omx_attach_discovery_diagnostics,
+        run_tmux_existing_session_workflow_fn=run_tmux_existing_session_workflow,
+        validate_plan_agent_attach_target_fn=validate_plan_agent_attach_target,
+        mark_worktree_plan_agent_launch_fn=_mark_worktree_plan_agent_launch,
+        persist_runtime_events_snapshot_fn=_persist_runtime_events_snapshot,
+        summarize_failed_launch_outcomes_fn=_summarize_failed_launch_outcomes,
+        print_launch_summary_fn=_print_launch_summary,
+        plan_agent_native_recovery_command_fn=plan_agent_native_recovery_command,
+        plan_agent_recovery_command_text_fn=_plan_agent_recovery_command_text,
     )
 
 

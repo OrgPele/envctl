@@ -49,6 +49,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "omx_attach_support.py",
             "omx_lock_support.py",
             "omx_spawn_support.py",
+            "omx_launch_support.py",
             "omx_transport.py",
             "omx_validation_support.py",
             "recovery.py",
@@ -342,6 +343,9 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "omx_validation_support.py": {
                 "omx_late_spawn_exit_reason",
                 "validate_omx_attach_target",
+            },
+            "omx_launch_support.py": {
+                "launch_omx_terminals",
             },
             "superset_transport.py": {
                 "_launch_plan_agent_superset_workspaces",
