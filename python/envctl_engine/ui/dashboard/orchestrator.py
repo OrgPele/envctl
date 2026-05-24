@@ -14,6 +14,7 @@ from envctl_engine.startup.startup_selection_support import (
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
 )
 import envctl_engine.ui.dashboard.command_support as command_support
+from envctl_engine.ui.dashboard import project_target_support
 from envctl_engine.ui.dashboard import pr_and_target_support
 from envctl_engine.ui.dashboard import target_selection_support
 from envctl_engine.ui.dashboard.failure_detail_support import (
@@ -337,55 +338,15 @@ class DashboardOrchestrator:
         return stop_service_detail(service_name, service_type)
 
     def _apply_commit_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
-        runtime_any = cast(Any, rt)
-        selected_route = self._apply_project_target_selection(route, state, rt)
-        if selected_route is None:
-            return None
-        route = selected_route
-        if isinstance(route.flags.get("commit_message"), str) and str(route.flags.get("commit_message")).strip():
-            return route
-        if (
-            isinstance(route.flags.get("commit_message_file"), str)
-            and str(route.flags.get("commit_message_file")).strip()
-        ):
-            return route
-        raw = self._prompt_commit_message(
-            runtime_any,
-        )
-        if raw is None:
-            print(self._no_target_selected_message(route.command))
-            return None
-        message = str(raw).strip()
-        if not message:
-            return route
-        route.flags = {
-            **{key: value for key, value in route.flags.items() if key != "commit_message_file"},
-            "commit_message": message,
-        }
-        runtime_any._emit(
-            "dashboard.commit_message.selected",
-            command="commit",
-            explicit=True,
-            length=len(message),
-        )
-        return route
+        return project_target_support.apply_commit_selection(self, route, state, rt)
 
     @staticmethod
     def _dashboard_owned_target_selection_commands() -> set[str]:
-        # Commands that already have downstream interactive selectors should not
-        # be pre-selected here; otherwise the dashboard changes their contract.
-        return {
-            "test",
-            "pr",
-            "commit",
-            "review",
-            "migrate",
-            "blast-worktree",
-        }
+        return project_target_support.dashboard_owned_target_selection_commands()
 
     @staticmethod
     def _dashboard_owned_project_selection_commands() -> set[str]:
-        return {"pr", "commit", "review", "migrate", "blast-worktree"}
+        return project_target_support.dashboard_owned_project_selection_commands()
 
     @staticmethod
     def _dashboard_hidden_commands(state: RunState) -> set[str]:
@@ -401,55 +362,7 @@ class DashboardOrchestrator:
         return hidden
 
     def _apply_project_target_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
-        runtime_any = cast(Any, rt)
-        if self._route_has_explicit_target(route, runtime_any):
-            return route
-
-        projects = self._project_names_from_state(state, runtime_any)
-        single_project = self._single_project_name(projects)
-        if single_project:
-            route.projects = [single_project]
-            runtime_any._emit(
-                "dashboard.target_scope.defaulted",
-                command=route.command,
-                mode=state.mode,
-                scope="single_project",
-                project_count=1,
-                projects=[single_project],
-            )
-            return route
-        selection = runtime_any._select_project_targets(
-            prompt=self._interactive_target_prompt(route.command),
-            projects=projects,
-            allow_all=True,
-            allow_untested=False,
-            multi=True,
-        )
-        if selection.cancelled:
-            print(self._no_target_selected_message(route.command))
-            return None
-        if selection.all_selected:
-            scoped_projects = [str(getattr(project, "name", "")).strip() for project in projects]
-            scoped_projects = [project for project in scoped_projects if project]
-            if scoped_projects:
-                route.projects = scoped_projects
-                route.flags = {key: value for key, value in route.flags.items() if key != "all"}
-                runtime_any._emit(
-                    "dashboard.target_scope.defaulted",
-                    command=route.command,
-                    mode=state.mode,
-                    scope="run_state_all_selection",
-                    project_count=len(scoped_projects),
-                    projects=scoped_projects,
-                )
-                return route
-            route.flags = {**route.flags, "all": True}
-            return route
-        if selection.project_names:
-            route.projects = list(selection.project_names)
-            return route
-        print(self._no_target_selected_message(route.command))
-        return None
+        return project_target_support.apply_project_target_selection(self, route, state, rt)
 
     def _apply_pr_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         return pr_and_target_support.apply_pr_selection(self, route, state, rt)
