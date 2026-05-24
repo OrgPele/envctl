@@ -269,7 +269,7 @@ def _ensure_python_modules_available(modules: list[str]) -> None:
     raise SystemExit(
         "Missing required Python modules for python_cleanup.py: "
         f"{joined}\nBootstrap the repo-local validation toolchain with:\n"
-        ".venv/bin/python -m pip install -e '.[dev]'\n"
+        "uv sync --extra dev --python 3.12\n"
         f"Or install only the missing modules with:\n{sys.executable} -m pip install {quoted}"
     )
 

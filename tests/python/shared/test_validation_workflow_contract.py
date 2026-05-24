@@ -132,7 +132,7 @@ class ValidationWorkflowContractTests(unittest.TestCase):
 
     def test_python_cleanup_bootstrap_hint_matches_dev_extra_contract(self) -> None:
         script = (REPO_ROOT / "scripts" / "python_cleanup.py").read_text(encoding="utf-8")
-        self.assertIn(".venv/bin/python -m pip install -e '.[dev]'", script)
+        self.assertIn("uv sync --extra dev --python 3.12", script)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ import sys
 from typing import Mapping
 
 import envctl_engine.actions.action_commit_support as commit_support
+import envctl_engine.actions.action_git_state_support as git_state_support
 import envctl_engine.actions.action_pr_message_support as pr_message_support
 import envctl_engine.actions.action_review_plan_support as review_plan_support
 import envctl_engine.actions.action_ship_support as ship_support
@@ -25,6 +26,7 @@ from envctl_engine.actions.action_review_output_support import (
     print_review_completion_rich as _print_review_completion_rich,
     review_colorizer as _review_colorizer,
 )
+
 from envctl_engine.shared.parsing import parse_bool
 
 PR_BODY_MAX_CHARS = 48_000
@@ -90,20 +92,6 @@ class ActionProjectContext:
 ReviewBaseResolution = review_plan_support.ReviewBaseResolution
 ReviewBaseResolutionError = review_plan_support.ReviewBaseResolutionError
 OriginalPlanResolution = review_plan_support.OriginalPlanResolution
-
-
-@dataclass(frozen=True, slots=True)
-class DirtyWorktreeReport:
-    project_name: str
-    project_root: Path
-    git_root: Path
-    staged: bool
-    unstaged: bool
-    untracked: bool
-
-    @property
-    def dirty(self) -> bool:
-        return self.staged or self.unstaged or self.untracked
 
 
 def run_commit_action(context: ActionProjectContext) -> int:
@@ -445,82 +433,41 @@ def run_review_action(context: ActionProjectContext) -> int:
     return 0
 
 
+DirtyWorktreeReport = git_state_support.DirtyWorktreeReport
+
+
 def resolve_git_root(project_root: Path, repo_root: Path) -> Path:
-    for candidate in (project_root, repo_root):
-        if (candidate / ".git").exists():
-            return candidate
-    return project_root
+    return git_state_support.resolve_git_root(project_root, repo_root)
 
 
 def probe_dirty_worktree(project_root: Path, repo_root: Path, *, project_name: str = "") -> DirtyWorktreeReport:
-    git_root = resolve_git_root(project_root, repo_root)
-    status_output = _git_output(git_root, ["status", "--porcelain", "--untracked-files=all"])
-    staged, unstaged, untracked = _classify_dirty_porcelain(status_output)
-    resolved_name = project_name.strip() or project_root.name or git_root.name or "project"
-    return DirtyWorktreeReport(
-        project_name=resolved_name,
-        project_root=project_root,
-        git_root=git_root,
-        staged=staged,
-        unstaged=unstaged,
-        untracked=untracked,
+    return git_state_support.probe_dirty_worktree(
+        project_root,
+        repo_root,
+        project_name=project_name,
+        git_output=_git_output,
     )
 
 
 def _classify_dirty_porcelain(status_output: str) -> tuple[bool, bool, bool]:
-    staged = False
-    unstaged = False
-    untracked = False
-    for raw_line in str(status_output or "").splitlines():
-        line = raw_line.rstrip("\n")
-        if not line:
-            continue
-        if line.startswith("??"):
-            untracked = True
-            continue
-        if len(line) < 2:
-            continue
-        index_status = line[0]
-        worktree_status = line[1]
-        if index_status not in {" ", "?"}:
-            staged = True
-        if worktree_status not in {" ", "?"}:
-            unstaged = True
-    return staged, unstaged, untracked
+    return git_state_support.classify_dirty_porcelain(status_output)
 
 
 def detect_default_branch(git_root: Path) -> str:
-    ref = _git_output(git_root, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
-    if ref.startswith("origin/"):
-        return ref.split("origin/", 1)[1]
-    for candidate in ("main", "master"):
-        if _git_output(git_root, ["rev-parse", "--verify", candidate]).strip():
-            return candidate
-    return "main"
+    return git_state_support.detect_default_branch(git_root, git_output=_git_output)
 
 
 def existing_pr_url(git_root: Path, branch: str) -> str:
-    branch_name = branch.strip()
-    if not branch_name or branch_name in {"HEAD", "unknown"}:
-        return ""
-    gh_path = shutil.which("gh")
-    if gh_path is None:
-        return ""
-    listed = subprocess.run(
-        [gh_path, "pr", "list", "--head", branch_name, "--state", "open", "--json", "url", "--jq", ".[0].url"],
-        cwd=str(git_root),
-        text=True,
-        capture_output=True,
-        check=False,
+    return git_state_support.existing_pr_url(
+        git_root,
+        branch,
+        gh_path=shutil.which("gh"),
+        run_process=subprocess.run,
     )
-    if listed.returncode != 0:
-        return ""
-    return listed.stdout.strip()
 
 
 def sanitize_label(value: str) -> str:
-    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
-    return cleaned.strip("_") or "project"
+    return git_state_support.sanitize_label(value)
 
 
 def _resolve_original_plan(context: ActionProjectContext) -> OriginalPlanResolution:
@@ -700,28 +647,15 @@ def _write_markdown_lines(path: Path, lines: list[str]) -> None:
 
 
 def _run_git(git_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", str(git_root), *args],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    return git_state_support.run_git(git_root, args, run_process=subprocess.run)
 
 
 def _git_output(git_root: Path, args: list[str]) -> str:
-    result = _run_git(git_root, args)
-    if result.returncode != 0:
-        return ""
-    return result.stdout
+    return git_state_support.git_output(git_root, args, run_git_fn=_run_git)
 
 
 def _print_process_output(result: subprocess.CompletedProcess[str]) -> None:
-    stdout = str(result.stdout or "").strip()
-    stderr = str(result.stderr or "").strip()
-    if stdout:
-        print(stdout)
-    if result.returncode != 0 and stderr:
-        print(stderr)
+    git_state_support.print_process_output(result)
 
 
 def _first_existing_path(*paths: Path) -> Path:
@@ -732,5 +666,4 @@ def _first_existing_path(*paths: Path) -> Path:
 
 
 def _print_error(prefix: str, result: subprocess.CompletedProcess[str]) -> None:
-    output = result.stderr or result.stdout or f"exit:{result.returncode}"
-    print(f"{prefix}: {output}")
+    git_state_support.print_error(prefix, result)

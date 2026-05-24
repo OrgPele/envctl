@@ -32,7 +32,7 @@ Key boundary decisions:
 - Launcher-owned flags such as `--version` must resolve before repo detection, config bootstrap, prereq checks, or runtime dispatch.
 - Source checkouts should use `bin/envctl`; explicit wrapper paths stay on that exact wrapper, while bare `envctl` still prefers an installed command on `PATH`.
 - Package-style test runs and raw `python3 -m unittest discover -s tests/python ...` both bootstrap the local `python/` package through the repo-owned test package initializers under `tests/`; standalone scripts use `scripts/_bootstrap.py` when launched directly.
-- Contributor and release-readiness validation should run from the editable repo-local install (`.venv/bin/python -m pip install -e '.[dev]'`) so the canonical `pytest -q` lane and packaging/build smoke exercise the installed runtime.
+- Contributor and release-readiness validation should run from the uv-managed editable repo-local environment (`uv sync --extra dev --python 3.12`) so the canonical `uv run --extra dev pytest -q` lane and packaging/build smoke exercise the installed runtime.
 - `runtime/cli.py` owns prereq checks, local config bootstrap policy, and exit code normalization.
 - `EngineRuntime` is the runtime facade that wires the domains together.
 - Orchestrators own behavior; helper modules own reusable policy and contract logic.

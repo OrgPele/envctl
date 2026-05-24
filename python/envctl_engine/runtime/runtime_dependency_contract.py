@@ -15,8 +15,7 @@ RUNTIME_DEPENDENCY_MODULES: tuple[str, ...] = (
 )
 
 CANONICAL_CONTRIBUTOR_BOOTSTRAP_COMMANDS: tuple[str, ...] = (
-    "python3.12 -m venv .venv",
-    ".venv/bin/python -m pip install -e '.[dev]'",
+    "uv sync --extra dev --python 3.12",
 )
 
 RuntimeDependencyContext = Literal["source_checkout", "installed_package", "contributor"]

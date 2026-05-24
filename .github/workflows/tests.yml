@@ -3,9 +3,9 @@ name: Tests
 # Runs the canonical contributor validation lane on every PR targeting `main`.
 # The lane matches `docs/developer/contributing.md`:
 #
-#   .venv/bin/python -m pytest -q
-#   .venv/bin/python -m build
-#   .venv/bin/python scripts/release_shipability_gate.py --repo .
+#   uv run --extra dev pytest -q
+#   uv run --extra dev python -m build
+#   uv run --extra dev python scripts/release_shipability_gate.py --repo .
 #
 # `pull_request` already fires on PR open, reopen, and every push to the head
 # branch (the `synchronize` event), so a separate `push` trigger would just
@@ -77,17 +77,16 @@ jobs:
         with:
           enable-cache: false
 
-      - name: Create venv and install dev extras
+      - name: Sync dev environment
+        env:
+          UV_CACHE_DIR: /home/runner/.cache/uv
+        run: uv sync --extra dev --python 3.12
+
+      - name: Run pytest
         env:
           UV_CACHE_DIR: /home/runner/.cache/uv
         run: |
-          set -euo pipefail
-          uv venv .venv --python 3.12
-          uv pip install --python .venv/bin/python -e '.[dev]'
-
-      - name: Run pytest
-        run: |
-          .venv/bin/python -m pytest -q \
+          uv run --extra dev pytest -q \
             -n 4 --dist=loadscope \
             --maxfail=25 \
             --ff \
@@ -125,19 +124,20 @@ jobs:
         with:
           enable-cache: false
 
-      - name: Create venv and install dev extras
+      - name: Sync dev environment
         env:
           UV_CACHE_DIR: /home/runner/.cache/uv
-        run: |
-          set -euo pipefail
-          uv venv .venv --python 3.12
-          uv pip install --python .venv/bin/python -e '.[dev]'
+        run: uv sync --extra dev --python 3.12
 
       - name: Build wheel and sdist
-        run: .venv/bin/python -m build
+        env:
+          UV_CACHE_DIR: /home/runner/.cache/uv
+        run: uv run --extra dev python -m build
 
       - name: Release shipability gate
-        run: .venv/bin/python scripts/release_shipability_gate.py --repo .
+        env:
+          UV_CACHE_DIR: /home/runner/.cache/uv
+        run: uv run --extra dev python scripts/release_shipability_gate.py --repo .
 
   lint:
     name: ruff
