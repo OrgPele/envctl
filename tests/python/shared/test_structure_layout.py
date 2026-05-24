@@ -246,6 +246,18 @@ class StructureLayoutTests(unittest.TestCase):
         legacy = startup_tests / "test_startup_spinner_integration.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_service_bootstrap_tests_are_split_by_env_owner(self) -> None:
+        startup_tests = REPO_ROOT / "tests" / "python" / "startup"
+        bootstrap_suite = startup_tests / "test_service_bootstrap_domain.py"
+        env_suite = startup_tests / "test_service_env_support.py"
+
+        self.assertTrue(bootstrap_suite.is_file())
+        self.assertTrue(env_suite.is_file())
+        env_text = env_suite.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.startup.service_env_support import", env_text)
+        self.assertIn("class ServiceEnvSupportTests", env_text)
+        self.assertLessEqual(len(bootstrap_suite.read_text(encoding="utf-8").splitlines()), 600)
+
     def test_runtime_service_facade_wrappers_have_owned_mixin(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_service_facade.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
