@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Mapping
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.startup.protocols import ProjectContextLike
 from envctl_engine.startup.service_backend_migration_support import (
     _backend_async_driver_mismatch_error as _backend_async_driver_mismatch_error,
     _backend_bootstrap_strict as _backend_bootstrap_strict,
@@ -73,11 +74,6 @@ from envctl_engine.startup.service_runtime_state_support import (
 )
 
 _STATE_DIRNAME = ".envctl-state"
-
-
-class ProjectContextLike(Protocol):
-    name: str
-    root: Path
 
 
 def configured_service_types_for_mode(config: Any, runtime_mode: str) -> list[str]:

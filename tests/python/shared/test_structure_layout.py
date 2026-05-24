@@ -1062,7 +1062,23 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.planning.worktree_path_support import", facade_text)
         self.assertIn("from envctl_engine.planning.worktree_menu_terminal_support import", facade_text)
         self.assertIn("from envctl_engine.planning.worktree_spinner_support import", facade_text)
+        self.assertNotIn("return _coerce_setup_entries_impl(flags=route.flags, flag_name=flag_name, value_name=value_name)\n    return _coerce_setup_entries_impl", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 920)
+
+    def test_startup_helpers_share_project_context_protocol(self) -> None:
+        helper_paths = [
+            REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_bootstrap_domain.py",
+            REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_frontend_bootstrap_support.py",
+            REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_startup_domain.py",
+            REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_execution_records.py",
+        ]
+
+        for helper_path in helper_paths:
+            with self.subTest(path=helper_path.name):
+                text = helper_path.read_text(encoding="utf-8")
+                self.assertIn("from envctl_engine.startup.protocols import ProjectContextLike", text)
+                self.assertNotIn("class ProjectContextLike(Protocol)", text)
+                self.assertNotIn("class _ProjectContextLike(Protocol)", text)
 
     def test_worktree_provenance_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_provenance.py"

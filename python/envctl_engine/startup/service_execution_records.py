@@ -5,16 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from envctl_engine.state.models import ServiceRecord
-
-
-class _PortPlanLike(Protocol):
-    final: int
-
-
-class _ProjectContextLike(Protocol):
-    name: str
-    ports: Mapping[str, _PortPlanLike]
+from envctl_engine.startup.protocols import ProjectContextLike
+from envctl_engine.state.models import PortPlan, ServiceRecord
 
 
 class _AdditionalServiceLike(Protocol):
@@ -44,10 +36,10 @@ class LaunchedServiceRuntime:
 
 def finalize_launched_service_records(
     *,
-    context: _ProjectContextLike,
+    context: ProjectContextLike,
     records: dict[str, ServiceRecord],
-    backend_plan: _PortPlanLike,
-    frontend_plan: _PortPlanLike,
+    backend_plan: PortPlan,
+    frontend_plan: PortPlan,
     additional_services: Iterable[_AdditionalServiceLike],
     prepared_launches: Mapping[str, PreparedServiceLaunch],
     backend_log_path: str,

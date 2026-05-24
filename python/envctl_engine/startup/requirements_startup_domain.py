@@ -26,11 +26,7 @@ from envctl_engine.requirements.supabase import (
     write_fingerprint as write_supabase_fingerprint,
 )
 from envctl_engine.requirements.orchestrator import FailureClass, RequirementOutcome
-
-
-class ProjectContextLike(Protocol):
-    name: str
-    root: Path
+from envctl_engine.startup.protocols import ProjectContextLike
 
 
 class _RequirementsHelpers(Protocol):
