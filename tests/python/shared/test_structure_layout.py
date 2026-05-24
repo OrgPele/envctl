@@ -403,16 +403,23 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_state_action_orchestrator_has_log_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_log_support.py"
+        health_owner = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_health_support.py"
         orchestrator = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_orchestrator.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(health_owner.is_file())
         owner_text = owner.read_text(encoding="utf-8")
+        health_owner_text = health_owner.read_text(encoding="utf-8")
         self.assertIn("class StateActionLogSupport", owner_text)
         self.assertIn("def logs_payload", owner_text)
         self.assertIn("def clear_service_logs", owner_text)
+        self.assertIn("class StateActionHealthSupport", health_owner_text)
+        self.assertIn("def health_payload", health_owner_text)
+        self.assertIn("def health_service_rows", health_owner_text)
         orchestrator_text = orchestrator.read_text(encoding="utf-8")
         self.assertIn("StateActionLogSupport", orchestrator_text)
-        self.assertLessEqual(len(orchestrator_text.splitlines()), 1050)
+        self.assertIn("StateActionHealthSupport", orchestrator_text)
+        self.assertLessEqual(len(orchestrator_text.splitlines()), 760)
 
     def test_runtime_feature_inventory_has_contract_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_contracts.py"
