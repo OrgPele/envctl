@@ -55,6 +55,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "terminal_screen.py",
             "tmux_surface_support.py",
             "tmux_identity_support.py",
+            "tmux_attach_support.py",
             "tmux_transport.py",
             "workflow.py",
         }
@@ -203,6 +204,10 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "next_available_tmux_session_name",
                 "tmux_session_name_for_worktree",
                 "tmux_window_name_for_worktree",
+            },
+            "tmux_attach_support.py": {
+                "find_existing_tmux_attach_target",
+                "resolve_tmux_attach_target",
             },
             "tmux_transport.py": {
                 "_run_tmux_worktree_bootstrap",

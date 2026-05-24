@@ -43,6 +43,7 @@ from envctl_engine.planning.plan_agent.tmux_identity_support import (
 )
 import envctl_engine.planning.plan_agent.tmux_workflow_submission_support as tmux_workflow_submission_support
 import envctl_engine.planning.plan_agent.tmux_surface_support as tmux_surface_support
+import envctl_engine.planning.plan_agent.tmux_attach_support as tmux_attach_support
 
 def _launch_plan_agent_tmux_terminals(
     runtime: Any,
@@ -328,24 +329,18 @@ def _resolve_tmux_attach_target(
     created_worktrees: tuple[CreatedPlanWorktree, ...],
     cli: str,
 ) -> PlanAgentAttachTarget | None:
-    existing_attach_target = _find_existing_tmux_attach_target(
-        runtime,
-        repo_root=repo_root,
-        created_worktrees=created_worktrees,
-        cli=cli,
-    )
-    if existing_attach_target is not None:
-        return existing_attach_target
-    if not _tmux_session_exists(runtime, session_name):
-        return None
-    if window_name and not _tmux_window_exists(runtime, session_name=session_name, window_name=window_name):
-        return None
-    return PlanAgentAttachTarget(
+    return tmux_attach_support.resolve_tmux_attach_target(
+        runtime=runtime,
         repo_root=repo_root,
         session_name=session_name,
-        window_name=window_name or "",
+        window_name=window_name,
         attach_via=attach_via,
-        attach_command=_guidance_attach_command(session_name),
+        created_worktrees=created_worktrees,
+        cli=cli,
+        find_existing_attach_target_fn=_find_existing_tmux_attach_target,
+        tmux_session_exists_fn=_tmux_session_exists,
+        tmux_window_exists_fn=_tmux_window_exists,
+        guidance_attach_command_fn=_guidance_attach_command,
     )
 
 
@@ -356,88 +351,19 @@ def _find_existing_tmux_attach_target(
     created_worktrees: tuple[CreatedPlanWorktree, ...],
     cli: str,
 ) -> PlanAgentAttachTarget | None:
-    separator = "|||ENVCTL_TMUX_PATH|||"
-    targets = [Path(worktree.root).expanduser().resolve(strict=False) for worktree in created_worktrees]
-    attach_by_root = {
-        Path(worktree.root).expanduser().resolve(strict=False): PlanAgentAttachTarget(
-            repo_root=repo_root,
-            session_name=_tmux_session_name_for_worktree(repo_root, worktree, cli=cli),
-            window_name=_tmux_window_name_for_worktree(worktree),
-            attach_via="attach-session",
-            attach_command=_guidance_attach_command(_tmux_session_name_for_worktree(repo_root, worktree, cli=cli)),
-        )
-        for worktree in created_worktrees
-    }
-    if not targets:
-        return None
-    for target in targets:
-        attach_target = attach_by_root[target]
-        session_name = attach_target.session_name
-        if not _tmux_session_exists(runtime, session_name):
-            continue
-        windows_result = _run_tmux_probe(
-            runtime,
-            ("tmux", "list-windows", "-t", session_name, "-F", f"#{{window_name}}{separator}#{{pane_current_path}}"),
-            cwd=Path(runtime.config.base_dir).resolve(),
-        )
-        if windows_result.returncode != 0:
-            continue
-        for raw_line in str(getattr(windows_result, "stdout", "")).splitlines():
-            window, _, raw_path = raw_line.partition(separator)
-            window_name = window.strip()
-            normalized_path = raw_path.strip()
-            if not window_name or not normalized_path:
-                continue
-            candidate = Path(normalized_path).expanduser().resolve(strict=False)
-            if candidate == target or target in candidate.parents:
-                health = _existing_tmux_session_health(
-                    runtime,
-                    session_name=session_name,
-                    window_name=window_name,
-                    cli=cli,
-                )
-                if not health.ready:
-                    reason = f"existing_{str(cli).strip().lower() or 'ai'}_session_unhealthy"
-                    detail = _format_ai_cli_ready_failure(
-                        AiCliReadyResult(ready=False, reason=reason, screen_excerpt=health.screen_excerpt)
-                    )
-                    setattr(runtime, "_last_unhealthy_existing_tmux_session_reason", reason)
-                    setattr(
-                        runtime,
-                        "_last_unhealthy_existing_tmux_session_outcomes",
-                        (
-                            PlanAgentLaunchOutcome(
-                                worktree_name=next(
-                                    (
-                                        worktree.name
-                                        for worktree in created_worktrees
-                                        if Path(worktree.root).expanduser().resolve(strict=False) == target
-                                    ),
-                                    "",
-                                ),
-                                worktree_root=target,
-                                surface_id=None,
-                                status="failed",
-                                reason=detail,
-                            ),
-                        ),
-                    )
-                    runtime._emit(
-                        "planning.agent_launch.existing_session_unhealthy",
-                        session_name=session_name,
-                        window_name=window_name,
-                        cli=cli,
-                        reason=detail,
-                    )
-                    continue
-                return PlanAgentAttachTarget(
-                    repo_root=repo_root,
-                    session_name=session_name,
-                    window_name=window_name,
-                    attach_via="attach-session",
-                    attach_command=_guidance_attach_command(session_name),
-                )
-    return None
+    return tmux_attach_support.find_existing_tmux_attach_target(
+        runtime=runtime,
+        repo_root=repo_root,
+        created_worktrees=created_worktrees,
+        cli=cli,
+        session_name_for_worktree_fn=_tmux_session_name_for_worktree,
+        window_name_for_worktree_fn=_tmux_window_name_for_worktree,
+        tmux_session_exists_fn=_tmux_session_exists,
+        run_tmux_probe_fn=_run_tmux_probe,
+        existing_session_health_fn=_existing_tmux_session_health,
+        format_ai_cli_ready_failure_fn=_format_ai_cli_ready_failure,
+        guidance_attach_command_fn=_guidance_attach_command,
+    )
 
 
 def _existing_tmux_session_looks_healthy(runtime: Any, *, session_name: str, window_name: str, cli: str) -> bool:
