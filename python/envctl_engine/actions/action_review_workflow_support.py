@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from envctl_engine.actions import action_review_plan_support as review_plan_support
+from envctl_engine.actions.action_review_artifact_support import write_markdown_lines
 from envctl_engine.actions.action_review_output_support import print_review_completion
 
 
@@ -113,7 +114,7 @@ def _write_unbased_review_summary(
         "review",
         f"review_{sanitize_label_fn(context.project_name)}_{mode}",
     )
-    _write_markdown_lines(
+    write_markdown_lines(
         output_path,
         [
             f"# Review Summary: {context.project_name}",
@@ -157,7 +158,7 @@ def _write_based_review_summary(
         "review",
         f"review_{sanitize_label_fn(context.project_name)}_{mode}",
     )
-    _write_markdown_lines(
+    write_markdown_lines(
         output_path,
         [
             f"# Review Summary: {context.project_name}",
@@ -207,8 +208,3 @@ def _print_review_ready(context: Any, *, mode: str, scope: str, output_path: Pat
         stats=[],
         tree_count=1,
     )
-
-
-def _write_markdown_lines(path: Path, lines: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines), encoding="utf-8")

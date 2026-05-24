@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,6 +10,7 @@ from typing import Mapping
 import envctl_engine.actions.action_commit_support as commit_support
 import envctl_engine.actions.action_git_state_support as git_state_support
 import envctl_engine.actions.action_pr_message_support as pr_message_support
+import envctl_engine.actions.action_review_artifact_support as review_artifact_support
 import envctl_engine.actions.action_pr_workflow_support as pr_workflow_support
 import envctl_engine.actions.action_review_workflow_support as review_workflow_support
 import envctl_engine.actions.action_review_plan_support as review_plan_support
@@ -483,24 +483,21 @@ def _run_analyze_helper_from_workflow(
 
 
 def _tree_changelog_path(context: ActionProjectContext) -> Path | None:
-    tree_name = "main" if context.project_name.strip().lower() == "main" else context.project_name.strip()
-    candidate = context.project_root / "docs" / "changelog" / f"{sanitize_label(tree_name)}_changelog.md"
-    if candidate.is_file() and _file_has_text(candidate):
-        return candidate
-    return None
+    return review_artifact_support.tree_changelog_path(context, sanitize_label_fn=sanitize_label)
 
 
 def _file_has_text(path: Path) -> bool:
-    return commit_support.file_has_text(path)
+    return review_artifact_support.file_has_text(path)
 
 
 def _summary_output_path(repo_root: Path, directory: str, prefix: str, label: str | None = None) -> Path:
-    output_dir = repo_root / directory
-    output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
-    if label:
-        return output_dir / f"{prefix}_{sanitize_label(label)}_{timestamp}.md"
-    return output_dir / f"{prefix}_{timestamp}.md"
+    return review_artifact_support.summary_output_path(
+        repo_root,
+        directory,
+        prefix,
+        label,
+        sanitize_label_fn=sanitize_label,
+    )
 
 
 def _tree_diffs_root(context: ActionProjectContext) -> Path:
@@ -527,7 +524,7 @@ def _tree_diffs_output_path_from_workflow(context: ActionProjectContext, directo
 
 
 def _write_markdown_lines(path: Path, lines: list[str]) -> None:
-    path.write_text("\n".join(lines), encoding="utf-8")
+    review_artifact_support.write_markdown_lines(path, lines)
 
 
 def _run_git(git_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:

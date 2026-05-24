@@ -254,6 +254,9 @@ class StructureLayoutTests(unittest.TestCase):
         protected_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_protected_artifacts.py"
         pr_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_pr_message_support.py"
         review_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_output_support.py"
+        review_artifact_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_artifact_support.py"
+        )
         review_plan_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_plan_support.py"
         review_original_plan_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_original_plan_support.py"
@@ -270,6 +273,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(protected_owner.is_file())
         self.assertTrue(pr_owner.is_file())
         self.assertTrue(review_owner.is_file())
+        self.assertTrue(review_artifact_owner.is_file())
         self.assertTrue(review_plan_owner.is_file())
         self.assertTrue(review_original_plan_owner.is_file())
         self.assertTrue(review_base_owner.is_file())
@@ -283,6 +287,10 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("partition_envctl_protected_paths", protected_owner.read_text(encoding="utf-8"))
         self.assertIn("pr_body", pr_owner.read_text(encoding="utf-8"))
         self.assertIn("print_review_completion", review_owner.read_text(encoding="utf-8"))
+        review_artifact_text = review_artifact_owner.read_text(encoding="utf-8")
+        self.assertIn("def tree_changelog_path", review_artifact_text)
+        self.assertIn("def summary_output_path", review_artifact_text)
+        self.assertIn("def write_markdown_lines", review_artifact_text)
         self.assertIn("resolve_original_plan", review_original_plan_owner.read_text(encoding="utf-8"))
         self.assertIn("resolve_review_base", review_base_owner.read_text(encoding="utf-8"))
         self.assertIn("run_analyze_helper", review_iteration_owner.read_text(encoding="utf-8"))
@@ -307,6 +315,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("action_commit_support", facade_text)
         self.assertIn("action_protected_artifacts", facade_text)
         self.assertIn("action_pr_message_support", facade_text)
+        self.assertIn("action_review_artifact_support", facade_text)
         self.assertIn("action_review_output_support", facade_text)
         self.assertIn("action_review_plan_support", facade_text)
         self.assertIn("action_git_state_support", facade_text)
