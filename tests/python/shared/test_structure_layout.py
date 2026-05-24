@@ -664,18 +664,33 @@ class StructureLayoutTests(unittest.TestCase):
         target_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "project_target_support.py"
         selection_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "target_selection_support.py"
         review_tab_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "review_tab_support.py"
+        pr_selection_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "pr_selection_support.py"
+        pr_commit_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "pr_commit_support.py"
+        pr_scope_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "pr_scope_support.py"
         stop_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "stop_scope_support.py"
+        pr_facade = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "pr_and_target_support.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator.py"
 
         self.assertTrue(owner.is_file())
         self.assertTrue(target_owner.is_file())
         self.assertTrue(selection_owner.is_file())
         self.assertTrue(review_tab_owner.is_file())
+        self.assertTrue(pr_selection_owner.is_file())
+        self.assertTrue(pr_commit_owner.is_file())
+        self.assertTrue(pr_scope_owner.is_file())
         self.assertTrue(stop_owner.is_file())
+        pr_facade_text = pr_facade.read_text(encoding="utf-8")
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("def dashboard_hidden_commands", owner.read_text(encoding="utf-8"))
         self.assertIn("def apply_interactive_target_selection", selection_owner.read_text(encoding="utf-8"))
+        self.assertIn("def apply_pr_selection", pr_selection_owner.read_text(encoding="utf-8"))
+        self.assertIn("def maybe_prepare_pr_commit", pr_commit_owner.read_text(encoding="utf-8"))
+        self.assertIn("def dirty_pr_reports", pr_scope_owner.read_text(encoding="utf-8"))
         self.assertIn("def apply_stop_resource_tokens", stop_owner.read_text(encoding="utf-8"))
+        self.assertIn("pr_selection_support", pr_facade_text)
+        self.assertIn("pr_commit_support", pr_facade_text)
+        self.assertIn("pr_scope_support", pr_facade_text)
+        self.assertLessEqual(len(pr_facade_text.splitlines()), 210)
         self.assertIn("import envctl_engine.ui.dashboard.command_support as command_support", facade_text)
         self.assertIn("from envctl_engine.ui.dashboard import project_target_support", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 700)
