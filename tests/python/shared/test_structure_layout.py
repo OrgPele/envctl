@@ -157,15 +157,28 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_action_test_support_has_spinner_owner(self) -> None:
         spinner_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_spinner_support.py"
+        manifest_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_manifest_support.py"
+        models_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_support_models.py"
         support = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_support.py"
 
         self.assertTrue(spinner_owner.is_file())
+        self.assertTrue(manifest_owner.is_file())
+        self.assertTrue(models_owner.is_file())
         owner_text = spinner_owner.read_text(encoding="utf-8")
         self.assertIn("class TestSuiteSpinnerGroup", owner_text)
         self.assertIn("def rich_progress_available", owner_text)
+        manifest_text = manifest_owner.read_text(encoding="utf-8")
+        self.assertIn("class FailedTestManifest", manifest_text)
+        self.assertIn("def load_failed_test_manifest", manifest_text)
+        self.assertIn("def sanitize_failed_test_identifiers", manifest_text)
+        models_text = models_owner.read_text(encoding="utf-8")
+        self.assertIn("class TestTargetContext", models_text)
+        self.assertIn("class TestExecutionSpec", models_text)
         support_text = support.read_text(encoding="utf-8")
         self.assertIn("action_test_spinner_support", support_text)
-        self.assertLessEqual(len(support_text.splitlines()), 720)
+        self.assertIn("action_test_manifest_support", support_text)
+        self.assertIn("action_test_support_models", support_text)
+        self.assertLessEqual(len(support_text.splitlines()), 520)
 
     def test_action_test_runner_has_progress_and_failure_owners(self) -> None:
         progress_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_runner_progress.py"
