@@ -5,8 +5,12 @@ from typing import Any, Callable, Mapping
 
 from envctl_engine.runtime.lifecycle_blast_support import LifecycleBlastCleanupSupport
 from envctl_engine.runtime.engine_runtime_lifecycle_support import release_requirement_ports
-from envctl_engine.runtime.runtime_context import resolve_process_runtime, resolve_state_repository
-from envctl_engine.shared.protocols import ProcessRuntime, StateRepository
+from envctl_engine.runtime.runtime_context import (
+    resolve_port_allocator,
+    resolve_process_runtime,
+    resolve_state_repository,
+)
+from envctl_engine.shared.protocols import PortAllocator, ProcessRuntime, StateRepository
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
@@ -385,12 +389,9 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
             for value in resources.values():
                 if isinstance(value, int) and value > 0:
                     ports.add(value)
-        port_planner = getattr(self.runtime, "port_planner", None)
-        release = getattr(port_planner, "release", None)
-        if not callable(release):
-            return
+        port_allocator = self._port_allocator(self.runtime)
         for port in sorted(ports):
-            release(port)
+            port_allocator.release(port)
 
     @staticmethod
     def _requirements_have_enabled_components(requirements: object) -> bool:
@@ -577,3 +578,7 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
     @staticmethod
     def _process_runtime(runtime: object) -> ProcessRuntime:
         return resolve_process_runtime(runtime)
+
+    @staticmethod
+    def _port_allocator(runtime: object) -> PortAllocator:
+        return resolve_port_allocator(runtime)

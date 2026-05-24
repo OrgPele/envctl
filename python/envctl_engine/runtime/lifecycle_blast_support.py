@@ -6,6 +6,7 @@ import subprocess
 
 from envctl_engine.requirements.supabase import build_supabase_project_name
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.runtime_context import resolve_port_allocator
 from envctl_engine.shared.parsing import parse_int
 from envctl_engine.ui.status_symbols import STATUS_SUCCESS, STATUS_WARNING
 
@@ -183,7 +184,10 @@ class LifecycleBlastCleanupSupport:
         return sorted(candidates)
 
     def release_all_runtime_ports(self) -> None:
-        port_planner = getattr(self.runtime, "port_planner", None)
+        try:
+            port_planner = resolve_port_allocator(self.runtime)
+        except RuntimeError:
+            port_planner = None
         release_all = getattr(port_planner, "release_all", None)
         if callable(release_all):
             release_all()

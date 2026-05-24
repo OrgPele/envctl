@@ -48,12 +48,16 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
             REPO_ROOT / "python/envctl_engine/startup/startup_orchestrator.py",
             REPO_ROOT / "python/envctl_engine/startup/resume_orchestrator.py",
             REPO_ROOT / "python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py",
+            REPO_ROOT / "python/envctl_engine/runtime/lifecycle_blast_support.py",
+            REPO_ROOT / "python/envctl_engine/startup/restart_prestop_support.py",
         ]
         for orchestrator_path in orchestrator_paths:
             raw = orchestrator_path.read_text(encoding="utf-8")
             self.assertNotIn("rt.port_planner", raw)
             self.assertNotIn("rt.state_repository", raw)
             self.assertNotIn("rt.process_runner", raw)
+            self.assertNotIn('getattr(runtime, "port_planner"', raw)
+            self.assertNotIn('getattr(self.runtime, "port_planner"', raw)
 
     def test_helper_accessors_prefer_runtime_context_dependencies(self) -> None:
         context_state_repository = object()
@@ -83,6 +87,7 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
         self.assertIs(
             _lifecycle_cleanup.LifecycleCleanupOrchestrator._process_runtime(runtime), context_process_runtime
         )
+        self.assertIs(_lifecycle_cleanup.LifecycleCleanupOrchestrator._port_allocator(runtime), context_port_allocator)
 
     def test_helper_accessors_fall_back_to_runtime_attributes_when_context_missing(self) -> None:
         runtime = SimpleNamespace()
@@ -98,6 +103,7 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
             _lifecycle_cleanup.LifecycleCleanupOrchestrator._state_repository(runtime), runtime.state_repository
         )
         self.assertIs(_lifecycle_cleanup.LifecycleCleanupOrchestrator._process_runtime(runtime), runtime.process_runner)
+        self.assertIs(_lifecycle_cleanup.LifecycleCleanupOrchestrator._port_allocator(runtime), runtime.port_planner)
 
     def test_runtime_context_stays_synced_when_runtime_collaborators_are_reassigned(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
