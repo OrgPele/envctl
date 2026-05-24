@@ -455,11 +455,16 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         shell_source_of_truth=(),
         python_source_of_truth=(
             "python/envctl_engine/runtime/inspection_support.py",
+            "python/envctl_engine/runtime/startup_inspection_support.py",
             "python/envctl_engine/runtime/engine_runtime_env.py",
         ),
-        evidence_tests=("tests/python/runtime/test_engine_runtime_env.py",),
+        evidence_tests=(
+            "tests/python/runtime/test_startup_inspection_support.py",
+            "tests/python/runtime/test_engine_runtime_command_parity_explain.py",
+            "tests/python/runtime/test_engine_runtime_env.py",
+        ),
         parity_status="verified_python",
-        notes="Explain-startup is Python-owned and verified through env/runtime tests.",
+        notes="Explain-startup dispatch stays in inspection_support; startup selection/preflight payload ownership lives in startup_inspection_support.",
     ),
     "preflight": FeatureDefinition(
         area="inspection",
@@ -468,11 +473,15 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         shell_source_of_truth=(),
         python_source_of_truth=(
             "python/envctl_engine/runtime/inspection_support.py",
+            "python/envctl_engine/runtime/startup_inspection_support.py",
             "python/envctl_engine/runtime/command_router.py",
         ),
-        evidence_tests=("tests/python/runtime/test_engine_runtime_command_parity.py",),
+        evidence_tests=(
+            "tests/python/runtime/test_startup_inspection_support.py",
+            "tests/python/runtime/test_engine_runtime_command_parity_explain.py",
+        ),
         parity_status="verified_python",
-        notes="Preflight is Python-owned and wraps explain-startup in a versioned JSON contract for automation clients.",
+        notes="Preflight dispatch stays in inspection_support; versioned contract wrapping lives in startup_inspection_support.",
     ),
     "dashboard": FeatureDefinition(
         area="inspection",

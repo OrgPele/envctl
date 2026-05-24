@@ -598,6 +598,19 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.runtime.command_special_flags import", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 500)
 
+    def test_runtime_inspection_has_startup_owner(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "startup_inspection_support.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "inspection_support.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        self.assertIn("class StartupInspectionBuilder", owner_text)
+        self.assertIn("def build_startup_explanation_payload", owner_text)
+        self.assertIn("def build_preflight_payload", owner_text)
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.runtime.startup_inspection_support import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 560)
+
     def test_runtime_planning_and_startup_facades_have_owned_mixins(self) -> None:
         planning_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_planning_facade.py"
         startup_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_startup_facade.py"
