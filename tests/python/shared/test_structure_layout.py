@@ -428,6 +428,19 @@ class StructureLayoutTests(unittest.TestCase):
         legacy = ui_tests / "test_dashboard_rendering_parity.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_dashboard_rendering_has_ai_session_owner(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "ai_session_rendering.py"
+        rendering = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "rendering.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        self.assertIn("def print_dashboard_ai_session_row", owner_text)
+        self.assertIn("def dashboard_repo_root_for_project", owner_text)
+        self.assertIn("def dashboard_current_tmux_target", owner_text)
+        rendering_text = rendering.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.ui.dashboard import ai_session_rendering", rendering_text)
+        self.assertLessEqual(len(rendering_text.splitlines()), 1100)
+
     def test_bats_harness_is_absent(self) -> None:
         self.assertFalse((REPO_ROOT / "tests" / "bats").exists())
 
