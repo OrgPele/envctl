@@ -218,6 +218,19 @@ class StructureLayoutTests(unittest.TestCase):
         legacy = runtime_tests / "test_engine_runtime_command_parity.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_state_action_orchestrator_has_log_owner(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_log_support.py"
+        orchestrator = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_orchestrator.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        self.assertIn("class StateActionLogSupport", owner_text)
+        self.assertIn("def logs_payload", owner_text)
+        self.assertIn("def clear_service_logs", owner_text)
+        orchestrator_text = orchestrator.read_text(encoding="utf-8")
+        self.assertIn("StateActionLogSupport", orchestrator_text)
+        self.assertLessEqual(len(orchestrator_text.splitlines()), 1050)
+
     def test_plan_agent_launch_tests_are_split_by_transport_owner(self) -> None:
         planning_tests = REPO_ROOT / "tests" / "python" / "planning"
         expected = [
