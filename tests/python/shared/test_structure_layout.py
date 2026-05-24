@@ -865,10 +865,25 @@ class StructureLayoutTests(unittest.TestCase):
                 self.assertTrue((REPO_ROOT / rel).is_file())
 
     def test_worktree_code_intelligence_has_owned_module(self) -> None:
-        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_code_intelligence.py"
+        coordinator = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_code_intelligence.py"
+        cgc_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_code_intelligence_cgc.py"
+        config_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_code_intelligence_config.py"
+        files_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_code_intelligence_files.py"
+        metadata_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_code_intelligence_metadata.py"
+        models_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_code_intelligence_models.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
 
-        self.assertTrue(owner.is_file())
+        self.assertTrue(coordinator.is_file())
+        self.assertTrue(cgc_owner.is_file())
+        self.assertTrue(config_owner.is_file())
+        self.assertTrue(files_owner.is_file())
+        self.assertTrue(metadata_owner.is_file())
+        self.assertTrue(models_owner.is_file())
+        coordinator_text = coordinator.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.planning.worktree_code_intelligence_cgc import", coordinator_text)
+        self.assertIn("from envctl_engine.planning.worktree_code_intelligence_config import", coordinator_text)
+        self.assertIn("from envctl_engine.planning.worktree_code_intelligence_files import", coordinator_text)
+        self.assertIn("from envctl_engine.planning.worktree_code_intelligence_metadata import", coordinator_text)
         self.assertIn(
             "from envctl_engine.planning.worktree_code_intelligence import",
             facade.read_text(encoding="utf-8"),
