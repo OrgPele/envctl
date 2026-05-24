@@ -129,14 +129,16 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("pr_body", pr_owner.read_text(encoding="utf-8"))
         self.assertIn("print_review_completion", review_owner.read_text(encoding="utf-8"))
         self.assertIn("resolve_original_plan", review_plan_owner.read_text(encoding="utf-8"))
-        self.assertIn("ship_payload", ship_owner.read_text(encoding="utf-8"))
+        ship_text = ship_owner.read_text(encoding="utf-8")
+        self.assertIn("ship_payload", ship_text)
+        self.assertIn("def run_ship_workflow", ship_text)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("action_protected_artifacts", facade_text)
         self.assertIn("action_pr_message_support", facade_text)
         self.assertIn("action_review_output_support", facade_text)
         self.assertIn("action_review_plan_support", facade_text)
         self.assertIn("action_ship_support", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 1100)
+        self.assertLessEqual(len(facade_text.splitlines()), 1000)
 
     def test_runtime_lifecycle_parity_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
