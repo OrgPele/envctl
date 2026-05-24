@@ -1104,6 +1104,20 @@ class StructureLayoutTests(unittest.TestCase):
             facade.read_text(encoding="utf-8"),
         )
 
+    def test_run_reuse_identity_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "run_reuse_identity.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "run_reuse_support.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        self.assertIn("class ProjectIdentity", owner_text)
+        self.assertIn("def build_startup_identity_metadata", owner_text)
+        self.assertIn("def _startup_identity_payload", owner_text)
+        self.assertIn("def project_identities_from_state", owner_text)
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.startup.run_reuse_identity import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 580)
+
     def test_disabled_startup_resolution_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "disabled_startup_resolution.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "startup_orchestrator.py"
