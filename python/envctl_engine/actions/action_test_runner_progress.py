@@ -6,6 +6,7 @@ import threading
 from typing import Any, Callable
 
 __all__ = [
+    "LiveTestProgressReporter",
     "ParallelTestProgressTracker",
     "format_live_collection_status",
     "format_live_progress_status",
@@ -51,6 +52,99 @@ def _render_labels(labels: list[str], *, max_items: int) -> str:
     if len(labels) > max_items:
         visible.append(f"+{len(labels) - max_items} more")
     return ", ".join(visible)
+
+
+def _spinner_counts_text(current: int, total: int | None, *, parsed: object | None) -> str:
+    failed = min(max(live_failed_count(parsed), 0), max(int(current), 0))
+    passed = max(0, int(current) - failed)
+    if total is None:
+        return f"{int(current)} complete • {passed} passed, {failed} failed"
+    return f"{int(current)}/{int(total)} complete • {passed} passed, {failed} failed"
+
+
+@dataclass
+class LiveTestProgressReporter:
+    __test__ = False
+
+    label: str
+    emit_status: Callable[[str], None]
+    parsed_provider: Callable[[], object | None]
+    spinner_progress: Callable[[str], None] | None = None
+    _last_snapshot: tuple[object, ...] | None = None
+    _current: int | None = None
+    _total: int | None = None
+    _running_started: bool = False
+
+    def emit(self, current: int, total: int) -> None:
+        merged_current = self._current
+        merged_total = self._total
+
+        if current < 0:
+            if self._running_started:
+                return
+            snapshot = ("collecting", total)
+            if self._last_snapshot == snapshot:
+                return
+            self._last_snapshot = snapshot
+            self._total = total
+            self.emit_status(format_live_collection_status(self.label, total))
+            self._emit_spinner_progress(f"{total} discovered")
+            return
+
+        self._running_started = True
+        if total <= 0:
+            merged_current = max(int(merged_current or 0), int(current))
+            self._current = merged_current
+            snapshot = ("running", merged_current, 0)
+            if self._last_snapshot == snapshot:
+                return
+            self._last_snapshot = snapshot
+            parsed = self.parsed_provider()
+            self.emit_status(format_live_progress_status_without_total(self.label, int(merged_current), parsed=parsed))
+            self._emit_spinner_progress(_spinner_counts_text(int(merged_current), None, parsed=parsed))
+            return
+
+        if int(current) == 0 and merged_current is not None and int(merged_current) > 0:
+            merged_total = int(total)
+            self._total = merged_total
+            snapshot = ("running", int(merged_current), merged_total)
+            if self._last_snapshot == snapshot:
+                return
+            self._last_snapshot = snapshot
+            parsed = self.parsed_provider()
+            self.emit_status(
+                format_live_progress_status_with_counts(
+                    self.label,
+                    int(merged_current),
+                    merged_total,
+                    parsed=parsed,
+                )
+            )
+            self._emit_spinner_progress(_spinner_counts_text(int(merged_current), merged_total, parsed=parsed))
+            return
+
+        merged_current = max(int(merged_current or 0), int(current))
+        merged_total = int(total)
+        self._current = merged_current
+        self._total = merged_total
+        snapshot = ("running", merged_current, merged_total)
+        if self._last_snapshot == snapshot:
+            return
+        self._last_snapshot = snapshot
+        parsed = self.parsed_provider()
+        self.emit_status(
+            format_live_progress_status_with_counts(
+                self.label,
+                merged_current,
+                merged_total,
+                parsed=parsed,
+            )
+        )
+        self._emit_spinner_progress(_spinner_counts_text(merged_current, merged_total, parsed=parsed))
+
+    def _emit_spinner_progress(self, status_text: str) -> None:
+        if callable(self.spinner_progress):
+            self.spinner_progress(status_text)
 
 
 @dataclass
