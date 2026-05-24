@@ -1,239 +1,380 @@
-# Envctl Codex Cycle Range Three-Point Scale
+# Envctl Workflow Efficiency And Worktree Identity
 
 ## Goals / non-goals / assumptions
 
 Goals:
-
-- Change the Codex plan-agent cycle range from the current broad recommendation
-  scale to a compact `0` through `3` scale.
-- Make `3` mean a genuinely complex task, not a normal multi-file task.
-- Keep the global default at `2` unless implementation evidence shows a better
-  default is required.
-- Align runtime clamping, generated prompt guidance, installed skill text, docs,
-  and tests so the behavior is not split between "prompt recommendation" and
-  "runtime implementation cap".
+- Make generated worktree branch names, envctl project names, and user-facing
+  `--project` selectors identical.
+- Make envctl commands run from an envctl-generated tree directory load the
+  owning parent repo `.envctl` automatically.
+- Add a focused validation planning surface so agents run relevant tests during
+  implementation instead of broad suites for every small change.
+- Add a narrow handoff command that combines the existing commit and PR flow,
+  then reports GitHub status-check state.
+- Keep envctl-local artifacts protected from accidental commits through the
+  existing global-excludes and commit-action protection policy.
 
 Non-goals:
+- Do not add background ship execution in this pass.
+- Do not add `envctl status --handoff`.
+- Do not change wrapper passthrough behavior such as `envctl playwright -- --help`.
+- Do not make broad release-gate or full-suite validation mandatory for every
+  implementation slice.
 
-- Do not redesign the queued Codex workflow shape in this change.
-- Do not change OpenCode behavior; OpenCode still ignores Codex cycle counts.
-- Do not change launch surface defaults such as cmux, tmux, OMX, or
-  `--new-session` beyond updating stale examples encountered in the touched
-  docs/tests.
-
-Assumption:
-
-- The user wants product behavior to use the smaller range, not only the wording
-  in `$envctl-create-plan-auto-codex`. Therefore direct env/config values above
-  `3` should be bounded to `3`, and prompt recommendations should never select
-  `4` or higher.
+Assumptions:
+- Generated worktrees continue to live under the configured trees root, usually
+  `trees/<feature>/<iteration>`.
+- Existing repo config may intentionally track `.envctl` in some repositories,
+  so artifact protection must stay user-global or local-exclude based rather
+  than editing repo `.gitignore`.
+- The first version of focused test planning can be deterministic and
+  rule-based; deeper import graph or CGC-powered impact analysis can be layered
+  later.
 
 ## Goal (user experience)
 
-When a user creates or launches a Codex plan-agent workflow, every visible
-recommendation and every accepted cycle count follows the same compact scale:
-
-- `0`: one initial implementation prompt only, plus whatever non-cycle follow-up
-  prompts remain enabled.
-- `1`: small localized change.
-- `2`: normal implementation that benefits from one continuation/finalization
-  round.
-- `3`: genuinely complex, risky, cross-module, or architecture-sensitive work
-  that needs the maximum available continuation depth.
-
-If a user or config provides `ENVCTL_PLAN_AGENT_CODEX_CYCLES=999` or
-`CYCLES=999`, envctl should report the bounded-cycle warning and use `3`.
+An implementation agent working in a generated worktree should be able to use a
+single unambiguous name for the project, branch, runtime services, tests, PR, and
+handoff. During implementation it should ask envctl for the narrow relevant
+checks to run, and at the end it should hand off with one command instead of
+manually repeating `git status`, `git add`, `git commit`, `git push`, `gh pr`,
+and `gh pr checks` commands.
 
 ## Business logic and data model mapping
 
-- Runtime parsing lives in
-  `python/envctl_engine/planning/plan_agent/config.py::_parse_codex_cycles`.
-  It reads `ENVCTL_PLAN_AGENT_CODEX_CYCLES`, the `CYCLES` alias, and config raw
-  values, then bounds them using `_PLAN_AGENT_CODEX_CYCLE_CAP`.
-- The hard cap constant lives in
-  `python/envctl_engine/planning/plan_agent/constants.py` as
-  `_PLAN_AGENT_CODEX_CYCLE_CAP = 10`.
-- Workflow expansion lives in
-  `python/envctl_engine/planning/plan_agent/workflow.py::_build_plan_agent_workflow`.
-  It independently bounds the requested cycles with the same cap before
-  expanding queued `continue_task`, `implement_task`, and `finalize_task` steps.
-- Prompt recommendation wording lives in:
-  - `python/envctl_engine/runtime/prompt_templates/create_plan.md`
-  - `python/envctl_engine/runtime/prompt_templates/create_plan_auto_codex.md`
-  - `python/envctl_engine/runtime/prompt_templates/create_plan_auto_omx.md`
-- Installed prompt rendering and prompt contract tests live in
-  `python/envctl_engine/runtime/prompt_install_support.py` and
-  `tests/python/runtime/test_prompt_install_support.py`.
-- Runtime and command docs currently mention the old range in:
-  - `docs/user/planning-and-worktrees.md`
-  - `docs/user/ai-playbooks.md`
-  - `docs/reference/configuration.md`
-  - `docs/reference/commands.md`
+- Worktree discovery and project identity live in
+  `python/envctl_engine/planning/__init__.py` through
+  `discover_tree_projects()`, `_append_feature_projects()`,
+  `predict_plan_projects()`, and `planning_existing_counts()`.
+- Worktree creation and branch naming live in
+  `python/envctl_engine/planning/worktree_domain.py` through
+  `_create_feature_worktrees_result()`, `_run_worktree_add()`, and
+  `_worktree_branch_name()`.
+- Explicit `ensure-worktree` behavior lives in
+  `python/envctl_engine/runtime/ensure_worktree_support.py`.
+- Runtime project contexts are built by
+  `python/envctl_engine/runtime/engine_runtime_startup_support.py::contexts_from_raw_projects()`.
+- Config loading starts in
+  `python/envctl_engine/config/__init__.py::load_config()`, which calls
+  `canonical_envctl_project_root()` and `discover_local_config_state()`.
+- Existing commit and PR behavior lives in
+  `python/envctl_engine/actions/project_action_domain.py::run_commit_action()`
+  and `run_pr_action()`, with action routing through
+  `python/envctl_engine/actions/action_command_orchestrator.py`.
+- Existing test execution behavior lives in
+  `python/envctl_engine/actions/action_test_runner.py::run_test_action()` and
+  test-command discovery/config in `python/envctl_engine/actions/actions_test.py`
+  plus config fields such as `ACTION_TEST_CMD`.
+- Envctl-local artifact protection is centralized in
+  `python/envctl_engine/config/local_artifacts.py`, enforced during commit by
+  `_partition_envctl_protected_paths()`, and installed into Git global excludes
+  by `python/envctl_engine/config/persistence.py::ensure_global_ignore_status()`.
+
+No database schema migration is required. New persistent data should be limited
+to optional JSON command output and, if needed, a small local metadata file under
+`.envctl-state/` for ship/check status. That state must remain local-only.
 
 ## Current behavior (verified in code)
 
-- `constants.py` sets `_PLAN_AGENT_CODEX_CYCLE_CAP = 10`.
-- `_parse_codex_cycles` returns `_PLAN_AGENT_CODEX_CYCLE_CAP` plus
-  `bounded_codex_cycles` when an env/config value is above the cap.
-- `_build_plan_agent_workflow` also clamps to `_PLAN_AGENT_CODEX_CYCLE_CAP`, so a
-  direct call with `codex_cycles=999` expands a workflow with `10` cycles.
-- `tests/python/planning/test_plan_agent_launch_support.py` currently asserts
-  this old cap in:
-  - `test_resolve_plan_agent_launch_config_bounds_large_cycles_alias`
-  - `test_build_plan_agent_workflow_bounds_large_cycle_counts`
-- `tests/python/runtime/test_prompt_install_support.py` asserts that create-plan
-  prompts contain `exactly one integer from \`0\` through \`8\``.
-- `tests/python/runtime/test_command_exit_codes.py` checks the installed
-  auto-Codex skill text for the same `0` through `8` phrase.
-- Docs under `docs/user` and `docs/reference` describe create-plan skills as
-  computing `0` through `8` recommendations, while also saying lower-level
-  runtime parsing uses a separate implementation cap.
+- `planning_feature_name()` derives a feature slug from the plan category and
+  file stem, for example `features/foo.md` becomes `features_foo`.
+- `worktree_domain._worktree_branch_name()` returns
+  `f"{feature}-{iteration}"`, and `_create_feature_worktrees_result()` records
+  created worktrees as `CreatedPlanWorktree(name=f"{feature}-{iteration}", ...)`.
+- `discover_tree_projects()` derives project names from tree paths. For nested
+  numeric iteration directories, `_append_feature_projects()` currently returns
+  `f"{feature_name}-{iter_dir.name}"`.
+- `ensure_worktree_support.run_ensure_worktree_command()` reports
+  `project_name=f"{feature}-{iteration}"` and `branch_name=f"{feature}-{iteration}"`.
+- `load_config()` chooses `requested_root` from `RUN_REPO_ROOT` or `Path.cwd()`,
+  resolves `base_dir = canonical_envctl_project_root(requested_root)`, then
+  calls `discover_local_config_state(base_dir, ENVCTL_CONFIG_FILE)`.
+- Existing docs already claim that when envctl runs from a linked worktree it
+  uses the owning main repo for `.envctl`, runtime scope, state files, port
+  locks, and latest-run artifacts. This must be enforced by tests for the exact
+  generated tree path shape.
+- `run_commit_action()` already stages non-protected paths, resolves a commit
+  message from `.envctl-commit-message.md` or env/config, commits, advances the
+  ledger pointer, and pushes the branch.
+- `run_pr_action()` already checks `existing_pr_url()` and creates a PR only
+  when none exists; if the worktree is dirty, it delegates to `run_commit_action()`.
+- `existing_pr_url()` currently uses `gh pr list --head <branch> --state open`.
+  There is no product command that waits for PR checks and returns a structured
+  status.
+- `config/local_artifacts.py` currently marks `.envctl*`, `MAIN_TASK.md`,
+  `OLD_TASK_*.md`, `trees/`, and `trees-*` as envctl-local artifacts.
+- Config persistence tests verify global exclude entries are installed and that
+  repo `.gitignore` is not modified.
+- Commit-action tests verify protected envctl-local files are unstaged or
+  skipped, including `MAIN_TASK.md` and `.envctl-state/worktree-provenance.json`.
 
 ## Root cause(s) / gaps
 
-- The recommendation scale and runtime cap drifted apart: prompts talk about
-  `0` through `8`, while runtime still accepts and expands up to `10`.
-- The broad `0` through `8` rubric encourages over-launching continuation cycles
-  for ordinary work.
-- Tests lock the old values in several layers, so changing only prompt markdown
-  would leave direct env/config behavior and workflow expansion inconsistent.
-- Docs explicitly preserve the old split between create-plan recommendation
-  policy and runtime implementation cap; that split should go away for this
-  simpler behavior.
+- Worktree project identity is currently inferred from directory layout and
+  duplicated in multiple helper paths. The invariant that project name equals
+  branch name is implicit, not validated end-to-end.
+- Config discovery depends on the chosen base directory. The docs describe parent
+  `.envctl` lookup from generated tree dirs, but the implementation needs a
+  direct generated-worktree ownership resolver with tests for
+  `<repo>/trees/<feature>/<iteration>`.
+- Existing `commit` and `pr` actions are useful but are separate operational
+  steps. There is no single command that performs commit + PR + check monitoring
+  and returns a structured handoff result.
+- Agents lack a deterministic, repo-native command for choosing focused tests
+  from changed files. That pushes them toward broad test suites even for small
+  implementation slices.
+- Artifact protection exists, but the policy needs explicit coverage for the
+  workflow files agents use most often, especially `.envctl-commit-message.md`,
+  `MAIN_TASK.md`, `.envctl-state/`, and generated tree roots.
 
 ## Plan
 
-### 1) Introduce the new cap as the runtime source of truth
+### 1) Centralize generated worktree identity
 
-- Change `_PLAN_AGENT_CODEX_CYCLE_CAP` in
-  `python/envctl_engine/planning/plan_agent/constants.py` from `10` to `3`.
-- Keep `_parse_codex_cycles` warning semantics unchanged:
-  values above `3` should still produce `bounded_codex_cycles`.
-- Keep invalid and negative handling unchanged:
-  invalid or negative values should resolve to `0` with
-  `invalid_codex_cycles`.
-- Confirm `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` remains the global default and does
-  not need migration.
+- Add a small identity helper module, or a focused section in
+  `planning/__init__.py`, that exposes one canonical function for generated
+  worktree identity:
+  - input: feature slug and iteration
+  - output: branch name, project name, and worktree path segment
+  - rule: branch name and project name are exactly identical
+- Route `_worktree_branch_name()`, `predict_plan_projects()`,
+  `_create_feature_worktrees_result()`, `_append_feature_projects()`,
+  `planning_existing_counts()`, and `ensure_worktree_support` through that
+  helper instead of open-coding `f"{feature}-{iteration}"`.
+- Add validation that generated project names discovered from nested tree paths
+  match the current branch when the worktree is a Git worktree and branch
+  information is cheaply available.
+- Keep the existing `features_foo-1` shape for compatibility unless a test
+  proves there is already a different branch name in use. The required invariant
+  is equality between branch and project, not a new naming format.
+- Preserve plan-file inference helpers such as
+  `project_action_domain._feature_name_from_project_name()` by updating their
+  tests against the centralized identity helper.
 
-### 2) Update workflow expansion expectations
+### 2) Resolve parent repo config from generated tree directories
 
-- Keep `_build_plan_agent_workflow` using `_PLAN_AGENT_CODEX_CYCLE_CAP`.
-- Update tests so `codex_cycles=999` expands to exactly `3` cycles.
-- Verify the number of queued workflow steps still follows the existing formula
-  for the reduced cap.
-- Add or update a focused test that direct canonical values `0`, `1`, `2`, and
-  `3` are accepted without warnings.
+- Add a generated-worktree ownership resolver in config loading, before
+  `discover_local_config_state()`:
+  - detect when `requested_root` or `ENVCTL_EXECUTION_ROOT` is inside
+    `<repo>/<trees_dir>/<feature>/<iteration>`
+  - read `.envctl-state/worktree-provenance.json` when present to identify the
+    owning repo root and original plan
+  - fall back to path shape plus nearest ancestor containing `.envctl` and the
+    configured trees directory
+  - keep `execution_root` as the actual worktree so backend/frontend paths and
+    command execution still point at the current worktree
+  - set `base_dir` to the owning repo root for `.envctl`, runtime scope,
+    planning dir, state, port locks, and tree discovery
+- Make `ENVCTL_CONFIG_FILE` explicit override continue to win.
+- Add a clear event/debug field for the resolved control-plane root versus
+  execution root so failures are inspectable.
+- Preserve inspect-only behavior when no `.envctl` exists and no parent config
+  can be found.
+- Ensure this logic does not walk outside the current repo arbitrarily. It
+  should climb only through the current path's ancestors and stop at filesystem
+  root or a Git boundary.
 
-### 3) Rewrite the create-plan recommendation rubric
+### 3) Add focused test planning
 
-- Update `create_plan.md`, `create_plan_auto_codex.md`, and
-  `create_plan_auto_omx.md` to say the allowed recommendation is exactly one
-  integer from `0` through `3`.
-- Replace the old five-band rubric with:
-  - `0`: trivial docs, prompt, static edit, or very small one-file change.
-  - `1`: small localized code/test change with low integration risk.
-  - `2`: normal multi-file feature/fix, moderate verification, or a task that
-    benefits from one continuation/finalization pass.
-  - `3`: genuinely complex, high-risk, cross-module, runtime-sensitive, or
-    architecture-sensitive work.
-- Keep "prefer the smallest number" wording so `3` is exceptional.
-- Update auto-Codex and auto-OMX wording so `recommended_codex_cycles=<n>` is
-  constrained to the new scale.
+- Add a new command surface:
+  `envctl test-plan --project <project> --json`.
+- Initial implementation should be rule-based and fast:
+  - collect changed files from `git diff --name-only`, `git diff --cached
+    --name-only`, and untracked non-protected paths
+  - map file prefixes to focused test groups
+  - include the exact command strings to run
+  - include a confidence level and a reason for each command
+  - include a separate full-gate recommendation for broad/risky changes
+- Suggested first ownership mapping:
+  - `python/envctl_engine/planning/` -> `tests/python/planning`
+  - `python/envctl_engine/actions/` -> `tests/python/actions`
+  - `python/envctl_engine/config/` -> `tests/python/config`
+  - `python/envctl_engine/startup/` -> `tests/python/startup`
+  - `python/envctl_engine/runtime/` -> `tests/python/runtime`
+  - `python/envctl_engine/requirements/` -> `tests/python/requirements`
+  - `python/envctl_engine/ui/` -> `tests/python/ui`
+  - prompt templates -> `tests/python/runtime/test_prompt_install_support.py`
+  - contract JSON/scripts -> relevant generator parity tests plus
+    `scripts/release_shipability_gate.py` only when the touched files require it
+- Make `envctl test --project <project> --changed` or `--affected` a thin
+  follow-up only after `test-plan` is useful; the first deliverable can be a
+  planner that prints commands without executing them.
+- Default policy:
+  - during implementation: run focused commands from `test-plan`
+  - before commit: run focused tests plus ruff for touched Python/test/script
+    paths
+  - before handoff: run broader validation only when `test-plan` marks the
+    change broad, runtime-critical, or contract-affecting
 
-### 4) Update docs and installed skill contracts
+### 4) Add a narrow ship command
 
-- Update `docs/user/planning-and-worktrees.md`,
-  `docs/user/ai-playbooks.md`, `docs/reference/configuration.md`, and
-  `docs/reference/commands.md` to describe the `0` through `3` scale.
-- Remove wording that says create-plan uses `0` through `8` while runtime uses a
-  separate cap.
-- Keep OpenCode notes explicit that OpenCode ignores Codex cycle settings.
-- If touched docs still show old launch examples such as `--tmux` where current
-  repo behavior prefers cmux, update those examples only when they are in the
-  same edited paragraph and are part of the auto-plan contract.
+- Add `envctl ship --project <project> --json`.
+- Reuse existing action code rather than duplicating Git/PR behavior:
+  - resolve the project context through existing action target selection
+  - call the same commit logic as `run_commit_action()` so
+    `.envctl-commit-message.md` and protected-path behavior stay consistent
+  - call the same PR detection/creation path as `run_pr_action()` so a PR is
+    only created if one does not already exist
+  - add a check-monitoring step after PR detection/creation
+- Implement GitHub checks with `gh` first:
+  - identify the current branch
+  - identify the PR URL/number
+  - run a bounded `gh pr checks --watch` when available
+  - fall back to `gh pr checks --json` polling if `--watch` is unavailable or
+    unsuitable for JSON mode
+  - return status values such as `clean_no_changes`, `committed_pushed`,
+    `pr_exists`, `pr_created`, `checks_passed`, `checks_failed`,
+    `checks_pending_timeout`, and `gh_unavailable`
+- JSON output should include:
+  - project name
+  - project root
+  - branch
+  - commit sha when created
+  - whether anything was committed
+  - whether push happened
+  - PR URL and whether it was created
+  - checks state, failing checks, pending checks, and monitor duration
+  - protected local artifacts skipped
+- Plain output should remain concise and link to the PR.
+- Do not add background execution yet. The command should be simple and
+  composable enough that an agent or future subagent can run it while another
+  implementation task continues.
 
-### 5) Update tests that lock the old range
+### 5) Tighten artifact protection policy
 
-- In `tests/python/runtime/test_prompt_install_support.py`, replace assertions
-  for `0` through `8` with `0` through `3`.
-- In `tests/python/runtime/test_command_exit_codes.py`, update installed skill
-  assertions to expect `0` through `3`.
-- In `tests/python/planning/test_plan_agent_launch_support.py`, update:
-  - bounded alias parsing from `10` to `3`;
-  - large workflow expansion from `10` to `3`;
-  - any canonical-value tests that currently treat `4` as valid. Values above
-    `3` should now assert `bounded_codex_cycles`.
-- Search for remaining literal `0 through 8`, `through \`8\``, and
-  `_PLAN_AGENT_CODEX_CYCLE_CAP = 10` references and remove or intentionally
-  update them.
+- Keep `config/local_artifacts.py` as the policy source for files that envctl
+  should not commit by default.
+- Confirm whether `.envctl-commit-message.md` is intentionally covered by the
+  `.envctl*` pattern. If yes, add an explicit test naming that file so future
+  changes do not accidentally unprotect it.
+- Add or extend tests for:
+  - `.envctl-state/`
+  - `.envctl-commit-message.md`
+  - `MAIN_TASK.md`
+  - `OLD_TASK_*.md`
+  - `trees/`
+  - `trees-*`
+- Keep repo `.gitignore` untouched. Continue using Git global excludes from
+  config save/bootstrap and commit-action protected-path filtering.
+- Add docs that distinguish:
+  - repo configuration that may be intentionally tracked
+  - envctl runtime/task artifacts that should stay local
+  - generated tree roots that should never be committed from the parent repo
+
+### 6) Update prompts and docs to use the efficient workflow
+
+- Update implementation/finalization prompt templates to prefer:
+  - `envctl test-plan --project <current-worktree-name> --json` during coding
+  - focused test commands from that output
+  - `envctl ship --project <current-worktree-name> --json` for final handoff
+- Keep guidance that full validation is required for broad/risky changes, but
+  stop making full-suite validation sound mandatory for every tiny change.
+- Update `docs/user/ai-playbooks.md`, `docs/user/planning-and-worktrees.md`, and
+  relevant help text with the project-name-equals-branch invariant and the
+  focused-test/handoff flow.
 
 ## Tests (add these)
 
-### Backend tests
+Backend tests:
+- `tests/python/planning/test_planning_worktree_setup.py`
+  - generated worktree branch, project name, created worktree name, and
+    provenance identity match exactly
+  - fresh AI worktree creation still targets the newly created identity
+- `tests/python/runtime/test_ensure_worktree_support.py` or existing
+  ensure-worktree tests
+  - JSON output reports identical `project_name` and `branch_name`
+- `tests/python/config/test_config_persistence.py` and
+  `tests/python/config/test_config_command_support.py`
+  - load config from `<repo>/trees/<feature>/<iteration>` using parent
+    `<repo>/.envctl`
+  - preserve worktree execution root for commands
+  - explicit `ENVCTL_CONFIG_FILE` override wins
+  - missing parent config preserves current non-interactive failure behavior
+- `tests/python/actions/test_actions_cli.py`
+  - ship command commits with `.envctl-commit-message.md`
+  - ship skips protected envctl-local artifacts
+  - ship creates PR only when none exists
+  - ship reports existing PR without creating another
+  - ship returns failed/pending/passed check status
+- `tests/python/actions/test_actions_parity.py`
+  - route-level action command orchestration for `ship`
+  - artifact protection explicitly covers `.envctl-commit-message.md`
+- New `tests/python/actions/test_test_plan_action.py`
+  - changed config files recommend config tests
+  - changed planning files recommend planning tests
+  - changed prompt templates recommend prompt install support tests
+  - broad/mixed changes recommend focused tests plus full-gate warning
 
-- Extend `tests/python/planning/test_plan_agent_launch_support.py`:
-  - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` resolves to `3` with no warning.
-  - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=4` resolves to `3` with
-    `bounded_codex_cycles`.
-  - `CYCLES=999` resolves to `3` with `bounded_codex_cycles`.
-  - `_build_plan_agent_workflow(..., codex_cycles=999)` has
-    `workflow.codex_cycles == 3`.
+Frontend tests:
+- None expected for the first implementation. This is CLI/runtime workflow
+  behavior, not browser-visible UI.
 
-### Frontend tests
-
-- None. This is CLI/runtime prompt behavior with no frontend surface.
-
-### Integration/E2E tests
-
-- Extend prompt-install coverage in
-  `tests/python/runtime/test_prompt_install_support.py` and
-  `tests/python/runtime/test_command_exit_codes.py` so installed skills and
-  rendered direct prompt bodies contain `0` through `3` and not `0` through `8`.
-- Run focused docs/prompt tests rather than full-stack E2E.
+Integration/E2E tests:
+- Add a temp-repo smoke test that creates an envctl worktree, runs envctl from
+  inside that worktree, and proves parent `.envctl` was loaded.
+- Add a fake-`gh` integration test for `envctl ship --json` covering commit,
+  existing PR, new PR, and check failure status without network.
+- Keep full release-gate validation as an optional final check for the
+  implementation branch, not a default per-edit requirement.
 
 ## Observability / logging
 
-- Keep existing `codex_cycles_warning="bounded_codex_cycles"` behavior. No new
-  telemetry event is required.
-- If command output or JSON payloads already expose `codex_cycles`, the bounded
-  value should now be `3`.
+- Emit a config discovery event or include debug-pack fields for:
+  - requested root
+  - execution root
+  - control-plane/base repo root
+  - config file path
+  - config source
+  - generated worktree provenance source when used
+- For `test-plan --json`, include reasons and confidence for every command.
+- For `ship --json`, include step timings and the exact final status so agents
+  can decide whether to keep implementing or stop for a failed check.
 
 ## Rollout / verification
 
-Recommended Codex cycles: 2.
-
-Rationale: this is a localized behavior change across runtime config, prompts,
-docs, and tests; it does not need the future maximum of `3`.
-
-Launch scope flags: `--cmux --no-infra --headless --new-session`.
-
-Focused verification commands:
-
-- `uv run pytest -q tests/python/planning/test_plan_agent_launch_support.py -k 'codex_cycles or build_plan_agent_workflow_bounds_large_cycle_counts'`
-- `uv run pytest -q tests/python/runtime/test_prompt_install_support.py -k 'cycle or auto_codex'`
-- `uv run pytest -q tests/python/runtime/test_command_exit_codes.py -k create_plan_auto_codex`
-- `uv tool run ruff check python tests scripts`
-
-Escalate to broader runtime tests only if changing the cap exposes unrelated
-launch parsing failures.
+- Recommended Codex cycles: `7`.
+  Rationale: this crosses config discovery, worktree identity, action commands,
+  GitHub integration, tests, docs, and prompt guidance, with several edge cases.
+- Intended launch scope: `--no-infra --headless --new-session`.
+  Runtime services do not prove this change; focused unit and temp-repo CLI
+  tests are the useful validation signal.
+- Launch command:
+  `cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=7 envctl --plan features/envctl-workflow-efficiency-and-identity --cmux --no-infra --headless --new-session`.
+- Implementation should be split into commits:
+  1. identity helper and tests
+  2. parent config discovery and tests
+  3. `test-plan` command and docs
+  4. `ship` command and fake-`gh` tests
+  5. artifact policy tests and prompt/doc updates
+- Run focused tests after each commit slice. Run ruff on touched Python/test
+  paths. Run broader action/config/planning/runtime tests before PR handoff.
 
 ## Definition of done
 
-- No prompt, installed skill, or user/reference doc describes the Codex
-  recommendation range as `0` through `8`.
-- Runtime parsing and workflow expansion bound any value above `3` down to `3`.
-- `3` is documented as the maximum for genuinely complex work.
-- Focused tests pass and lock both the prompt text and runtime behavior.
+- Generated worktree project names and branch names are identical everywhere
+  envctl reports or selects them.
+- Running envctl from a generated tree directory loads the owning parent `.envctl`
+  while executing project commands against the current worktree.
+- `envctl test-plan --project <project> --json` returns deterministic focused
+  commands for common envctl code areas.
+- `envctl ship --project <project> --json` commits from
+  `.envctl-commit-message.md`, pushes, creates a PR only when needed, monitors
+  checks, and returns structured status.
+- Envctl-local artifacts remain protected from accidental commits and are present
+  in the configured global excludes flow.
+- Docs and prompt templates teach focused testing and the narrow ship handoff
+  instead of repeated manual Git/GitHub command loops.
 
 ## Risk register
 
-- Lowering the runtime cap from `10` to `3` is behaviorally visible for users who
-  intentionally set larger values. That is aligned with the requested simpler
-  scale, but release notes or docs should call it out.
-- Some historical changelog files mention the old range. Treat release notes and
-  archived changelogs as historical unless tests require otherwise; do not rewrite
-  old release history just to remove the phrase.
-
-## Open questions
-
-- None.
+- Parent `.envctl` discovery can accidentally choose the wrong ancestor in
+  unusual nested repositories. Mitigate with strict generated-worktree shape
+  checks, provenance-first resolution, and explicit override precedence.
+- `ship` can mask too much if it becomes a giant workflow. Keep it narrow:
+  commit, push, PR if missing, check status, structured result.
+- Focused test planning can under-select tests. Start with conservative
+  mappings, expose confidence/reasons, and recommend full gates for mixed or
+  contract-touching changes.
+- Artifact protection can conflict with intentionally tracked `.envctl` files.
+  Do not edit repo `.gitignore`; keep protection in global excludes and commit
+  filtering, and document the distinction.

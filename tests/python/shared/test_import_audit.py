@@ -104,18 +104,22 @@ OWNERSHIP_RULES = {
     "sanitize_interactive_input": {
         ENGINE_ROOT / "ui" / "command_parsing.py",
         ENGINE_ROOT / "runtime" / "engine_runtime_ui_bridge.py",
+        ENGINE_ROOT / "ui" / "dashboard" / "command_support.py",
     },
     "recover_single_letter_command_from_escape_fragment": {
         ENGINE_ROOT / "ui" / "command_parsing.py",
         ENGINE_ROOT / "runtime" / "engine_runtime_ui_bridge.py",
+        ENGINE_ROOT / "ui" / "dashboard" / "command_support.py",
     },
     "parse_interactive_command": {
         ENGINE_ROOT / "ui" / "command_parsing.py",
         ENGINE_ROOT / "runtime" / "engine_runtime_ui_bridge.py",
+        ENGINE_ROOT / "ui" / "dashboard" / "command_support.py",
     },
     "tokens_set_mode": {
         ENGINE_ROOT / "ui" / "command_parsing.py",
         ENGINE_ROOT / "runtime" / "engine_runtime_misc_support.py",
+        ENGINE_ROOT / "ui" / "dashboard" / "command_support.py",
     },
     "_textual_importable": {
         ENGINE_ROOT / "ui" / "textual" / "screens" / "selector" / "support.py",

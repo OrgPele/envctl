@@ -48,8 +48,8 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         runtime._debug_last = lambda _route: 0  # type: ignore[method-assign]
         runtime._discover_projects = lambda mode: []  # type: ignore[method-assign]
 
-        # Verify we have exactly 42 commands
-        self.assertEqual(len(commands), 42, f"Expected 42 commands, got {len(commands)}")
+        # Verify we have exactly 44 commands
+        self.assertEqual(len(commands), 44, f"Expected 44 commands, got {len(commands)}")
 
         # Expected command set
         expected_commands = {
@@ -69,6 +69,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "playwright",
             "supabase-user",
             "test",
+            "test-focused",
             "logs",
             "clear-logs",
             "health",
@@ -78,6 +79,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "self-destruct-worktree",
             "pr",
             "commit",
+            "ship",
             "review",
             "migrate",
             "install-prompts",
@@ -134,11 +136,13 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "errors": "state_action_orchestrator",
             # Action command orchestrator
             "test": "action_command_orchestrator",
+            "test-focused": "action_command_orchestrator",
             "delete-worktree": "action_command_orchestrator",
             "blast-worktree": "action_command_orchestrator",
             "self-destruct-worktree": "action_command_orchestrator",
             "pr": "action_command_orchestrator",
             "commit": "action_command_orchestrator",
+            "ship": "action_command_orchestrator",
             "review": "action_command_orchestrator",
             "migrate": "action_command_orchestrator",
             "install-prompts": "utility_dispatch",

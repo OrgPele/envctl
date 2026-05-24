@@ -1,19 +1,28 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
-from pathlib import Path
 
-from envctl_engine.shared.protocols import ProcessRuntime
-
-from ..shared.env_access import float_from_env, int_from_env, str_from_env
-from ..shared.parsing import parse_bool
+from .adapter_lifecycle_models import AdapterLifecycleEvent, ContainerLifecycleRun, ContainerLifecycleTemplate
 from ..shared.reason_codes import (
     PortFailureReason,
     RequirementFailureReason,
     RequirementLifecycleReason,
     reason_code_to_string,
+)
+from .adapter_policy import (  # noqa: F401 - compatibility re-export surface
+    env_bool,
+    env_float,
+    env_int,
+    port_mismatch_policy,
+    retryable_probe_error,
+    sleep_between_probes,
+    timeout_error,
+)
+from .adapter_port_cleanup import (  # noqa: F401 - compatibility re-export surface
+    bind_safe_cleanup_enabled,
+    cleanup_envctl_owned_port_containers,
+    format_bind_conflict_guidance,
+    wait_for_port_ready,
 )
 from .common import (
     ContainerStartResult,
@@ -28,102 +37,6 @@ from .common import (
     run_result_error,
     stop_and_remove_container,
 )
-
-
-def timeout_error(error: str | None) -> bool:
-    normalized = (error or "").lower()
-    return "command timed out" in normalized
-
-
-def sleep_between_probes(process_runner: object, seconds: float) -> None:
-    if seconds <= 0:
-        return
-    sleeper = getattr(process_runner, "sleep", None)
-    if callable(sleeper):
-        _ = sleeper(seconds)
-        return
-    time.sleep(seconds)
-
-
-def env_bool(env: Mapping[str, str] | None, key: str, default: bool) -> bool:
-    return parse_bool(str_from_env(env, key), default)
-
-
-def env_int(env: Mapping[str, str] | None, key: str, default: int, *, minimum: int | None = None) -> int:
-    value = int_from_env(env, key, default)
-    if minimum is not None:
-        return max(minimum, value)
-    return value
-
-
-def env_float(env: Mapping[str, str] | None, key: str, default: float, *, minimum: float | None = None) -> float:
-    value = float_from_env(env, key, default)
-    if minimum is not None:
-        return max(minimum, value)
-    return value
-
-
-def port_mismatch_policy(env: Mapping[str, str] | None) -> str:
-    raw = (str_from_env(env, "ENVCTL_REQUIREMENTS_PORT_MISMATCH_POLICY") or "").strip().lower()
-    if raw == "recreate":
-        return "recreate"
-    return "adopt_existing"
-
-
-def retryable_probe_error(error: str | None, tokens: tuple[str, ...]) -> bool:
-    normalized = (error or "").lower()
-    return any(token in normalized for token in tokens)
-
-
-@dataclass(slots=True)
-class AdapterLifecycleEvent:
-    stage: str
-    reason: str | None = None
-    detail: str | None = None
-    elapsed_ms: float = 0.0
-
-    def to_payload(self) -> dict[str, object]:
-        return {
-            "stage": self.stage,
-            "reason": self.reason,
-            "detail": self.detail,
-            "elapsed_ms": self.elapsed_ms,
-        }
-
-
-@dataclass(slots=True)
-class ContainerLifecycleTemplate:
-    service_name: str
-    container_name: str
-    process_runner: ProcessRuntime
-    project_root: Path
-    env: Mapping[str, str] | None
-    port: int
-    container_port: int
-    listener_wait_timeout: float
-    probe_attempts: int
-    restart_probe_attempts: int
-    recreate_probe_attempts: int
-    restart_on_probe_failure: bool
-    recreate_on_probe_failure: bool
-    retryable_probe_error: Callable[[str | None], bool]
-    create_container: Callable[[], str | None]
-    probe_readiness: Callable[[int], tuple[bool, str | None]]
-    probe_failure_fallback: str
-    restart_on_listener_timeout: bool = False
-    recreate_on_restart_listener_timeout: bool = False
-    bind_cleanup: Callable[[int], tuple[bool, str | None]] | None = None
-    trace_stage: Callable[[dict[str, object]], None] | None = None
-
-
-@dataclass(slots=True)
-class ContainerLifecycleRun:
-    result: ContainerStartResult
-    events: list[AdapterLifecycleEvent]
-    stage_durations_ms: dict[str, float]
-    listener_wait_ms: float
-    container_reused: bool
-    container_recreated: bool
 
 
 def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLifecycleRun:
@@ -825,63 +738,3 @@ def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLi
         failure_class=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
         stage="probe.failed",
     )
-
-
-def bind_safe_cleanup_enabled(env: Mapping[str, str] | None, *, service_name: str) -> bool:
-    global_default = env_bool(env, "ENVCTL_REQUIREMENT_BIND_SAFE_CLEANUP", False)
-    service_key = f"ENVCTL_REQUIREMENT_{service_name.upper()}_BIND_SAFE_CLEANUP"
-    return env_bool(env, service_key, global_default)
-
-
-def cleanup_envctl_owned_port_containers(
-    *,
-    process_runner: object,
-    project_root: Path,
-    env: Mapping[str, str] | None,
-    port: int,
-    allowed_prefixes: tuple[str, ...],
-) -> tuple[bool, str | None]:
-    result, error = run_docker(
-        process_runner,
-        ["ps", "-a", "--filter", f"publish={port}", "--format", "{{.Names}}"],
-        cwd=project_root,
-        env=env,
-    )
-    if result is None:
-        return False, error
-    if getattr(result, "returncode", 1) != 0:
-        return False, run_result_error(result, "failed listing bind-conflict containers")
-    raw = str(getattr(result, "stdout", "") or "")
-    candidates = [line.strip() for line in raw.splitlines() if line.strip()]
-    removable = sorted({name for name in candidates if any(name.startswith(prefix) for prefix in allowed_prefixes)})
-    if not removable:
-        return False, None
-    for container_name in removable:
-        cleanup_error = stop_and_remove_container(
-            process_runner,
-            container_name=container_name,
-            cwd=project_root,
-            env=env,
-        )
-        if cleanup_error:
-            return False, cleanup_error
-    return True, None
-
-
-def format_bind_conflict_guidance(service_name: str, port: int, error: str | None) -> str:
-    detail = (error or "bind conflict").strip() or "bind conflict"
-    return (
-        f"{detail}. Unable to acquire port {port} for {service_name}. "
-        "Resolve the conflict manually or run with ENVCTL_REQUIREMENT_BIND_SAFE_CLEANUP=true "
-        "to allow safe cleanup of envctl-owned stale containers, then retry."
-    )
-
-
-def wait_for_port_ready(process_runner: object, port: int, *, timeout: float) -> bool:
-    waiter = getattr(process_runner, "wait_for_port", None)
-    if not callable(waiter):
-        return False
-    try:
-        return bool(waiter(port, timeout=timeout))
-    except TypeError:
-        return bool(waiter(port))

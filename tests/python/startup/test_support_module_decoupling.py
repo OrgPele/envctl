@@ -29,6 +29,7 @@ from envctl_engine.startup.startup_execution_support import (  # noqa: E402
     start_project_services,
     start_project_context,
 )
+from envctl_engine.startup.startup_orchestrator import StartupOrchestrator  # noqa: E402
 from envctl_engine.startup.startup_selection_support import _tree_preselected_projects_from_state  # noqa: E402
 from envctl_engine.config import AppServiceConfig  # noqa: E402
 from envctl_engine.runtime.command_router import parse_route  # noqa: E402
@@ -68,6 +69,136 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
     def test_startup_execution_support_reexports_new_owner_modules(self) -> None:
         self.assertIs(start_requirements_for_project, requirements_start_impl)
         self.assertIs(start_project_services, service_start_impl)
+
+    def test_startup_orchestrator_does_not_retain_selected_context_pass_through_wrappers(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_record_project_startup"))
+        self.assertFalse(hasattr(StartupOrchestrator, "_record_plan_agent_handoff_local_startup_failure"))
+
+    def test_startup_orchestrator_does_not_retain_selected_context_startup_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_start_selected_contexts"))
+
+    def test_startup_orchestrator_does_not_retain_selected_context_startup_runtime_binding(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_selected_context_startup_runtime"))
+
+    def test_startup_orchestrator_execute_delegates_to_lifecycle_owner(self) -> None:
+        self.assertLessEqual(len(StartupOrchestrator.execute.__code__.co_names), 4)
+
+    def test_startup_orchestrator_does_not_retain_context_selection_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_select_contexts"))
+
+    def test_startup_orchestrator_does_not_retain_restart_port_application_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_apply_restart_ports"))
+
+    def test_startup_orchestrator_does_not_retain_tree_selection_pass_through_wrappers(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_trees_start_selection_required"))
+        self.assertFalse(hasattr(StartupOrchestrator, "_select_start_tree_projects"))
+
+    def test_startup_orchestrator_does_not_retain_process_runtime_pass_through_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_process_runtime"))
+
+    def test_startup_orchestrator_does_not_retain_restart_selection_pass_through_wrappers(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_restart_include_requirements"))
+        self.assertFalse(hasattr(StartupOrchestrator, "_restart_service_types_for_project"))
+
+    def test_startup_orchestrator_does_not_retain_prewarm_pass_through_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_maybe_prewarm_docker"))
+
+    def test_startup_orchestrator_does_not_retain_requirements_timing_pass_through_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_requirements_timing_enabled"))
+
+    def test_startup_orchestrator_does_not_retain_configured_service_types_pass_through_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_configured_service_types_for_mode"))
+
+    def test_startup_orchestrator_does_not_retain_project_warning_render_pass_through_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_render_project_startup_warnings"))
+
+    def test_startup_orchestrator_does_not_retain_fresh_start_replacement_services_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_fresh_start_replacement_services"))
+
+    def test_startup_orchestrator_does_not_retain_dashboard_stopped_services_static_wrappers(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_dashboard_stopped_service_entries"))
+        self.assertFalse(hasattr(StartupOrchestrator, "_metadata_without_dashboard_stopped_services"))
+
+    def test_startup_orchestrator_does_not_retain_restart_requirements_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_requirements_for_restart_context"))
+
+    def test_startup_orchestrator_does_not_retain_suppress_timing_wrapper(self) -> None:
+        self.assertTrue(hasattr(StartupOrchestrator, "_suppress_timing_output"))
+
+    def test_startup_orchestrator_does_not_retain_suppress_progress_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_suppress_progress_output"))
+
+    def test_startup_orchestrator_does_not_retain_report_progress_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_report_progress"))
+
+    def test_startup_orchestrator_does_not_retain_process_cwd_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_process_cwd"))
+
+    def test_startup_orchestrator_does_not_retain_restart_orphan_listener_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_terminate_restart_orphan_listeners"))
+
+    def test_startup_orchestrator_does_not_retain_plan_dry_run_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_resolve_plan_dry_run"))
+
+    def test_startup_orchestrator_does_not_retain_emit_snapshot_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_emit_snapshot"))
+
+    def test_startup_orchestrator_does_not_retain_emit_phase_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_emit_phase"))
+
+    def test_startup_orchestrator_does_not_retain_plan_agent_handoff_decision_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_should_degrade_to_plan_agent_handoff"))
+
+    def test_startup_orchestrator_does_not_retain_run_reuse_replacement_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_replace_existing_project_services_for_fresh_start"))
+
+    def test_startup_orchestrator_does_not_retain_dashboard_stopped_restore_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_prepare_dashboard_stopped_service_restore"))
+
+    def test_startup_orchestrator_does_not_retain_plan_agent_handoff_validation_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_validate_plan_agent_handoff"))
+
+    def test_startup_orchestrator_does_not_retain_plan_agent_launch_spinner_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_launch_plan_agent_terminals_with_spinner"))
+
+    def test_startup_orchestrator_does_not_retain_plan_agent_launch_sequence_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_prepare_and_launch_plan_agent_worktrees"))
+
+    def test_startup_orchestrator_does_not_retain_disabled_startup_resolution_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_resolve_disabled_startup_mode"))
+
+    def test_startup_orchestrator_does_not_retain_run_reuse_resolution_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_resolve_run_reuse"))
+
+    def test_startup_orchestrator_does_not_retain_prepare_execution_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_prepare_execution"))
+
+    def test_startup_orchestrator_does_not_retain_route_contract_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_validate_route_contract"))
+
+    def test_startup_orchestrator_does_not_retain_run_id_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_ensure_run_id"))
+
+    def test_startup_orchestrator_does_not_retain_resolved_run_id_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_resolved_run_id"))
+
+    def test_startup_orchestrator_does_not_retain_announce_session_identifiers_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_announce_session_identifiers"))
+
+    def test_startup_orchestrator_does_not_retain_create_session_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_create_session"))
+
+    def test_startup_orchestrator_does_not_retain_strict_truth_reconcile_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_reconcile_strict_truth"))
+
+    def test_startup_orchestrator_does_not_retain_finalize_failure_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_finalize_failure"))
+
+    def test_startup_orchestrator_does_not_retain_degraded_handoff_finalization_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_finalize_plan_agent_degraded_handoff"))
+
+    def test_startup_orchestrator_does_not_retain_success_finalization_wrapper(self) -> None:
+        self.assertFalse(hasattr(StartupOrchestrator, "_finalize_success"))
 
     def test_requirements_parallel_defaults_to_sequential_on_macos_with_cli_override(self) -> None:
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
@@ -381,7 +512,6 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         ]
 
         result = _tree_preselected_projects_from_state(
-            SimpleNamespace(runtime=runtime),
             runtime=runtime,
             project_contexts=project_contexts,
         )
@@ -705,6 +835,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
                 _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
                 _service_enabled_for_mode=lambda mode, service: True,
+                process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: None),
                 _prepare_backend_runtime=prepare_backend_runtime,
                 _prepare_frontend_runtime=prepare_frontend_runtime,
                 _service_command_source=lambda **kwargs: "configured",
@@ -712,7 +843,6 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             )
             orchestrator = SimpleNamespace(
                 runtime=runtime,
-                _process_runtime=lambda rt: SimpleNamespace(start_background=lambda *args, **kwargs: None),
                 _restart_service_types_for_project=lambda **kwargs: {"backend", "frontend"},
                 _suppress_timing_output=lambda route: True,
             )
@@ -858,6 +988,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _service_command_source=lambda **kwargs: "configured",
                 _service_start_command_resolved=lambda service_name, **kwargs: ("python -c pass", "configured"),
                 _split_command=lambda command, **kwargs: ["python", "-c", "pass"],
+                process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)),
                 _detect_service_actual_port=lambda service_name, pid, requested_port, **kwargs: 8022
                 if service_name == "voice-runtime"
                 else requested_port,
@@ -868,9 +999,6 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             )
             orchestrator = SimpleNamespace(
                 runtime=runtime,
-                _process_runtime=lambda rt: SimpleNamespace(
-                    start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)
-                ),
                 _restart_service_types_for_project=lambda route, project_name, default_service_types: set(default_service_types),
                 _suppress_timing_output=lambda route: True,
             )
@@ -974,6 +1102,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                     "scripts/envctl/start-voice-runtime.sh",
                     str(kwargs["port"]),
                 ],
+                process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)),
                 _detect_service_actual_port=lambda **kwargs: 8010,
                 _listener_truth_enforced=lambda: True,
                 _service_listener_failure_detail=lambda **kwargs: "",
@@ -982,9 +1111,6 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             )
             orchestrator = SimpleNamespace(
                 runtime=runtime,
-                _process_runtime=lambda rt: SimpleNamespace(
-                    start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)
-                ),
                 _restart_service_types_for_project=lambda **kwargs: {"voice-runtime"},
                 _suppress_timing_output=lambda route: True,
             )
@@ -1085,6 +1211,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _service_enabled_for_mode=lambda mode, service_name: service_name == "voice-runtime",
                 _service_command_source=lambda **kwargs: "configured",
                 _split_command=lambda command, **kwargs: ["python", "-c", "pass"],
+                process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)),
                 _detect_service_actual_port=lambda **kwargs: 8019,
                 _listener_truth_enforced=lambda: True,
                 _service_listener_failure_detail=lambda **kwargs: "",
@@ -1093,7 +1220,6 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             )
             orchestrator = SimpleNamespace(
                 runtime=runtime,
-                _process_runtime=lambda rt: SimpleNamespace(start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)),
                 _restart_service_types_for_project=lambda **kwargs: {"voice-runtime"},
                 _suppress_timing_output=lambda route: True,
             )

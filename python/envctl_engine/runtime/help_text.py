@@ -41,8 +41,10 @@ GENERAL_ACTION_ORDER = (
     "health",
     "errors",
     "test",
+    "test-focused",
     "commit",
     "pr",
+    "ship",
     "review",
     "migrate",
     "delete-worktree",
@@ -543,6 +545,28 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         aliases=("tests", "t", "--test", "--tests"),
         related=("health", "logs", "review"),
     ),
+    "test-focused": CommandHelpTopic(
+        command="test-focused",
+        summary="run focused validation commands for the current or selected project",
+        usage=("envctl test-focused [--project <name>] [--dry-run] [--json]",),
+        what_it_does=(
+            "collects changed files from git and maps common envctl code areas to focused test commands",
+            "when run inside a generated worktree, infers that worktree without requiring --project",
+            "includes reasons, confidence, ruff suggestions for touched Python paths, and full-gate guidance",
+            "runs the focused commands by default in order and stops at the first failure",
+        ),
+        flags=(
+            "--project <name>        plan validation for one project/worktree",
+            "--dry-run               print the focused commands without executing them",
+            "--json                  print the envctl.test_plan.v1 payload",
+        ),
+        examples=(
+            "envctl test-focused",
+            "envctl test-focused --project feature-a-1",
+        ),
+        aliases=("--test-focused",),
+        related=("test", "ship", "commit"),
+    ),
     "pr": CommandHelpTopic(
         command="pr",
         summary="create a pull request for the selected branch/worktree",
@@ -579,6 +603,26 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         examples=("envctl commit --main", "envctl commit --project feature-a-1 --commit-message-file /tmp/msg.md"),
         aliases=("c", "--commit"),
         related=("pr", "review"),
+    ),
+    "ship": CommandHelpTopic(
+        command="ship",
+        summary="commit, push, open/update PR, and report GitHub checks for the current or selected target",
+        usage=("envctl ship [--project <name>] [--json]",),
+        what_it_does=(
+            "when run inside a generated worktree, infers that worktree without requiring --project",
+            "reuses envctl commit behavior, including .envctl-commit-message.md and protected local artifacts",
+            "opens a PR when needed and reuses an existing PR when one already exists",
+            "predicts merge conflicts and returns conflicting files, messages, and resolution steps",
+            "queries GitHub PR checks and returns passed, failed, pending-timeout, or gh-unavailable status "
+            "with failing_checks and pending_checks",
+        ),
+        flags=(
+            "--project <name>        ship one worktree/project",
+            "--json                  print the envctl.ship.v1 payload",
+        ),
+        examples=("envctl ship --json", "envctl ship --project feature-a-1 --json"),
+        aliases=("--ship",),
+        related=("test-focused", "commit", "pr"),
     ),
     "review": CommandHelpTopic(
         command="review",
@@ -985,6 +1029,11 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--                    separates envctl flags from the passthrough command",
         ),
         examples=("envctl playwright --project feature-a-1 -- npx playwright test",),
+        notes=(
+            "use `envctl playwright --help` for wrapper help; tokens after `--` are treated as the command to run",
+            "pass a concrete executable after `--`; for Playwright projects this is usually `npx playwright test`",
+            "use `envctl endpoints --project <name> --json` first when you need to inspect resolved URLs",
+        ),
         aliases=("--playwright",),
         related=("endpoints", "qa-user", "test"),
     ),

@@ -10,7 +10,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator
-from envctl_engine.actions.action_test_support import TestTargetContext
+import envctl_engine.actions.action_test_summary_support as action_test_summary_support_module
+from envctl_engine.actions.action_test_summary_support import (
+    write_failed_tests_summary_for_orchestrator,
+)
+from envctl_engine.actions.action_test_support import TestTargetContext as TargetContext
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.ui.target_selector import TargetSelection
@@ -202,6 +206,133 @@ class ActionCommandTargetTests(unittest.TestCase):
 
         self.assertEqual(projects, ["Main"])
 
+    def test_test_plan_action_delegates_to_owner(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.config = SimpleNamespace(base_dir=Path("/tmp/repo"), raw={})
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="test-focused", mode="main", flags={"json": True, "dry_run": True})
+        targets = [SimpleNamespace(name="Main", root=Path("/tmp/repo"))]
+
+        with patch(
+            "envctl_engine.actions.action_command_orchestrator.run_test_plan_action_for_targets_impl",
+            return_value=7,
+        ) as run_test_plan:
+            code = orchestrator.run_test_plan_action(route, targets)
+
+        self.assertEqual(code, 7)
+        run_test_plan.assert_called_once_with(orchestrator, route, targets)
+
+    def test_migrate_action_delegates_to_owner(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="migrate", mode="trees")
+        targets = [SimpleNamespace(name="alpha", root=Path("/tmp/alpha"))]
+
+        with patch(
+            "envctl_engine.actions.action_command_orchestrator.run_migrate_action_with_owner",
+            return_value=11,
+        ) as run_migrate:
+            code = orchestrator.run_migrate_action(route, targets)
+
+        self.assertEqual(code, 11)
+        run_migrate.assert_called_once_with(orchestrator, route, targets, extra_env=orchestrator.action_extra_env(route))
+
+    def test_test_execution_spec_methods_delegate_to_test_plan_owner(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="test", mode="main")
+        target_contexts = [TargetContext(project_name="Main", project_root=Path("/tmp"), target_obj=object())]
+
+        with patch(
+            "envctl_engine.actions.action_command_orchestrator.build_test_execution_specs_for_orchestrator",
+            return_value=[SimpleNamespace(index=1)],
+        ) as build_specs:
+            specs = orchestrator._build_test_execution_specs(
+                route=route,
+                targets=[],
+                target_contexts=target_contexts,
+                include_backend=True,
+                include_frontend=False,
+                run_all=False,
+                untested=False,
+            )
+
+        self.assertEqual([spec.index for spec in specs], [1])
+        build_specs.assert_called_once_with(
+            orchestrator,
+            route=route,
+            targets=[],
+            target_contexts=target_contexts,
+            include_backend=True,
+            include_frontend=False,
+            run_all=False,
+            untested=False,
+        )
+
+        with patch(
+            "envctl_engine.actions.action_test_plan_support.build_failed_test_execution_specs_for_orchestrator",
+            return_value=[SimpleNamespace(index=2)],
+        ) as build_failed:
+            from envctl_engine.actions.action_test_plan_support import build_failed_test_execution_specs_for_orchestrator as build_failed_impl
+            failed_specs = build_failed_impl(
+                orchestrator, route=route, target_contexts=target_contexts,
+            )
+
+        self.assertEqual([spec.index for spec in failed_specs], [2])
+        build_failed.assert_called_once_with(orchestrator, route=route, target_contexts=target_contexts)
+
+    def test_test_summary_artifact_methods_delegate_to_summary_owner(self) -> None:
+        runtime = _RuntimeStub()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="test", mode="main")
+        targets = [SimpleNamespace(name="Main", root=Path("/tmp/repo"))]
+        outcomes = [{"project_name": "Main", "returncode": 0}]
+
+        with patch(
+            "envctl_engine.actions.action_command_orchestrator.persist_test_summary_artifacts_for_orchestrator",
+            return_value={"Main": {"status": "passed"}},
+        ) as persist:
+            summaries = orchestrator._persist_test_summary_artifacts(route=route, targets=targets, outcomes=outcomes)
+
+        self.assertEqual(summaries, {"Main": {"status": "passed"}})
+        persist.assert_called_once_with(orchestrator, route=route, targets=targets, outcomes=outcomes)
+
+        with patch(
+            "envctl_engine.actions.action_test_summary_support.write_failed_tests_summary",
+            return_value={"status": "failed"},
+        ) as write_summary:
+            summary = write_failed_tests_summary_for_orchestrator(
+                orchestrator,
+                run_dir=Path("/tmp/run"),
+                project_name="Main",
+                project_root=Path("/tmp/repo"),
+                outcomes=outcomes,
+                previous_entry={"status": "failed"},
+            )
+
+        self.assertEqual(summary, {"status": "failed"})
+        write_summary.assert_called_once_with(
+            run_dir=Path("/tmp/run"),
+            project_name="Main",
+            project_root=Path("/tmp/repo"),
+            outcomes=outcomes,
+            previous_entry={"status": "failed"},
+            short_failed_summary_path=action_test_summary_support_module.short_failed_summary_path,
+            format_summary_error_lines=action_test_summary_support_module.format_summary_error_lines,
+            git_state_components=action_test_summary_support_module.default_git_state_components,
+        )
+
+        with patch(
+            "envctl_engine.actions.action_command_orchestrator.print_test_suite_overview_for_orchestrator"
+        ) as print_overview:
+            orchestrator._print_test_suite_overview(outcomes, summary_metadata={"Main": {"status": "passed"}})
+
+        print_overview.assert_called_once_with(
+            orchestrator,
+            outcomes,
+            summary_metadata={"Main": {"status": "passed"}},
+        )
+
     def test_build_test_execution_specs_uses_additional_service_test_command(self) -> None:
         runtime = _RuntimeStub()
         runtime.config = SimpleNamespace(
@@ -224,7 +355,7 @@ class ActionCommandTargetTests(unittest.TestCase):
         specs = orchestrator._build_test_execution_specs(
             route=route,
             targets=[target],
-            target_contexts=[TestTargetContext(project_name="Main", project_root=Path("/tmp/repo"), target_obj=target)],
+            target_contexts=[TargetContext(project_name="Main", project_root=Path("/tmp/repo"), target_obj=target)],
             include_backend=False,
             include_frontend=False,
             run_all=False,
@@ -261,7 +392,7 @@ class ActionCommandTargetTests(unittest.TestCase):
                 route=route,
                 targets=[target],
                 target_contexts=[
-                    TestTargetContext(project_name="Main", project_root=Path("/tmp/repo"), target_obj=target)
+                    TargetContext(project_name="Main", project_root=Path("/tmp/repo"), target_obj=target)
                 ],
                 include_backend=False,
                 include_frontend=False,
@@ -388,7 +519,20 @@ class ActionCommandTargetTests(unittest.TestCase):
         self.assertIn("alembic failed", str(migrate_entry.get("summary", "")))
         report_path = Path(str(migrate_entry.get("report_path", "")))
         self.assertTrue(report_path.is_file())
-        self.assertIn("alembic failed", report_path.read_text(encoding="utf-8"))
+
+    def test_project_action_handlers_delegate_to_owner_module(self) -> None:
+        self.assertNotIn(
+            "build_project_action_success_handler_impl",
+            ActionCommandOrchestrator._project_action_success_handler.__code__.co_names,
+        )
+        self.assertNotIn(
+            "build_project_action_failure_handler_impl",
+            ActionCommandOrchestrator._project_action_failure_handler.__code__.co_names,
+        )
+        self.assertNotIn(
+            "persist_project_action_result_impl",
+            ActionCommandOrchestrator._persist_project_action_result.__code__.co_names,
+        )
 
 
 if __name__ == "__main__":

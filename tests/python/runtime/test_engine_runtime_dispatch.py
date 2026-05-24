@@ -11,10 +11,80 @@ import tempfile
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-dispatch_command = importlib.import_module("envctl_engine.runtime.engine_runtime_dispatch").dispatch_command
+dispatch_module = importlib.import_module("envctl_engine.runtime.engine_runtime_dispatch")
+dispatch = dispatch_module.dispatch
+dispatch_command = dispatch_module.dispatch_command
 
 
 class EngineRuntimeDispatchTests(unittest.TestCase):
+    def test_dispatch_entry_configures_probe_debug_recorder_and_route_events(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        calls: list[str] = []
+        route = SimpleNamespace(command="start", mode="main")
+        runtime = SimpleNamespace(
+            process_probe=None,
+            _build_process_probe_backend=lambda: calls.append("probe_backend") or "backend",
+            _effective_start_mode=lambda value: calls.append(f"effective:{value.command}") or "trees",
+            _configure_debug_recorder=lambda value: calls.append(f"debug:{value.command}"),
+            _emit=lambda event, **payload: events.append((event, payload)),
+        )
+
+        with (
+            __import__("unittest").mock.patch(
+                "envctl_engine.runtime.engine_runtime_dispatch.ProcessProbe",
+                side_effect=lambda backend: ("probe", backend),
+            ),
+            __import__("unittest").mock.patch(
+                "envctl_engine.runtime.engine_runtime_dispatch.dispatch_command",
+                return_value=9,
+            ) as command_dispatch,
+        ):
+            code = dispatch(runtime, route)
+
+        self.assertEqual(code, 9)
+        self.assertEqual(runtime.process_probe, ("probe", "backend"))
+        self.assertEqual(calls, ["probe_backend", "effective:start", "debug:start"])
+        self.assertEqual(
+            events,
+            [
+                (
+                    "engine.mode.selected",
+                    {"mode": "main", "effective_mode": "trees", "command": "start"},
+                ),
+                (
+                    "command.route.selected",
+                    {"mode": "main", "effective_mode": "trees", "command": "start"},
+                ),
+            ],
+        )
+        command_dispatch.assert_called_once_with(runtime, route)
+
+    def test_dispatch_entry_uses_route_mode_for_non_startup_commands(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        route = SimpleNamespace(command="health", mode="trees")
+        runtime = SimpleNamespace(
+            process_probe=None,
+            _build_process_probe_backend=lambda: "backend",
+            _effective_start_mode=lambda _route: (_ for _ in ()).throw(AssertionError("should not resolve")),
+            _configure_debug_recorder=lambda _route: None,
+            _emit=lambda event, **payload: events.append((event, payload)),
+        )
+
+        with (
+            __import__("unittest").mock.patch(
+                "envctl_engine.runtime.engine_runtime_dispatch.ProcessProbe",
+                side_effect=lambda backend: ("probe", backend),
+            ),
+            __import__("unittest").mock.patch(
+                "envctl_engine.runtime.engine_runtime_dispatch.dispatch_command",
+                return_value=4,
+            ),
+        ):
+            code = dispatch(runtime, route)
+
+        self.assertEqual(code, 4)
+        self.assertTrue(all(payload["effective_mode"] == "trees" for _event, payload in events))
+
     def test_list_commands_dispatch_prints_supported_commands(self) -> None:
         runtime = SimpleNamespace()
         route = SimpleNamespace(command="list-commands", mode="main")

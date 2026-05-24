@@ -4,7 +4,7 @@ import time
 import copy
 import hashlib
 from dataclasses import dataclass
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -47,9 +47,12 @@ def start_project_context(
     mode: str,
     route: Route,
     run_id: str,
+    report_progress_fn: Callable[..., None] | None = None,
 ) -> ProjectStartupResult:
     rt = orchestrator.runtime
-    orchestrator._report_progress(route, f"Starting project {context.name}...", project=context.name)
+    if report_progress_fn is None:
+        report_progress_fn = orchestrator._report_progress
+    report_progress_fn(route, f"Starting project {context.name}...", project=context.name)
     _reserve_project_ports(rt, context, route=route)
     requirements = _requirements_for_project_context(orchestrator, context=context, mode=mode, route=route)
     if not rt._requirements_ready(requirements):
@@ -69,7 +72,7 @@ def start_project_context(
         requirements=requirements,
     )
     if requirements_progress_message is not None:
-        orchestrator._report_progress(route, requirements_progress_message, project=context.name)
+        report_progress_fn(route, requirements_progress_message, project=context.name)
     project_services = orchestrator.start_project_services(
         context,
         requirements=requirements,
@@ -81,7 +84,7 @@ def start_project_context(
     except RuntimeError:
         rt._terminate_started_services(project_services)
         raise
-    orchestrator._report_progress(
+    report_progress_fn(
         route,
         f"Services ready for {context.name}: "
         + " ".join(
