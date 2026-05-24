@@ -304,6 +304,18 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("initialize_runtime_construction(self, config, env=env)", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 1050)
 
+    def test_runtime_command_router_has_owned_catalog(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_catalog.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_router.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        self.assertIn("COMMAND_ALIASES", owner_text)
+        self.assertIn("def list_supported_flag_tokens", owner_text)
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.runtime.command_catalog import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 900)
+
     def test_runtime_planning_and_startup_facades_have_owned_mixins(self) -> None:
         planning_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_planning_facade.py"
         startup_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_startup_facade.py"
