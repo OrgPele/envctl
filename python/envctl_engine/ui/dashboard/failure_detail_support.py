@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from contextlib import suppress
 import hashlib
-from typing import Any, cast
+from typing import Any
 
 from envctl_engine.actions.action_migrate_support import (
     migrate_failure_headline,
@@ -59,7 +59,13 @@ def failure_details_available(route: Route, state: RunState, *, project_names_fr
     return False
 
 
-def print_test_failure_details(route: Route, state: RunState, *, runtime: Any, project_names_from_state_fn: Any) -> bool:
+def print_test_failure_details(
+    route: Route,
+    state: RunState,
+    *,
+    runtime: Any,
+    project_names_from_state_fn: Any,
+) -> bool:
     metadata = state.metadata.get("project_test_summaries")
     if not isinstance(metadata, dict):
         return False
@@ -129,9 +135,22 @@ def ensure_short_test_summary_path(*, project_name: str, summary_path: str) -> s
     return str(short_path) if short_path.exists() else summary_path
 
 
-def print_project_action_failure_details(route: Route, state: RunState, *, runtime: Any, project_names_from_state_fn: Any, project_name_list_fn: Any) -> bool:
+def print_project_action_failure_details(
+    route: Route,
+    state: RunState,
+    *,
+    runtime: Any,
+    project_names_from_state_fn: Any,
+    project_name_list_fn: Any,
+) -> bool:
     if route.command == "migrate":
-        return print_migrate_result_details(route, state, runtime=runtime, project_names_from_state_fn=project_names_from_state_fn, project_name_list_fn=project_name_list_fn)
+        return print_migrate_result_details(
+            route,
+            state,
+            runtime=runtime,
+            project_names_from_state_fn=project_names_from_state_fn,
+            project_name_list_fn=project_name_list_fn,
+        )
     metadata = state.metadata.get("project_action_reports")
     if not isinstance(metadata, dict):
         return False
@@ -187,7 +206,14 @@ def print_project_action_failure_details(route: Route, state: RunState, *, runti
     return printed
 
 
-def print_migrate_result_details(route: Route, state: RunState, *, runtime: Any, project_names_from_state_fn: Any, project_name_list_fn: Any) -> bool:
+def print_migrate_result_details(
+    route: Route,
+    state: RunState,
+    *,
+    runtime: Any,
+    project_names_from_state_fn: Any,
+    project_name_list_fn: Any,
+) -> bool:
     metadata = state.metadata.get("project_action_reports")
     if not isinstance(metadata, dict):
         return False

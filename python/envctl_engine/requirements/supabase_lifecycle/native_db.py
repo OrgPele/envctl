@@ -1,15 +1,27 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 import time
 from pathlib import Path
 
-from collections.abc import Mapping
-
 from ..adapter_base import env_float, port_mismatch_policy, timeout_error
+from ..common import (
+    ContainerStartResult,
+    container_exists,
+    container_host_port,
+    container_status,
+    ensure_docker_image_present,
+    is_bind_conflict,
+    run_docker,
+    run_result_error,
+)
 from .config import _db_probe_timeout_seconds
-from ..common import container_exists, container_host_port, container_status, ContainerStartResult, ensure_docker_image_present, is_bind_conflict, run_docker, run_result_error
-from envctl_engine.shared.dependency_compose_assets import DEFAULT_SUPABASE_JWT_SECRET, default_supabase_anon_key, default_supabase_service_role_key
+from envctl_engine.shared.dependency_compose_assets import (
+    DEFAULT_SUPABASE_JWT_SECRET,
+    default_supabase_anon_key,
+    default_supabase_service_role_key,
+)
 
 
 def _start_supabase_db_native(
@@ -537,5 +549,4 @@ def _force_remove_native_db_container(
     if getattr(rm_result, "returncode", 1) != 0:
         return run_result_error(rm_result, "failed removing supabase db container")
     return None
-
 

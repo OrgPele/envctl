@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import re
+
+from .types import _SupabaseStartupBudget, SupabaseAuthHealthProbeResult
 
 
 def _format_auth_service_state(service_state: Mapping[str, object]) -> str:
@@ -136,5 +139,4 @@ def _supabase_db_failure_detail(
     if service_states:
         parts.append(f"service_state={_format_auth_service_states(service_states)}")
     return " ".join(parts)
-
 

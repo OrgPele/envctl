@@ -7,7 +7,6 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.dashboard.stop_scope_support import (
     apply_stop_resource_tokens,
-    apply_stop_scope_selection,
     stop_dependencies_by_project,
     stop_project_order,
     stop_route_has_explicit_scope,

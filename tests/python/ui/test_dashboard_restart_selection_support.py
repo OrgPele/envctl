@@ -6,7 +6,6 @@ from unittest import mock
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.dashboard.restart_selection_support import (
     apply_restart_resource_tokens,
-    dashboard_configured_missing_services_by_project,
     dashboard_project_configured_services,
     dashboard_stopped_services_by_project,
     has_dashboard_stopped_services,

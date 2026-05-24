@@ -11,15 +11,20 @@ from typing import cast
 
 from envctl_engine.debug.debug_utils import file_lock
 
+from ..common import docker_port_publish_lock, run_docker
 from ..adapter_base import env_bool, env_float, timeout_error
 from ..common import run_result_error
 from .config import _supabase_startup_budget_seconds
-from ..common import docker_port_publish_lock, run_docker
-from .network_recovery import _is_docker_address_pool_exhaustion, _is_docker_network_missing, _recover_missing_supabase_network_for_project, _remove_empty_envctl_supabase_networks
 from .formatting import _supabase_compose_failure_detail
-from .workspace import _normalize_compose_error
 from .inspect import _inspect_auth_gateway_services, _inspect_auth_gateway_service
+from .network_recovery import (
+    _is_docker_address_pool_exhaustion,
+    _is_docker_network_missing,
+    _recover_missing_supabase_network_for_project,
+    _remove_empty_envctl_supabase_networks,
+)
 from .probe import _compose_service_state_failed
+from .workspace import _normalize_compose_error
 
 def _compose_service_list(
     *,
@@ -651,5 +656,4 @@ def _compose_timeout_recovered(
         if _compose_service_state_ready(service_state):
             return True
     return False
-
 

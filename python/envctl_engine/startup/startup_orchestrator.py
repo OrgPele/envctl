@@ -4,9 +4,17 @@ import threading
 
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
+from envctl_engine.startup.context_selection import select_startup_contexts
+from envctl_engine.startup.disabled_startup_resolution import resolve_disabled_startup_mode
+from envctl_engine.startup.execution_preparation import prepare_startup_execution
 from envctl_engine.startup.lifecycle import execute_startup_lifecycle
+from envctl_engine.startup.post_start_reconcile import reconcile_strict_truth_after_start
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
+from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse
+from envctl_engine.startup.selected_context_startup import record_project_startup
 from envctl_engine.startup.session import ProjectStartupResult
+from envctl_engine.startup.session_lifecycle import create_startup_session
+from envctl_engine.startup.startup_selection_support import state_project_names
 from envctl_engine.startup.startup_progress import (
     ProjectSpinnerGroup,
     report_progress,
@@ -19,18 +27,17 @@ from envctl_engine.startup.startup_execution_support import (
 )
 
 _MODE_TREE_TOKENS_NORMALIZED = {str(token).strip().lower() for token in MODE_TREE_TOKENS}
-
-# Owner-module imports for structure-layout verification
-from envctl_engine.startup.startup_selection_support import state_project_names
-from envctl_engine.startup.context_selection import select_startup_contexts
-from envctl_engine.startup.selected_context_startup import record_project_startup
-from envctl_engine.startup.post_start_reconcile import reconcile_strict_truth_after_start
-from envctl_engine.startup.session_lifecycle import create_startup_session
-from envctl_engine.startup.run_reuse_resolution import resolve_startup_run_reuse
-from envctl_engine.startup.disabled_startup_resolution import resolve_disabled_startup_mode
-from envctl_engine.startup.execution_preparation import prepare_startup_execution
-
 _ProjectSpinnerGroup = ProjectSpinnerGroup
+_STARTUP_OWNER_IMPORTS = (
+    state_project_names,
+    select_startup_contexts,
+    record_project_startup,
+    reconcile_strict_truth_after_start,
+    create_startup_session,
+    resolve_startup_run_reuse,
+    resolve_disabled_startup_mode,
+    prepare_startup_execution,
+)
 
 
 class StartupOrchestrator:
