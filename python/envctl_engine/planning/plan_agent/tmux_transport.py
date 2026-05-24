@@ -47,6 +47,7 @@ import envctl_engine.planning.plan_agent.tmux_attach_support as tmux_attach_supp
 import envctl_engine.planning.plan_agent.tmux_window_support as tmux_window_support
 import envctl_engine.planning.plan_agent.tmux_health_support as tmux_health_support
 import envctl_engine.planning.plan_agent.tmux_worktree_launch_support as tmux_worktree_launch_support
+import envctl_engine.planning.plan_agent.tmux_launch_support as tmux_launch_support
 
 def _launch_plan_agent_tmux_terminals(
     runtime: Any,
@@ -58,146 +59,25 @@ def _launch_plan_agent_tmux_terminals(
     base_payload: Mapping[str, object],
     prompt_on_existing: bool,
 ) -> PlanAgentLaunchResult:
-    repo_root = Path(runtime.config.base_dir).resolve()
-    attach_via = "switch-client" if str(getattr(runtime, "env", {}).get("TMUX", "")).strip() else "attach-session"
-    route_flags = getattr(route, "flags", {}) or {}
-    create_new_session = bool(route_flags.get("new_session"))
-    prompt_existing_possible = not create_new_session and _should_prompt_existing_tmux_session(
+    return tmux_launch_support.launch_tmux_terminals(
         runtime,
-        prompt_on_existing=prompt_on_existing,
-    )
-    existing_attach_target = _find_existing_tmux_attach_target(
-        runtime,
-        repo_root=repo_root,
+        route=route,
+        launch_config=launch_config,
+        workflow=workflow,
         created_worktrees=created_worktrees,
-        cli=launch_config.cli,
-    )
-    unhealthy_existing_reason = str(getattr(runtime, "_last_unhealthy_existing_tmux_session_reason", "") or "")
-    unhealthy_existing_outcomes = tuple(getattr(runtime, "_last_unhealthy_existing_tmux_session_outcomes", ()) or ())
-    if hasattr(runtime, "_last_unhealthy_existing_tmux_session_reason"):
-        try:
-            delattr(runtime, "_last_unhealthy_existing_tmux_session_reason")
-        except AttributeError:
-            pass
-    if hasattr(runtime, "_last_unhealthy_existing_tmux_session_outcomes"):
-        try:
-            delattr(runtime, "_last_unhealthy_existing_tmux_session_outcomes")
-        except AttributeError:
-            pass
-    if existing_attach_target is None and unhealthy_existing_reason:
-        return PlanAgentLaunchResult(
-            status="failed",
-            reason=unhealthy_existing_reason,
-            outcomes=unhealthy_existing_outcomes,
-            attach_target=None,
-        )
-    if existing_attach_target is not None:
-        if prompt_existing_possible:
-            action = _prompt_existing_tmux_session_action(runtime, attach_target=existing_attach_target)
-            if action == "attach":
-                runtime._emit(
-                    "planning.agent_launch.skipped",
-                    reason="existing_tmux_session_attach",
-                    session_name=existing_attach_target.session_name,
-                    attach_command=" ".join(existing_attach_target.attach_command),
-                    **base_payload,
-                )
-                return PlanAgentLaunchResult(
-                    status="failed",
-                    reason="existing_tmux_session_attach",
-                    outcomes=(),
-                    attach_target=existing_attach_target,
-                )
-            create_new_session = True
-        attach_command = " ".join(existing_attach_target.attach_command)
-        if not create_new_session:
-            reason = f"An envctl tmux session already exists for this plan. Attach with: {attach_command}"
-            runtime._emit(
-                "planning.agent_launch.skipped",
-                reason="existing_tmux_session",
-                session_name=existing_attach_target.session_name,
-                attach_command=attach_command,
-                **base_payload,
-            )
-            return PlanAgentLaunchResult(
-                status="failed",
-                reason=reason,
-                outcomes=(),
-                attach_target=PlanAgentAttachTarget(
-                    repo_root=existing_attach_target.repo_root,
-                    session_name=existing_attach_target.session_name,
-                    window_name=existing_attach_target.window_name,
-                    attach_via=existing_attach_target.attach_via,
-                    attach_command=existing_attach_target.attach_command,
-                    new_session_command=_new_session_command_for_route(
-                        runtime,
-                        route=route,
-                        launch_config=launch_config,
-                        created_worktrees=created_worktrees,
-                    ),
-                ),
-            )
-    runtime._emit(
-        "planning.agent_launch.evaluate",
-        reason="ready",
-        preset=launch_config.preset,
-        **base_payload,
-    )
-    runtime._emit(
-        "planning.agent_launch.workflow_selected",
-        warning=launch_config.codex_cycles_warning,
-        **base_payload,
-    )
-    outcomes: list[PlanAgentLaunchOutcome] = []
-    first_attach_target: PlanAgentAttachTarget | None = None
-    for worktree in created_worktrees:
-        session_name = _tmux_session_name_for_worktree(repo_root, worktree, cli=launch_config.cli)
-        if create_new_session:
-            session_name = _next_available_tmux_session_name(runtime, session_name)
-        window_name = _tmux_window_name_for_worktree(worktree)
-        outcome = _launch_single_tmux_worktree(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            launch_config=launch_config,
-            workflow=workflow,
-            worktree=worktree,
-        )
-        outcomes.append(outcome)
-        if first_attach_target is None and outcome.status == "launched":
-            first_attach_target = PlanAgentAttachTarget(
-                repo_root=repo_root,
-                session_name=session_name,
-                window_name=window_name,
-                attach_via=attach_via,
-                attach_command=_guidance_attach_command(session_name),
-            )
-    launched = [item for item in outcomes if item.status == "launched"]
-    failed = [item for item in outcomes if item.status == "failed"]
-    attach_target = first_attach_target or existing_attach_target
-    if failed and launched:
-        details = _summarize_failed_launch_outcomes(failed)
-        suffix = f" Details: {details}." if details else ""
-        _print_launch_summary(
-            f"Plan agent launch finished with partial success: launched {len(launched)}, failed {len(failed)}.{suffix}"
-        )
-        return PlanAgentLaunchResult(
-            status="partial",
-            reason="partial_failure",
-            outcomes=tuple(outcomes),
-            attach_target=attach_target,
-        )
-    if failed:
-        details = _summarize_failed_launch_outcomes(failed)
-        suffix = f" Details: {details}." if details else ""
-        _print_launch_summary(f"Plan agent launch failed for {len(failed)} worktree(s).{suffix}")
-        return PlanAgentLaunchResult(status="failed", reason="launch_failed", outcomes=tuple(outcomes))
-    _print_launch_summary(f"Plan agent launch prepared {len(launched)} tmux session(s).")
-    return PlanAgentLaunchResult(
-        status="launched",
-        reason="launched",
-        outcomes=tuple(outcomes),
-        attach_target=attach_target,
+        base_payload=base_payload,
+        prompt_on_existing=prompt_on_existing,
+        should_prompt_existing_session_fn=_should_prompt_existing_tmux_session,
+        prompt_existing_session_action_fn=_prompt_existing_tmux_session_action,
+        find_existing_attach_target_fn=_find_existing_tmux_attach_target,
+        new_session_command_for_route_fn=_new_session_command_for_route,
+        tmux_session_name_for_worktree_fn=_tmux_session_name_for_worktree,
+        next_available_tmux_session_name_fn=_next_available_tmux_session_name,
+        tmux_window_name_for_worktree_fn=_tmux_window_name_for_worktree,
+        launch_single_tmux_worktree_fn=_launch_single_tmux_worktree,
+        guidance_attach_command_fn=_guidance_attach_command,
+        summarize_failed_launch_outcomes_fn=_summarize_failed_launch_outcomes,
+        print_launch_summary_fn=_print_launch_summary,
     )
 
 
