@@ -85,6 +85,7 @@ def resolve_plan_agent_launch_config(
         or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
         or ""
     ).strip()
+    current_cmux_workspace = str(env_map.get("CMUX_WORKSPACE_ID") or config.raw.get("CMUX_WORKSPACE_ID") or "").strip()
     configured_surface_transport = str(
         env_map.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
         or config.raw.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
@@ -100,7 +101,7 @@ def resolve_plan_agent_launch_config(
         transport = "omx"
     elif bool(route_flags.get("tmux")):
         transport = "tmux"
-    elif cmux_launch_requested or cmux_alias_requested or bool(cmux_workspace):
+    elif cmux_launch_requested or cmux_alias_requested or bool(cmux_workspace) or bool(current_cmux_workspace):
         transport = "cmux"
     elif opencode_launch_requested:
         transport = _default_plan_agent_surface_transport()
@@ -274,9 +275,30 @@ def _default_plan_agent_surface_transport() -> Literal["cmux", "tmux"]:
 
 def _resolve_available_plan_agent_surface_transport(raw: str) -> str:
     normalized = str(raw or "").strip().lower()
-    if normalized == "cmux" and not shutil.which("cmux"):
-        return "tmux"
     return normalized
+
+
+def _cmux_transport_explicitly_requested(config: EngineConfig, env: dict[str, str], route: object | None) -> bool:
+    route_flags = getattr(route, "flags", {}) or {}
+    explicit_config_keys = set(getattr(config, "explicit_keys", ()) or ())
+    surface_transport = str(env.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT") or "").strip().lower()
+    config_surface_transport = str(config.raw.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT") or "").strip().lower()
+    return any(
+        (
+            bool(route_flags.get("cmux")),
+            parse_bool(env.get("CMUX") or config.raw.get("CMUX"), False),
+            bool(
+                str(
+                    env.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
+                    or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
+                    or ""
+                ).strip()
+            ),
+            bool(str(env.get("CMUX_WORKSPACE_ID") or config.raw.get("CMUX_WORKSPACE_ID") or "").strip()),
+            surface_transport == "cmux",
+            config_surface_transport == "cmux" and "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT" in explicit_config_keys,
+        )
+    )
 
 
 def _route_requests_ulw(route: object | None) -> bool:
@@ -308,6 +330,12 @@ def plan_agent_launch_prereq_commands(
         return ("superset", "codex")
     cli_executable = _command_executable(launch_config.cli_command)
     launcher = "tmux" if launch_config.transport == "tmux" else "cmux"
+    if (
+        launcher == "cmux"
+        and shutil.which("cmux") is None
+        and not _cmux_transport_explicitly_requested(config, env or {}, route)
+    ):
+        launcher = "tmux"
     if not cli_executable:
         return (launcher,)
     return (launcher, cli_executable)

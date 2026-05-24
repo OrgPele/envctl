@@ -380,7 +380,7 @@ def _bootstrap_python_executable() -> str:
             return candidate
     raise RuntimeError(
         "Unable to bootstrap repo-local envctl test prerequisites: no Python interpreter was found. "
-        "Run python3.12 -m venv .venv and .venv/bin/python -m pip install -e '.[dev]'."
+        "Run uv sync --extra dev --python 3.12."
     )
 
 
@@ -400,8 +400,7 @@ def _run_bootstrap_command(command: list[str], *, cwd: Path) -> None:
     raise RuntimeError(
         "Failed to bootstrap repo-local envctl test prerequisites "
         f"with `{rendered}`: {detail}\n"
-        "Run python3.12 -m venv .venv\n"
-        ".venv/bin/python -m pip install -e '.[dev]'"
+        "Run uv sync --extra dev --python 3.12"
     )
 
 

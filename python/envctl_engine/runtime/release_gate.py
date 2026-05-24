@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -31,9 +32,9 @@ DEFAULT_REQUIRED_SCOPES: tuple[str, ...] = (
 )
 
 CANONICAL_BOOTSTRAP_COMMANDS: tuple[str, ...] = CANONICAL_CONTRIBUTOR_BOOTSTRAP_COMMANDS
-CANONICAL_VALIDATION_COMMAND_DISPLAY = ".venv/bin/python -m pytest -q"
-CANONICAL_BUILD_COMMAND_DISPLAY = ".venv/bin/python -m build"
-CANONICAL_RELEASE_GATE_COMMAND = ".venv/bin/python scripts/release_shipability_gate.py --repo ."
+CANONICAL_VALIDATION_COMMAND_DISPLAY = "uv run --extra dev pytest -q"
+CANONICAL_BUILD_COMMAND_DISPLAY = "uv run --extra dev python -m build"
+CANONICAL_RELEASE_GATE_COMMAND = "uv run --extra dev python scripts/release_shipability_gate.py --repo ."
 CANONICAL_RELEASE_GATE_WITH_TESTS_COMMAND = f"{CANONICAL_RELEASE_GATE_COMMAND} --check-tests"
 
 
@@ -187,11 +188,11 @@ def canonical_repo_python(repo_root: Path) -> Path:
 
 
 def canonical_validation_command(repo_root: Path) -> list[str]:
-    return [str(canonical_repo_python(repo_root)), "-m", "pytest", "-q"]
+    return ["uv", "run", "--extra", "dev", "pytest", "-q"]
 
 
 def canonical_packaging_command(repo_root: Path) -> list[str]:
-    return [str(canonical_repo_python(repo_root)), "-m", "build"]
+    return ["uv", "run", "--extra", "dev", "python", "-m", "build"]
 
 
 def format_command(args: Sequence[str]) -> str:
@@ -365,9 +366,13 @@ def _run_cmd(repo_root: Path, args: Sequence[str], *, shell: bool = False) -> in
 
 
 def _run_cmd_capture(repo_root: Path, args: Sequence[str]) -> CommandExecution:
+    env = dict(os.environ)
+    env.pop("VIRTUAL_ENV", None)
+    env.setdefault("UV_LINK_MODE", "copy")
     completed = subprocess.run(
         list(args),
         cwd=repo_root,
+        env=env,
         text=True,
         capture_output=True,
         check=False,

@@ -227,6 +227,7 @@ class StructureLayoutTests(unittest.TestCase):
         pr_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_pr_message_support.py"
         review_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_output_support.py"
         review_plan_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_plan_support.py"
+        git_state_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_git_state_support.py"
         ship_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_support.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_domain.py"
 
@@ -235,6 +236,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(pr_owner.is_file())
         self.assertTrue(review_owner.is_file())
         self.assertTrue(review_plan_owner.is_file())
+        self.assertTrue(git_state_owner.is_file())
         self.assertTrue(ship_owner.is_file())
         commit_text = commit_owner.read_text(encoding="utf-8")
         self.assertIn("def run_commit_workflow", commit_text)
@@ -244,6 +246,11 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("pr_body", pr_owner.read_text(encoding="utf-8"))
         self.assertIn("print_review_completion", review_owner.read_text(encoding="utf-8"))
         self.assertIn("resolve_original_plan", review_plan_owner.read_text(encoding="utf-8"))
+        git_state_text = git_state_owner.read_text(encoding="utf-8")
+        self.assertIn("class DirtyWorktreeReport", git_state_text)
+        self.assertIn("def probe_dirty_worktree", git_state_text)
+        self.assertIn("def detect_default_branch", git_state_text)
+        self.assertIn("def existing_pr_url", git_state_text)
         ship_text = ship_owner.read_text(encoding="utf-8")
         self.assertIn("ship_payload", ship_text)
         self.assertIn("def run_ship_workflow", ship_text)
@@ -253,8 +260,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("action_pr_message_support", facade_text)
         self.assertIn("action_review_output_support", facade_text)
         self.assertIn("action_review_plan_support", facade_text)
+        self.assertIn("action_git_state_support", facade_text)
         self.assertIn("action_ship_support", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 780)
+        self.assertLessEqual(len(facade_text.splitlines()), 700)
 
     def test_runtime_lifecycle_parity_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
