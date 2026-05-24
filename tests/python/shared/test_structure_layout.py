@@ -291,6 +291,24 @@ class StructureLayoutTests(unittest.TestCase):
         legacy = runtime_tests / "test_prompt_install_support.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_prompt_install_support_is_split_by_owner(self) -> None:
+        runtime = REPO_ROOT / "python" / "envctl_engine" / "runtime"
+        expected = [
+            "prompt_install_codex_skills.py",
+            "prompt_install_direct_prompt.py",
+            "prompt_install_flow.py",
+            "prompt_install_models.py",
+            "prompt_install_paths.py",
+            "prompt_install_templates.py",
+        ]
+
+        for filename in expected:
+            with self.subTest(path=filename):
+                self.assertTrue((runtime / filename).is_file())
+
+        facade = runtime / "prompt_install_support.py"
+        self.assertLessEqual(len(facade.read_text(encoding="utf-8").splitlines()), 160)
+
     def test_state_action_orchestrator_has_log_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_log_support.py"
         orchestrator = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_orchestrator.py"
