@@ -417,10 +417,21 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertLessEqual(len(facade_text.splitlines()), 760)
 
     def test_config_dependency_env_templates_have_owned_module(self) -> None:
+        models_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "models.py"
+        defaults_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "defaults.py"
         owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "dependency_env_templates.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "config" / "__init__.py"
 
+        self.assertTrue(models_owner.is_file())
+        self.assertTrue(defaults_owner.is_file())
         self.assertTrue(owner.is_file())
+        models_text = models_owner.read_text(encoding="utf-8")
+        self.assertIn("class EngineConfig", models_text)
+        self.assertIn("class LocalConfigState", models_text)
+        self.assertIn("class StartupProfile", models_text)
+        defaults_text = defaults_owner.read_text(encoding="utf-8")
+        self.assertIn("DEFAULTS: dict[str, str]", defaults_text)
+        self.assertIn("MANAGED_CONFIG_KEYS", defaults_text)
         owner_text = owner.read_text(encoding="utf-8")
         self.assertIn("class DependencyEnvTemplateEntry", owner_text)
         self.assertIn("def parse_dependency_env_section", owner_text)
@@ -428,7 +439,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def _strip_template_sections", owner_text)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.config.dependency_env_templates import", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 1700)
+        self.assertIn("from envctl_engine.config.models import", facade_text)
+        self.assertIn("from envctl_engine.config.defaults import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 1200)
 
     def test_prompt_install_support_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
