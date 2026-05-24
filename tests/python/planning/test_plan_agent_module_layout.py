@@ -195,7 +195,17 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "tmux_transport.py": {
                 "_tmux_session_name_for_worktree",
                 "_run_tmux_worktree_bootstrap",
-                "_queue_tmux_codex_workflow_steps",
+            },
+            "tmux_workflow_submission_support.py": {
+                "launch_tmux_cli_bootstrap_commands",
+                "maybe_submit_tmux_codex_goal",
+                "queue_tmux_codex_message",
+                "queue_tmux_codex_workflow_steps",
+                "submit_tmux_codex_goal",
+                "submit_tmux_prompt_workflow_step",
+                "wait_for_tmux_cli_ready",
+                "wait_for_tmux_prompt_accepted",
+                "wait_for_tmux_prompt_ready_after_goal",
             },
             "cmux_transport.py": {
                 "_prepare_surface",

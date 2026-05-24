@@ -37,6 +37,7 @@ from envctl_engine.planning.plan_agent.workflow import *
 from envctl_engine.planning.plan_agent.terminal_screen import *
 from envctl_engine.planning.plan_agent.recovery import *
 from envctl_engine.planning.plan_agent.tmux_session import *
+import envctl_engine.planning.plan_agent.tmux_workflow_submission_support as tmux_workflow_submission_support
 
 def _launch_plan_agent_tmux_terminals(
     runtime: Any,
@@ -661,46 +662,18 @@ def _maybe_submit_tmux_codex_goal(
     worktree: CreatedPlanWorktree,
     transport: str,
 ) -> str | None:
-    if launch_config.cli != "codex" or not launch_config.codex_goal_enable:
-        return None
-    goal_text = _codex_goal_text_for_worktree(
-        worktree=worktree,
-        preset=launch_config.preset,
-        workflow_mode=workflow.mode,
-        omx_workflow=launch_config.omx_workflow,
-    )
-    error = _submit_tmux_codex_goal(
+    return tmux_workflow_submission_support.maybe_submit_tmux_codex_goal(
         runtime,
         session_name=session_name,
         window_name=window_name,
-        goal_text=goal_text,
+        launch_config=launch_config,
+        workflow=workflow,
+        worktree=worktree,
+        transport=transport,
+        codex_goal_text_for_worktree_fn=_codex_goal_text_for_worktree,
+        submit_tmux_codex_goal_fn=_submit_tmux_codex_goal,
+        emit_codex_goal_event_fn=_emit_codex_goal_event,
     )
-    if error is None:
-        _emit_codex_goal_event(
-            runtime,
-            "planning.agent_launch.codex_goal_submitted",
-            session_name=session_name,
-            window_name=window_name,
-            cli=launch_config.cli,
-            workflow=workflow,
-            transport=transport,
-            worktree=worktree,
-        )
-        return None
-    if error == "codex_goal_ready_timeout":
-        _emit_codex_goal_event(
-            runtime,
-            "planning.agent_launch.codex_goal_fallback",
-            session_name=session_name,
-            window_name=window_name,
-            cli=launch_config.cli,
-            workflow=workflow,
-            transport=transport,
-            worktree=worktree,
-            reason=error,
-        )
-        return error
-    return error
 
 
 def _submit_tmux_codex_goal(
@@ -710,28 +683,23 @@ def _submit_tmux_codex_goal(
     window_name: str,
     goal_text: str,
 ) -> str | None:
-    submit_error = _submit_tmux_prompt_workflow_step(
+    return tmux_workflow_submission_support.submit_tmux_codex_goal(
         runtime,
         session_name=session_name,
         window_name=window_name,
-        prompt_text=f"/goal {goal_text}",
-        cli="codex",
+        goal_text=goal_text,
+        submit_tmux_prompt_workflow_step_fn=_submit_tmux_prompt_workflow_step,
+        wait_for_tmux_prompt_ready_after_goal_fn=_wait_for_tmux_prompt_ready_after_goal,
     )
-    if submit_error is not None:
-        return submit_error
-    if not _wait_for_tmux_prompt_ready_after_goal(runtime, session_name=session_name, window_name=window_name):
-        return "codex_goal_ready_timeout"
-    return None
 
 
 def _wait_for_tmux_prompt_ready_after_goal(runtime: Any, *, session_name: str, window_name: str) -> bool:
-    deadline = time.monotonic() + _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
-        if _screen_looks_ready("codex", screen):
-            return True
-        time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
-    return False
+    return tmux_workflow_submission_support.wait_for_tmux_prompt_ready_after_goal(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        read_tmux_screen_fn=_read_tmux_screen,
+    )
 
 
 def _launch_tmux_cli_bootstrap_commands(
@@ -743,61 +711,28 @@ def _launch_tmux_cli_bootstrap_commands(
     cli_command: str,
     failure_event: str = "planning.agent_launch.failed",
 ) -> list[str | None]:
-    typed_root = shlex.quote(str(cwd))
-    emit_failure_event = failure_event == "planning.agent_launch.failed"
-    return [
-        _send_tmux_text(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            text=f"cd {typed_root}",
-            emit_failure_event=emit_failure_event,
-            failure_event=failure_event,
-        ),
-        _send_tmux_key(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            key="enter",
-            emit_failure_event=emit_failure_event,
-            failure_event=failure_event,
-        ),
-        _send_tmux_text(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            text=cli_command,
-            emit_failure_event=emit_failure_event,
-            failure_event=failure_event,
-        ),
-        _send_tmux_key(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            key="enter",
-            emit_failure_event=emit_failure_event,
-            failure_event=failure_event,
-        ),
-    ]
+    return tmux_workflow_submission_support.launch_tmux_cli_bootstrap_commands(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        cwd=cwd,
+        cli_command=cli_command,
+        failure_event=failure_event,
+        send_tmux_text_fn=_send_tmux_text,
+        send_tmux_key_fn=_send_tmux_key,
+    )
 
 
 def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: str, cli: str) -> AiCliReadyResult:
     normalized_cli = str(cli).strip().lower()
     timeout_seconds = _cli_ready_delay_seconds(normalized_cli)
-    if normalized_cli not in {"codex", "opencode"}:
-        time.sleep(timeout_seconds)
-        return AiCliReadyResult(ready=True, reason="unsupported_cli_assumed_ready")
-    deadline = time.monotonic() + timeout_seconds
-    last_screen = ""
-    while time.monotonic() < deadline:
-        last_screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
-        if _screen_looks_ready(normalized_cli, last_screen):
-            return AiCliReadyResult(ready=True, reason="ready", screen_excerpt=_screen_excerpt(last_screen))
-        time.sleep(_CLI_READY_POLL_INTERVAL_SECONDS)
-    return AiCliReadyResult(
-        ready=False,
-        reason=f"{normalized_cli}_ready_timeout",
-        screen_excerpt=_screen_excerpt(last_screen),
+    return tmux_workflow_submission_support.wait_for_tmux_cli_ready(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        cli=cli,
+        timeout_seconds=timeout_seconds,
+        read_tmux_screen_fn=_read_tmux_screen,
     )
 
 
@@ -841,24 +776,17 @@ def _submit_tmux_prompt_workflow_step(
     prompt_text: str,
     cli: str = "",
 ) -> str | None:
-    paste_error = _send_tmux_prompt(runtime, session_name=session_name, window_name=window_name, text=prompt_text)
-    if paste_error is not None:
-        return paste_error
-    if str(cli).strip().lower() == "opencode":
-        time.sleep(1.0)
-    enter_error = _send_tmux_key(runtime, session_name=session_name, window_name=window_name, key="enter")
-    if enter_error is not None:
-        return enter_error
-    accepted = _wait_for_tmux_prompt_accepted(
+    return tmux_workflow_submission_support.submit_tmux_prompt_workflow_step(
         runtime,
         session_name=session_name,
         window_name=window_name,
-        cli=cli,
         prompt_text=prompt_text,
+        cli=cli,
+        send_tmux_prompt_fn=_send_tmux_prompt,
+        send_tmux_key_fn=_send_tmux_key,
+        wait_for_tmux_prompt_accepted_fn=_wait_for_tmux_prompt_accepted,
+        format_ai_cli_ready_failure_fn=_format_ai_cli_ready_failure,
     )
-    if not accepted.ready:
-        return _format_ai_cli_ready_failure(accepted)
-    return None
 
 
 def _wait_for_tmux_prompt_accepted(
@@ -869,20 +797,13 @@ def _wait_for_tmux_prompt_accepted(
     cli: str,
     prompt_text: str,
 ) -> AiCliReadyResult:
-    normalized_cli = str(cli).strip().lower()
-    if normalized_cli != "opencode":
-        return AiCliReadyResult(ready=True, reason="post_submit_check_not_required")
-    deadline = time.monotonic() + _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS
-    last_screen = ""
-    while time.monotonic() < deadline:
-        last_screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
-        if _post_submit_screen_looks_accepted(normalized_cli, last_screen, prompt_text):
-            return AiCliReadyResult(ready=True, reason="prompt_accepted", screen_excerpt=_screen_excerpt(last_screen))
-        time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
-    return AiCliReadyResult(
-        ready=False,
-        reason="opencode_prompt_accept_timeout",
-        screen_excerpt=_screen_excerpt(last_screen),
+    return tmux_workflow_submission_support.wait_for_tmux_prompt_accepted(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        cli=cli,
+        prompt_text=prompt_text,
+        read_tmux_screen_fn=_read_tmux_screen,
     )
 
 
@@ -1006,69 +927,21 @@ def _queue_tmux_codex_workflow_steps(
     cli: str,
     transport: str = "tmux",
 ) -> str | None:
-    for step_index, step in enumerate(queued_steps):
-        if launch_config.codex_goal_enable and step.requires_goal:
-            goal_text = _codex_goal_text_for_worktree(
-                worktree=worktree,
-                preset=launch_config.preset,
-                workflow_mode=workflow.mode,
-                omx_workflow=launch_config.omx_workflow,
-            )
-            queued_goal_text = f"/goal {goal_text}"
-            goal_send_error = _send_tmux_prompt(
-                runtime,
-                session_name=session_name,
-                window_name=window_name,
-                text=queued_goal_text,
-            )
-            if goal_send_error is not None:
-                return _QueueFailure("queue_goal_send_failed", step_index=step_index, step_kind=step.kind)
-            if not _queue_tmux_codex_message(
-                runtime,
-                session_name=session_name,
-                window_name=window_name,
-                text=queued_goal_text,
-                require_text_match=False,
-            ):
-                return _QueueFailure("queue_goal_not_ready", step_index=step_index, step_kind=step.kind)
-        queued_text, resolution_error = _workflow_step_prompt_text(
-            runtime,
-            launch_config=launch_config,
-            cli=cli,
-            step=step,
-            worktree=worktree,
-        )
-        if resolution_error is not None:
-            return _QueueFailure("queue_prompt_resolution_failed", step_index=step_index, step_kind=step.kind)
-        send_error = _send_tmux_prompt(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            text=queued_text,
-        )
-        if send_error is not None:
-            return _QueueFailure("queue_send_failed", step_index=step_index, step_kind=step.kind)
-        if not _queue_tmux_codex_message(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            text=queued_text,
-            require_text_match=False,
-        ):
-            return _QueueFailure("queue_not_ready", step_index=step_index, step_kind=step.kind)
-    runtime._emit(
-        "planning.agent_launch.workflow_queued",
+    return tmux_workflow_submission_support.queue_tmux_codex_workflow_steps(
+        runtime,
         session_name=session_name,
         window_name=window_name,
-        worktree=worktree.name,
+        worktree=worktree,
+        workflow=workflow,
+        queued_steps=queued_steps,
+        launch_config=launch_config,
         cli=cli,
-        workflow_mode=workflow.mode,
-        codex_cycles=workflow.codex_cycles,
-        queued_steps=len(queued_steps),
-        queued_steps_confirmed=len(queued_steps),
         transport=transport,
+        codex_goal_text_for_worktree_fn=_codex_goal_text_for_worktree,
+        workflow_step_prompt_text_fn=_workflow_step_prompt_text,
+        send_tmux_prompt_fn=_send_tmux_prompt,
+        queue_tmux_codex_message_fn=_queue_tmux_codex_message,
     )
-    return None
 
 
 def _queue_tmux_codex_message(
@@ -1079,33 +952,15 @@ def _queue_tmux_codex_message(
     text: str,
     require_text_match: bool = True,
 ) -> bool:
-    deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
-    tab_attempts = 0
-    while time.monotonic() < deadline:
-        screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
-        if tab_attempts > 0 and _codex_queue_screen_confirms_queued(
-            screen,
-            text,
-            require_text_match=require_text_match,
-        ):
-            return True
-        if _codex_queue_message_needs_tab(screen, text, require_text_match=require_text_match):
-            if tab_attempts >= _CODEX_QUEUE_MAX_TAB_ATTEMPTS:
-                return False
-            tab_error = _send_tmux_key(
-                runtime,
-                session_name=session_name,
-                window_name=window_name,
-                key="tab",
-                emit_failure_event=False,
-            )
-            if tab_error is not None:
-                return False
-            tab_attempts += 1
-            time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
-            continue
-        time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
-    return False
+    return tmux_workflow_submission_support.queue_tmux_codex_message(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        text=text,
+        require_text_match=require_text_match,
+        read_tmux_screen_fn=_read_tmux_screen,
+        send_tmux_key_fn=_send_tmux_key,
+    )
 
 
 def attach_plan_agent_terminal(runtime: Any, attach_target: PlanAgentAttachTarget) -> int:
