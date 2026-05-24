@@ -7,9 +7,9 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tempfile
 from typing import Mapping
 
+import envctl_engine.actions.action_commit_support as commit_support
 import envctl_engine.actions.action_pr_message_support as pr_message_support
 import envctl_engine.actions.action_review_plan_support as review_plan_support
 import envctl_engine.actions.action_ship_support as ship_support
@@ -26,17 +26,16 @@ from envctl_engine.actions.action_review_output_support import (
     review_colorizer as _review_colorizer,
 )
 from envctl_engine.shared.parsing import parse_bool
-from envctl_engine.ui.path_links import render_paths_in_terminal_text
 
 PR_BODY_MAX_CHARS = 48_000
 PR_TITLE_MAX_CHARS = 240
-COMMIT_MESSAGE_MAX_CHARS = 16_000
+COMMIT_MESSAGE_MAX_CHARS = commit_support.COMMIT_MESSAGE_MAX_CHARS
 WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
 WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
 PLANNING_ROOT = Path("todo") / "plans"
 DONE_PLANNING_ROOT = Path("todo") / "done"
-ENVCTL_COMMIT_LEDGER_NAME = ".envctl-commit-message.md"
-ENVCTL_COMMIT_POINTER_MARKER = "### Envctl pointer ###"
+ENVCTL_COMMIT_LEDGER_NAME = commit_support.ENVCTL_COMMIT_LEDGER_NAME
+ENVCTL_COMMIT_POINTER_MARKER = commit_support.ENVCTL_COMMIT_POINTER_MARKER
 
 __all__ = [
     "ActionProjectContext",
@@ -108,119 +107,20 @@ class DirtyWorktreeReport:
 
 
 def run_commit_action(context: ActionProjectContext) -> int:
-    git_root = resolve_git_root(context.project_root, context.repo_root)
-    if shutil.which("git") is None:
-        print("git is required for commit action")
-        return 1
-
-    branch = _git_output(git_root, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
-    if not branch or branch == "HEAD":
-        print(f"Skipping {context.project_name} (detached HEAD).")
-        return 0
-
-    pre_stage_status = _run_git(git_root, ["status", "--porcelain", "--untracked-files=all"])
-    if pre_stage_status.returncode != 0:
-        _print_error("git status failed", pre_stage_status)
-        return 1
-    partition = _partition_envctl_protected_paths(pre_stage_status.stdout)
-    unstaged_protected_paths: list[str] = []
-    if partition.protected_staged_paths:
-        reset = _unstage_envctl_protected_paths(git_root, partition.protected_staged_paths)
-        if reset.returncode != 0:
-            _print_error("git reset protected envctl-local artifacts failed", reset)
-            print("Protected envctl-local artifacts still staged: " + ", ".join(partition.protected_staged_paths))
-            return 1
-        unstaged_protected_paths = list(partition.protected_staged_paths)
-        print("Unstaged envctl-local artifacts: " + ", ".join(unstaged_protected_paths))
-
-        refreshed_status = _run_git(git_root, ["status", "--porcelain", "--untracked-files=all"])
-        if refreshed_status.returncode != 0:
-            _print_error("git status failed", refreshed_status)
-            return 1
-        partition = _partition_envctl_protected_paths(refreshed_status.stdout)
-        if partition.protected_staged_paths:
-            print(
-                "Protected envctl-local artifacts remain staged after recovery: "
-                + ", ".join(partition.protected_staged_paths)
-            )
-            return 1
-
-    if partition.stageable_paths:
-        add = _run_git(git_root, ["add", "--", *partition.stageable_paths])
-        if add.returncode != 0:
-            _print_error("git add failed", add)
-            return 1
-    protected_paths = _ordered_unique_paths(unstaged_protected_paths, partition.protected_skipped_paths)
-    if protected_paths:
-        print("Skipping envctl-local artifacts: " + ", ".join(protected_paths))
-
-    status = _run_git(git_root, ["status", "--porcelain"])
-    if status.returncode != 0:
-        _print_error("git status failed", status)
-        return 1
-    commit_partition = _partition_envctl_protected_paths(status.stdout)
-    if commit_partition.protected_staged_paths:
-        print(
-            "Protected envctl-local artifacts remain staged after recovery: "
-            + ", ".join(commit_partition.protected_staged_paths)
-        )
-        return 1
-    if not commit_partition.stageable_paths:
-        print(f"No changes to commit for {branch}.")
-        return 0
-
-    commit_message, message_file, error, ledger_path = _resolve_commit_message(context, branch=branch)
-    if error:
-        error_paths: list[object] = []
-        explicit_message_file = str(context.env.get("ENVCTL_COMMIT_MESSAGE_FILE", "")).strip()
-        if explicit_message_file:
-            error_paths.append(explicit_message_file)
-        elif ledger_path is not None:
-            error_paths.append(ledger_path)
-        print(render_paths_in_terminal_text(error, paths=error_paths, env=context.env, stream=sys.stdout))
-        return 1
-
-    generated_message_file = message_file.endswith(".envctl-commit-message.txt")
-    try:
-        if message_file:
-            commit = _run_git(git_root, ["commit", "-F", message_file])
-        else:
-            commit = _run_git(git_root, ["commit", "-m", commit_message])
-    finally:
-        if generated_message_file:
-            try:
-                Path(message_file).unlink()
-            except OSError:
-                pass
-    if commit.returncode != 0:
-        _print_error("git commit failed", commit)
-        return 1
-
-    if ledger_path is not None:
-        advance_error = _advance_commit_ledger_pointer(ledger_path)
-        if advance_error:
-            print(
-                render_paths_in_terminal_text(
-                    advance_error,
-                    paths=[ledger_path],
-                    env=context.env,
-                    stream=sys.stdout,
-                )
-            )
-            return 1
-
-    remote = str(context.env.get("PR_REMOTE") or "origin").strip() or "origin"
-    push = _run_git(git_root, ["push", "-u", remote, branch])
-    if push.returncode != 0:
-        _print_error("git push failed", push)
-        return 1
-
-    print(f"Committed and pushed changes for {context.project_name} ({branch}).")
-    return 0
+    return commit_support.run_commit_workflow(
+        context,
+        resolve_git_root=resolve_git_root,
+        git_available=shutil.which("git") is not None,
+        git_output=_git_output,
+        run_git=_run_git,
+        print_error=_print_error,
+        partition_envctl_protected_paths=_partition_envctl_protected_paths,
+        ordered_unique_paths=_ordered_unique_paths,
+    )
 
 
 def _unstage_envctl_protected_paths(git_root: Path, paths: list[str]) -> subprocess.CompletedProcess[str]:
-    return _run_git(git_root, ["reset", "-q", "--", *paths])
+    return commit_support.unstage_envctl_protected_paths(git_root, paths, run_git=_run_git)
 
 
 def _pr_title(context: ActionProjectContext, git_root: Path, head_branch: str) -> str:
@@ -641,77 +541,15 @@ def _resolve_commit_message(
     *,
     branch: str,
 ) -> tuple[str, str, str | None, Path | None]:
-    commit_message = str(context.env.get("ENVCTL_COMMIT_MESSAGE", "")).strip()
-    commit_message_file = str(context.env.get("ENVCTL_COMMIT_MESSAGE_FILE", "")).strip()
-    if commit_message:
-        return commit_message, "", None, None
-    if commit_message_file:
-        path = Path(commit_message_file)
-        if path.is_file() and _file_has_text(path):
-            return "", str(path), None, None
-        return "", "", f"Commit message file is missing or empty: {commit_message_file}", None
-
-    ledger_path = context.project_root / ENVCTL_COMMIT_LEDGER_NAME
-    payload, error = _read_commit_ledger_segment(ledger_path)
-    if error:
-        return "", "", error, ledger_path
-    return "", str(_write_commit_message_file(payload)), None, ledger_path
+    return commit_support.resolve_commit_message(context, branch=branch)
 
 
 def _read_commit_ledger_segment(path: Path) -> tuple[str, str | None]:
-    if not path.exists():
-        _atomic_write(path, f"# Envctl Commit Log\n\n{ENVCTL_COMMIT_POINTER_MARKER}\n")
-
-    text = _read_text(path)
-    marker_count = text.count(ENVCTL_COMMIT_POINTER_MARKER)
-    if marker_count == 0:
-        payload = _normalize_text_block(text)
-        if not payload:
-            return "", (
-                f"Envctl commit log is empty in {path}. Provide --commit-message, "
-                f"--commit-message-file, or append a new summary to {path}."
-            )
-        return payload[:COMMIT_MESSAGE_MAX_CHARS].rstrip() or payload, None
-    if marker_count > 1:
-        return "", f"Envctl commit log is malformed: {path} contains multiple pointer markers."
-
-    before, after = text.split(ENVCTL_COMMIT_POINTER_MARKER, 1)
-    del before
-    payload = _normalize_text_block(after)
-    if not payload:
-        return "", (
-            f"Envctl commit log is empty after the pointer in {path}. Provide --commit-message, "
-            f"--commit-message-file, or append a new summary to {path}."
-        )
-    return payload[:COMMIT_MESSAGE_MAX_CHARS].rstrip() or payload, None
+    return commit_support.read_commit_ledger_segment(path)
 
 
 def _advance_commit_ledger_pointer(path: Path) -> str | None:
-    if not path.exists():
-        return f"Envctl commit log disappeared before pointer advance: {path}"
-    text = _read_text(path)
-    marker_count = text.count(ENVCTL_COMMIT_POINTER_MARKER)
-    if marker_count == 0:
-        archived = _normalize_text_block(text)
-        updated = f"{archived}\n\n{ENVCTL_COMMIT_POINTER_MARKER}\n" if archived else f"{ENVCTL_COMMIT_POINTER_MARKER}\n"
-        try:
-            _atomic_write(path, updated)
-        except OSError as exc:
-            return f"Failed to advance envctl commit log pointer in {path}: {exc}"
-        return None
-    if marker_count > 1:
-        return f"Envctl commit log is malformed during pointer advance: {path} contains multiple pointer markers."
-    before, after = text.split(ENVCTL_COMMIT_POINTER_MARKER, 1)
-    archived_before = _normalize_text_block(before)
-    payload = _normalize_text_block(after)
-    parts = [part for part in (archived_before, payload) if part]
-    archived = "\n\n".join(parts).strip()
-    updated = f"{archived}\n\n{ENVCTL_COMMIT_POINTER_MARKER}\n" if archived else f"{ENVCTL_COMMIT_POINTER_MARKER}\n"
-    try:
-        _atomic_write(path, updated)
-    except OSError as exc:
-        return f"Failed to advance envctl commit log pointer in {path}: {exc}"
-    return None
+    return commit_support.advance_commit_ledger_pointer(path)
 
 
 def _resolve_pr_base_branch(context: ActionProjectContext, git_root: Path) -> str:
@@ -779,29 +617,11 @@ _load_worktree_provenance = review_plan_support.load_worktree_provenance
 
 
 def _write_commit_message_file(message: str) -> Path:
-    with tempfile.NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        delete=False,
-        suffix=".envctl-commit-message.txt",
-    ) as handle:
-        handle.write(message)
-        return Path(handle.name)
+    return commit_support.write_commit_message_file(message)
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        Path(temp_name).replace(path)
-    finally:
-        try:
-            if Path(temp_name).exists():
-                Path(temp_name).unlink()
-        except OSError:
-            pass
+    commit_support.atomic_write(path, text)
 
 
 def _analysis_iterations(context: ActionProjectContext, *, mode: str) -> list[str]:
@@ -844,10 +664,7 @@ def _tree_changelog_path(context: ActionProjectContext) -> Path | None:
 
 
 def _file_has_text(path: Path) -> bool:
-    try:
-        return bool(path.read_text(encoding="utf-8").strip())
-    except OSError:
-        return False
+    return commit_support.file_has_text(path)
 
 
 def _summary_output_path(repo_root: Path, directory: str, prefix: str, label: str | None = None) -> Path:
