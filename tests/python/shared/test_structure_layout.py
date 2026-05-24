@@ -159,11 +159,15 @@ class StructureLayoutTests(unittest.TestCase):
         spinner_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_spinner_support.py"
         manifest_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_manifest_support.py"
         models_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_support_models.py"
+        command_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_command_support.py"
+        failed_spec_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_failed_test_spec_support.py"
         support = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_support.py"
 
         self.assertTrue(spinner_owner.is_file())
         self.assertTrue(manifest_owner.is_file())
         self.assertTrue(models_owner.is_file())
+        self.assertTrue(command_owner.is_file())
+        self.assertTrue(failed_spec_owner.is_file())
         owner_text = spinner_owner.read_text(encoding="utf-8")
         self.assertIn("class TestSuiteSpinnerGroup", owner_text)
         self.assertIn("def rich_progress_available", owner_text)
@@ -174,11 +178,19 @@ class StructureLayoutTests(unittest.TestCase):
         models_text = models_owner.read_text(encoding="utf-8")
         self.assertIn("class TestTargetContext", models_text)
         self.assertIn("class TestExecutionSpec", models_text)
+        command_text = command_owner.read_text(encoding="utf-8")
+        self.assertIn("def build_test_execution_specs", command_text)
+        self.assertIn("def configured_or_default_test_spec", command_text)
+        failed_spec_text = failed_spec_owner.read_text(encoding="utf-8")
+        self.assertIn("def build_failed_test_execution_specs", failed_spec_text)
+        self.assertIn("def failed_rerun_spec_for_entry", failed_spec_text)
         support_text = support.read_text(encoding="utf-8")
         self.assertIn("action_test_spinner_support", support_text)
         self.assertIn("action_test_manifest_support", support_text)
         self.assertIn("action_test_support_models", support_text)
-        self.assertLessEqual(len(support_text.splitlines()), 520)
+        self.assertIn("action_test_command_support", support_text)
+        self.assertIn("action_failed_test_spec_support", support_text)
+        self.assertLessEqual(len(support_text.splitlines()), 220)
 
     def test_action_test_runner_has_progress_and_failure_owners(self) -> None:
         execution_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_execution_support.py"
