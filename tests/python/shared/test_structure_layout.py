@@ -1582,9 +1582,25 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def _requirements_reuse_decision", owner_text)
         self.assertIn("def _reserve_application_service_ports", owner_text)
         self.assertIn("def context_for_project", owner_text)
+        self.assertIn("from envctl_engine.runtime.runtime_context import", owner_text)
+        self.assertNotIn("class _StateRepositoryProtocol(Protocol)", owner_text)
+        self.assertNotIn("class _PortAllocatorProtocol(Protocol)", owner_text)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.startup.resume_restore_policy import", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 650)
+
+    def test_runtime_dependency_accessors_use_shared_runtime_context_helpers(self) -> None:
+        cleanup_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "lifecycle_cleanup_orchestrator.py"
+        worktree_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_worktree.py"
+
+        cleanup_text = cleanup_owner.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.runtime.runtime_context import", cleanup_text)
+        self.assertNotIn("class _StateRepositoryProtocol(Protocol)", cleanup_text)
+        self.assertNotIn("class _ProcessRuntimeProtocol(Protocol)", cleanup_text)
+
+        worktree_text = worktree_owner.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.shared.protocols import ProcessRuntime", worktree_text)
+        self.assertNotIn("class _ProcessRunnerProtocol(Protocol)", worktree_text)
 
     def test_repo_local_launcher_is_python_script(self) -> None:
         launcher = REPO_ROOT / "bin" / "envctl"

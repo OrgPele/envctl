@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, Sequence, cast
+from typing import Any, Callable, Mapping
 
 from envctl_engine.runtime.lifecycle_blast_support import LifecycleBlastCleanupSupport
 from envctl_engine.runtime.engine_runtime_lifecycle_support import release_requirement_ports
+from envctl_engine.runtime.runtime_context import resolve_process_runtime, resolve_state_repository
+from envctl_engine.shared.protocols import ProcessRuntime, StateRepository
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
@@ -20,29 +21,6 @@ from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 from envctl_engine.requirements.core import dependency_definitions
-
-
-class _StateRepositoryProtocol(Protocol):
-    def save_selected_stop_state(
-        self,
-        *,
-        state: RunState,
-        emit: Callable[..., None],
-        runtime_map_builder: Callable[[RunState], dict[str, object]],
-    ) -> dict[str, object]: ...
-
-    def purge(self, *, aggressive: bool = False) -> None: ...
-
-
-class _ProcessRuntimeProtocol(Protocol):
-    def run(
-        self,
-        cmd: Sequence[str],
-        *,
-        cwd: str | os.PathLike[str] | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> object: ...
 
 
 class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
@@ -593,21 +571,9 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
             return code
 
     @staticmethod
-    def _state_repository(runtime: object) -> _StateRepositoryProtocol:
-        runtime_context = getattr(runtime, "runtime_context", None)
-        candidate = getattr(runtime_context, "state_repository", None)
-        if candidate is None:
-            candidate = getattr(runtime, "state_repository", None)
-        if candidate is None:
-            raise RuntimeError("state repository dependency is not configured")
-        return cast(_StateRepositoryProtocol, candidate)
+    def _state_repository(runtime: object) -> StateRepository:
+        return resolve_state_repository(runtime)
 
     @staticmethod
-    def _process_runtime(runtime: object) -> _ProcessRuntimeProtocol:
-        runtime_context = getattr(runtime, "runtime_context", None)
-        candidate = getattr(runtime_context, "process_runtime", None)
-        if candidate is None:
-            candidate = getattr(runtime, "process_runner", None)
-        if candidate is None:
-            raise RuntimeError("process runtime dependency is not configured")
-        return cast(_ProcessRuntimeProtocol, candidate)
+    def _process_runtime(runtime: object) -> ProcessRuntime:
+        return resolve_process_runtime(runtime)
