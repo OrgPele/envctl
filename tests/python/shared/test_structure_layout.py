@@ -1002,6 +1002,23 @@ class StructureLayoutTests(unittest.TestCase):
             facade.read_text(encoding="utf-8"),
         )
 
+    def test_runtime_help_rendering_has_metadata_and_general_owners(self) -> None:
+        metadata_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_metadata.py"
+        general_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_general.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_text.py"
+
+        self.assertTrue(metadata_owner.is_file())
+        self.assertTrue(general_owner.is_file())
+        metadata_text = metadata_owner.read_text(encoding="utf-8")
+        general_text = general_owner.read_text(encoding="utf-8")
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("def default_interactivity", metadata_text)
+        self.assertIn("def ordered_known_commands", metadata_text)
+        self.assertIn("def render_general_help", general_text)
+        self.assertIn("from envctl_engine.runtime.help_general import render_general_help", facade_text)
+        self.assertIn("from envctl_engine.runtime.help_metadata import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 920)
+
     def test_engine_runtime_doctor_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_doctor_support.py"
         facade_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_doctor_facade.py"
