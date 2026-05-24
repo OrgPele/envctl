@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from collections import deque
 from contextlib import nullcontext
 import inspect
 from pathlib import Path
 import sys
-import threading
 import time
 from typing import Any, Callable
 
@@ -17,6 +15,7 @@ from envctl_engine.actions.action_test_runner_failures import (
     summarize_failure_output as _summarize_failure_output,
 )
 from envctl_engine.actions.action_test_runner_progress import (
+    ParallelTestProgressTracker,
     format_live_collection_status as _format_live_collection_status,
     format_live_progress_status as _format_live_progress_status,
     format_live_progress_status_with_counts as _format_live_progress_status_with_counts,
@@ -38,6 +37,7 @@ __all__ = [
     "_format_live_progress_status_without_total",
     "_live_failed_count",
     "_summarize_failure_output",
+    "ParallelTestProgressTracker",
     "TestSuiteInterruptRegistry",
     "run_test_action",
 ]
@@ -158,49 +158,21 @@ def run_test_action(
         else:
             text = f"Test execution mode: {execution_mode} ({len(execution_specs)} suites)"
             print(orchestrator._colorize(text, fg=mode_color, bold=True))
-    progress_lock = threading.Lock()
-    progress_state = {
-        "queued": len(execution_specs),
-        "running": 0,
-        "finished": 0,
-        "running_labels": set(),
-        "done_labels": deque(maxlen=4),
-    }
-
-    def render_labels(labels: list[str], *, max_items: int) -> str:
-        if not labels:
-            return "-"
-        visible = labels[:max_items]
-        if len(labels) > max_items:
-            visible.append(f"+{len(labels) - max_items} more")
-        return ", ".join(visible)
-
-    def emit_parallel_progress_status(*, phase: str, execution: Any | None = None) -> None:
-        if not parallel or use_suite_spinner_group:
-            return
-        prefix = (
-            f"Tests progress: running {progress_state['running']}/{parallel_workers}, "
-            f"finished {progress_state['finished']}/{len(execution_specs)}, "
-            f"queued {progress_state['queued']}"
-        )
-        running_labels_sorted = sorted(str(label) for label in progress_state["running_labels"])
-        done_labels_list = [str(label) for label in progress_state["done_labels"]]
-        details = (
-            f" • running: {render_labels(running_labels_sorted, max_items=3)}"
-            f" • done: {render_labels(done_labels_list, max_items=3)}"
-        )
-        if execution is None:
-            orchestrator._emit_status(f"{prefix}{details}")
-            return
-        suite_label = orchestrator._suite_display_name(execution.spec.source, failed_only=failed_only)
-        descriptor = f"{execution.project_name} / {suite_label}" if multi_project else suite_label
-        orchestrator._emit_status(f"{prefix} • {phase}: {descriptor}{details}")
+    progress_tracker = ParallelTestProgressTracker(
+        enabled=parallel and not use_suite_spinner_group,
+        total_suites=len(execution_specs),
+        max_workers=parallel_workers,
+        multi_project=multi_project,
+        failed_only=failed_only,
+        emit_status=orchestrator._emit_status,
+        suite_display_name=orchestrator._suite_display_name,
+    )
 
     if parallel and not use_suite_spinner_group:
         orchestrator._emit_status(
             f"Running {len(execution_specs)} test suites in parallel (max {parallel_workers} concurrent)..."
         )
-        emit_parallel_progress_status(phase="queued")
+        progress_tracker.emit_status(phase="queued")
     suite_spinner_group = suite_spinner_group_cls(
         execution_specs=execution_specs,
         enabled=use_suite_spinner_group,
@@ -368,16 +340,10 @@ def run_test_action(
                     ),
                 )
 
-        with progress_lock:
-            if parallel:
-                progress_state["queued"] = max(0, int(progress_state["queued"]) - 1)
-                progress_state["running"] = int(progress_state["running"]) + 1
-                descriptor = f"{project_name} / {suite_label}" if multi_project else suite_label
-                progress_state["running_labels"].add(descriptor)
-            if use_suite_spinner_group:
-                suite_spinner_group.mark_running(execution)
-            elif parallel:
-                emit_parallel_progress_status(phase="running", execution=execution)
+        if use_suite_spinner_group:
+            suite_spinner_group.mark_running(execution)
+        else:
+            progress_tracker.mark_running(execution)
         command = [*spec.command, *args]
         started_at = time.monotonic()
         rt._emit(  # type: ignore[attr-defined]
@@ -525,27 +491,15 @@ def run_test_action(
             project_root=str(project_root),
         )
         interrupt_registry.clear_by_index(int(index))
-        with progress_lock:
-            if parallel:
-                progress_state["running"] = max(0, int(progress_state["running"]) - 1)
-                progress_state["finished"] = int(progress_state["finished"]) + 1
-                running_descriptor = f"{project_name} / {suite_label}" if multi_project else suite_label
-                progress_state["running_labels"].discard(running_descriptor)
-                done_status = "PASS" if completed.returncode == 0 else "FAIL"
-                progress_state["done_labels"].append(f"{running_descriptor} ({done_status})")
-                progress_state["queued"] = max(
-                    0,
-                    len(execution_specs) - int(progress_state["running"]) - int(progress_state["finished"]),
-                )
-            if use_suite_spinner_group:
-                suite_spinner_group.mark_finished(
-                    execution,
-                    success=completed.returncode == 0,
-                    duration_text=format_duration(max(duration_ms / 1000.0, 0.0)),
-                    parsed=parsed,
-                )
-            elif parallel:
-                emit_parallel_progress_status(phase="completed", execution=execution)
+        if use_suite_spinner_group:
+            suite_spinner_group.mark_finished(
+                execution,
+                success=completed.returncode == 0,
+                duration_text=format_duration(max(duration_ms / 1000.0, 0.0)),
+                parsed=parsed,
+            )
+        else:
+            progress_tracker.mark_finished(execution, success=completed.returncode == 0)
 
         if completed.returncode != 0:
             error = _summarize_failure_output(
