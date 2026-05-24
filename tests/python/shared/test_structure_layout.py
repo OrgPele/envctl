@@ -1183,6 +1183,20 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.startup.service_launch_diagnostics import", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 850)
 
+    def test_resume_restore_policy_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "resume_restore_policy.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "resume_restore_support.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        self.assertIn("def _restore_parallel_config", owner_text)
+        self.assertIn("def _requirements_reuse_decision", owner_text)
+        self.assertIn("def _reserve_application_service_ports", owner_text)
+        self.assertIn("def context_for_project", owner_text)
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.startup.resume_restore_policy import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 650)
+
     def test_repo_local_launcher_is_python_script(self) -> None:
         launcher = REPO_ROOT / "bin" / "envctl"
         self.assertTrue(launcher.is_file())
