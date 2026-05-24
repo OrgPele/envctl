@@ -12,6 +12,7 @@ from typing import Mapping
 import envctl_engine.actions.action_commit_support as commit_support
 import envctl_engine.actions.action_git_state_support as git_state_support
 import envctl_engine.actions.action_pr_message_support as pr_message_support
+import envctl_engine.actions.action_review_workflow_support as review_workflow_support
 import envctl_engine.actions.action_review_plan_support as review_plan_support
 import envctl_engine.actions.action_ship_support as ship_support
 from envctl_engine.actions.action_protected_artifacts import (
@@ -308,129 +309,26 @@ def _ship_protected_paths(git_root: Path) -> list[str]:
 
 
 def run_review_action(context: ActionProjectContext) -> int:
-    git_root = resolve_git_root(context.project_root, context.repo_root)
-    if shutil.which("git") is None:
-        print("git is required for review action")
-        return 1
-
-    mode = _resolve_analyze_mode(context)
-    scope = str(context.env.get("ENVCTL_ANALYZE_SCOPE", "all")).strip().lower() or "all"
-    original_plan = _resolve_original_plan(context)
-    review_base: ReviewBaseResolution | None = None
-    if mode == "single" or str(context.env.get("ENVCTL_REVIEW_BASE", "")).strip():
-        try:
-            review_base = _resolve_review_base(context, git_root)
-        except ReviewBaseResolutionError as exc:
-            print(str(exc))
-            return 1
-
-    helper = context.repo_root / "utils" / "analyze-tree-changes.sh"
-    if helper.is_file() and os.access(helper, os.X_OK):
-        iterations = _analysis_iterations(context, mode=mode)
-        if iterations:
-            return _run_analyze_helper(
-                context=context,
-                helper=helper,
-                iterations=iterations,
-                mode=mode,
-                scope=scope,
-                review_base=review_base,
-                original_plan=original_plan,
-            )
-
-    if review_base is None:
-        diff_stat = _git_output(git_root, ["diff", "--stat"]).strip()
-        status = _git_output(git_root, ["status", "--porcelain"]).strip()
-        output_path = _tree_diffs_output_path(
-            context,
-            "review",
-            f"review_{sanitize_label(context.project_name)}_{mode}",
-        )
-        _write_markdown_lines(
-            output_path,
-            [
-                f"# Review Summary: {context.project_name}",
-                "",
-                f"Mode: {mode}",
-                f"Scope: {scope}",
-                "",
-                *_original_plan_markdown_lines(original_plan, include_contents=True),
-                "## Diff Stat",
-                diff_stat or "(no diff)",
-                "",
-                "## Working Tree",
-                status or "(clean)",
-                "",
-            ],
-        )
-        _print_review_completion(
-            context,
+    return review_workflow_support.run_review_workflow(
+        context,
+        resolve_git_root_fn=resolve_git_root,
+        git_available=shutil.which("git") is not None,
+        git_output_fn=_git_output,
+        resolve_analyze_mode_fn=_resolve_analyze_mode,
+        resolve_original_plan_fn=_resolve_original_plan,
+        resolve_review_base_fn=_resolve_review_base,
+        analysis_iterations_fn=lambda review_context, mode: _analysis_iterations(
+            review_context,
             mode=mode,
-            scope=scope,
-            output_dir=output_path.parent,
-            summary_path=output_path,
-            all_in_one_path=output_path,
-            stats=[],
-            tree_count=1,
-        )
-        return 0
-
-    diff_left = review_base.merge_base or review_base.base_ref
-    diff_stat = _git_output(git_root, ["diff", "--find-renames", "--stat", diff_left]).strip()
-    changed_files = _git_output(git_root, ["diff", "--find-renames", "--name-status", diff_left]).strip()
-    full_diff = _git_output(git_root, ["diff", "--find-renames", diff_left]).strip()
-    status = _git_output(git_root, ["status", "--porcelain", "--untracked-files=all"]).strip()
-    output_path = _tree_diffs_output_path(
-        context,
-        "review",
-        f"review_{sanitize_label(context.project_name)}_{mode}",
+        ),
+        run_analyze_helper_fn=_run_analyze_helper_from_workflow,
+        tree_diffs_output_path_fn=_tree_diffs_output_path_from_workflow,
+        original_plan_markdown_lines_fn=lambda original_plan: _original_plan_markdown_lines(
+            original_plan,
+            include_contents=True,
+        ),
+        sanitize_label_fn=sanitize_label,
     )
-    _write_markdown_lines(
-        output_path,
-        [
-            f"# Review Summary: {context.project_name}",
-            "",
-            f"Mode: {mode}",
-            f"Scope: {scope}",
-            "",
-            *_original_plan_markdown_lines(original_plan, include_contents=True),
-            "## Base branch",
-            review_base.base_branch,
-            "",
-            "## Base resolution source",
-            review_base.source,
-            "",
-            "## Base ref",
-            review_base.base_ref,
-            "",
-            "## Merge base",
-            review_base.merge_base or "(merge-base unavailable)",
-            "",
-            "## Diff Stat",
-            diff_stat or "(no diff)",
-            "",
-            "## Changed files",
-            changed_files or "(no changed files)",
-            "",
-            "## Full diff",
-            full_diff or "(no diff)",
-            "",
-            "## Working tree / untracked files",
-            status or "(clean)",
-            "",
-        ],
-    )
-    _print_review_completion(
-        context,
-        mode=mode,
-        scope=scope,
-        output_dir=output_path.parent,
-        summary_path=output_path,
-        all_in_one_path=output_path,
-        stats=[],
-        tree_count=1,
-    )
-    return 0
 
 
 DirtyWorktreeReport = git_state_support.DirtyWorktreeReport
@@ -602,6 +500,26 @@ def _run_analyze_helper(
     )
 
 
+def _run_analyze_helper_from_workflow(
+    context: ActionProjectContext,
+    helper: Path,
+    iterations: list[str],
+    mode: str,
+    scope: str,
+    review_base: ReviewBaseResolution | None,
+    original_plan: OriginalPlanResolution,
+) -> int:
+    return _run_analyze_helper(
+        context=context,
+        helper=helper,
+        iterations=iterations,
+        mode=mode,
+        scope=scope,
+        review_base=review_base,
+        original_plan=original_plan,
+    )
+
+
 def _tree_changelog_path(context: ActionProjectContext) -> Path | None:
     tree_name = "main" if context.project_name.strip().lower() == "main" else context.project_name.strip()
     candidate = context.project_root / "docs" / "changelog" / f"{sanitize_label(tree_name)}_changelog.md"
@@ -640,6 +558,10 @@ def _tree_diffs_output_path(
         label,
         sanitize_label_fn=sanitize_label,
     )
+
+
+def _tree_diffs_output_path_from_workflow(context: ActionProjectContext, directory: str, prefix: str) -> Path:
+    return _tree_diffs_output_path(context, directory, prefix)
 
 
 def _write_markdown_lines(path: Path, lines: list[str]) -> None:
