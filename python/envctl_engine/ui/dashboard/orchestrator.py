@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, Mapping, cast
+from typing import Any, Literal, cast
 
 from envctl_engine.actions.project_action_domain import (
     DirtyWorktreeReport,
@@ -165,74 +165,7 @@ class DashboardOrchestrator:
         )
 
     def _apply_interactive_target_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
-        if route.command == "restart":
-            return route
-        if route.command == "pr":
-            return self._apply_pr_selection(route, state, rt)
-        if route.command == "commit":
-            return self._apply_commit_selection(route, state, rt)
-        if route.command not in self._dashboard_owned_target_selection_commands():
-            return route
-
-        if route.command in self._dashboard_owned_project_selection_commands():
-            selected_route = self._apply_project_target_selection(route, state, rt)
-            if selected_route is None:
-                return None
-            if selected_route.command == "review":
-                return self._apply_review_tab_launch_selection(selected_route, state, rt)
-            return selected_route
-
-        runtime_any = cast(Any, rt)
-        if self._route_has_explicit_target(route, runtime_any):
-            return route
-
-        projects = self._project_names_from_state(state, runtime_any)
-        selected_projects = self._select_dashboard_projects(
-            command=route.command,
-            state=state,
-            projects=projects,
-            runtime=runtime_any,
-        )
-        if selected_projects is None:
-            print(self._no_target_selected_message(route.command))
-            return None
-        route.projects = list(selected_projects)
-
-        selected_service_types = self._select_dashboard_service_types(
-            command=route.command,
-            state=state,
-            selected_projects=selected_projects,
-            runtime=runtime_any,
-        )
-        if selected_service_types is None:
-            print(self._no_target_selected_message(route.command))
-            return None
-
-        if route.command == "test":
-            route.flags = {
-                key: value
-                for key, value in route.flags.items()
-                if key not in {"backend", "frontend", "services", "failed"}
-            }
-            if any(service_type == "failed" for service_type in selected_service_types):
-                route.flags["failed"] = True
-                return route
-            selected_service_names = self._service_names_for_projects_and_types(
-                state,
-                runtime_any,
-                project_names=selected_projects,
-                service_types=selected_service_types,
-            )
-            if selected_service_names:
-                route.flags["services"] = selected_service_names
-            selected_types = set(selected_service_types)
-            if selected_types == {"backend"}:
-                route.flags = {**route.flags, "backend": True, "frontend": False}
-            elif selected_types == {"frontend"}:
-                route.flags = {**route.flags, "backend": False, "frontend": True}
-            return route
-
-        return route
+        return target_selection_support.apply_interactive_target_selection(self, route, state, rt)
 
     def _apply_stop_scope_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         return apply_stop_scope_selection(
@@ -291,16 +224,7 @@ class DashboardOrchestrator:
 
     @staticmethod
     def _dashboard_hidden_commands(state: RunState) -> set[str]:
-        raw = state.metadata.get("dashboard_hidden_commands")
-        hidden = (
-            {str(command).strip().lower() for command in raw if str(command).strip()}
-            if isinstance(raw, list)
-            else set()
-        )
-        hidden.update(command_support.DASHBOARD_ALWAYS_HIDDEN_COMMANDS)
-        if not state.services:
-            hidden.add("migrate")
-        return hidden
+        return command_support.dashboard_hidden_commands(state)
 
     def _apply_project_target_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         return project_target_support.apply_project_target_selection(self, route, state, rt)
@@ -466,20 +390,7 @@ class DashboardOrchestrator:
 
     @staticmethod
     def _dashboard_stopped_services_by_project(state: RunState) -> dict[str, dict[str, str]]:
-        raw = state.metadata.get("dashboard_stopped_services")
-        if not isinstance(raw, list):
-            return {}
-        stopped: dict[str, dict[str, str]] = {}
-        for item in raw:
-            if not isinstance(item, Mapping):
-                continue
-            project = str(item.get("project", "") or "").strip()
-            service_type = str(item.get("type", "") or "").strip().lower()
-            name = str(item.get("name", "") or "").strip()
-            if not project or service_type not in {"backend", "frontend"}:
-                continue
-            stopped.setdefault(project, {})[service_type] = name or f"{project} {service_type.title()}"
-        return stopped
+        return dashboard_stopped_services_by_project(state)
 
     @staticmethod
     def _dashboard_project_configured_services(state: RunState) -> dict[str, set[str]]:

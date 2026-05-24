@@ -176,6 +176,19 @@ def queue_return_to_dashboard_prompt(runtime: Any, prompt: str) -> None:
         return
 
 
+def dashboard_hidden_commands(state: RunState) -> set[str]:
+    raw = state.metadata.get("dashboard_hidden_commands")
+    hidden = (
+        {str(command).strip().lower() for command in raw if str(command).strip()}
+        if isinstance(raw, list)
+        else set()
+    )
+    hidden.update(DASHBOARD_ALWAYS_HIDDEN_COMMANDS)
+    if not state.services:
+        hidden.add("migrate")
+    return hidden
+
+
 def prompt_text_dialog(
     runtime: Any,
     *,

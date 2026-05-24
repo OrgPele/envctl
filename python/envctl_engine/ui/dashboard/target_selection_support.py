@@ -39,6 +39,94 @@ def route_has_explicit_target(route: Route, runtime: object) -> bool:
     return selection_route_has_explicit_target(route, cast(Any, runtime))
 
 
+def apply_interactive_target_selection(owner: Any, route: Route, state: RunState, rt: object) -> Route | None:
+    if route.command == "restart":
+        return route
+    if route.command == "pr":
+        return owner._apply_pr_selection(route, state, rt)
+    if route.command == "commit":
+        return owner._apply_commit_selection(route, state, rt)
+    if route.command not in owner._dashboard_owned_target_selection_commands():
+        return route
+
+    if route.command in owner._dashboard_owned_project_selection_commands():
+        selected_route = owner._apply_project_target_selection(route, state, rt)
+        if selected_route is None:
+            return None
+        if selected_route.command == "review":
+            return owner._apply_review_tab_launch_selection(selected_route, state, rt)
+        return selected_route
+
+    runtime_any = cast(Any, rt)
+    if owner._route_has_explicit_target(route, runtime_any):
+        return route
+
+    projects = owner._project_names_from_state(state, runtime_any)
+    selected_projects = owner._select_dashboard_projects(
+        command=route.command,
+        state=state,
+        projects=projects,
+        runtime=runtime_any,
+    )
+    if selected_projects is None:
+        print(owner._no_target_selected_message(route.command))
+        return None
+    route.projects = list(selected_projects)
+
+    selected_service_types = owner._select_dashboard_service_types(
+        command=route.command,
+        state=state,
+        selected_projects=selected_projects,
+        runtime=runtime_any,
+    )
+    if selected_service_types is None:
+        print(owner._no_target_selected_message(route.command))
+        return None
+
+    if route.command == "test":
+        apply_dashboard_test_target_selection(
+            owner,
+            route,
+            state,
+            runtime_any,
+            selected_projects=selected_projects,
+            selected_service_types=selected_service_types,
+        )
+    return route
+
+
+def apply_dashboard_test_target_selection(
+    owner: Any,
+    route: Route,
+    state: RunState,
+    runtime: Any,
+    *,
+    selected_projects: list[str],
+    selected_service_types: list[str],
+) -> None:
+    route.flags = {
+        key: value
+        for key, value in route.flags.items()
+        if key not in {"backend", "frontend", "services", "failed"}
+    }
+    if any(service_type == "failed" for service_type in selected_service_types):
+        route.flags["failed"] = True
+        return
+    selected_service_names = owner._service_names_for_projects_and_types(
+        state,
+        runtime,
+        project_names=selected_projects,
+        service_types=selected_service_types,
+    )
+    if selected_service_names:
+        route.flags["services"] = selected_service_names
+    selected_types = set(selected_service_types)
+    if selected_types == {"backend"}:
+        route.flags = {**route.flags, "backend": True, "frontend": False}
+    elif selected_types == {"frontend"}:
+        route.flags = {**route.flags, "backend": False, "frontend": True}
+
+
 def restart_service_types_from_service_names(service_names: list[str]) -> list[str]:
     types: list[str] = []
     seen: set[str] = set()
