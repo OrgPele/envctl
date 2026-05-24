@@ -156,7 +156,8 @@ def apply_stop_resource_tokens(route: Route, state: RunState, runtime: Any, valu
             continue
         if token.startswith("__STOP__:service:"):
             service_name = token.removeprefix("__STOP__:service:")
-            selected_services.add(service_name)
+            if service_name in state.services:
+                selected_services.add(service_name)
             continue
         if token.startswith("__STOP__:dependency:"):
             _, _, project_name, dependency_id = token.split(":", 3)

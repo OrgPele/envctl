@@ -28,6 +28,7 @@ from envctl_engine.ui.dashboard.failure_detail_support import (
 )
 from envctl_engine.ui.dashboard.stop_scope_support import (
     apply_stop_scope_selection,
+    apply_stop_resource_tokens,
     stop_resource_items,
     stop_project_order,
     stop_services_by_project,
@@ -256,67 +257,7 @@ class DashboardOrchestrator:
         )
 
     def _apply_stop_resource_tokens(self, route: Route, state: RunState, runtime: Any, values: list[str]) -> None:
-        service_lookup = self._stop_services_by_project(state, runtime)
-        dependency_lookup = self._stop_dependencies_by_project(state)
-        selected_services: set[str] = set()
-        selected_dependencies: set[tuple[str, str]] = set()
-
-        for token in values:
-            if token.startswith("__STOP__:worktree:"):
-                project_name = token.removeprefix("__STOP__:worktree:")
-                for service_name, _service_type in service_lookup.get(project_name, []):
-                    selected_services.add(service_name)
-                for dependency_id, _label in dependency_lookup.get(project_name, []):
-                    selected_dependencies.add((project_name, dependency_id))
-                continue
-            if token.startswith("__STOP__:service:"):
-                service_name = token.removeprefix("__STOP__:service:")
-                if service_name in state.services:
-                    selected_services.add(service_name)
-                continue
-            if token.startswith("__STOP__:dependency:"):
-                _, _, project_name, dependency_id = token.split(":", 3)
-                if any(dependency_id == existing_id for existing_id, _label in dependency_lookup.get(project_name, [])):
-                    selected_dependencies.add((project_name, dependency_id))
-
-        all_services = set(state.services)
-        all_dependencies = {
-            (project_name, dependency_id)
-            for project_name, dependencies in dependency_lookup.items()
-            for dependency_id, _label in dependencies
-        }
-
-        flags = {
-            key: value
-            for key, value in route.flags.items()
-            if key
-            not in {
-                "runtime_scope",
-                "backend",
-                "frontend",
-                "services",
-                "stop_dependency_components",
-                "stop_preserve_requirements",
-            }
-        }
-        if (
-            selected_services
-            and selected_services == all_services
-            and selected_dependencies == all_dependencies
-            and all_dependencies
-        ):
-            flags["runtime_scope"] = "entire-system"
-        else:
-            if selected_services:
-                flags["services"] = sorted(selected_services)
-                flags["stop_preserve_requirements"] = True
-            if selected_dependencies:
-                flags["stop_dependency_components"] = [
-                    f"{project_name}:{dependency_id}"
-                    for project_name, dependency_id in sorted(selected_dependencies)
-                ]
-                flags["stop_preserve_requirements"] = True
-        route.flags = flags
+        apply_stop_resource_tokens(route, state, runtime, values)
 
     def _stop_project_order(self, state: RunState, runtime: Any) -> list[str]:
         return stop_project_order(state, runtime, project_names_from_state_fn=self._project_names_from_state)

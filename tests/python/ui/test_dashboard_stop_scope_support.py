@@ -4,7 +4,7 @@ import unittest
 from unittest import mock
 
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.state.models import RunState
+from envctl_engine.state.models import RequirementsResult, RunState
 from envctl_engine.ui.dashboard.stop_scope_support import (
     apply_stop_resource_tokens,
     stop_dependencies_by_project,
@@ -80,6 +80,26 @@ class StopScopeSupportTests(unittest.TestCase):
         state = _make_state()
         apply_stop_resource_tokens(route, state, mock.MagicMock(), [])
         self.assertNotIn("services", route.flags)
+
+    def test_apply_stop_resource_tokens_ignores_unknown_service_token(self) -> None:
+        route = _make_route(flags={"services": ["old"], "backend": True, "other": True})
+        state = _make_state()
+        apply_stop_resource_tokens(route, state, mock.MagicMock(), ["__STOP__:service:missing"])
+
+        self.assertEqual(route.flags, {"other": True})
+
+    def test_apply_stop_resource_tokens_entire_system_when_all_services_and_dependencies_selected(self) -> None:
+        route = _make_route(flags={"services": ["old"], "frontend": True})
+        state = _make_state(
+            services={"Main Backend": object()},
+            requirements={"Main": RequirementsResult(project="Main", db={"enabled": True})},
+        )
+        runtime = mock.MagicMock()
+        runtime._project_name_from_service.return_value = "Main"
+
+        apply_stop_resource_tokens(route, state, runtime, ["__STOP__:worktree:Main"])
+
+        self.assertEqual(route.flags, {"runtime_scope": "entire-system"})
 
 
 if __name__ == "__main__":

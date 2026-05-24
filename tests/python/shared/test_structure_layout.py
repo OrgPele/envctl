@@ -438,15 +438,18 @@ class StructureLayoutTests(unittest.TestCase):
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_support.py"
         target_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "project_target_support.py"
         review_tab_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "review_tab_support.py"
+        stop_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "stop_scope_support.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator.py"
 
         self.assertTrue(owner.is_file())
         self.assertTrue(target_owner.is_file())
         self.assertTrue(review_tab_owner.is_file())
+        self.assertTrue(stop_owner.is_file())
         facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("def apply_stop_resource_tokens", stop_owner.read_text(encoding="utf-8"))
         self.assertIn("import envctl_engine.ui.dashboard.command_support as command_support", facade_text)
         self.assertIn("from envctl_engine.ui.dashboard import project_target_support", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 830)
+        self.assertLessEqual(len(facade_text.splitlines()), 700)
 
     def test_dashboard_orchestrator_tests_are_split_by_owner(self) -> None:
         ui_tests = REPO_ROOT / "tests" / "python" / "ui"
