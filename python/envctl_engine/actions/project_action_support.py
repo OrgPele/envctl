@@ -13,7 +13,12 @@ from envctl_engine.actions.action_command_support import (
 )
 from envctl_engine.actions.action_target_support import ActionCommandResolution, action_target_identity
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.runtime.runtime_context import resolve_state_repository, run_dir_path, save_resume_state
+from envctl_engine.runtime.runtime_context import (
+    resolve_process_runtime,
+    resolve_state_repository,
+    run_dir_path,
+    save_resume_state,
+)
 from envctl_engine.shared.artifact_names import project_command_artifact_path
 from envctl_engine.test_output.parser_base import strip_ansi
 
@@ -197,17 +202,19 @@ def run_project_action(
     raw = runtime.env.get(env_key)
     interactive_command = bool(route.flags.get("interactive_command"))
     command_extra_env = dict(extra_env)
+    if raw is None and default_command is None:
+        print(f"No {command_name} command configured. Set {env_key} or add repo utility script.")
+        return 1
+
+    process_runtime = resolve_process_runtime(runtime)
     stream_review_output = bool(
         command_name == "review"
         and not interactive_command
         and stdout_is_live_terminal()
-        and hasattr(runtime.process_runner, "run_streaming")
+        and hasattr(process_runtime, "run_streaming")
     )
     if stream_review_output:
         command_extra_env["ENVCTL_ACTION_FORCE_RICH"] = "1"
-    if raw is None and default_command is None:
-        print(f"No {command_name} command configured. Set {env_key} or add repo utility script.")
-        return 1
 
     def resolve_command(context: object) -> ActionCommandResolution:
         target = getattr(context, "target_obj")
@@ -241,7 +248,7 @@ def run_project_action(
 
     def process_run(command: list[str], cwd: Path, env: Mapping[str, str]) -> subprocess.CompletedProcess[str]:
         if stream_review_output:
-            completed = runtime.process_runner.run_streaming(
+            completed = process_runtime.run_streaming(  # type: ignore[attr-defined]
                 command,
                 cwd=cwd,
                 env=dict(env),
@@ -255,7 +262,7 @@ def run_project_action(
                 stdout="" if completed.returncode == 0 else str(completed.stdout or ""),
                 stderr=str(getattr(completed, "stderr", "") or ""),
             )
-        return runtime.process_runner.run(
+        return process_runtime.run(
             command,
             cwd=cwd,
             env=dict(env),

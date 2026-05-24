@@ -11,6 +11,7 @@ from envctl_engine.actions.action_target_support import action_target_identities
 from envctl_engine.planning import discover_tree_projects
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.launcher_support import main_repo_root_for_linked_worktree
+from envctl_engine.runtime.runtime_context import resolve_process_runtime
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
@@ -232,8 +233,8 @@ def main_repo_root_for_worktree(*, worktree_root: Path, runtime: Any, trees_dir_
     if repo_root_from_layout is not None:
         return repo_root_from_layout
 
-    process_runner = getattr(raw_runtime, "process_runner")
-    completed = process_runner.run(
+    process_runtime = resolve_process_runtime(raw_runtime)
+    completed = process_runtime.run(
         ["git", "rev-parse", "--show-toplevel"],
         cwd=worktree_root,
         timeout=10.0,
@@ -242,7 +243,7 @@ def main_repo_root_for_worktree(*, worktree_root: Path, runtime: Any, trees_dir_
         return None
     top_level = Path(str(getattr(completed, "stdout", "") or "").strip()).resolve()
 
-    common = process_runner.run(
+    common = process_runtime.run(
         ["git", "rev-parse", "--git-common-dir"],
         cwd=worktree_root,
         timeout=10.0,
@@ -293,6 +294,7 @@ def repo_root_from_worktree_layout(worktree_root: Path, trees_dir_name: str) -> 
 
 def spawn_self_destruct_helper(*, runtime: Any, repo_root: Path, trees_root: Path, worktree_root: Path) -> bool:
     raw_runtime = getattr(runtime, "raw_runtime", runtime)
+    process_runtime = resolve_process_runtime(raw_runtime)
     helper_dir = Path(tempfile.mkdtemp(prefix="envctl-self-destruct-", dir=str(repo_root)))
     helper_script = helper_dir / "self_destruct.py"
     helper_script.write_text(
@@ -333,7 +335,7 @@ if result.returncode != 0:
         + "\n",
         encoding="utf-8",
     )
-    completed = raw_runtime.process_runner.start_background(
+    completed = process_runtime.start_background(  # type: ignore[attr-defined]
         [
             "python3",
             str(helper_script),
