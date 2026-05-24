@@ -5,7 +5,7 @@ from typing import Any, Callable, Literal, cast
 from envctl_engine.actions.project_action_domain import DirtyWorktreeReport
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
-from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+from envctl_engine.ui.dashboard.command_input_support import read_interactive_line
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.textual.screens.selector import _run_selector_with_impl
 
@@ -162,11 +162,3 @@ def prompt_yes_no_dialog(runtime: Any, *, title: str, prompt: str) -> DirtyPrDec
     if response in {"c", "cancel", "q", "quit", "esc", "escape"}:
         return "cancel"
     return "skip"
-
-
-def read_interactive_line(runtime: Any, prompt: str) -> str:
-    reader = getattr(runtime, "_read_interactive_command_line", None)
-    if callable(reader):
-        return str(reader(prompt))
-    env = getattr(runtime, "env", {})
-    return str(RuntimeTerminalUI.read_interactive_command_line(prompt, env))

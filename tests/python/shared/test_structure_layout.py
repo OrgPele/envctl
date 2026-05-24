@@ -786,6 +786,7 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_dashboard_command_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_support.py"
+        input_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_input_support.py"
         target_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "project_target_support.py"
         selection_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "target_selection_support.py"
         review_tab_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "review_tab_support.py"
@@ -797,6 +798,7 @@ class StructureLayoutTests(unittest.TestCase):
         facade = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(input_owner.is_file())
         self.assertTrue(target_owner.is_file())
         self.assertTrue(selection_owner.is_file())
         self.assertTrue(review_tab_owner.is_file())
@@ -806,7 +808,14 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(stop_owner.is_file())
         pr_facade_text = pr_facade.read_text(encoding="utf-8")
         facade_text = facade.read_text(encoding="utf-8")
-        self.assertIn("def dashboard_hidden_commands", owner.read_text(encoding="utf-8"))
+        owner_text = owner.read_text(encoding="utf-8")
+        input_owner_text = input_owner.read_text(encoding="utf-8")
+        self.assertIn("def run_interactive_command", owner_text)
+        self.assertIn("def dashboard_hidden_commands", owner_text)
+        self.assertIn("command_input_support", owner_text)
+        self.assertIn("def prompt_text_dialog", input_owner_text)
+        self.assertIn("def dispatch_kill_session", input_owner_text)
+        self.assertIn("def repo_root_for_project", input_owner_text)
         self.assertIn("def apply_interactive_target_selection", selection_owner.read_text(encoding="utf-8"))
         self.assertIn("def apply_pr_selection", pr_selection_owner.read_text(encoding="utf-8"))
         self.assertIn("def maybe_prepare_pr_commit", pr_commit_owner.read_text(encoding="utf-8"))
@@ -816,6 +825,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("pr_commit_support", pr_facade_text)
         self.assertIn("pr_scope_support", pr_facade_text)
         self.assertLessEqual(len(pr_facade_text.splitlines()), 210)
+        self.assertLessEqual(len(owner_text.splitlines()), 220)
         self.assertIn("import envctl_engine.ui.dashboard.command_support as command_support", facade_text)
         self.assertIn("from envctl_engine.ui.dashboard import project_target_support", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 700)
