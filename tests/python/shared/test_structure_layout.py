@@ -175,6 +175,10 @@ class StructureLayoutTests(unittest.TestCase):
         expected = [
             "plan_agent_launch_support_test_support.py",
             "test_plan_agent_launch_cmux.py",
+            "test_plan_agent_launch_cmux_cycles.py",
+            "test_plan_agent_launch_cmux_goal.py",
+            "test_plan_agent_launch_cmux_review.py",
+            "test_plan_agent_launch_cmux_workspace.py",
             "test_plan_agent_launch_omx.py",
             "test_plan_agent_launch_options.py",
             "test_plan_agent_launch_readiness.py",
@@ -189,6 +193,8 @@ class StructureLayoutTests(unittest.TestCase):
 
         legacy = planning_tests / "test_plan_agent_launch_support.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
+        cmux_breadcrumb = planning_tests / "test_plan_agent_launch_cmux.py"
+        self.assertLessEqual(len(cmux_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
 
     def test_planning_worktree_setup_tests_are_split_by_owner(self) -> None:
         planning_tests = REPO_ROOT / "tests" / "python" / "planning"
