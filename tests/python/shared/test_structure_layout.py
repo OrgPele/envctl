@@ -901,13 +901,19 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_textual_config_wizard_has_field_owner(self) -> None:
         screen = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard.py"
+        component_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_components.py"
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_fields.py"
         hint_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_hints.py"
 
+        self.assertTrue(component_owner.is_file())
         self.assertTrue(owner.is_file())
         self.assertTrue(hint_owner.is_file())
+        component_text = component_owner.read_text(encoding="utf-8")
         owner_text = owner.read_text(encoding="utf-8")
         hint_text = hint_owner.read_text(encoding="utf-8")
+        self.assertIn("class ComponentRow", component_text)
+        self.assertIn("def component_rows", component_text)
+        self.assertIn("def toggle_service_startup_value", component_text)
         self.assertIn("def _hydrate_wizard_values", owner_text)
         self.assertIn("def _visible_directory_fields", owner_text)
         self.assertIn("def _additional_service_field_value", owner_text)
@@ -916,9 +922,10 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def directory_validation_error", hint_text)
         self.assertIn("def field_hint_text", hint_text)
         screen_text = screen.read_text(encoding="utf-8")
+        self.assertIn("from . import config_wizard_components as component_policy", screen_text)
         self.assertIn("from .config_wizard_fields import", screen_text)
         self.assertIn("from .config_wizard_hints import", screen_text)
-        self.assertLessEqual(len(screen_text.splitlines()), 1450)
+        self.assertLessEqual(len(screen_text.splitlines()), 1375)
 
     def test_removed_dead_leaf_modules_are_absent(self) -> None:
         stale_modules = [

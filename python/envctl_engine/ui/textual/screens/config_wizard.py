@@ -30,6 +30,8 @@ from envctl_engine.ui.textual.list_row_styles import (
     selectable_list_default_index,
     selectable_list_row_classes,
 )
+from . import config_wizard_components as component_policy
+from .config_wizard_components import ComponentRow
 from .config_wizard_fields import (
     CONFIG_ROW_STYLES_CSS,
     _ADDITIONAL_SERVICE_FIELDS,
@@ -37,7 +39,6 @@ from .config_wizard_fields import (
     _COMPONENT_FIELDS,
     _DIRECTORY_FIELDS,
     _PORT_FIELDS,
-    _SERVICE_FIELDS,
     _SERVICE_STARTUP_FIELDS,
     _STEP_HELP_TEXT,
     _STEP_TITLES,
@@ -111,21 +112,6 @@ def run_config_wizard_textual(
     from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.events import Key
     from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
-
-    @dataclass(frozen=True, slots=True)
-    class ComponentRow:
-        label: str
-        component_id: str | None = None
-        mode: str | None = None
-        kind: str = "item"
-
-        @property
-        def selectable(self) -> bool:
-            return self.kind == "item" and self.component_id is not None
-
-        @property
-        def shared(self) -> bool:
-            return self.selectable and self.mode is None
 
     class ConfigWizardApp(App[ConfigWizardResult | None]):
         BINDINGS = [
@@ -452,7 +438,7 @@ def run_config_wizard_textual(
             return self._steps[self.step_index]
 
         def _profile_for_mode(self, mode: str) -> StartupProfile:
-            return self.values.trees_profile if mode == "trees" else self.values.main_profile
+            return component_policy.profile_for_mode(self.values, mode)
 
         def _should_show_service_startup_step(self) -> bool:
             profiles = (self.values.main_profile, self.values.trees_profile)
@@ -643,22 +629,7 @@ def run_config_wizard_textual(
             apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
 
         def _component_rows(self) -> list[ComponentRow]:
-            rows: list[ComponentRow] = []
-            rows.append(ComponentRow(label="Services", kind="header"))
-            for field_name, label in _SERVICE_FIELDS:
-                if field_name in self._split_component_fields:
-                    rows.append(ComponentRow(component_id=field_name, label=f"Main - {label}", mode="main"))
-                    rows.append(ComponentRow(component_id=field_name, label=f"Trees - {label}", mode="trees"))
-                else:
-                    rows.append(ComponentRow(component_id=field_name, label=label))
-            rows.append(ComponentRow(label="Dependencies", kind="header"))
-            for field_name, label in _COMPONENT_FIELDS:
-                if field_name in self._split_component_fields:
-                    rows.append(ComponentRow(component_id=field_name, label=f"Main - {label}", mode="main"))
-                    rows.append(ComponentRow(component_id=field_name, label=f"Trees - {label}", mode="trees"))
-                else:
-                    rows.append(ComponentRow(component_id=field_name, label=label))
-            return rows
+            return component_policy.component_rows(self._split_component_fields)
 
         def _render_components_step(self, list_view) -> None:
             list_view.clear()
@@ -705,26 +676,10 @@ def run_config_wizard_textual(
             apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
 
         def _service_startup_value(self, field_name: str, mode: str) -> bool:
-            if field_name == "startup_enable":
-                return bool(self._profile_for_mode(mode).startup_enable)
-            if field_name == "backend_expect_listener":
-                return bool(
-                    self.values.trees_backend_expect_listener
-                    if mode == "trees"
-                    else self.values.main_backend_expect_listener
-                )
-            return False
+            return component_policy.service_startup_value(self.values, field_name, mode)
 
         def _toggle_service_startup_value(self, field_name: str, mode: str) -> None:
-            if field_name == "startup_enable":
-                profile = self._profile_for_mode(mode)
-                profile.startup_enable = not profile.startup_enable
-                return
-            if field_name == "backend_expect_listener":
-                if mode == "trees":
-                    self.values.trees_backend_expect_listener = not self.values.trees_backend_expect_listener
-                else:
-                    self.values.main_backend_expect_listener = not self.values.main_backend_expect_listener
+            component_policy.toggle_service_startup_value(self.values, field_name, mode)
 
         def _sync_directory_inputs(self, visible_fields: tuple[tuple[str, str], ...]) -> None:
             visible_names = {field_name for field_name, _label in visible_fields}
@@ -936,60 +891,28 @@ def run_config_wizard_textual(
             return 0
 
         def _sync_startup_enable_flags(self) -> None:
-            if self._should_show_service_startup_step():
-                return
-            for profile in (self.values.main_profile, self.values.trees_profile):
-                profile.startup_enable = bool(
-                    profile.backend_enable or profile.frontend_enable or any(profile.dependencies.values())
-                )
+            component_policy.sync_startup_enable_flags(
+                self.values,
+                include_service_startup=self._should_show_service_startup_step(),
+            )
 
         def _component_value(self, mode: str, field_name: str) -> bool:
-            profile = self._profile_for_mode(mode)
-            if field_name in {"backend_enable", "frontend_enable"}:
-                return bool(getattr(profile, field_name))
-            return profile.dependency_enabled(field_name)
+            return component_policy.component_value(self.values, mode, field_name)
 
         def _set_component_value(self, mode: str, field_name: str, enabled: bool) -> None:
-            profile = self._profile_for_mode(mode)
-            if field_name in {"backend_enable", "frontend_enable"}:
-                setattr(profile, field_name, enabled)
-                return
-            profile.dependencies[field_name] = enabled
+            component_policy.set_component_value(self.values, mode, field_name, enabled)
 
         def _component_values_differ(self, field_name: str) -> bool:
-            return self._component_value("main", field_name) != self._component_value("trees", field_name)
+            return component_policy.component_values_differ(self.values, field_name)
 
         def _component_row_enabled(self, row: ComponentRow) -> bool:
-            if not row.selectable:
-                return False
-            if row.shared:
-                return self._component_value("main", row.component_id or "")
-            return self._component_value(row.mode or "main", row.component_id or "")
+            return component_policy.component_row_enabled(self.values, row)
 
         def _default_component_index(self, rows: list[ComponentRow], selected_flags: list[bool]) -> int:
-            selected_index = selectable_list_default_index(selected_flags)
-            if 0 <= selected_index < len(rows) and rows[selected_index].selectable:
-                return selected_index
-            return next((index for index, row in enumerate(rows) if row.selectable), 0)
+            return component_policy.default_component_index(rows, selected_flags)
 
         def _nearest_selectable_component_index(self, index: int, *, step: int) -> int:
-            rows = self._component_rows()
-            if not rows:
-                return 0
-            candidate = max(0, min(index, len(rows) - 1))
-            if rows[candidate].selectable:
-                return candidate
-            probe = candidate
-            while 0 <= probe + step < len(rows):
-                probe += step
-                if rows[probe].selectable:
-                    return probe
-            probe = candidate
-            while 0 <= probe - step < len(rows):
-                probe -= step
-                if rows[probe].selectable:
-                    return probe
-            return candidate
+            return component_policy.nearest_selectable_component_index(self._component_rows(), index, step=step)
 
         def _directory_label(self, field_name: str) -> str:
             return self._field_hints.directory_label(field_name)
