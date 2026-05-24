@@ -205,6 +205,11 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "run_cmux_command",
                 "send_surface_key",
             },
+            "cmux_workflow_submission_support.py": {
+                "queue_codex_workflow_steps",
+                "submit_direct_prompt_workflow_step",
+                "submit_prompt_workflow_step",
+            },
             "cmux_workspace_support.py": {
                 "ensure_workspace_id",
                 "workspace_entries_from_list_output",
