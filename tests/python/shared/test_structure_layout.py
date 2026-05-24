@@ -323,6 +323,29 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("import envctl_engine.ui.dashboard.command_support as command_support", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 900)
 
+    def test_dashboard_orchestrator_tests_are_split_by_owner(self) -> None:
+        ui_tests = REPO_ROOT / "tests" / "python" / "ui"
+        expected = [
+            "dashboard_orchestrator_test_support.py",
+            "test_dashboard_orchestrator_failure_details.py",
+            "test_dashboard_orchestrator_pr_flow.py",
+            "test_dashboard_orchestrator_pr_flow_dirty.py",
+            "test_dashboard_orchestrator_pr_flow_failure_details.py",
+            "test_dashboard_orchestrator_pr_flow_messages.py",
+            "test_dashboard_orchestrator_pr_flow_selection.py",
+            "test_dashboard_orchestrator_restart_selector.py",
+            "test_dashboard_orchestrator_review_tab.py",
+            "test_dashboard_orchestrator_stop_scope.py",
+            "test_dashboard_orchestrator_target_selection.py",
+        ]
+
+        for filename in expected:
+            with self.subTest(path=filename):
+                self.assertTrue((ui_tests / filename).is_file())
+
+        pr_flow_breadcrumb = ui_tests / "test_dashboard_orchestrator_pr_flow.py"
+        self.assertLessEqual(len(pr_flow_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
+
     def test_dashboard_rendering_parity_tests_are_split_by_owner(self) -> None:
         ui_tests = REPO_ROOT / "tests" / "python" / "ui"
         expected = [
