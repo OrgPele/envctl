@@ -420,12 +420,17 @@ class StructureLayoutTests(unittest.TestCase):
         models_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "models.py"
         defaults_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "defaults.py"
         service_parsing_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "service_parsing.py"
+        persistence_values_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "persistence_values.py"
+        persistence_rendering_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "persistence_rendering.py"
+        persistence_facade = REPO_ROOT / "python" / "envctl_engine" / "config" / "persistence.py"
         owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "dependency_env_templates.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "config" / "__init__.py"
 
         self.assertTrue(models_owner.is_file())
         self.assertTrue(defaults_owner.is_file())
         self.assertTrue(service_parsing_owner.is_file())
+        self.assertTrue(persistence_values_owner.is_file())
+        self.assertTrue(persistence_rendering_owner.is_file())
         self.assertTrue(owner.is_file())
         models_text = models_owner.read_text(encoding="utf-8")
         self.assertIn("class EngineConfig", models_text)
@@ -438,6 +443,18 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def _parse_additional_services", service_parsing_text)
         self.assertIn("def _parse_supabase_auth_users", service_parsing_text)
         self.assertIn("def _validate_additional_service_dependencies", service_parsing_text)
+        persistence_values_text = persistence_values_owner.read_text(encoding="utf-8")
+        self.assertIn("class ManagedConfigValues", persistence_values_text)
+        self.assertIn("def managed_values_from_payload", persistence_values_text)
+        self.assertIn("def validate_managed_values", persistence_values_text)
+        persistence_rendering_text = persistence_rendering_owner.read_text(encoding="utf-8")
+        self.assertIn("def render_managed_block", persistence_rendering_text)
+        self.assertIn("def merge_managed_block", persistence_rendering_text)
+        self.assertIn("def config_review_text", persistence_rendering_text)
+        persistence_facade_text = persistence_facade.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.config.persistence_values import", persistence_facade_text)
+        self.assertIn("from envctl_engine.config.persistence_rendering import", persistence_facade_text)
+        self.assertLessEqual(len(persistence_facade_text.splitlines()), 260)
         owner_text = owner.read_text(encoding="utf-8")
         self.assertIn("class DependencyEnvTemplateEntry", owner_text)
         self.assertIn("def parse_dependency_env_section", owner_text)
