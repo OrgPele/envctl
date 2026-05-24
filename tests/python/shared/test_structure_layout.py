@@ -180,6 +180,10 @@ class StructureLayoutTests(unittest.TestCase):
             "test_plan_agent_launch_cmux_review.py",
             "test_plan_agent_launch_cmux_workspace.py",
             "test_plan_agent_launch_omx.py",
+            "test_plan_agent_launch_omx_attach.py",
+            "test_plan_agent_launch_omx_config.py",
+            "test_plan_agent_launch_omx_spawn.py",
+            "test_plan_agent_launch_omx_workflow.py",
             "test_plan_agent_launch_options.py",
             "test_plan_agent_launch_readiness.py",
             "test_plan_agent_launch_superset.py",
@@ -195,6 +199,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
         cmux_breadcrumb = planning_tests / "test_plan_agent_launch_cmux.py"
         self.assertLessEqual(len(cmux_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
+        omx_breadcrumb = planning_tests / "test_plan_agent_launch_omx.py"
+        self.assertLessEqual(len(omx_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
 
     def test_planning_worktree_setup_tests_are_split_by_owner(self) -> None:
         planning_tests = REPO_ROOT / "tests" / "python" / "planning"
