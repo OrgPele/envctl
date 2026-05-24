@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -12,6 +11,7 @@ from typing import Mapping
 import envctl_engine.actions.action_commit_support as commit_support
 import envctl_engine.actions.action_git_state_support as git_state_support
 import envctl_engine.actions.action_pr_message_support as pr_message_support
+import envctl_engine.actions.action_pr_workflow_support as pr_workflow_support
 import envctl_engine.actions.action_review_workflow_support as review_workflow_support
 import envctl_engine.actions.action_review_plan_support as review_plan_support
 import envctl_engine.actions.action_ship_support as ship_support
@@ -216,68 +216,22 @@ _write_pr_body_file = pr_message_support.write_pr_body_file
 
 
 def run_pr_action(context: ActionProjectContext) -> int:
-    git_root = resolve_git_root(context.project_root, context.repo_root)
-    if shutil.which("git") is None:
-        print("git is required for pr action")
-        return 1
-
-    head_branch = _git_output(git_root, ["rev-parse", "--abbrev-ref", "HEAD"]).strip() or "unknown"
-    if head_branch in {"HEAD", "unknown"}:
-        print(f"Skipping {context.project_name} (detached HEAD).")
-        return 0
-    base_branch = _resolve_pr_base_branch(context, git_root)
-
-    existing_url = existing_pr_url(git_root, head_branch)
-    if existing_url:
-        print(f"PR already exists: {existing_url}")
-        return 0
-
-    dirty_report = probe_dirty_worktree(context.project_root, context.repo_root, project_name=context.project_name)
-    if dirty_report.dirty:
-        print(f"Dirty worktree detected for {context.project_name}; committing and pushing before PR creation.")
-        commit_code = run_commit_action(context)
-        if commit_code != 0:
-            return commit_code
-
-    helper = context.repo_root / "utils" / "create-pr.sh"
-    if helper.is_file() and os.access(helper, os.X_OK):
-        command = [str(helper)]
-        if base_branch:
-            command.extend(["--base", base_branch])
-        command.extend(["--head", head_branch, "--workdir", str(git_root)])
-        created = subprocess.run(
-            command,
-            cwd=str(context.repo_root),
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        _print_process_output(created)
-        if created.returncode != 0:
-            return 1
-        return 0
-
-    gh_path = shutil.which("gh")
-    if gh_path is None:
-        print("gh is required for pr action when utils/create-pr.sh is unavailable")
-        return 1
-    title = _pr_title(context, git_root, head_branch)
-    body = _pr_body(context, git_root, head_branch, base_branch)
-    body_file = _write_pr_body_file(body)
-    args = [gh_path, "pr", "create", "--title", title, "--body-file", str(body_file), "--head", head_branch]
-    if base_branch:
-        args.extend(["--base", base_branch])
-    try:
-        created = subprocess.run(args, cwd=str(git_root), text=True, capture_output=True, check=False)
-        _print_process_output(created)
-        if created.returncode != 0:
-            return 1
-        return 0
-    finally:
-        try:
-            body_file.unlink()
-        except OSError:
-            pass
+    return pr_workflow_support.run_pr_workflow(
+        context,
+        resolve_git_root_fn=resolve_git_root,
+        git_available=shutil.which("git") is not None,
+        git_output_fn=_git_output,
+        resolve_base_branch_fn=_resolve_pr_base_branch,
+        existing_pr_url_fn=existing_pr_url,
+        probe_dirty_worktree_fn=_probe_dirty_worktree_from_pr_workflow,
+        run_commit_action_fn=run_commit_action,
+        pr_title_fn=_pr_title,
+        pr_body_fn=_pr_body,
+        write_pr_body_file_fn=_write_pr_body_file,
+        print_process_output_fn=_print_process_output,
+        gh_path=shutil.which("gh"),
+        run_process_fn=subprocess.run,
+    )
 
 
 def run_ship_action(context: ActionProjectContext) -> int:
@@ -345,6 +299,14 @@ def probe_dirty_worktree(project_root: Path, repo_root: Path, *, project_name: s
         project_name=project_name,
         git_output=_git_output,
     )
+
+
+def _probe_dirty_worktree_from_pr_workflow(
+    project_root: Path,
+    repo_root: Path,
+    project_name: str,
+) -> DirtyWorktreeReport:
+    return probe_dirty_worktree(project_root, repo_root, project_name=project_name)
 
 
 def _classify_dirty_porcelain(status_output: str) -> tuple[bool, bool, bool]:
