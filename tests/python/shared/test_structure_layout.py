@@ -264,6 +264,9 @@ class StructureLayoutTests(unittest.TestCase):
         )
         git_state_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_git_state_support.py"
         ship_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_support.py"
+        ship_conflict_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_conflict_support.py"
+        ship_check_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_check_support.py"
+        ship_result_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_result_support.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_domain.py"
 
         self.assertTrue(commit_owner.is_file())
@@ -276,6 +279,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(review_iteration_owner.is_file())
         self.assertTrue(git_state_owner.is_file())
         self.assertTrue(ship_owner.is_file())
+        self.assertTrue(ship_conflict_owner.is_file())
+        self.assertTrue(ship_check_owner.is_file())
+        self.assertTrue(ship_result_owner.is_file())
         commit_text = commit_owner.read_text(encoding="utf-8")
         self.assertIn("def run_commit_workflow", commit_text)
         self.assertIn("def resolve_commit_message", commit_text)
@@ -297,8 +303,14 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def detect_default_branch", git_state_text)
         self.assertIn("def existing_pr_url", git_state_text)
         ship_text = ship_owner.read_text(encoding="utf-8")
-        self.assertIn("ship_payload", ship_text)
+        self.assertIn("action_ship_conflict_support", ship_text)
+        self.assertIn("action_ship_check_support", ship_text)
+        self.assertIn("action_ship_result_support", ship_text)
         self.assertIn("def run_ship_workflow", ship_text)
+        self.assertIn("predicted_merge_conflict_report", ship_conflict_owner.read_text(encoding="utf-8"))
+        self.assertIn("normalize_github_pr_checks", ship_check_owner.read_text(encoding="utf-8"))
+        self.assertIn("ship_payload", ship_result_owner.read_text(encoding="utf-8"))
+        self.assertLessEqual(len(ship_text.splitlines()), 260)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("action_commit_support", facade_text)
         self.assertIn("action_protected_artifacts", facade_text)
