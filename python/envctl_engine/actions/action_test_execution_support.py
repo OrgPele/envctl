@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from envctl_engine.actions.actions_test import ensure_repo_local_test_prereqs
+from envctl_engine.actions.action_target_support import action_target_names
 from envctl_engine.actions.action_test_support_models import TestExecutionSpec, TestTargetContext
 
 
@@ -46,7 +47,7 @@ def build_test_action_execution_plan(orchestrator: Any, route: Any, targets: lis
     run_all = bool(route.flags.get("all"))
     untested = bool(route.flags.get("untested"))
     failed_only = bool(route.flags.get("failed"))
-    project_names = [str(getattr(target, "name")) for target in targets if hasattr(target, "name")]
+    project_names = action_target_names(targets)
     orchestrator._emit_status(
         orchestrator._test_scope_status(project_names, run_all=run_all, untested=untested, failed=failed_only)
     )

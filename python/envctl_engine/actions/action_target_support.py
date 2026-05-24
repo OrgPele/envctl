@@ -24,17 +24,60 @@ class ActionTargetContext:
     target_obj: object
 
 
+@dataclass(frozen=True)
+class ActionTargetIdentity:
+    name: str
+    root: Path
+    target_obj: object
+
+
+def action_target_identity(target: object, *, fallback_name_from_root: bool = False) -> ActionTargetIdentity | None:
+    root_raw = str(getattr(target, "root", "") or "").strip()
+    if not root_raw:
+        return None
+    root = Path(root_raw)
+    name = action_target_name(target)
+    if not name and fallback_name_from_root:
+        name = root.name
+    if not name:
+        return None
+    return ActionTargetIdentity(name=name, root=root, target_obj=target)
+
+
+def action_target_identities(
+    targets: Sequence[object], *, fallback_name_from_root: bool = False
+) -> list[ActionTargetIdentity]:
+    identities: list[ActionTargetIdentity] = []
+    for target in targets:
+        identity = action_target_identity(target, fallback_name_from_root=fallback_name_from_root)
+        if identity is not None:
+            identities.append(identity)
+    return identities
+
+
+def action_target_name(target: object) -> str:
+    return str(getattr(target, "name", "") or "").strip()
+
+
+def action_target_names(targets: Sequence[object]) -> list[str]:
+    return [name for target in targets if (name := action_target_name(target))]
+
+
+def action_target_names_with_roots(targets: Sequence[object]) -> list[str]:
+    return [identity.name for identity in action_target_identities(targets)]
+
+
 def build_action_target_contexts(targets: Sequence[object]) -> list[ActionTargetContext]:
     total = max(len(targets), 1)
     return [
         ActionTargetContext(
-            name=str(getattr(target, "name")),
-            root=Path(str(getattr(target, "root"))),
+            name=identity.name,
+            root=identity.root,
             index=index,
             total=total,
-            target_obj=target,
+            target_obj=identity.target_obj,
         )
-        for index, target in enumerate(targets, start=1)
+        for index, identity in enumerate(action_target_identities(targets), start=1)
     ]
 
 

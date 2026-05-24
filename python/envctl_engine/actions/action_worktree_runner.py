@@ -7,6 +7,7 @@ import tempfile
 from typing import Any, Callable
 
 from envctl_engine.actions.actions_worktree import delete_worktree_path
+from envctl_engine.actions.action_target_support import action_target_identities, action_target_identity
 from envctl_engine.planning import discover_tree_projects
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.launcher_support import main_repo_root_for_linked_worktree
@@ -39,7 +40,8 @@ def run_delete_worktree_action(orchestrator: Any, route: Route) -> int:
 
     dry_run = bool(route.flags.get("dry_run"))
     failures = 0
-    total = max(len(targets), 1)
+    target_identities = action_target_identities(targets, fallback_name_from_root=True)
+    total = max(len(target_identities), 1)
     spinner_message = (
         "Blasting selected worktrees..." if command_name == "blast-worktree" else "Deleting selected worktrees..."
     )
@@ -61,9 +63,9 @@ def run_delete_worktree_action(orchestrator: Any, route: Route) -> int:
                 state="start",
                 message=spinner_message,
             )
-        for index, target in enumerate(targets, start=1):
-            target_root = Path(str(getattr(target, "root")))
-            target_name = str(getattr(target, "name", target_root.name))
+        for index, identity in enumerate(target_identities, start=1):
+            target_root = identity.root
+            target_name = identity.name
             progress = f"Deleting worktree {target_name} ({index}/{total})..."
             orchestrator._emit_status(progress)
             if spinner_policy.enabled:
@@ -138,9 +140,12 @@ def run_self_destruct_worktree_action(orchestrator: Any, route: Route) -> int:
     if len(targets) != 1:
         print("self-destruct-worktree requires exactly one current worktree target.")
         return 1
-    target = targets[0]
-    target_root = Path(str(getattr(target, "root"))).resolve()
-    target_name = str(getattr(target, "name", target_root.name))
+    identity = action_target_identity(targets[0], fallback_name_from_root=True)
+    if identity is None:
+        print("self-destruct-worktree requires a valid current worktree target.")
+        return 1
+    target_root = identity.root.resolve()
+    target_name = identity.name
     cwd = Path.cwd().resolve()
     if target_root != cwd:
         print("self-destruct-worktree must be launched from the worktree root.")

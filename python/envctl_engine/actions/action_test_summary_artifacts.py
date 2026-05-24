@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from envctl_engine.shared.artifact_names import project_artifact_dir
+from envctl_engine.actions.action_target_support import action_target_identities
 from envctl_engine.actions.action_test_summary_collection import (
     collect_failed_test_manifest_entries,
     collect_failed_tests,
@@ -104,14 +105,7 @@ def new_test_results_run_dir_path(runtime: object, run_id: str) -> Path:
 
 
 def _project_roots_from_targets(targets: list[object]) -> dict[str, Path]:
-    project_roots: dict[str, Path] = {}
-    for target in targets:
-        name = str(getattr(target, "name", "")).strip()
-        root_raw = str(getattr(target, "root", "")).strip()
-        if not name or not root_raw:
-            continue
-        project_roots[name] = Path(root_raw)
-    return project_roots
+    return {identity.name: identity.root for identity in action_target_identities(targets)}
 
 
 def _project_roots_from_outcomes(outcomes: list[dict[str, object]]) -> dict[str, Path]:

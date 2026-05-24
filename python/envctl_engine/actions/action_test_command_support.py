@@ -14,28 +14,22 @@ from envctl_engine.actions.actions_test import (
     is_pytest_command,
     is_unittest_command,
 )
+from envctl_engine.actions.action_target_support import action_target_identities
 from envctl_engine.actions.action_test_support_models import TestExecutionSpec, TestTargetContext
 from envctl_engine.shared.node_tooling import detect_python_bin
 
 
 def build_test_target_contexts(targets: Sequence[object], *, repo_root: Path) -> list[TestTargetContext]:
-    contexts: list[TestTargetContext] = []
-    if targets:
-        for target in targets:
-            name = str(getattr(target, "name", "")).strip()
-            root_raw = str(getattr(target, "root", "")).strip()
-            if not root_raw:
-                continue
-            project_name = name or Path(root_raw).name
-            contexts.append(
-                TestTargetContext(
-                    project_name=project_name,
-                    project_root=Path(root_raw),
-                    target_obj=target,
-                )
-            )
-        if contexts:
-            return contexts
+    contexts = [
+        TestTargetContext(
+            project_name=identity.name,
+            project_root=identity.root,
+            target_obj=identity.target_obj,
+        )
+        for identity in action_target_identities(targets, fallback_name_from_root=True)
+    ]
+    if contexts:
+        return contexts
     return [
         TestTargetContext(
             project_name="Main",

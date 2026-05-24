@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from envctl_engine.actions.actions_analysis import default_migrate_command
-from envctl_engine.actions.action_target_support import ActionCommandResolution
+from envctl_engine.actions.action_target_support import ActionCommandResolution, action_target_names
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.actions.action_migrate_support import (
@@ -136,11 +136,7 @@ def run_migrate_action(
         print_noninteractive_successes=False,
     )
     if not interactive_command:
-        target_names = [
-            str(getattr(target, "name", "")).strip()
-            for target in targets
-            if str(getattr(target, "name", "")).strip()
-        ]
+        target_names = action_target_names(targets)
         set_deferred_output(
             lambda: print_result_summary(
                 mode=route.mode,

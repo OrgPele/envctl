@@ -11,6 +11,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.actions.action_target_support import (  # noqa: E402
     ActionCommandResolution,
+    action_target_identities,
+    action_target_names,
+    action_target_names_with_roots,
     execute_targeted_action,
     emit_action_output,
     projects_for_services,
@@ -33,6 +36,20 @@ class _Target:
 
 
 class ActionTargetSupportTests(unittest.TestCase):
+    def test_action_target_identities_normalize_name_root_and_skip_invalid_targets(self) -> None:
+        targets = [
+            SimpleNamespace(name=" feature-a-1 ", root="/repo/trees/feature-a/1"),
+            SimpleNamespace(name="", root="/repo/trees/feature-b/1"),
+            SimpleNamespace(name="missing-root", root=""),
+        ]
+
+        identities = action_target_identities(targets, fallback_name_from_root=True)
+
+        self.assertEqual([identity.name for identity in identities], ["feature-a-1", "1"])
+        self.assertEqual([identity.root for identity in identities], [Path("/repo/trees/feature-a/1"), Path("/repo/trees/feature-b/1")])
+        self.assertEqual(action_target_names(targets), ["feature-a-1", "missing-root"])
+        self.assertEqual(action_target_names_with_roots(targets), ["feature-a-1"])
+
     def test_projects_for_services_resolves_from_state_and_deduplicates(self) -> None:
         state = SimpleNamespace(
             services={

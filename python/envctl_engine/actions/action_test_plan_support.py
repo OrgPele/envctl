@@ -5,6 +5,7 @@ from typing import Callable, Mapping
 
 from envctl_engine.actions.action_command_support import service_types_from_route_services
 from envctl_engine.actions.action_failed_rerun_support import build_failed_test_execution_specs_from_state
+from envctl_engine.actions.action_target_support import action_target_identities, action_target_names
 from envctl_engine.actions.action_test_service_support import additional_service_test_execution_specs
 from envctl_engine.actions.action_test_support import TestExecutionSpec, TestTargetContext, build_test_execution_specs
 from envctl_engine.actions.action_test_support import is_backend_only_selection
@@ -17,14 +18,14 @@ def run_test_plan_action_for_targets(orchestrator: object, route: Route, targets
     json_output = bool(route.flags.get("json"))
     dry_run = bool(route.flags.get("dry_run"))
     runtime = getattr(orchestrator, "runtime")
-    for target in targets:
+    for identity in action_target_identities(targets):
         context = type(
             "TestPlanActionContext",
             (),
             {
                 "repo_root": runtime.config.base_dir,
-                "project_root": Path(str(getattr(target, "root"))).resolve(),
-                "project_name": str(getattr(target, "name")),
+                "project_root": identity.root.resolve(),
+                "project_name": identity.name,
             },
         )()
         code = run_test_plan_action(context, json_output=json_output, dry_run=dry_run)
@@ -205,8 +206,7 @@ def is_legacy_tree_test_script(command: list[str]) -> bool:
 
 
 def command_start_status(command_name: str, targets: list[object]) -> str:
-    target_names = [str(getattr(target, "name", "")).strip() for target in targets]
-    target_names = [name for name in target_names if name]
+    target_names = action_target_names(targets)
     if not target_names:
         return f"Running {command_name}..."
     if len(target_names) == 1:
