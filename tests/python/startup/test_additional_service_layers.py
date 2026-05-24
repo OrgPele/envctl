@@ -4,10 +4,18 @@ import unittest
 from types import SimpleNamespace
 
 from envctl_engine.config import AppServiceConfig
-from envctl_engine.startup.service_execution import _project_backend_cors_origin, ordered_service_layers
+from envctl_engine.startup.service_execution import (
+    _project_backend_cors_origin as facade_project_backend_cors_origin,
+    ordered_service_layers as facade_ordered_service_layers,
+)
+from envctl_engine.startup.service_execution_policy import _project_backend_cors_origin, ordered_service_layers
 
 
 class AdditionalServiceLayerTests(unittest.TestCase):
+    def test_service_execution_keeps_policy_compatibility_exports(self) -> None:
+        self.assertIs(facade_ordered_service_layers, ordered_service_layers)
+        self.assertIs(facade_project_backend_cors_origin, _project_backend_cors_origin)
+
     def test_project_backend_cors_origin_preserves_existing_and_adds_loopback_variants(self) -> None:
         runtime = SimpleNamespace(
             env={},
