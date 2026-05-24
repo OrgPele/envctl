@@ -4,7 +4,7 @@ import sys
 from collections import OrderedDict
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable
 
 from envctl_engine.actions.actions_worktree import delete_worktree_path
 from envctl_engine.planning.worktree_creation_commands import (
@@ -123,17 +123,13 @@ from envctl_engine.planning.plan_agent.models import (
     PlanSelectionResult,
     PlanWorktreeSyncResult,
 )
+from envctl_engine.planning.protocols import ProjectContextLike
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.planning import (
     discover_tree_projects,
 )
 from envctl_engine.ui.spinner_service import SpinnerPolicy
 from envctl_engine.ui.textual.screens.planning_selector import select_planning_counts_textual
-
-
-class ProjectContextLike(Protocol):
-    name: str
-    root: Path
 
 
 def _worktree_spinner_policy(self: Any, *, op_id: str) -> SpinnerPolicy:

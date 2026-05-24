@@ -1041,11 +1041,13 @@ class StructureLayoutTests(unittest.TestCase):
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_path_support.py"
         menu_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_menu_terminal_support.py"
         spinner_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_spinner_support.py"
+        protocols = REPO_ROOT / "python" / "envctl_engine" / "planning" / "protocols.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
 
         self.assertTrue(owner.is_file())
         self.assertTrue(menu_owner.is_file())
         self.assertTrue(spinner_owner.is_file())
+        self.assertTrue(protocols.is_file())
         owner_text = owner.read_text(encoding="utf-8")
         menu_owner_text = menu_owner.read_text(encoding="utf-8")
         spinner_owner_text = spinner_owner.read_text(encoding="utf-8")
@@ -1062,6 +1064,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.planning.worktree_path_support import", facade_text)
         self.assertIn("from envctl_engine.planning.worktree_menu_terminal_support import", facade_text)
         self.assertIn("from envctl_engine.planning.worktree_spinner_support import", facade_text)
+        self.assertIn("from envctl_engine.planning.protocols import ProjectContextLike", facade_text)
+        self.assertNotIn("class ProjectContextLike(Protocol)", facade_text)
         self.assertNotIn("return _coerce_setup_entries_impl(flags=route.flags, flag_name=flag_name, value_name=value_name)\n    return _coerce_setup_entries_impl", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 920)
 
@@ -1182,13 +1186,17 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_worktree_plan_project_selection_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_plan_project_selection.py"
+        protocols = REPO_ROOT / "python" / "envctl_engine" / "planning" / "protocols.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(protocols.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_plan_project_selection import",
             facade.read_text(encoding="utf-8"),
         )
+        self.assertIn("from envctl_engine.planning.protocols import ProjectContextLike", owner.read_text(encoding="utf-8"))
+        self.assertNotIn("class ProjectContextLike(Protocol)", owner.read_text(encoding="utf-8"))
 
     def test_worktree_prompt_selection_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_prompt_selection.py"
@@ -1222,13 +1230,17 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_worktree_setup_coordinator_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_setup_coordinator.py"
+        protocols = REPO_ROOT / "python" / "envctl_engine" / "planning" / "protocols.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(protocols.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_setup_coordinator import",
             facade.read_text(encoding="utf-8"),
         )
+        self.assertIn("from envctl_engine.planning.protocols import ProjectContextLike", owner.read_text(encoding="utf-8"))
+        self.assertNotIn("class ProjectContextLike(Protocol)", owner.read_text(encoding="utf-8"))
 
     def test_worktree_sync_deletion_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_deletion.py"

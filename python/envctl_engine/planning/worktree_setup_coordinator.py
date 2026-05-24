@@ -2,16 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
+from envctl_engine.planning.protocols import ProjectContextLike
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import SpinnerPolicy, emit_spinner_policy, resolve_spinner_policy
-
-
-class ProjectContextLike(Protocol):
-    name: str
-    root: Path
 
 
 RawProject = tuple[str, Path]
