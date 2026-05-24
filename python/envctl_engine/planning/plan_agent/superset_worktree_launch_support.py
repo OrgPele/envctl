@@ -10,6 +10,7 @@ from envctl_engine.planning.plan_agent.models import (
     PlanAgentLaunchOutcome,
     _PlanAgentWorkflow,
 )
+from envctl_engine.runtime.runtime_context import resolve_process_runtime
 
 
 SupersetInitialPromptFn = Callable[..., tuple[str, str | None]]
@@ -131,7 +132,7 @@ def launch_single_superset_worktree(
         command_kind=command[1] if len(command) > 1 else "superset",
         **event_payload,
     )
-    result = runtime.process_runner.run(
+    result = resolve_process_runtime(runtime).run(
         command,
         cwd=Path(worktree.root),
         env=getattr(runtime, "env", {}),

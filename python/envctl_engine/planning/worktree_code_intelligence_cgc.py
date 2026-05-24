@@ -11,6 +11,7 @@ from envctl_engine.planning.worktree_code_intelligence_models import (
     WORKTREE_CGC_INDEX_MODE_AUTO,
     WORKTREE_CGC_INDEX_MODE_ENABLED,
 )
+from envctl_engine.runtime.runtime_context import resolve_process_runtime
 
 
 def short_command_output(value: object, *, limit: int = 500) -> str:
@@ -26,6 +27,7 @@ def cgc_context_already_exists(result: object) -> bool:
 
 
 def reuse_or_index_worktree_with_cgc(runtime: Any, *, target: Path, context: str) -> dict[str, object]:
+    process_runtime = resolve_process_runtime(runtime)
     source_context = source_cgc_context(runtime)
     metadata: dict[str, object] = {
         "cgc_index_mode": WORKTREE_CGC_INDEX_MODE_AUTO,
@@ -50,7 +52,7 @@ def reuse_or_index_worktree_with_cgc(runtime: Any, *, target: Path, context: str
     assert isinstance(commands, list)
     list_command = ["cgc", "list", "--context", source_context]
     try:
-        result = runtime.process_runner.run(
+        result = process_runtime.run(
             list_command,
             cwd=runtime.config.base_dir,
             env=runtime._command_env(port=0),
@@ -111,6 +113,7 @@ def reuse_or_index_worktree_with_cgc(runtime: Any, *, target: Path, context: str
 
 
 def index_worktree_with_cgc(runtime: Any, *, target: Path, context: str) -> dict[str, object]:
+    process_runtime = resolve_process_runtime(runtime)
     database = worktree_cgc_database(runtime)
     metadata: dict[str, object] = {
         "cgc_index_mode": WORKTREE_CGC_INDEX_MODE_ENABLED,
@@ -133,7 +136,7 @@ def index_worktree_with_cgc(runtime: Any, *, target: Path, context: str) -> dict
     commands = metadata["cgc_commands"]
     assert isinstance(commands, list)
     try:
-        context_result = runtime.process_runner.run(
+        context_result = process_runtime.run(
             context_command,
             cwd=target,
             env=runtime._command_env(port=0),
@@ -183,7 +186,7 @@ def index_worktree_with_cgc(runtime: Any, *, target: Path, context: str) -> dict
 
     index_command = ["cgc", "index", str(target), "--context", context]
     try:
-        result = runtime.process_runner.run(
+        result = process_runtime.run(
             index_command,
             cwd=target,
             env=runtime._command_env(port=0),

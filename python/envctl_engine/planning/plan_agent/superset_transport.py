@@ -27,6 +27,7 @@ from envctl_engine.planning.plan_agent.workflow import (
     _tab_title_for_worktree,
     _workflow_step_prompt_text,
 )
+from envctl_engine.runtime.runtime_context import resolve_process_runtime
 
 
 _SUPERSET_CODEX_GOAL_AGENT_ID = "0e19b1f7-51b4-45a1-84c1-0d9c5d6dbb5f"
@@ -401,7 +402,7 @@ def _superset_host_agent_db(home: Path) -> Path | None:
 
 
 def _git_branch_name(runtime: Any, cwd: Path) -> tuple[str, str | None]:
-    result = runtime.process_runner.run(
+    result = resolve_process_runtime(runtime).run(
         ["git", "-C", str(cwd), "branch", "--show-current"],
         cwd=cwd,
         env=getattr(runtime, "env", {}),
@@ -435,7 +436,7 @@ def _open_superset_workspace(
         workspace_id=workspace_id,
         command_kind="open",
     )
-    result = runtime.process_runner.run(
+    result = resolve_process_runtime(runtime).run(
         command,
         cwd=Path(worktree.root),
         env=getattr(runtime, "env", {}),

@@ -125,6 +125,7 @@ from envctl_engine.planning.plan_agent.models import (
 )
 from envctl_engine.planning.protocols import ProjectContextLike
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.runtime_context import resolve_process_runtime
 from envctl_engine.planning import (
     discover_tree_projects,
 )
@@ -327,7 +328,7 @@ def _apply_single_setup_entry(
             message=message,
         ),
         repo_root=self.config.base_dir,
-        process_runner=self.process_runner,
+        process_runner=resolve_process_runtime(self),
         setup_worktree_existing=setup_worktree_existing,
         setup_worktree_recreate=setup_worktree_recreate,
     )
@@ -691,7 +692,7 @@ def _run_worktree_add(self: Any, *, feature: str, iteration: str, target: Path, 
         git_hooks_disabled=_worktree_git_hooks_disabled(self),
         branch_exists=lambda branch_name: _worktree_branch_exists(self, branch_name=branch_name),
         start_point=lambda: _worktree_start_point(self),
-        run=self.process_runner.run,
+        run=resolve_process_runtime(self).run,
     )
 
 
@@ -806,7 +807,7 @@ def _delete_feature_worktrees(
         delete_worktree=delete_worktree_path,
         repo_root=self.config.base_dir,
         trees_root_for_worktree=self._trees_root_for_worktree,
-        process_runner=self.process_runner,
+        process_runner=resolve_process_runtime(self),
         emit=self._emit,
     )
 

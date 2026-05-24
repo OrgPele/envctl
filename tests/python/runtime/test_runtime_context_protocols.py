@@ -167,6 +167,14 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
             REPO_ROOT / "python/envctl_engine/actions/project_action_support.py",
             REPO_ROOT / "python/envctl_engine/actions/action_migrate_execution_support.py",
             REPO_ROOT / "python/envctl_engine/actions/action_worktree_runner.py",
+            REPO_ROOT / "python/envctl_engine/planning/worktree_domain.py",
+            REPO_ROOT / "python/envctl_engine/planning/worktree_provenance.py",
+            REPO_ROOT / "python/envctl_engine/planning/worktree_code_intelligence_cgc.py",
+            REPO_ROOT / "python/envctl_engine/planning/plan_agent/cmux_surface_support.py",
+            REPO_ROOT / "python/envctl_engine/planning/plan_agent/cmux_workspace_support.py",
+            REPO_ROOT / "python/envctl_engine/planning/plan_agent/superset_desktop_support.py",
+            REPO_ROOT / "python/envctl_engine/planning/plan_agent/superset_transport.py",
+            REPO_ROOT / "python/envctl_engine/planning/plan_agent/superset_worktree_launch_support.py",
         ]
         for support_path in support_paths:
             raw = support_path.read_text(encoding="utf-8")
@@ -174,6 +182,7 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
             self.assertNotIn('getattr(runtime, "state_repository"', raw)
             self.assertNotIn('getattr(runtime, "process_runner"', raw)
             self.assertNotIn('getattr(self.runtime, "process_runner"', raw)
+            self.assertNotIn("self.process_runner", raw)
             self.assertNotIn("runtime.process_runner", raw)
             self.assertNotIn("raw_runtime.process_runner", raw)
             self.assertNotIn("runtime.state_repository.save_resume_state", raw)
