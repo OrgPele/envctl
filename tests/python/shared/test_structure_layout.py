@@ -198,6 +198,7 @@ class StructureLayoutTests(unittest.TestCase):
             "test_plan_agent_launch_options.py",
             "test_plan_agent_launch_readiness.py",
             "test_plan_agent_launch_superset.py",
+            "test_plan_agent_launch_superset_desktop.py",
             "test_plan_agent_launch_tmux.py",
             "test_plan_agent_launch_workflow.py",
             "test_plan_agent_launch_workflow_build.py",

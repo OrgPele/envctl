@@ -50,6 +50,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "omx_transport.py",
             "omx_validation_support.py",
             "recovery.py",
+            "superset_desktop_support.py",
             "superset_transport.py",
             "terminal_screen.py",
             "tmux_transport.py",
@@ -294,6 +295,16 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             },
             "superset_transport.py": {
                 "_launch_plan_agent_superset_workspaces",
+            },
+            "superset_desktop_support.py": {
+                "bridge_superset_desktop_workspace",
+                "parse_superset_json_output",
+                "print_superset_outcome_details",
+                "restart_superset_desktop",
+                "superset_completed_process_error_text",
+                "verify_superset_desktop_workspace",
+                "workspace_id_from_superset_payload",
+                "workspace_payload_from_superset_payload",
             },
             "recovery.py": {
                 "plan_agent_native_recovery_command",
