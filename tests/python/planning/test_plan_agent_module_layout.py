@@ -346,6 +346,9 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "superset_transport.py": {
                 "_launch_plan_agent_superset_workspaces",
             },
+            "superset_worktree_launch_support.py": {
+                "launch_single_superset_worktree",
+            },
             "superset_desktop_support.py": {
                 "bridge_superset_desktop_workspace",
                 "parse_superset_json_output",

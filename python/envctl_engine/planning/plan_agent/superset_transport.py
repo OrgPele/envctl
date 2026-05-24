@@ -20,6 +20,7 @@ from envctl_engine.planning.plan_agent.superset_desktop_support import (
     verify_superset_desktop_workspace,
     workspace_id_from_superset_payload,
 )
+import envctl_engine.planning.plan_agent.superset_worktree_launch_support as superset_worktree_launch_support
 from envctl_engine.planning.plan_agent.workflow import (
     _codex_goal_text_for_worktree,
     _emit_codex_goal_event,
@@ -244,183 +245,25 @@ def _launch_single_superset_worktree(
     worktree: CreatedPlanWorktree,
     base_payload: dict[str, object],
 ) -> PlanAgentLaunchOutcome:
-    prompt, prompt_error = _superset_initial_prompt(
+    return superset_worktree_launch_support.launch_single_superset_worktree(
         runtime,
         launch_config=launch_config,
         workflow=workflow,
         worktree=worktree,
+        base_payload=base_payload,
+        superset_initial_prompt_fn=_superset_initial_prompt,
+        superset_agent_and_prompt_fn=_superset_agent_and_prompt,
+        git_branch_name_fn=_git_branch_name,
+        superset_workspace_name_fn=_superset_workspace_name,
+        parse_superset_json_output_fn=parse_superset_json_output,
+        workspace_id_from_superset_payload_fn=workspace_id_from_superset_payload,
+        bridge_superset_desktop_workspace_fn=bridge_superset_desktop_workspace,
+        open_superset_workspace_fn=_open_superset_workspace,
+        verify_superset_desktop_workspace_fn=verify_superset_desktop_workspace,
+        restart_superset_desktop_fn=restart_superset_desktop,
+        completed_process_error_text_fn=superset_completed_process_error_text,
+        persist_runtime_events_snapshot_fn=_persist_runtime_events_snapshot,
     )
-    if prompt_error:
-        runtime._emit(
-            "planning.agent_launch.failed",
-            reason="prompt_resolution_failed",
-            transport="superset",
-            worktree=worktree.name,
-            error=prompt_error,
-            **base_payload,
-        )
-        return PlanAgentLaunchOutcome(worktree.name, worktree.root, None, "failed", prompt_error)
-    agent, prompt = _superset_agent_and_prompt(
-        runtime,
-        launch_config=launch_config,
-        workflow=workflow,
-        worktree=worktree,
-        prompt=prompt,
-    )
-
-    if launch_config.superset_workspace:
-        command = [
-            "superset",
-            "agents",
-            "run",
-            "--workspace",
-            launch_config.superset_workspace,
-            "--agent",
-            agent,
-            "--prompt",
-            prompt,
-            "--json",
-        ]
-        event_name = "planning.agent_launch.superset_agent_run"
-        event_payload = {
-            "workspace_id": launch_config.superset_workspace,
-            "project": launch_config.superset_project or None,
-        }
-    else:
-        branch, branch_warning = _git_branch_name(runtime, worktree.root)
-        if branch_warning:
-            runtime._emit(
-                "planning.agent_launch.superset_branch_fallback",
-                transport="superset",
-                worktree=worktree.name,
-                reason=branch_warning,
-                fallback=worktree.name,
-            )
-        command = ["superset", "workspaces", "create"]
-        if launch_config.superset_host:
-            command.extend(["--host", launch_config.superset_host])
-        elif launch_config.superset_local:
-            command.append("--local")
-        # Superset's public CLI accepts project and branch, but not an explicit worktree path.
-        command.extend(
-            [
-                "--project",
-                launch_config.superset_project,
-                "--name",
-                _superset_workspace_name(worktree),
-                "--branch",
-                branch or worktree.name,
-                "--agent",
-                agent,
-                "--prompt",
-                prompt,
-                "--json",
-            ]
-        )
-        event_name = "planning.agent_launch.superset_workspace_create"
-        event_payload = {
-            "workspace_id": None,
-            "project": launch_config.superset_project,
-        }
-
-    runtime._emit(
-        event_name,
-        transport="superset",
-        worktree=worktree.name,
-        command_kind=command[1] if len(command) > 1 else "superset",
-        **event_payload,
-    )
-    result = runtime.process_runner.run(
-        command,
-        cwd=Path(worktree.root),
-        env=getattr(runtime, "env", {}),
-        timeout=60.0,
-    )
-    if getattr(result, "returncode", 1) != 0:
-        error = superset_completed_process_error_text(result)
-        runtime._emit(
-            "planning.agent_launch.failed",
-            reason="superset_command_failed",
-            transport="superset",
-            worktree=worktree.name,
-            error=error,
-            **base_payload,
-        )
-        return PlanAgentLaunchOutcome(worktree.name, worktree.root, None, "failed", error)
-
-    parsed = parse_superset_json_output(str(getattr(result, "stdout", "") or ""))
-    if parsed is None:
-        runtime._emit(
-            "planning.agent_launch.superset_debug_output",
-            transport="superset",
-            worktree=worktree.name,
-            stdout=str(getattr(result, "stdout", "") or "").strip(),
-        )
-        workspace_id = launch_config.superset_workspace or None
-    else:
-        workspace_id = workspace_id_from_superset_payload(parsed) or launch_config.superset_workspace or None
-        runtime._emit(
-            "planning.agent_launch.superset_result",
-            transport="superset",
-            worktree=worktree.name,
-            workspace_id=workspace_id,
-            project=launch_config.superset_project or None,
-        )
-
-    bridge_applied = False
-    if workspace_id and parsed is not None:
-        bridge_applied = bridge_superset_desktop_workspace(
-            runtime,
-            launch_config=launch_config,
-            worktree=worktree,
-            workspace_id=workspace_id,
-            payload=parsed,
-        )
-
-    outcome_reason = None
-    if launch_config.superset_open and workspace_id:
-        open_error = _open_superset_workspace(
-            runtime,
-            launch_config=launch_config,
-            worktree=worktree,
-            workspace_id=workspace_id,
-        )
-        if open_error:
-            outcome_reason = f"open_failed: {open_error}"
-        else:
-            desktop_error = verify_superset_desktop_workspace(runtime, worktree=worktree, workspace_id=workspace_id)
-            if desktop_error and bridge_applied and restart_superset_desktop(
-                runtime,
-                worktree=worktree,
-                workspace_id=workspace_id,
-            ):
-                _open_superset_workspace(
-                    runtime,
-                    launch_config=launch_config,
-                    worktree=worktree,
-                    workspace_id=workspace_id,
-                )
-                desktop_error = verify_superset_desktop_workspace(
-                    runtime,
-                    worktree=worktree,
-                    workspace_id=workspace_id,
-                )
-            if desktop_error:
-                runtime._emit(
-                    "planning.agent_launch.superset_desktop_workspace_unavailable",
-                    reason="superset_desktop_workspace_unavailable",
-                    transport="superset",
-                    worktree=worktree.name,
-                    project=launch_config.superset_project or None,
-                    workspace_id=workspace_id,
-                    error=desktop_error,
-                )
-                _persist_runtime_events_snapshot(runtime)
-                return PlanAgentLaunchOutcome(worktree.name, worktree.root, workspace_id, "failed", desktop_error)
-    elif not workspace_id:
-        outcome_reason = "workspace_id_unavailable"
-    _persist_runtime_events_snapshot(runtime)
-    return PlanAgentLaunchOutcome(worktree.name, worktree.root, workspace_id, "launched", outcome_reason)
 
 
 def _superset_initial_prompt(
