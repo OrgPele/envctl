@@ -565,7 +565,7 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         shell_source_of_truth=(),
         python_source_of_truth=(
             "python/envctl_engine/shared/hooks.py",
-            "python/envctl_engine/runtime/hook_migration_support.py",
+            "python/envctl_engine/runtime/engine_runtime_cli_support.py",
             "python/envctl_engine/runtime/engine_runtime.py",
         ),
         evidence_tests=("tests/python/startup/test_hooks_bridge.py",),

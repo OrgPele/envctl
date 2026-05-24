@@ -12,6 +12,7 @@ import tempfile
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 dispatch_module = importlib.import_module("envctl_engine.runtime.engine_runtime_dispatch")
+utility_module = importlib.import_module("envctl_engine.runtime.utility_command_support")
 dispatch = dispatch_module.dispatch
 dispatch_command = dispatch_module.dispatch_command
 
@@ -187,6 +188,26 @@ class EngineRuntimeDispatchTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         command.assert_called_once_with(runtime, route)
+
+    def test_utility_command_handlers_are_table_driven_and_complete(self) -> None:
+        self.assertEqual(
+            set(utility_module.utility_command_handlers()),
+            {
+                "install-prompts",
+                "codex-tmux",
+                "ensure-worktree",
+                "supabase-user",
+                "qa-user",
+                "playwright",
+            },
+        )
+
+    def test_utility_command_dispatch_reports_unknown_command(self) -> None:
+        runtime = SimpleNamespace()
+        route = SimpleNamespace(command="unknown-utility")
+
+        with self.assertRaisesRegex(RuntimeError, "Unsupported utility command: unknown-utility"):
+            utility_module.dispatch_utility_command(runtime, route)
 
 
 if __name__ == "__main__":

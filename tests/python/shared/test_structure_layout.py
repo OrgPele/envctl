@@ -1137,10 +1137,17 @@ class StructureLayoutTests(unittest.TestCase):
     def test_engine_runtime_cli_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_cli_support.py"
         facade_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_cli_facade.py"
+        utility_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "utility_command_support.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
 
         self.assertTrue(owner.is_file())
         self.assertTrue(facade_owner.is_file())
+        self.assertTrue(utility_owner.is_file())
+        self.assertFalse((REPO_ROOT / "python" / "envctl_engine" / "runtime" / "hook_migration_support.py").exists())
+        self.assertIn("def run_hook_migration", owner.read_text(encoding="utf-8"))
+        utility_text = utility_owner.read_text(encoding="utf-8")
+        self.assertIn("def utility_command_handlers", utility_text)
+        self.assertIn("def dispatch_utility_command", utility_text)
         self.assertIn(
             "from envctl_engine.runtime.engine_runtime_cli_support import",
             facade_owner.read_text(encoding="utf-8"),
