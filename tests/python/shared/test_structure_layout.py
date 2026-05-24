@@ -231,6 +231,19 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("StateActionLogSupport", orchestrator_text)
         self.assertLessEqual(len(orchestrator_text.splitlines()), 1050)
 
+    def test_runtime_feature_inventory_has_contract_owner(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_contracts.py"
+        inventory = REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_inventory.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        self.assertIn("def build_runtime_feature_matrix_from_definitions", owner_text)
+        self.assertIn("def validate_runtime_feature_matrix_payload", owner_text)
+        self.assertIn("def render_python_runtime_gap_closure_plan", owner_text)
+        inventory_text = inventory.read_text(encoding="utf-8")
+        self.assertIn("runtime_feature_contracts", inventory_text)
+        self.assertLessEqual(len(inventory_text.splitlines()), 1250)
+
     def test_plan_agent_launch_tests_are_split_by_transport_owner(self) -> None:
         planning_tests = REPO_ROOT / "tests" / "python" / "planning"
         expected = [
