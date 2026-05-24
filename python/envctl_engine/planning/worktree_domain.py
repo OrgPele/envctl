@@ -13,6 +13,11 @@ from envctl_engine.planning.worktree_creation_commands import (
     worktree_branch_name as _worktree_branch_name_impl,
     worktree_start_point as _worktree_start_point_impl,
 )
+from envctl_engine.planning.worktree_creation_flow import (
+    create_feature_worktrees as _create_feature_worktrees_flow,
+    create_feature_worktrees_result as _create_feature_worktrees_result_flow,
+    create_single_worktree as _create_single_worktree_flow,
+)
 from envctl_engine.planning.worktree_identity import worktree_project_name as _worktree_project_name_impl
 from envctl_engine.planning.worktree_creation_recovery import (
     recover_partial_worktree_creation as _recover_partial_worktree_creation_impl,
@@ -115,7 +120,6 @@ from envctl_engine.planning.worktree_provenance import (
     write_worktree_provenance as _write_worktree_provenance_impl,
 )
 from envctl_engine.planning.plan_agent.models import (
-    CreatedPlanWorktree,
     PlanSelectionResult,
     PlanWorktreeSyncResult,
 )
@@ -237,24 +241,18 @@ def _coerce_setup_entries(
 
 
 def _create_single_worktree(self, *, feature: str, iteration: str) -> str | None:
-    feature_root = self._preferred_tree_root_for_feature(feature)
-    feature_root.mkdir(parents=True, exist_ok=True)
-    target = feature_root / iteration
-    result = _run_worktree_add(self, feature=feature, iteration=iteration, target=target, env=self._command_env(port=0))
-    if getattr(result, "returncode", 1) != 0:
-        if _recover_partial_worktree_creation(self, feature=feature, iteration=iteration, target=target, result=result):
-            _link_repo_local_shared_artifacts(self, target=target)
-            _prepare_worktree_code_intelligence(self, target=target)
-            _write_worktree_provenance(self, target=target)
-            return None
-        error = self._worktree_add_failure(feature=feature, iteration=iteration, target=target, result=result)
-        if error:
-            return error
-    else:
-        _link_repo_local_shared_artifacts(self, target=target)
-        _prepare_worktree_code_intelligence(self, target=target)
-        _write_worktree_provenance(self, target=target)
-    return None
+    return _create_single_worktree_flow(
+        feature=feature,
+        iteration=iteration,
+        preferred_tree_root_for_feature=self._preferred_tree_root_for_feature,
+        command_env=self._command_env,
+        run_worktree_add=lambda **kwargs: _run_worktree_add(self, **kwargs),
+        recover_partial_worktree_creation=lambda **kwargs: _recover_partial_worktree_creation(self, **kwargs),
+        link_repo_local_shared_artifacts=lambda **kwargs: _link_repo_local_shared_artifacts(self, **kwargs),
+        prepare_worktree_code_intelligence=lambda **kwargs: _prepare_worktree_code_intelligence(self, **kwargs),
+        write_worktree_provenance=lambda **kwargs: _write_worktree_provenance(self, **kwargs),
+        worktree_add_failure=self._worktree_add_failure,
+    )
 
 
 def _apply_setup_worktree_selection(
@@ -609,7 +607,12 @@ def _sync_single_plan_worktree_target(
 
 
 def _create_feature_worktrees(self: Any, *, feature: str, count: int, plan_file: str) -> str | None:
-    return _create_feature_worktrees_result(self, feature=feature, count=count, plan_file=plan_file).error
+    return _create_feature_worktrees_flow(
+        feature=feature,
+        count=count,
+        plan_file=plan_file,
+        create_feature_worktrees_result=lambda **kwargs: _create_feature_worktrees_result(self, **kwargs),
+    )
 
 
 def _create_feature_worktrees_result(
@@ -621,73 +624,26 @@ def _create_feature_worktrees_result(
     created_for_fresh_ai_launch: bool = False,
     launch_transport: str = "",
 ) -> PlanWorktreeSyncResult:
-    if count <= 0:
-        return PlanWorktreeSyncResult(raw_projects=[])
-    feature_root = self._preferred_tree_root_for_feature(feature)
-    feature_root.mkdir(parents=True, exist_ok=True)
-    existing_iters = {int(path.name) for path in feature_root.iterdir() if path.is_dir() and path.name.isdigit()}
-    plan_path = self._planning_root() / plan_file
-    setup_env = self._command_env(port=0, extra={"PLAN_FILE": str(plan_path)})
-    created_worktrees: list[CreatedPlanWorktree] = []
-    requested_cli = str(
-        self.env.get("ENVCTL_PLAN_AGENT_CLI") or self.config.raw.get("ENVCTL_PLAN_AGENT_CLI") or ""
-    ).strip().lower()
-    cli_sequence = (["codex", "opencode"] if requested_cli == "both" and count == 2 else [""] * count)
-
-    for index in range(count):
-        iteration = self._next_available_iteration(existing_iters)
-        target = feature_root / str(iteration)
-        result = _run_worktree_add(self, feature=feature, iteration=str(iteration), target=target, env=setup_env)
-        if getattr(result, "returncode", 1) != 0:
-            if _recover_partial_worktree_creation(
-                self,
-                feature=feature,
-                iteration=str(iteration),
-                target=target,
-                result=result,
-            ):
-                _write_worktree_provenance(
-                    self,
-                    target=target,
-                    plan_file=plan_file,
-                    created_for_fresh_ai_launch=created_for_fresh_ai_launch,
-                    launch_transport=launch_transport,
-                )
-                _prepare_worktree_code_intelligence(self, target=target)
-            else:
-                error = self._worktree_add_failure(
-                    feature=feature,
-                    iteration=str(iteration),
-                    target=target,
-                    result=result,
-                )
-                if error:
-                    return PlanWorktreeSyncResult(
-                        raw_projects=[],
-                        created_worktrees=tuple(created_worktrees),
-                        error=error,
-                    )
-        else:
-            _write_worktree_provenance(
-                self,
-                target=target,
-                plan_file=plan_file,
-                created_for_fresh_ai_launch=created_for_fresh_ai_launch,
-                launch_transport=launch_transport,
-            )
-            _prepare_worktree_code_intelligence(self, target=target)
-        _seed_main_task_from_plan(target=target, plan_path=plan_path)
-        worktree_cli = cli_sequence[index] if index < len(cli_sequence) else ""
-        created_worktrees.append(
-            CreatedPlanWorktree(
-                name=_worktree_project_name_impl(feature=feature, iteration=iteration),
-                root=target.resolve(),
-                plan_file=plan_file,
-                cli=worktree_cli,
-            )
-        )
-        existing_iters.add(iteration)
-    return PlanWorktreeSyncResult(raw_projects=[], created_worktrees=tuple(created_worktrees))
+    return _create_feature_worktrees_result_flow(
+        feature=feature,
+        count=count,
+        plan_file=plan_file,
+        created_for_fresh_ai_launch=created_for_fresh_ai_launch,
+        launch_transport=launch_transport,
+        preferred_tree_root_for_feature=self._preferred_tree_root_for_feature,
+        planning_root=self._planning_root,
+        command_env=self._command_env,
+        run_worktree_add=lambda **kwargs: _run_worktree_add(self, **kwargs),
+        recover_partial_worktree_creation=lambda **kwargs: _recover_partial_worktree_creation(self, **kwargs),
+        write_worktree_provenance=lambda **kwargs: _write_worktree_provenance(self, **kwargs),
+        prepare_worktree_code_intelligence=lambda **kwargs: _prepare_worktree_code_intelligence(self, **kwargs),
+        worktree_add_failure=self._worktree_add_failure,
+        seed_main_task_from_plan=_seed_main_task_from_plan,
+        next_available_iteration=self._next_available_iteration,
+        worktree_project_name=_worktree_project_name_impl,
+        env=getattr(self, "env", {}),
+        config_raw=getattr(self.config, "raw", {}),
+    )
 
 
 def _worktree_add_failure(self: Any, *, feature: str, iteration: str, target: Path, result: object) -> str | None:
