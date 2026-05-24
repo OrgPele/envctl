@@ -167,6 +167,47 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("action_test_spinner_support", support_text)
         self.assertLessEqual(len(support_text.splitlines()), 720)
 
+    def test_action_test_runner_has_progress_and_failure_owners(self) -> None:
+        progress_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_runner_progress.py"
+        failure_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_runner_failures.py"
+        runner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_runner.py"
+
+        self.assertTrue(progress_owner.is_file())
+        self.assertTrue(failure_owner.is_file())
+        progress_text = progress_owner.read_text(encoding="utf-8")
+        failure_text = failure_owner.read_text(encoding="utf-8")
+        self.assertIn("def format_live_progress_status", progress_text)
+        self.assertIn("def format_live_progress_status_with_counts", progress_text)
+        self.assertIn("def summarize_failure_output", failure_text)
+        self.assertIn("def format_failure_output_for_artifact", failure_text)
+        runner_text = runner.read_text(encoding="utf-8")
+        self.assertIn("action_test_runner_progress", runner_text)
+        self.assertIn("action_test_runner_failures", runner_text)
+        self.assertLessEqual(len(runner_text.splitlines()), 730)
+
+    def test_actions_test_has_models_path_and_classification_owners(self) -> None:
+        models_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_models.py"
+        path_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_frontend_paths.py"
+        classification_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_classification.py"
+        discovery = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test.py"
+
+        self.assertTrue(models_owner.is_file())
+        self.assertTrue(path_owner.is_file())
+        self.assertTrue(classification_owner.is_file())
+        self.assertIn("class TestCommandSpec", models_owner.read_text(encoding="utf-8"))
+        self.assertIn("class TestPathSuggestion", models_owner.read_text(encoding="utf-8"))
+        path_text = path_owner.read_text(encoding="utf-8")
+        self.assertIn("def append_frontend_test_path", path_text)
+        self.assertIn("def canonicalize_frontend_test_path", path_text)
+        classification_text = classification_owner.read_text(encoding="utf-8")
+        self.assertIn("def classify_test_command_source", classification_text)
+        self.assertIn("def build_test_args", classification_text)
+        discovery_text = discovery.read_text(encoding="utf-8")
+        self.assertIn("actions_test_models", discovery_text)
+        self.assertIn("actions_test_frontend_paths", discovery_text)
+        self.assertIn("actions_test_classification", discovery_text)
+        self.assertLessEqual(len(discovery_text.splitlines()), 540)
+
     def test_project_action_domain_has_output_and_artifact_owners(self) -> None:
         commit_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_commit_support.py"
         protected_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_protected_artifacts.py"
