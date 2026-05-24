@@ -96,15 +96,7 @@ def _launch_single_worktree(
 
 
 def _create_surface(runtime: Any, *, workspace_id: str) -> tuple[str | None, str | None]:
-    result = runtime.process_runner.run(
-        ["cmux", "new-surface", "--workspace", workspace_id],
-        cwd=runtime.config.base_dir,
-        env=getattr(runtime, "env", {}),
-        timeout=10.0,
-    )
-    if getattr(result, "returncode", 1) != 0:
-        return None, _completed_process_error_text(result)
-    return _surface_id_from_output(str(getattr(result, "stdout", ""))), None
+    return cmux_surface_support.create_surface(runtime, workspace_id=workspace_id)
 
 
 def _start_background_surface_bootstrap(

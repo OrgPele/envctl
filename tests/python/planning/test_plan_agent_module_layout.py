@@ -255,6 +255,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "launch_review_agent_terminal",
             },
             "cmux_surface_support.py": {
+                "create_surface",
                 "prepare_surface",
                 "run_cmux_command",
                 "send_surface_key",

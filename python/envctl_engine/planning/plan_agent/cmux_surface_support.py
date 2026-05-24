@@ -17,6 +17,19 @@ from envctl_engine.planning.plan_agent.terminal_screen import (
     _prompt_submit_screen_looks_ready,
     _screen_looks_ready,
 )
+from envctl_engine.planning.plan_agent.cmux_workspace_support import surface_id_from_output
+
+
+def create_surface(runtime: Any, *, workspace_id: str) -> tuple[str | None, str | None]:
+    result = runtime.process_runner.run(
+        ["cmux", "new-surface", "--workspace", workspace_id],
+        cwd=runtime.config.base_dir,
+        env=getattr(runtime, "env", {}),
+        timeout=10.0,
+    )
+    if getattr(result, "returncode", 1) != 0:
+        return None, completed_process_error_text(result)
+    return surface_id_from_output(str(getattr(result, "stdout", ""))), None
 
 
 def send_surface_text(

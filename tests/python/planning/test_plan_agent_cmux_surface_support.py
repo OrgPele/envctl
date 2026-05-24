@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from envctl_engine.planning.plan_agent.cmux_surface_support import (
+    create_surface,
     paste_surface_text,
     prepare_surface,
     run_cmux_command,
@@ -48,6 +49,22 @@ def _runtime(runner: _RecordingRunner) -> SimpleNamespace:
 
 
 class PlanAgentCmuxSurfaceSupportTests(unittest.TestCase):
+    def test_create_surface_returns_surface_id_from_command_output(self) -> None:
+        runner = _RecordingRunner(stdout="surface:42\n")
+        runtime = _runtime(runner)
+
+        self.assertEqual(create_surface(runtime, workspace_id="workspace:7"), ("surface:42", None))
+        self.assertEqual(
+            runner.commands,
+            [["cmux", "new-surface", "--workspace", "workspace:7"]],
+        )
+
+    def test_create_surface_returns_process_error_on_failure(self) -> None:
+        runner = _RecordingRunner(returncode=1, stderr="no workspace")
+        runtime = _runtime(runner)
+
+        self.assertEqual(create_surface(runtime, workspace_id="workspace:7"), (None, "no workspace"))
+
     def test_run_cmux_command_emits_failure_with_command_name_and_error(self) -> None:
         runner = _RecordingRunner(returncode=17, stderr="cmux exploded")
         runtime = _runtime(runner)
