@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.runtime.runtime_context import optional_state_repository
+from envctl_engine.runtime.runtime_context import run_dir_path
 from envctl_engine.debug.debug_contract import apply_debug_event_contract
 from envctl_engine.debug.debug_utils import debug_env_value, hash_command, hash_value
 from envctl_engine.shared.parsing import parse_bool, parse_int
@@ -130,22 +130,11 @@ def _current_run_dir(runtime: Any) -> Path | None:
     run_id = raw_run_id.strip()
     if not run_id:
         return None
-    run_dir_resolver = getattr(runtime, "_run_dir_path", None)
-    if callable(run_dir_resolver):
-        try:
-            candidate = run_dir_resolver(run_id)
-        except Exception:
-            return None
-        return candidate if isinstance(candidate, Path) else Path(candidate)
-    state_repository = optional_state_repository(runtime)
-    run_dir_resolver = getattr(state_repository, "run_dir_path", None)
-    if not callable(run_dir_resolver):
-        return None
     try:
-        candidate = run_dir_resolver(run_id)
+        candidate = run_dir_path(runtime, run_id)
     except Exception:
         return None
-    return candidate if isinstance(candidate, Path) else Path(candidate)
+    return candidate
 
 
 def current_session_id(runtime: Any) -> str | None:

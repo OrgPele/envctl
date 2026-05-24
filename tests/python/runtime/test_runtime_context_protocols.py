@@ -127,6 +127,34 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
         self.assertIsNone(_runtime_context.optional_state_repository(SimpleNamespace()))
         self.assertIsNone(_runtime_context.optional_process_runtime(SimpleNamespace()))
 
+    def test_artifact_path_helpers_use_repository_when_available_and_runtime_root_fallback(self) -> None:
+        repository = SimpleNamespace(
+            run_dir_path=lambda run_id: Path("/repo-runs") / str(run_id),
+            test_results_dir_path=lambda run_id: Path("/repo-results") / str(run_id),
+        )
+        runtime = SimpleNamespace(
+            runtime_context=RuntimeContext(
+                config=object(),
+                env={},
+                process_runtime=object(),
+                port_allocator=object(),
+                state_repository=repository,
+                terminal_ui=object(),
+                emit=lambda *_args, **_kwargs: None,
+            ),
+            runtime_root=Path("/runtime-root"),
+        )
+
+        self.assertEqual(_runtime_context.run_dir_path(runtime, "run-1"), Path("/repo-runs/run-1"))
+        self.assertEqual(_runtime_context.test_results_dir_path(runtime, "run-1"), Path("/repo-results/run-1"))
+
+        fallback_runtime = SimpleNamespace(runtime_root=Path("/runtime-root"))
+        self.assertEqual(_runtime_context.run_dir_path(fallback_runtime, "run-2"), Path("/runtime-root/runs/run-2"))
+        self.assertEqual(
+            _runtime_context.test_results_dir_path(fallback_runtime, "run-2"),
+            Path("/runtime-root/runs/run-2/test-results"),
+        )
+
     def test_command_support_uses_runtime_context_dependency_helpers(self) -> None:
         support_paths = [
             REPO_ROOT / "python/envctl_engine/runtime/engine_runtime_event_support.py",
@@ -135,6 +163,8 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
             REPO_ROOT / "python/envctl_engine/runtime/playwright_command_support.py",
             REPO_ROOT / "python/envctl_engine/runtime/qa_user_command_support.py",
             REPO_ROOT / "python/envctl_engine/runtime/codex_tmux_support.py",
+            REPO_ROOT / "python/envctl_engine/actions/action_test_summary_artifacts.py",
+            REPO_ROOT / "python/envctl_engine/actions/project_action_support.py",
         ]
         for support_path in support_paths:
             raw = support_path.read_text(encoding="utf-8")
@@ -142,6 +172,8 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
             self.assertNotIn('getattr(runtime, "state_repository"', raw)
             self.assertNotIn('getattr(runtime, "process_runner"', raw)
             self.assertNotIn('getattr(self.runtime, "process_runner"', raw)
+            self.assertNotIn("runtime.state_repository.run_dir_path", raw)
+            self.assertNotIn("runtime.state_repository.test_results_dir_path", raw)
 
     def test_runtime_context_stays_synced_when_runtime_collaborators_are_reassigned(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

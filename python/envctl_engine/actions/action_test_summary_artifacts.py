@@ -15,6 +15,7 @@ from envctl_engine.actions.action_test_summary_collection import (
 from envctl_engine.actions.action_test_summary_formatting import format_summary_error_lines
 from envctl_engine.actions.action_test_summary_git import default_git_state_components
 from envctl_engine.actions.action_test_support import load_failed_test_manifest
+from envctl_engine.runtime.runtime_context import test_results_dir_path
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.test_output.failure_summary import extract_failure_summary_excerpt
 from envctl_engine.test_output.parser_base import strip_ansi
@@ -85,7 +86,7 @@ def persist_test_summary_artifacts(
 
 
 def new_test_results_run_dir_path(runtime: object, run_id: str) -> Path:
-    results_root = runtime.state_repository.test_results_dir_path(run_id)  # type: ignore[attr-defined]
+    results_root = test_results_dir_path(runtime, run_id)
     results_root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(tz=UTC).strftime("run_%Y%m%d_%H%M%S")
     candidate = results_root / stamp

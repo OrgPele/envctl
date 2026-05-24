@@ -13,6 +13,7 @@ from envctl_engine.actions.action_command_support import (
 )
 from envctl_engine.actions.action_target_support import ActionCommandResolution
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.runtime_context import run_dir_path
 from envctl_engine.test_output.parser_base import strip_ansi
 
 
@@ -360,7 +361,7 @@ def write_project_action_failure_report(
     command_name: str,
     output: str,
 ) -> Path:
-    results_root = runtime.state_repository.run_dir_path(run_id)
+    results_root = run_dir_path(runtime, run_id)
     results_root.mkdir(parents=True, exist_ok=True)
     safe_project = project_name.replace(" ", "_")
     report_path = results_root / f"{safe_project}_{command_name}.txt"
