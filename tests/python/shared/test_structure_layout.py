@@ -336,6 +336,19 @@ class StructureLayoutTests(unittest.TestCase):
         legacy = runtime_tests / "test_engine_runtime_env.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_runtime_env_dependency_projection_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_dependency_env.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_env.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        self.assertIn("def dependency_projector_env", owner_text)
+        self.assertIn("def resolve_dependency_env_templates", owner_text)
+        self.assertIn("def service_env_overlays", owner_text)
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.runtime.engine_runtime_dependency_env import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 760)
+
     def test_prompt_install_support_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
         expected = [
