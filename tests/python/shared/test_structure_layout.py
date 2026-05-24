@@ -49,15 +49,25 @@ class StructureLayoutTests(unittest.TestCase):
         auth_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "auth_flow.py"
         db_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "db_flow.py"
         graph_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "graph_flow.py"
+        service_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "service_resolution.py"
+        )
+        preflight_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "gateway_preflight.py"
+        )
         facade = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase.py"
 
         self.assertTrue(owner.is_file())
         self.assertTrue(auth_owner.is_file())
         self.assertTrue(db_owner.is_file())
         self.assertTrue(graph_owner.is_file())
+        self.assertTrue(service_owner.is_file())
+        self.assertTrue(preflight_owner.is_file())
         self.assertIn("def complete_supabase_auth_startup", auth_owner.read_text(encoding="utf-8"))
         self.assertIn("def ensure_supabase_db_ready", db_owner.read_text(encoding="utf-8"))
         self.assertIn("def start_supabase_compose_graph", graph_owner.read_text(encoding="utf-8"))
+        self.assertIn("def resolve_supabase_startup_services", service_owner.read_text(encoding="utf-8"))
+        self.assertIn("def prepare_supabase_gateway_preflight", preflight_owner.read_text(encoding="utf-8"))
         self.assertIn(
             "from envctl_engine.requirements.supabase_lifecycle.orchestrator import start_supabase_stack",
             facade.read_text(encoding="utf-8"),
