@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import os
-from dataclasses import dataclass
 from pathlib import Path
 import time
 
@@ -21,31 +20,16 @@ from envctl_engine.startup.service_execution_policy import (
     service_attach_parallel_enabled,
     service_prep_parallel_enabled,
 )
+from envctl_engine.startup.service_execution_records import (
+    LaunchedServiceRuntime as LaunchedServiceRuntime,
+    PreparedServiceLaunch as PreparedServiceLaunch,
+    finalize_launched_service_records,
+)
 from envctl_engine.startup.service_launch_diagnostics import record_runtime_launch_diagnostics
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
 from envctl_engine.startup.public_urls import browser_backend_url, resolve_public_host
 from envctl_engine.startup.requirements_execution import requirements_timing_enabled
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
-
-
-@dataclass(slots=True)
-class PreparedServiceLaunch:
-    service_name: str
-    cwd: Path
-    log_path: str
-    requested_port: int
-    env: dict[str, str]
-    command_source: str | None
-    listener_expected: bool = True
-
-
-@dataclass(slots=True)
-class LaunchedServiceRuntime:
-    service_name: str
-    requested_port: int
-    actual_port: int
-    pid: int | None
-    log_path: str
 
 
 def start_project_services(
@@ -782,55 +766,17 @@ def start_project_services(
         timing_parts.append(f"total={total_duration_ms:.1f}ms")
         print(f"Service timing for {context.name}: {' '.join(timing_parts)}")
 
-    launched_runtimes: list[LaunchedServiceRuntime] = []
-    backend_record = records.get(f"{context.name} Backend")
-    frontend_record = records.get(f"{context.name} Frontend")
-    if backend_record is not None:
-        backend_record.log_path = backend_log_path
-        backend_plan.final = backend_record.actual_port or backend_plan.final
-        launched_runtimes.append(
-            LaunchedServiceRuntime(
-                service_name="backend",
-                requested_port=backend_record.requested_port or backend_plan.final,
-                actual_port=backend_record.actual_port or backend_plan.final,
-                pid=backend_record.pid,
-                log_path=backend_log_path,
-            )
-        )
-    if frontend_record is not None:
-        frontend_record.log_path = frontend_log_path
-        frontend_plan.final = frontend_record.actual_port or frontend_plan.final
-        launched_runtimes.append(
-            LaunchedServiceRuntime(
-                service_name="frontend",
-                requested_port=frontend_record.requested_port or frontend_plan.final,
-                actual_port=frontend_record.actual_port or frontend_plan.final,
-                pid=frontend_record.pid,
-                log_path=frontend_log_path,
-            )
-        )
-    for service in additional_services:
-        display_name = " ".join(part.capitalize() for part in service.name.split("-") if part)
-        record = records.get(f"{context.name} {display_name}")
-        if record is None:
-            continue
-        launch = prepared_launches[service.name]
-        record.log_path = launch.log_path
-        plan = context.ports.get(service.name)
-        if plan is not None and record.actual_port:
-            plan.final = record.actual_port
-        final_env = project_env_for_service(service.name)
-        record.public_url = final_env.get(f"ENVCTL_SOURCE_SERVICE_{service.env_suffix}_PUBLIC_URL") or record.public_url
-        record.health_url = final_env.get(f"ENVCTL_SOURCE_SERVICE_{service.env_suffix}_HEALTH_URL") or record.health_url
-        launched_runtimes.append(
-            LaunchedServiceRuntime(
-                service_name=service.name,
-                requested_port=record.requested_port or launch.requested_port,
-                actual_port=record.actual_port or launch.requested_port,
-                pid=record.pid,
-                log_path=launch.log_path,
-            )
-        )
+    launched_runtimes = finalize_launched_service_records(
+        context=context,
+        records=records,
+        backend_plan=backend_plan,
+        frontend_plan=frontend_plan,
+        additional_services=additional_services,
+        prepared_launches=prepared_launches,
+        backend_log_path=backend_log_path,
+        frontend_log_path=frontend_log_path,
+        project_env_for_service=project_env_for_service,
+    )
 
     rt._emit(
         "service.attach",

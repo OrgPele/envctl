@@ -1186,17 +1186,23 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_service_execution_policy_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_execution_policy.py"
+        records_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_execution_records.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_execution.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(records_owner.is_file())
         owner_text = owner.read_text(encoding="utf-8")
         self.assertIn("def resolve_command_env_builder", owner_text)
         self.assertIn("def ordered_service_layers", owner_text)
         self.assertIn("def service_attach_parallel_enabled", owner_text)
         self.assertIn("def _project_backend_cors_origin", owner_text)
+        records_text = records_owner.read_text(encoding="utf-8")
+        self.assertIn("class PreparedServiceLaunch", records_text)
+        self.assertIn("def finalize_launched_service_records", records_text)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.startup.service_execution_policy import", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 900)
+        self.assertIn("from envctl_engine.startup.service_execution_records import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 800)
 
     def test_service_launch_diagnostics_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_launch_diagnostics.py"
@@ -1206,7 +1212,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def record_runtime_launch_diagnostics", owner.read_text(encoding="utf-8"))
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.startup.service_launch_diagnostics import", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 850)
+        self.assertLessEqual(len(facade_text.splitlines()), 800)
 
     def test_resume_restore_policy_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "resume_restore_policy.py"
