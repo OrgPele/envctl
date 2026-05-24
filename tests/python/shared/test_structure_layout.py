@@ -256,6 +256,24 @@ class StructureLayoutTests(unittest.TestCase):
         legacy = runtime_tests / "test_engine_runtime_command_parity.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_runtime_env_tests_are_split_by_owner(self) -> None:
+        runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
+        expected = [
+            "engine_runtime_env_test_support.py",
+            "test_engine_runtime_env_external_dependencies.py",
+            "test_engine_runtime_env_mode.py",
+            "test_engine_runtime_env_readiness.py",
+            "test_engine_runtime_env_service_projection.py",
+            "test_engine_runtime_env_templates.py",
+        ]
+
+        for filename in expected:
+            with self.subTest(path=filename):
+                self.assertTrue((runtime_tests / filename).is_file())
+
+        legacy = runtime_tests / "test_engine_runtime_env.py"
+        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
+
     def test_state_action_orchestrator_has_log_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_log_support.py"
         orchestrator = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_orchestrator.py"
