@@ -40,6 +40,7 @@ _COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         python_source_of_truth=(
             "python/envctl_engine/runtime/engine_runtime.py",
             "python/envctl_engine/startup/startup_orchestrator.py",
+            "python/envctl_engine/startup/service_env_support.py",
         ),
         evidence_tests=(
             "tests/python/runtime/test_engine_runtime_real_startup.py",

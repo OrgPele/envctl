@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-23T23:52:01+00:00",
+  "generated_at": "2026-05-24T06:24:12+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -1185,7 +1185,8 @@
       "shell_source_of_truth": [],
       "python_source_of_truth": [
         "python/envctl_engine/runtime/engine_runtime.py",
-        "python/envctl_engine/startup/startup_orchestrator.py"
+        "python/envctl_engine/startup/startup_orchestrator.py",
+        "python/envctl_engine/startup/service_env_support.py"
       ],
       "evidence_tests": [
         "tests/python/runtime/test_engine_runtime_real_startup.py",
