@@ -1144,11 +1144,15 @@ class StructureLayoutTests(unittest.TestCase):
         frontend_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_frontend_bootstrap_support.py"
         )
+        migration_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_backend_migration_support.py"
+        )
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_bootstrap_domain.py"
 
         self.assertTrue(env_owner.is_file())
         self.assertTrue(runtime_state_owner.is_file())
         self.assertTrue(frontend_owner.is_file())
+        self.assertTrue(migration_owner.is_file())
         owner_text = env_owner.read_text(encoding="utf-8")
         self.assertIn("def _resolve_backend_env_contract", owner_text)
         self.assertIn("def _service_env_from_file", owner_text)
@@ -1158,6 +1162,9 @@ class StructureLayoutTests(unittest.TestCase):
         frontend_text = frontend_owner.read_text(encoding="utf-8")
         self.assertIn("def _prepare_frontend_runtime", frontend_text)
         self.assertIn("def _frontend_install_commands", frontend_text)
+        migration_text = migration_owner.read_text(encoding="utf-8")
+        self.assertIn("def _run_backend_migration_step", migration_text)
+        self.assertIn("def _backend_migration_retry_env_for_async_driver_mismatch", migration_text)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn(
             "from envctl_engine.startup.service_env_support import",
@@ -1171,7 +1178,11 @@ class StructureLayoutTests(unittest.TestCase):
             "from envctl_engine.startup.service_frontend_bootstrap_support import",
             facade_text,
         )
-        self.assertLessEqual(len(facade_text.splitlines()), 850)
+        self.assertIn(
+            "from envctl_engine.startup.service_backend_migration_support import",
+            facade_text,
+        )
+        self.assertLessEqual(len(facade_text.splitlines()), 500)
 
     def test_service_execution_policy_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_execution_policy.py"
