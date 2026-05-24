@@ -136,6 +136,18 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("ActionCommandProjectFacadeMixin", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 180)
 
+    def test_action_test_support_has_spinner_owner(self) -> None:
+        spinner_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_spinner_support.py"
+        support = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_support.py"
+
+        self.assertTrue(spinner_owner.is_file())
+        owner_text = spinner_owner.read_text(encoding="utf-8")
+        self.assertIn("class TestSuiteSpinnerGroup", owner_text)
+        self.assertIn("def rich_progress_available", owner_text)
+        support_text = support.read_text(encoding="utf-8")
+        self.assertIn("action_test_spinner_support", support_text)
+        self.assertLessEqual(len(support_text.splitlines()), 720)
+
     def test_project_action_domain_has_output_and_artifact_owners(self) -> None:
         protected_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_protected_artifacts.py"
         pr_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_pr_message_support.py"

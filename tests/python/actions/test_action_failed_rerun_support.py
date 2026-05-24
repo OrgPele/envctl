@@ -12,7 +12,7 @@ from envctl_engine.actions.action_failed_rerun_support import (
     build_failed_test_execution_specs_from_state,
     summary_indicates_extraction_failure,
 )
-from envctl_engine.actions.action_test_support import TestTargetContext
+from envctl_engine.actions.action_test_support import TestTargetContext as TargetContext
 
 
 def _write_manifest(path: Path, *, failed_tests: list[str]) -> None:
@@ -78,7 +78,7 @@ class ActionFailedRerunSupportTests(unittest.TestCase):
                 specs = build_failed_test_execution_specs_from_state(
                     state=state,
                     target_contexts=[
-                        TestTargetContext(project_name="feature-a-1", project_root=project, target_obj=None)
+                        TargetContext(project_name="feature-a-1", project_root=project, target_obj=None)
                     ],
                     repo_root=repo,
                     shared_raw_command=None,
@@ -112,7 +112,7 @@ class ActionFailedRerunSupportTests(unittest.TestCase):
                 with redirect_stdout(stdout):
                     build_failed_test_execution_specs_from_state(
                         state=state,
-                        target_contexts=[TestTargetContext(project_name="Main", project_root=Path(tmpdir), target_obj=None)],
+                        target_contexts=[TargetContext(project_name="Main", project_root=Path(tmpdir), target_obj=None)],
                         repo_root=Path(tmpdir),
                         shared_raw_command=None,
                         backend_raw_command=None,

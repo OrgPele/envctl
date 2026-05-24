@@ -14,7 +14,7 @@ from envctl_engine.actions.action_test_summary_support import (  # noqa: F401
     persist_test_summary_artifacts_for_orchestrator,
     print_test_suite_overview_for_orchestrator,
 )
-from envctl_engine.actions.action_test_support import (  # noqa: F401
+from envctl_engine.actions.action_test_spinner_support import (  # noqa: F401
     TestSuiteSpinnerGroup as _TestSuiteSpinnerGroup,
     rich_progress_available as _rich_progress_available,
 )

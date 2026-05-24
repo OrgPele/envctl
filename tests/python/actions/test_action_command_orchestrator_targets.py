@@ -14,7 +14,7 @@ import envctl_engine.actions.action_test_summary_support as action_test_summary_
 from envctl_engine.actions.action_test_summary_support import (
     write_failed_tests_summary_for_orchestrator,
 )
-from envctl_engine.actions.action_test_support import TestTargetContext
+from envctl_engine.actions.action_test_support import TestTargetContext as TargetContext
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.ui.target_selector import TargetSelection
@@ -241,7 +241,7 @@ class ActionCommandTargetTests(unittest.TestCase):
         runtime = _RuntimeStub()
         orchestrator = ActionCommandOrchestrator(runtime)
         route = Route(command="test", mode="main")
-        target_contexts = [TestTargetContext(project_name="Main", project_root=Path("/tmp"), target_obj=object())]
+        target_contexts = [TargetContext(project_name="Main", project_root=Path("/tmp"), target_obj=object())]
 
         with patch(
             "envctl_engine.actions.action_command_orchestrator.build_test_execution_specs_for_orchestrator",
@@ -355,7 +355,7 @@ class ActionCommandTargetTests(unittest.TestCase):
         specs = orchestrator._build_test_execution_specs(
             route=route,
             targets=[target],
-            target_contexts=[TestTargetContext(project_name="Main", project_root=Path("/tmp/repo"), target_obj=target)],
+            target_contexts=[TargetContext(project_name="Main", project_root=Path("/tmp/repo"), target_obj=target)],
             include_backend=False,
             include_frontend=False,
             run_all=False,
@@ -392,7 +392,7 @@ class ActionCommandTargetTests(unittest.TestCase):
                 route=route,
                 targets=[target],
                 target_contexts=[
-                    TestTargetContext(project_name="Main", project_root=Path("/tmp/repo"), target_obj=target)
+                    TargetContext(project_name="Main", project_root=Path("/tmp/repo"), target_obj=target)
                 ],
                 include_backend=False,
                 include_frontend=False,

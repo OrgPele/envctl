@@ -24,9 +24,11 @@ from envctl_engine.actions.action_test_summary_support import (
 )
 from envctl_engine.actions.action_test_support import (
     TestExecutionSpec as _TestExecutionSpec,
-    TestSuiteSpinnerGroup as _TestSuiteSpinnerGroup,
     TestTargetContext,
     build_test_target_contexts,
+)
+from envctl_engine.actions.action_test_spinner_support import (
+    TestSuiteSpinnerGroup as _TestSuiteSpinnerGroup,
     rich_progress_available as _rich_progress_available,
 )
 from envctl_engine.actions.project_action_env_support import test_action_extra_env as test_action_extra_env_impl
