@@ -902,16 +902,23 @@ class StructureLayoutTests(unittest.TestCase):
     def test_textual_config_wizard_has_field_owner(self) -> None:
         screen = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard.py"
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_fields.py"
+        hint_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_hints.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(hint_owner.is_file())
         owner_text = owner.read_text(encoding="utf-8")
+        hint_text = hint_owner.read_text(encoding="utf-8")
         self.assertIn("def _hydrate_wizard_values", owner_text)
         self.assertIn("def _visible_directory_fields", owner_text)
         self.assertIn("def _additional_service_field_value", owner_text)
         self.assertIn("def build_additional_service_from_input_values", owner_text)
+        self.assertIn("class ConfigWizardHintResolver", hint_text)
+        self.assertIn("def directory_validation_error", hint_text)
+        self.assertIn("def field_hint_text", hint_text)
         screen_text = screen.read_text(encoding="utf-8")
         self.assertIn("from .config_wizard_fields import", screen_text)
-        self.assertLessEqual(len(screen_text.splitlines()), 1550)
+        self.assertIn("from .config_wizard_hints import", screen_text)
+        self.assertLessEqual(len(screen_text.splitlines()), 1450)
 
     def test_removed_dead_leaf_modules_are_absent(self) -> None:
         stale_modules = [

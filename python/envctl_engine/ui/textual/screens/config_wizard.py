@@ -61,6 +61,7 @@ from .config_wizard_fields import (
     _visible_port_fields,
     _wizard_steps,
 )
+from .config_wizard_hints import ConfigWizardHintResolver
 
 
 def _emit(emit: Callable[..., None] | None, event: str, **payload: object) -> None:
@@ -253,6 +254,11 @@ def run_config_wizard_textual(
             self.step_index = 0
             self.values = _hydrate_wizard_values(values, base_dir=local_state.base_dir)
             self._suggestions_by_field = self._build_suggestions_by_field()
+            self._field_hints = ConfigWizardHintResolver.from_local_state(
+                local_state,
+                suggestions_by_field=self._suggestions_by_field,
+                field_value=self._field_value,
+            )
             self._save_result: ConfigSaveResult | None = None
             self._steps: list[str] = []
             self._suppress_list_selected_once = False
@@ -986,128 +992,39 @@ def run_config_wizard_textual(
             return candidate
 
         def _directory_label(self, field_name: str) -> str:
-            for candidate, label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS):
-                if candidate == field_name:
-                    return label
-            return "Directory"
+            return self._field_hints.directory_label(field_name)
 
         def _config_key_for_field(self, field_name: str) -> str | None:
-            return {
-                "backend_start_cmd": "ENVCTL_BACKEND_START_CMD",
-                "frontend_start_cmd": "ENVCTL_FRONTEND_START_CMD",
-                "backend_test_cmd": "ENVCTL_BACKEND_TEST_CMD",
-                "frontend_test_cmd": "ENVCTL_FRONTEND_TEST_CMD",
-                "frontend_test_path": "ENVCTL_FRONTEND_TEST_PATH",
-            }.get(field_name)
+            return self._field_hints.config_key_for_field(field_name)
 
         def _field_has_existing_config_value(self, field_name: str) -> bool:
-            key = self._config_key_for_field(field_name)
-            if not key or key not in local_state.parsed_values:
-                return False
-            return bool(str(local_state.parsed_values.get(key) or "").strip())
+            return self._field_hints.field_has_existing_config_value(field_name)
 
         def _suggestion_value(self, suggestion: TestCommandSuggestion | TestPathSuggestion) -> str:
-            if isinstance(suggestion, TestCommandSuggestion):
-                return suggestion.command_text
-            return suggestion.path
+            return self._field_hints.suggestion_value(suggestion)
 
         def _matching_suggestion(
             self,
             field_name: str,
             value: str,
         ) -> TestCommandSuggestion | TestPathSuggestion | None:
-            normalized = str(value or "").strip()
-            if not normalized:
-                return None
-            for suggestion in self._suggestions_by_field.get(field_name, ()):
-                if self._suggestion_value(suggestion) == normalized:
-                    return suggestion
-            return None
+            return self._field_hints.matching_suggestion(field_name, value)
 
         def _refresh_field_hint(self, field_name: str, *, raw: str | None = None) -> None:
             hint = self.query_one(f"#{_directory_hint_id(field_name)}", Static)
             hint.update(self._field_hint_text(field_name, raw=raw))
 
         def _field_hint_text(self, field_name: str, *, raw: str | None = None) -> str:
-            value = str(self._field_value(field_name)) if raw is None else str(raw)
-            if field_name in {"backend_test_cmd", "frontend_test_cmd"}:
-                return self._test_command_hint(field_name, value=value)
-            if field_name == "frontend_test_path":
-                return self._frontend_test_path_hint(value=value)
-            if field_name in {"backend_start_cmd", "frontend_start_cmd"} and not value.strip():
-                return "No entrypoint detected; enter the command envctl should run for this service."
-            return ""
+            return self._field_hints.field_hint_text(field_name, raw=raw)
 
         def _test_command_hint(self, field_name: str, *, value: str) -> str:
-            suggestions = self._suggestions_by_field.get(field_name, ())
-            if self._field_has_existing_config_value(field_name):
-                return "Existing value from .envctl; detection will not overwrite it."
-            stripped = value.strip()
-            if stripped:
-                match = self._matching_suggestion(field_name, stripped)
-                if isinstance(match, TestCommandSuggestion):
-                    suffix = (
-                        " Multiple suggestions available; press Ctrl+S or Down to cycle."
-                        if len(suggestions) > 1
-                        else ""
-                    )
-                    return f"Detected: {match.label} — {match.reason}{suffix}"
-                return "Manual value; detection will not overwrite it."
-            if suggestions:
-                first = suggestions[0]
-                if isinstance(first, TestCommandSuggestion):
-                    if len(suggestions) > 1:
-                        return (
-                            "Multiple suggestions available; press Ctrl+S or Down to accept "
-                            f"{first.label}: {first.command_text}"
-                        )
-                    return f"Detected suggestion available; press Ctrl+S or Down to accept {first.label}."
-            return (
-                "No test command detected; leave blank to let envctl try runtime defaults when `envctl test` runs, "
-                "or enter one manually."
-            )
+            return self._field_hints.test_command_hint(field_name, value=value)
 
         def _frontend_test_path_hint(self, *, value: str) -> str:
-            suggestions = self._suggestions_by_field.get("frontend_test_path", ())
-            if self._field_has_existing_config_value("frontend_test_path"):
-                return "Existing value from .envctl; detection will not overwrite it."
-            stripped = value.strip()
-            if stripped:
-                match = self._matching_suggestion("frontend_test_path", stripped)
-                if isinstance(match, TestPathSuggestion):
-                    suffix = (
-                        " Multiple suggestions available; press Ctrl+S or Down to cycle."
-                        if len(suggestions) > 1
-                        else ""
-                    )
-                    return f"Detected: {match.path} — {match.reason}{suffix}"
-                return "Manual frontend test path; detection will not overwrite it."
-            if suggestions:
-                first = suggestions[0]
-                if isinstance(first, TestPathSuggestion):
-                    if any(isinstance(item, TestPathSuggestion) and item.confidence == "high" for item in suggestions):
-                        return (
-                            "Frontend test path suggestions available; press Ctrl+S or Down to accept "
-                            f"{first.path}."
-                        )
-                    return (
-                        "No high-confidence frontend test directory detected; leave blank unless you want to scope "
-                        f"frontend tests. Press Ctrl+S or Down to cycle suggestions such as {first.path}."
-                    )
-            return "No frontend test directory detected; leave blank when the package test script scopes tests itself."
+            return self._field_hints.frontend_test_path_hint(value=value)
 
         def _directory_validation_error(self, field_name: str, *, raw: str | None = None) -> str | None:
-            label = self._directory_label(field_name)
-            value = str(self._field_value(field_name)) if raw is None else str(raw)
-            if field_name in {"backend_start_cmd", "frontend_start_cmd"}:
-                return _entrypoint_validation_message(label, value)
-            if field_name in {"backend_test_cmd", "frontend_test_cmd"}:
-                return None
-            if field_name == "frontend_test_path":
-                if not value.strip():
-                    return None
-                return _directory_validation_message(local_state.base_dir, label, value)
-            return _directory_validation_message(local_state.base_dir, label, value)
+            return self._field_hints.directory_validation_error(field_name, raw=raw)
 
         def _refresh_directory_validation(self, field_name: str, *, raw: str | None = None) -> None:
             directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
