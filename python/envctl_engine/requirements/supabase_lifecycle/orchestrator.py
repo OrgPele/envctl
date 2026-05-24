@@ -6,11 +6,7 @@ from pathlib import Path
 
 from envctl_engine.requirements.common import ContainerStartResult
 from envctl_engine.requirements.supabase_lifecycle.compose import (
-    _compose_run,
     _compose_service_list,
-    _compose_timeout_recovered,
-    _compose_up_timeout_seconds,
-    _is_compose_port_publish_stall,
     _resolve_service_name,
 )
 from envctl_engine.requirements.supabase_lifecycle.auth_flow import complete_supabase_auth_startup
@@ -18,21 +14,13 @@ from envctl_engine.requirements.supabase_lifecycle.config import (
     _native_db_start_enabled,
 )
 from envctl_engine.requirements.supabase_lifecycle.db_flow import ensure_supabase_db_ready
-from envctl_engine.requirements.supabase_lifecycle.formatting import (
-    _supabase_compose_failure_detail,
-    _supabase_local_auth_health_url,
-)
 from envctl_engine.requirements.supabase_lifecycle.gateway import (
     _format_gateway_port_mismatch,
     _gateway_public_port_mismatch,
     _remove_auth_gateway_services,
 )
-from envctl_engine.requirements.supabase_lifecycle.inspect import _inspect_auth_gateway_services
+from envctl_engine.requirements.supabase_lifecycle.graph_flow import start_supabase_compose_graph
 from envctl_engine.requirements.supabase_lifecycle.native_db import _start_supabase_db_native
-from envctl_engine.requirements.supabase_lifecycle.probe import (
-    _is_compose_network_recovery_marker,
-    _record_compose_network_recovery_stage,
-)
 from envctl_engine.requirements.supabase_lifecycle.types import _SupabaseStartupBudget
 from envctl_engine.requirements.supabase_lifecycle.workspace import (
     _resolve_supabase_compose_workspace,
@@ -99,7 +87,6 @@ def start_supabase_stack(
         service for service in (auth_service, gateway_service) if isinstance(service, str) and service
     ]
     graph_services = [db_service, *secondary_services]
-    compose_up_timeout = _compose_up_timeout_seconds(env, service_names=graph_services)
 
     db_handoff_recovered = False
     if gateway_service and secondary_services:
@@ -144,63 +131,22 @@ def start_supabase_stack(
                     stage_events=stage_events,
                 )
 
-    graph_event = {
-        "stage": "supabase.graph.up" if secondary_services else "supabase.db.up",
-        "detail": ",".join(graph_services),
-        "timeout_s": compose_up_timeout,
-        "startup_budget_s": startup_budget.timeout_seconds,
-    }
-    stage_events.append(graph_event)
-    up_db = _compose_run(
+    graph_failure, db_handoff_recovered = start_supabase_compose_graph(
         process_runner=process_runner,
         compose_root=compose_root,
         compose_project_name=compose_project_name,
         compose_path=compose_path,
         env=env,
-        args=["up", "-d", *graph_services],
+        db_service=db_service,
+        graph_services=graph_services,
+        secondary_services=secondary_services,
+        db_port=db_port,
+        resolved_public_port=resolved_public_port,
+        startup_budget=startup_budget,
+        stage_events=stage_events,
     )
-    graph_event["elapsed_ms"] = startup_budget.elapsed_ms()
-    if up_db is not None:
-        if _is_compose_network_recovery_marker(up_db):
-            _record_compose_network_recovery_stage(stage_events, up_db)
-            db_handoff_recovered = True
-        else:
-            db_handoff_recovered = _compose_timeout_recovered(
-                process_runner=process_runner,
-                compose_root=compose_root,
-                compose_project_name=compose_project_name,
-                compose_path=compose_path,
-                env=env,
-                service_name=db_service,
-                probe_port=db_port,
-                error=up_db,
-            )
-        if not db_handoff_recovered:
-            service_states = []
-            if not _is_compose_port_publish_stall(up_db):
-                service_states = _inspect_auth_gateway_services(
-                    process_runner=process_runner,
-                    compose_root=compose_root,
-                    compose_project_name=compose_project_name,
-                    compose_path=compose_path,
-                    env=env,
-                    service_names=graph_services,
-                )
-            return ContainerStartResult(
-                success=False,
-                container_name=compose_project_name,
-                error=_supabase_compose_failure_detail(
-                    phase="compose_graph" if secondary_services else "compose_db",
-                    error=up_db,
-                    services=graph_services,
-                    service_states=service_states,
-                    compose_timeout_seconds=compose_up_timeout,
-                    startup_budget=startup_budget,
-                    public_port=resolved_public_port,
-                    health_url=_supabase_local_auth_health_url(resolved_public_port),
-                ),
-                stage_events=stage_events,
-            )
+    if graph_failure is not None:
+        return graph_failure
 
     db_ready_failure = ensure_supabase_db_ready(
         process_runner=process_runner,
