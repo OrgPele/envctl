@@ -38,6 +38,8 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
         expected = {
             "__init__.py",
             "cmux_transport.py",
+            "cmux_bootstrap_support.py",
+            "cmux_goal_support.py",
             "config.py",
             "constants.py",
             "launch.py",
@@ -205,10 +207,21 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "run_cmux_command",
                 "send_surface_key",
             },
+            "cmux_bootstrap_support.py": {
+                "complete_review_surface_bootstrap",
+                "complete_surface_bootstrap",
+                "start_background_review_surface_bootstrap",
+                "start_background_surface_bootstrap",
+            },
             "cmux_workflow_submission_support.py": {
                 "queue_codex_workflow_steps",
                 "submit_direct_prompt_workflow_step",
                 "submit_prompt_workflow_step",
+            },
+            "cmux_goal_support.py": {
+                "maybe_submit_surface_codex_goal",
+                "submit_surface_codex_goal",
+                "wait_for_surface_codex_goal_active",
             },
             "cmux_workspace_support.py": {
                 "ensure_workspace_id",

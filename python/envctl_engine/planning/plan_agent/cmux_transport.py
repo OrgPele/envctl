@@ -31,6 +31,8 @@ from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 import envctl_engine.planning.plan_agent.cmux_workspace_support as cmux_workspace_support
 import envctl_engine.planning.plan_agent.cmux_surface_support as cmux_surface_support
 import envctl_engine.planning.plan_agent.cmux_workflow_submission_support as cmux_workflow_submission_support
+import envctl_engine.planning.plan_agent.cmux_goal_support as cmux_goal_support
+import envctl_engine.planning.plan_agent.cmux_bootstrap_support as cmux_bootstrap_support
 from envctl_engine.planning.plan_agent.constants import *
 from envctl_engine.planning.plan_agent.models import *
 from envctl_engine.planning.plan_agent.config import *
@@ -223,19 +225,15 @@ def _start_background_surface_bootstrap(
     launch_config: PlanAgentLaunchConfig,
     worktree: CreatedPlanWorktree,
 ) -> None:
-    thread = threading.Thread(
-        target=_complete_surface_bootstrap,
-        kwargs={
-            "runtime": runtime,
-            "workspace_id": workspace_id,
-            "surface_id": surface_id,
-            "launch_config": launch_config,
-            "worktree": worktree,
-        },
-        name=f"envctl-plan-agent-{worktree.name}",
-        daemon=False,
+    cmux_bootstrap_support.start_background_surface_bootstrap(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        launch_config=launch_config,
+        worktree=worktree,
+        complete_surface_bootstrap_fn=_complete_surface_bootstrap,
+        thread_factory=threading.Thread,
     )
-    thread.start()
 
 
 def _start_background_review_surface_bootstrap(
@@ -249,22 +247,18 @@ def _start_background_review_surface_bootstrap(
     project_root: Path,
     review_bundle_path: Path | None,
 ) -> None:
-    thread = threading.Thread(
-        target=_complete_review_surface_bootstrap,
-        kwargs={
-            "runtime": runtime,
-            "workspace_id": workspace_id,
-            "surface_id": surface_id,
-            "launch_config": launch_config,
-            "repo_root": repo_root,
-            "project_name": project_name,
-            "project_root": project_root,
-            "review_bundle_path": review_bundle_path,
-        },
-        name=f"envctl-review-agent-{project_name}",
-        daemon=False,
+    cmux_bootstrap_support.start_background_review_surface_bootstrap(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        launch_config=launch_config,
+        repo_root=repo_root,
+        project_name=project_name,
+        project_root=project_root,
+        review_bundle_path=review_bundle_path,
+        complete_review_surface_bootstrap_fn=_complete_review_surface_bootstrap,
+        thread_factory=threading.Thread,
     )
-    thread.start()
 
 
 def _complete_surface_bootstrap(
@@ -275,43 +269,16 @@ def _complete_surface_bootstrap(
     launch_config: PlanAgentLaunchConfig,
     worktree: CreatedPlanWorktree,
 ) -> None:
-    workflow = _build_plan_agent_workflow(
-        cli=launch_config.cli,
-        preset=launch_config.preset,
-        codex_cycles=launch_config.codex_cycles,
-        direct_prompt_enabled=launch_config.direct_prompt_enabled,
-        browser_e2e_followup_enable=launch_config.browser_e2e_followup_enable,
-        pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
+    cmux_bootstrap_support.complete_surface_bootstrap(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        launch_config=launch_config,
+        worktree=worktree,
+        build_plan_agent_workflow_fn=_build_plan_agent_workflow,
+        run_surface_bootstrap_fn=_run_surface_bootstrap,
+        persist_runtime_events_snapshot_fn=_persist_runtime_events_snapshot,
     )
-    try:
-        error = _run_surface_bootstrap(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            launch_config=launch_config,
-            worktree=worktree,
-        )
-        if error is None:
-            runtime._emit(
-                "planning.agent_launch.command_sent",
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                worktree=worktree.name,
-                preset=launch_config.preset,
-                workflow_mode=workflow.mode,
-                codex_cycles=workflow.codex_cycles,
-            )
-            return
-        runtime._emit(
-            "planning.agent_launch.failed",
-            reason="bootstrap_failed",
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            worktree=worktree.name,
-            error=error,
-        )
-    finally:
-        _persist_runtime_events_snapshot(runtime)
 
 
 def _complete_review_surface_bootstrap(
@@ -325,38 +292,18 @@ def _complete_review_surface_bootstrap(
     project_root: Path,
     review_bundle_path: Path | None,
 ) -> None:
-    try:
-        error = _run_review_surface_bootstrap(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            launch_config=launch_config,
-            repo_root=repo_root,
-            project_name=project_name,
-            project_root=project_root,
-            review_bundle_path=review_bundle_path,
-        )
-        if error is None:
-            runtime._emit(
-                "dashboard.review_tab.command_sent",
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                project=project_name,
-                cli=launch_config.cli,
-                preset=_REVIEW_WORKTREE_PRESET,
-            )
-            return
-        runtime._emit(
-            "dashboard.review_tab.failed",
-            reason="bootstrap_failed",
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            project=project_name,
-            cli=launch_config.cli,
-            error=error,
-        )
-    finally:
-        _persist_runtime_events_snapshot(runtime)
+    cmux_bootstrap_support.complete_review_surface_bootstrap(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        launch_config=launch_config,
+        repo_root=repo_root,
+        project_name=project_name,
+        project_root=project_root,
+        review_bundle_path=review_bundle_path,
+        run_review_surface_bootstrap_fn=_run_review_surface_bootstrap,
+        persist_runtime_events_snapshot_fn=_persist_runtime_events_snapshot,
+    )
 
 
 def _run_surface_bootstrap(
@@ -566,46 +513,17 @@ def _maybe_submit_surface_codex_goal(
     workflow: _PlanAgentWorkflow,
     worktree: CreatedPlanWorktree,
 ) -> str | None:
-    if launch_config.cli != "codex" or not launch_config.codex_goal_enable:
-        return None
-    goal_text = _codex_goal_text_for_worktree(
-        worktree=worktree,
-        preset=launch_config.preset,
-        workflow_mode=workflow.mode,
-        omx_workflow=launch_config.omx_workflow,
-    )
-    error = _submit_surface_codex_goal(
+    return cmux_goal_support.maybe_submit_surface_codex_goal(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
-        goal_text=goal_text,
+        launch_config=launch_config,
+        workflow=workflow,
+        worktree=worktree,
+        codex_goal_text_for_worktree_fn=_codex_goal_text_for_worktree,
+        submit_surface_codex_goal_fn=_submit_surface_codex_goal,
+        emit_codex_goal_event_fn=_emit_codex_goal_event,
     )
-    if error is None:
-        _emit_codex_goal_event(
-            runtime,
-            "planning.agent_launch.codex_goal_submitted",
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            cli=launch_config.cli,
-            workflow=workflow,
-            transport="cmux",
-            worktree=worktree,
-        )
-        return None
-    if error == "codex_goal_ready_timeout":
-        _emit_codex_goal_event(
-            runtime,
-            "planning.agent_launch.codex_goal_fallback",
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            cli=launch_config.cli,
-            workflow=workflow,
-            transport="cmux",
-            worktree=worktree,
-            reason=error,
-        )
-        return error
-    return error
 
 
 def _submit_surface_codex_goal(
@@ -615,24 +533,15 @@ def _submit_surface_codex_goal(
     surface_id: str,
     goal_text: str,
 ) -> str | None:
-    submit_error = _submit_direct_prompt_workflow_step(
-        runtime,
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        prompt_text=f"/goal {goal_text}",
-    )
-    if submit_error is not None:
-        return submit_error
-    if not _wait_for_surface_codex_goal_active(
+    return cmux_goal_support.submit_surface_codex_goal(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
         goal_text=goal_text,
-    ):
-        return "codex_goal_active_timeout"
-    if not _wait_for_codex_queue_ready(runtime, workspace_id=workspace_id, surface_id=surface_id):
-        return "codex_goal_ready_timeout"
-    return None
+        submit_direct_prompt_workflow_step_fn=_submit_direct_prompt_workflow_step,
+        wait_for_surface_codex_goal_active_fn=_wait_for_surface_codex_goal_active,
+        wait_for_codex_queue_ready_fn=_wait_for_codex_queue_ready,
+    )
 
 
 def _wait_for_surface_codex_goal_active(
@@ -642,13 +551,13 @@ def _wait_for_surface_codex_goal_active(
     surface_id: str,
     goal_text: str,
 ) -> bool:
-    deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        screen = _read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
-        if _codex_goal_screen_looks_active(screen, goal_text):
-            return True
-        time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
-    return False
+    return cmux_goal_support.wait_for_surface_codex_goal_active(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        goal_text=goal_text,
+        read_surface_screen_fn=_read_surface_screen,
+    )
 
 
 def _submit_prompt_workflow_step(
