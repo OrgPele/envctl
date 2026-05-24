@@ -45,6 +45,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "launch.py",
             "models.py",
             "omx_attach_support.py",
+            "omx_lock_support.py",
             "omx_spawn_support.py",
             "omx_transport.py",
             "omx_validation_support.py",
@@ -268,6 +269,10 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "read_omx_session_payload_from_root",
                 "record_cwd_matches_worktree",
                 "wait_for_omx_attach_target",
+            },
+            "omx_lock_support.py": {
+                "cleanup_stale_omx_tmux_locks",
+                "cleanup_stale_omx_tmux_locks_under_root",
             },
             "omx_spawn_support.py": {
                 "bounded_process_output_excerpt",
