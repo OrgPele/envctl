@@ -569,15 +569,27 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_runtime_command_router_has_owned_catalog(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_catalog.py"
+        models_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_models.py"
+        flag_storage_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_flag_storage.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_router.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(models_owner.is_file())
+        self.assertTrue(flag_storage_owner.is_file())
         owner_text = owner.read_text(encoding="utf-8")
+        models_text = models_owner.read_text(encoding="utf-8")
+        flag_storage_text = flag_storage_owner.read_text(encoding="utf-8")
         self.assertIn("COMMAND_ALIASES", owner_text)
         self.assertIn("def list_supported_flag_tokens", owner_text)
+        self.assertIn("class Route", models_text)
+        self.assertIn("class RouteError", models_text)
+        self.assertIn("def boolean_flag_name", flag_storage_text)
+        self.assertIn("def store_value_flag", flag_storage_text)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.runtime.command_catalog import", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 900)
+        self.assertIn("from envctl_engine.runtime.command_models import", facade_text)
+        self.assertIn("from envctl_engine.runtime.command_flag_storage import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 720)
 
     def test_runtime_planning_and_startup_facades_have_owned_mixins(self) -> None:
         planning_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_planning_facade.py"
