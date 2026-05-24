@@ -9,6 +9,7 @@ from envctl_engine.actions.project_action_domain import (
     run_commit_action as _domain_run_commit_action,
     run_pr_action as _domain_run_pr_action,
     run_review_action as _domain_run_review_action,
+    run_ship_action as _domain_run_ship_action,
 )
 
 
@@ -38,6 +39,8 @@ def main(argv: list[str] | None = None) -> int:
         return _domain_run_pr_action(context)
     if command == "commit":
         return _domain_run_commit_action(context)
+    if command == "ship":
+        return _domain_run_ship_action(context)
     if command in {"review", "analyze"}:
         return _domain_run_review_action(context)
 
@@ -55,6 +58,11 @@ def _run_commit_action(project_root: Path, project_name: str) -> int:
 def _run_pr_action(project_root: Path, repo_root: Path, project_name: str) -> int:
     context = _build_context(repo_root=Path(repo_root), project_root=Path(project_root), project_name=project_name)
     return _domain_run_pr_action(context)
+
+
+def _run_ship_action(project_root: Path, repo_root: Path, project_name: str) -> int:
+    context = _build_context(repo_root=Path(repo_root), project_root=Path(project_root), project_name=project_name)
+    return _domain_run_ship_action(context)
 
 
 # Compatibility wrappers retained for direct tests.

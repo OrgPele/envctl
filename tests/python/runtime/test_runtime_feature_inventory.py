@@ -10,7 +10,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import list_supported_commands
+from envctl_engine.runtime_feature_definitions import COMMAND_DEFINITIONS, EXTRA_FEATURES, FeatureDefinition
 from envctl_engine.runtime_feature_inventory import (
+    build_runtime_feature_matrix,
     validate_python_runtime_gap_report_payload,
     validate_runtime_feature_matrix_payload,
 )
@@ -21,6 +23,14 @@ class RuntimeFeatureInventoryTests(unittest.TestCase):
     _GAP_REPORT_PATH = REPO_ROOT / "contracts" / "python_runtime_gap_report.json"
     _PLAN_PATH = REPO_ROOT / "todo" / "plans" / "refactoring" / "python-runtime-gap-closure.md"
     _ARCHIVE_ROOT = REPO_ROOT / "todo" / "done" / "refactoring"
+
+    def test_runtime_feature_definition_owner_exports_inventory_data(self) -> None:
+        self.assertGreaterEqual(len(COMMAND_DEFINITIONS), len(list_supported_commands()))
+        self.assertTrue(all(isinstance(value, FeatureDefinition) for value in COMMAND_DEFINITIONS.values()))
+        self.assertTrue(all(isinstance(value, FeatureDefinition) for value in EXTRA_FEATURES))
+        payload = build_runtime_feature_matrix(repo_root=REPO_ROOT, generated_at="2026-01-01T00:00:00Z")
+        feature_commands = {str(feature["command"]) for feature in payload["features"] if "command" in feature}
+        self.assertEqual(feature_commands, set(list_supported_commands()))
 
     def test_repository_runtime_feature_matrix_matches_generator(self) -> None:
         payload = json.loads(self._MATRIX_PATH.read_text(encoding="utf-8"))

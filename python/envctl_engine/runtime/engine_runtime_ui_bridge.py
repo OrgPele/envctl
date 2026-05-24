@@ -46,6 +46,14 @@ def flush_pending_interactive_input() -> None:
     RuntimeTerminalUI.flush_pending_interactive_input()
 
 
+def restore_terminal_after_input(*, fd: int, original_state: list[int] | None) -> None:
+    RuntimeTerminalUI.restore_terminal_after_input(fd=fd, original_state=original_state)
+
+
+def can_interactive_tty() -> bool:
+    return RuntimeTerminalUI._can_interactive_tty()
+
+
 def read_interactive_command_line(runtime: Any, prompt: str) -> str:
     from envctl_engine.ui.terminal_session import TerminalSession
 

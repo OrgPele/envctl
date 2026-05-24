@@ -472,6 +472,7 @@ class EngineConfig:
     config_file_exists: bool
     config_source: Literal["envctl", "legacy_prefill", "defaults"]
     raw: dict[str, str]
+    explicit_keys: tuple[str, ...] = ()
     dependency_env_templates: tuple["DependencyEnvTemplateEntry", ...] = ()
     dependency_env_section_present: bool = False
     dependency_env_template_errors: tuple[str, ...] = ()
@@ -591,6 +592,13 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         execution_root = execution_root.parent
     execution_root = execution_root.resolve()
     base_dir = canonical_envctl_project_root(requested_root)
+    generated_root = _generated_worktree_control_root(
+        requested_root=requested_root,
+        execution_root=execution_root,
+        trees_dir_name=str(env.get("TREES_DIR_NAME") or DEFAULTS["TREES_DIR_NAME"]),
+    )
+    if generated_root is not None:
+        base_dir = generated_root
     local_state = discover_local_config_state(base_dir, env.get("ENVCTL_CONFIG_FILE"))
 
     resolved: dict[str, str] = dict(DEFAULTS)
@@ -607,6 +615,10 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
     elif not str(resolved.get("ENVCTL_UI_VISUAL_HOST") or "").strip():
         resolved["ENVCTL_UI_VISUAL_HOST"] = visual_host_fallback
     _apply_plan_agent_aliases(resolved, explicit_values=explicit_values)
+    explicit_keys = set(explicit_values)
+    aliased_explicit_values = dict(explicit_values)
+    _apply_plan_agent_aliases(aliased_explicit_values, explicit_values=explicit_values)
+    explicit_keys.update(aliased_explicit_values)
 
     default_mode = resolved.get("ENVCTL_DEFAULT_MODE", "main").strip().lower()
     if default_mode not in {"main", "trees"}:
@@ -777,6 +789,7 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         config_file_exists=local_state.config_file_exists,
         config_source=local_state.config_source,
         raw=resolved,
+        explicit_keys=tuple(sorted(explicit_keys)),
         dependency_env_templates=local_state.dependency_env_templates,
         dependency_env_section_present=local_state.dependency_env_section_present,
         dependency_env_template_errors=local_state.dependency_env_template_errors,
@@ -810,6 +823,57 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         mode_service_dependency_env_section_present=dict(local_state.mode_service_dependency_env_section_present or {}),
         mode_service_dependency_env_template_errors=dict(local_state.mode_service_dependency_env_template_errors or {}),
     )
+
+
+def _generated_worktree_control_root(
+    *,
+    requested_root: Path,
+    execution_root: Path,
+    trees_dir_name: str,
+) -> Path | None:
+    for candidate in (execution_root, requested_root):
+        resolved = Path(candidate).expanduser()
+        if resolved.is_file():
+            resolved = resolved.parent
+        resolved = resolved.resolve()
+        provenance_root = _control_root_from_worktree_provenance(resolved)
+        if provenance_root is not None:
+            return provenance_root
+        shaped_root = _control_root_from_generated_tree_shape(resolved, trees_dir_name=trees_dir_name)
+        if shaped_root is not None:
+            return shaped_root
+    return None
+
+
+def _control_root_from_worktree_provenance(worktree_root: Path) -> Path | None:
+    path = worktree_root / ".envctl-state" / "worktree-provenance.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    raw_root = str(payload.get("created_from_repo", "") or "").strip()
+    if not raw_root:
+        return None
+    root = Path(raw_root).expanduser().resolve()
+    if (root / CONFIG_PRIMARY_FILENAME).is_file():
+        return root
+    return None
+
+
+def _control_root_from_generated_tree_shape(path: Path, *, trees_dir_name: str) -> Path | None:
+    normalized_trees = str(trees_dir_name or DEFAULTS["TREES_DIR_NAME"]).strip().rstrip("/") or "trees"
+    current = path.resolve()
+    while current.parent != current:
+        if current.parent.name and current.parent.parent.name == Path(normalized_trees).name:
+            repo_root = current.parent.parent.parent
+            if (repo_root / CONFIG_PRIMARY_FILENAME).is_file():
+                return repo_root.resolve()
+        if (current / ".git").is_dir() or (current / ".git").is_file():
+            return None
+        current = current.parent
+    return None
 
 
 def _parse_additional_services(resolved: Mapping[str, str]) -> tuple[tuple[AppServiceConfig, ...], tuple[str, ...]]:

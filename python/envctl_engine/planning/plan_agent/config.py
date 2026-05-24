@@ -79,26 +79,33 @@ def resolve_plan_agent_launch_config(
     route_flags = getattr(route, "flags", {}) or {}
     cmux_launch_requested = bool(route_flags.get("cmux"))
     opencode_launch_requested = bool(route_flags.get("opencode"))
+    cmux_alias_requested = parse_bool(env_map.get("CMUX") or config.raw.get("CMUX"), False)
+    cmux_workspace = str(
+        env_map.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
+        or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
+        or ""
+    ).strip()
     configured_surface_transport = str(
         env_map.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
         or config.raw.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
-        or "cmux"
-    ).strip().lower() or "cmux"
+        or _default_plan_agent_surface_transport()
+    ).strip().lower() or _default_plan_agent_surface_transport()
+    configured_surface_transport = _resolve_available_plan_agent_surface_transport(configured_surface_transport)
     surface_transport_warning = None
-    if configured_surface_transport not in {"cmux", "superset"}:
+    if configured_surface_transport not in {"cmux", "tmux", "superset"}:
         surface_transport_warning = "invalid_surface_transport"
-        configured_surface_transport = "cmux"
+        configured_surface_transport = _default_plan_agent_surface_transport()
     transport: Literal["cmux", "tmux", "omx", "superset"]
     if bool(route_flags.get("omx")):
         transport = "omx"
     elif bool(route_flags.get("tmux")):
         transport = "tmux"
-    elif cmux_launch_requested:
+    elif cmux_launch_requested or cmux_alias_requested or bool(cmux_workspace):
         transport = "cmux"
     elif opencode_launch_requested:
-        transport = "tmux"
+        transport = _default_plan_agent_surface_transport()
     else:
-        transport = "superset" if configured_surface_transport == "superset" else "cmux"
+        transport = configured_surface_transport
     cli = str(
         "opencode"
         if bool(route_flags.get("opencode"))
@@ -132,11 +139,6 @@ def resolve_plan_agent_launch_config(
         or config.raw.get("ENVCTL_PLAN_AGENT_SHELL")
         or _DEFAULT_SHELL
     ).strip() or _DEFAULT_SHELL
-    cmux_workspace = str(
-        env_map.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
-        or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
-        or ""
-    ).strip()
     superset_project = str(
         env_map.get("ENVCTL_PLAN_AGENT_SUPERSET_PROJECT")
         or config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_PROJECT")
@@ -164,9 +166,11 @@ def resolve_plan_agent_launch_config(
     ) or any(
         (
             bool(cmux_workspace),
+            cmux_alias_requested,
             cmux_launch_requested,
+            opencode_launch_requested,
             bool(superset_project or superset_workspace),
-            transport in {"tmux", "omx"},
+            bool(route_flags.get("tmux")) or bool(route_flags.get("omx")),
         )
     )
     direct_prompt_enabled = parse_bool(
@@ -262,6 +266,17 @@ def _default_plan_agent_cli_command(cli: str, *, codex_yolo_enabled: bool = True
             return f"codex {_CODEX_BYPASS_FLAGS}"
         return "codex"
     return normalized or "codex"
+
+
+def _default_plan_agent_surface_transport() -> Literal["cmux", "tmux"]:
+    return "cmux" if shutil.which("cmux") else "tmux"
+
+
+def _resolve_available_plan_agent_surface_transport(raw: str) -> str:
+    normalized = str(raw or "").strip().lower()
+    if normalized == "cmux" and not shutil.which("cmux"):
+        return "tmux"
+    return normalized
 
 
 def _route_requests_ulw(route: object | None) -> bool:

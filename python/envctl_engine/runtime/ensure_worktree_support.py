@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from envctl_engine.actions.actions_worktree import delete_worktree_path
+from envctl_engine.planning.worktree_identity import worktree_project_name
 
 
 def run_ensure_worktree_command(runtime: Any, route: object) -> int:
@@ -33,11 +34,12 @@ def run_ensure_worktree_command(runtime: Any, route: object) -> int:
     action = "recreate" if existed_before and recreate_existing else ("reuse" if existed_before else "create")
 
     if dry_run:
+        project_name = worktree_project_name(feature=feature, iteration=iteration)
         return _print_ensure_worktree_success(
             feature=feature,
             iteration=iteration,
             worktree_root=worktree_root,
-            branch_name=f"{feature}-{iteration}",
+            branch_name=project_name,
             action=action,
             existed_before=existed_before,
             created=not existed_before,
@@ -60,11 +62,12 @@ def run_ensure_worktree_command(runtime: Any, route: object) -> int:
         if create_error:
             return _print_ensure_worktree_failure(error=create_error, json_output=json_output)
 
+    project_name = worktree_project_name(feature=feature, iteration=iteration)
     return _print_ensure_worktree_success(
         feature=feature,
         iteration=iteration,
         worktree_root=worktree_root,
-        branch_name=f"{feature}-{iteration}",
+        branch_name=project_name,
         action=action,
         existed_before=existed_before,
         created=not existed_before or recreate_existing,
@@ -126,7 +129,7 @@ def _print_ensure_worktree_success(
         "ok": True,
         "feature": feature,
         "iteration": iteration,
-        "project_name": f"{feature}-{iteration}",
+        "project_name": worktree_project_name(feature=feature, iteration=iteration),
         "branch_name": branch_name,
         "worktree_root": str(worktree_root.resolve()),
         "feature_root": str(worktree_root.parent.resolve()),

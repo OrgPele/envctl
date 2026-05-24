@@ -95,15 +95,14 @@ Before showing or running any envctl worktree-and-prompt follow-up, default impl
 Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run.
 
 ## Codex cycle recommendation
-Before writing the final response, choose exactly one integer from `0` through `8` as the recommended Codex cycle count for implementation depth. Use this rubric:
+Before writing the final response, choose exactly one integer from `0` through `3` as the recommended Codex cycle count for implementation depth. Use this rubric:
 
 - `0`: trivial docs, prompt, static edit, or very small one-file change where one implementation prompt is enough.
-- `1-2`: small localized code or test changes with low integration risk.
-- `3-4`: normal multi-file feature or fix requiring implementation, verification, and at least one follow-up pass.
-- `5-6`: cross-module/runtime behavior, meaningful edge cases, or broad test/docs updates.
-- `7-8`: high-complexity, multi-surface, risky, or architecture-sensitive work that benefits from many continuation/review rounds.
+- `1`: small localized code or test change with low integration risk.
+- `2`: normal multi-file feature or fix, moderate verification, or a task that benefits from one continuation/finalization pass.
+- `3`: genuinely complex, high-risk, cross-module, runtime-sensitive, or architecture-sensitive work.
 
-Prefer the smallest number that can plausibly finish the task and verify it. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record both the recommended Codex cycle count and the intended launch-scope flags.
+Prefer the smallest number that can plausibly finish the task and verify it; `3` is exceptional. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record both the recommended Codex cycle count and the intended launch-scope flags.
 
 ## Optional envctl follow-up
 - After completing the required final response items, ask exactly one final approval question asking whether you should now use `envctl` to create or sync the implementation worktree(s) for this plan and launch the implementation prompt workflow.
@@ -112,7 +111,7 @@ Prefer the smallest number that can plausibly finish the task and verify it. Inc
   - use an explicit selector for the created plan with `envctl --headless --plan <selector>`
   - if the user wants envctl to launch the AI prompts too, treat that as a deterministic repo-scoped flow rather than an inherited terminal-context flow
   - explain the supported launch surfaces clearly enough that the user does not need to run `envctl --help` to understand them:
-    - `--cmux`: envctl launches the default cmux plan-agent workflow for this command without requiring an environment alias
+    - `--cmux`: envctl launches the default cmux plan-agent workflow for this command without requiring an environment alias; prefer this when cmux is installed
     - `--tmux`: envctl creates or reuses the tmux session/window itself, launches the selected CLI, and submits the rendered prompt/workflow there
     - `--cmux --opencode` or `--tmux --opencode`: envctl launches OpenCode and prepends `/ulw-loop` to the first submitted prompt by default; add `--no-ulw-loop` only when the user explicitly wants to omit that prefix
     - `--omx`: envctl asks OMX to create the managed detached tmux/Codex session, then envctl submits the rendered prompt/workflow into that OMX-managed session
@@ -122,6 +121,7 @@ Prefer the smallest number that can plausibly finish the task and verify it. Inc
     - `--headless`: envctl stays non-interactive and prints follow-up/attach guidance instead of taking over the current terminal
     - `--new-session`: create a fresh cmux surface, tmux session, or OMX-managed session instead of attaching to an existing one
   - whenever you show a follow-up command, include `--entire-system` by default; use narrower flags (`--only-frontend`, `--only-backend`, or `--no-infra`) only when the plan records why full-stack E2E does not apply
+  - default to the cmux launcher when cmux is installed; use `--tmux` only when cmux is unavailable or the user explicitly asks for tmux
   - whenever you show a follow-up command, also explain in plain language what happens when that exact command runs: whether envctl only prints guidance or actually launches a session, whether the session is tmux-managed by envctl or OMX-managed by omx, whether the current terminal is taken over, and how the user can reconnect to the launched session later
   - keep the wording operational rather than marketing: spell out what envctl creates or syncs, what CLI or session it starts, what prompt preset it submits, and what remains for the user or AI to do after launch
   - make clear that `opencode` applies only to the cmux/tmux launcher paths today; OMX-managed launches are Codex-only

@@ -91,9 +91,7 @@ def _print_targets(runtime: Any, route: object, *, trees_only: bool) -> int:
     if mode == "trees":
         startup = getattr(runtime, "startup_orchestrator", None)
         if startup is not None:
-            preselected = set(
-                _tree_preselected_projects_from_state_impl(startup, runtime=runtime, project_contexts=projects)
-            )
+            preselected = set(_tree_preselected_projects_from_state_impl(runtime=runtime, project_contexts=projects))
         state = runtime._try_load_existing_state(mode="trees", strict_mode_match=True)
         if state is not None:
             state_present = set(_state_project_names_impl(runtime=runtime, state=state))
@@ -559,7 +557,6 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
     batch = runtime._batch_mode_requested(startup_route)
     can_tty = runtime._can_interactive_tty()
     projects = runtime._discover_projects(mode=runtime_mode)
-    startup = runtime.startup_orchestrator
     selection_info: dict[str, object] = {
         "required": False,
         "reason": None,
@@ -644,7 +641,7 @@ def _build_startup_explanation_payload(runtime: Any, route: object) -> dict[str,
         and not getattr(route, "projects", None)
         and not getattr(startup_route, "passthrough_args", None)
     ):
-        preselected = _tree_preselected_projects_from_state_impl(startup, runtime=runtime, project_contexts=projects)
+        preselected = _tree_preselected_projects_from_state_impl(runtime=runtime, project_contexts=projects)
         selection_info.update({"required": True, "preselected_projects": preselected})
         if batch or not can_tty:
             selection_info.update(

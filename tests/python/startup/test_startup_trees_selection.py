@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState, ServiceRecord
-from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
+from envctl_engine.startup.startup_selection_support import select_start_tree_projects, trees_start_selection_required
 from envctl_engine.ui.selection_types import TargetSelection
 
 
@@ -58,19 +58,10 @@ class StartupTreesSelectionTests(unittest.TestCase):
         )
 
     def test_trees_start_selection_required_for_default_or_explicit_trees_start(self) -> None:
-        runtime = _RuntimeStub()
-        orchestrator = StartupOrchestrator(runtime)
-
-        self.assertTrue(
-            orchestrator._trees_start_selection_required(
-                route=self._trees_route(raw_args=["--trees"]), runtime_mode="trees"
-            )
-        )
-        self.assertTrue(
-            orchestrator._trees_start_selection_required(route=self._trees_route(raw_args=[]), runtime_mode="trees")
-        )
+        self.assertTrue(trees_start_selection_required(route=self._trees_route(raw_args=["--trees"]), runtime_mode="trees"))
+        self.assertTrue(trees_start_selection_required(route=self._trees_route(raw_args=[]), runtime_mode="trees"))
         self.assertFalse(
-            orchestrator._trees_start_selection_required(
+            trees_start_selection_required(
                 route=Route(
                     command="plan", mode="trees", raw_args=["--plan"], passthrough_args=[], projects=[], flags={}
                 ),
@@ -78,7 +69,7 @@ class StartupTreesSelectionTests(unittest.TestCase):
             )
         )
         self.assertFalse(
-            orchestrator._trees_start_selection_required(
+            trees_start_selection_required(
                 route=Route(
                     command="start",
                     mode="trees",
@@ -102,10 +93,9 @@ class StartupTreesSelectionTests(unittest.TestCase):
             },
         )
         runtime.selection = TargetSelection(project_names=["alpha", "gamma"])
-        orchestrator = StartupOrchestrator(runtime)
 
         contexts = [SimpleNamespace(name="alpha"), SimpleNamespace(name="beta"), SimpleNamespace(name="gamma")]
-        selected = orchestrator._select_start_tree_projects(route=self._trees_route(), project_contexts=contexts)
+        selected = select_start_tree_projects(runtime=runtime, route=self._trees_route(), project_contexts=contexts)
 
         self.assertEqual([ctx.name for ctx in selected], ["alpha", "gamma"])
         self.assertIsNotNone(runtime.selection_kwargs)
@@ -123,14 +113,13 @@ class StartupTreesSelectionTests(unittest.TestCase):
             runtime = _RuntimeStub(can_tty=True)
             runtime.selection = TargetSelection(project_names=["implementations_alpha-1"])
             runtime.config = SimpleNamespace(planning_dir=root / "todo" / "plans")
-            orchestrator = StartupOrchestrator(runtime)
 
             contexts = [
                 SimpleNamespace(name="implementations_alpha-1", root=root / "trees" / "alpha" / "1"),
                 SimpleNamespace(name="implementations_beta-1", root=root / "trees" / "beta" / "1"),
                 SimpleNamespace(name="implementations_gamma-1", root=root / "trees" / "gamma" / "1"),
             ]
-            selected = orchestrator._select_start_tree_projects(route=self._trees_route(), project_contexts=contexts)
+            selected = select_start_tree_projects(runtime=runtime, route=self._trees_route(), project_contexts=contexts)
 
             self.assertEqual([ctx.name for ctx in selected], ["implementations_alpha-1"])
             self.assertIsNotNone(runtime.selection_kwargs)
@@ -143,10 +132,9 @@ class StartupTreesSelectionTests(unittest.TestCase):
     def test_select_start_tree_projects_requires_explicit_selection_without_tty(self) -> None:
         runtime = _RuntimeStub(can_tty=False)
         runtime.selection = TargetSelection(project_names=["alpha"])
-        orchestrator = StartupOrchestrator(runtime)
         contexts = [SimpleNamespace(name="alpha"), SimpleNamespace(name="beta")]
 
-        selected = orchestrator._select_start_tree_projects(route=self._trees_route(), project_contexts=contexts)
+        selected = select_start_tree_projects(runtime=runtime, route=self._trees_route(), project_contexts=contexts)
 
         self.assertEqual(selected, [])
         self.assertIsNone(runtime.selection_kwargs)

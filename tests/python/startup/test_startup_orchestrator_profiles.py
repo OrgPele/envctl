@@ -9,13 +9,13 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.runtime.engine_runtime_env import requirement_enabled_for_mode
-from envctl_engine.startup.startup_orchestrator import StartupOrchestrator
 from envctl_engine.startup.finalization import build_success_run_state
 from envctl_engine.startup.session import StartupSession
 from envctl_engine.state.models import RequirementsResult
 from envctl_engine.startup.startup_selection_support import (
     _restart_selected_services,
     _restart_service_types_for_project,
+    restart_include_requirements,
     restart_target_projects,
 )
 
@@ -30,7 +30,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
         route = parse_route(["restart", "--service", "Main Backend"], env={"ENVCTL_DEFAULT_MODE": "main"})
         route.flags["_restart_request"] = True
 
-        selected = StartupOrchestrator._restart_service_types_for_project(
+        selected = _restart_service_types_for_project(
             route=route,
             project_name="Main",
             default_service_types=default_service_types,
@@ -185,7 +185,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
         route = parse_route(["restart", "--service", "Main Frontend"], env={"ENVCTL_DEFAULT_MODE": "main"})
         route.flags["_restart_request"] = True
 
-        selected = StartupOrchestrator._restart_service_types_for_project(
+        selected = _restart_service_types_for_project(
             route=route,
             project_name="Main",
             default_service_types={"backend"},
@@ -208,7 +208,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
             },
         )
 
-        selected = StartupOrchestrator._restart_service_types_for_project(
+        selected = _restart_service_types_for_project(
             route=route,
             project_name="feature-a-1",
             default_service_types={"backend", "frontend", "voice-runtime"},
@@ -290,7 +290,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
                     route=route,
                     runtime=runtime,
                 )
-                service_types = StartupOrchestrator._restart_service_types_for_project(
+                service_types = _restart_service_types_for_project(
                     route=route,
                     project_name="Main",
                     default_service_types={"backend", "frontend", "voice-runtime"},
@@ -309,7 +309,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
             flags={"restart_service_types": ["voice-runtime"], "_restart_request": True},
         )
 
-        selected = StartupOrchestrator._restart_service_types_for_project(
+        selected = _restart_service_types_for_project(
             route=route,
             project_name="Main",
             default_service_types={"backend", "frontend", "voice-runtime"},
@@ -321,7 +321,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
     def test_runtime_scope_flags_select_startup_service_types(self) -> None:
         backend_route = parse_route(["--backend"], env={})
         self.assertEqual(
-            StartupOrchestrator._restart_service_types_for_project(
+            _restart_service_types_for_project(
                 route=backend_route,
                 project_name="Main",
                 default_service_types={"backend", "frontend"},
@@ -331,7 +331,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
 
         frontend_route = parse_route(["--frontend"], env={})
         self.assertEqual(
-            StartupOrchestrator._restart_service_types_for_project(
+            _restart_service_types_for_project(
                 route=frontend_route,
                 project_name="Main",
                 default_service_types={"backend", "frontend"},
@@ -341,7 +341,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
 
         dependencies_route = parse_route(["--dependencies"], env={})
         self.assertEqual(
-            StartupOrchestrator._restart_service_types_for_project(
+            _restart_service_types_for_project(
                 route=dependencies_route,
                 project_name="Main",
                 default_service_types={"backend", "frontend"},
@@ -351,7 +351,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
 
         fullstack_route = parse_route(["--fullstack"], env={})
         self.assertEqual(
-            StartupOrchestrator._restart_service_types_for_project(
+            _restart_service_types_for_project(
                 route=fullstack_route,
                 project_name="Main",
                 default_service_types={"backend", "frontend"},
@@ -362,7 +362,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
     def test_startup_only_flags_select_individual_worktree_launch_parts(self) -> None:
         route = parse_route(["--tree", "--fullstack", "--only-frontend"], env={})
         self.assertEqual(
-            StartupOrchestrator._restart_service_types_for_project(
+            _restart_service_types_for_project(
                 route=route,
                 project_name="feature-a-1",
                 default_service_types={"backend", "frontend"},
@@ -373,7 +373,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
 
         route = parse_route(["--tree", "--fullstack", "--only-backend"], env={})
         self.assertEqual(
-            StartupOrchestrator._restart_service_types_for_project(
+            _restart_service_types_for_project(
                 route=route,
                 project_name="feature-a-1",
                 default_service_types={"backend", "frontend"},
@@ -384,7 +384,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
 
         route = parse_route(["--tree", "--fullstack", "--no-infra"], env={})
         self.assertEqual(
-            StartupOrchestrator._restart_service_types_for_project(
+            _restart_service_types_for_project(
                 route=route,
                 project_name="feature-a-1",
                 default_service_types={"backend", "frontend"},
@@ -445,19 +445,19 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
                 self.assertFalse(requirement_enabled_for_mode(runtime, "trees", "redis", route=route))
 
     def test_runtime_scope_flags_control_restart_requirements(self) -> None:
-        self.assertFalse(StartupOrchestrator._restart_include_requirements(parse_route(["restart", "--backend"], env={})))
-        self.assertFalse(StartupOrchestrator._restart_include_requirements(parse_route(["restart", "--fullstack"], env={})))
-        self.assertTrue(StartupOrchestrator._restart_include_requirements(parse_route(["restart", "--dependencies"], env={})))
-        self.assertTrue(StartupOrchestrator._restart_include_requirements(parse_route(["restart", "--entire-system"], env={})))
-        self.assertTrue(StartupOrchestrator._restart_include_requirements(parse_route(["restart"], env={})))
+        self.assertFalse(restart_include_requirements(parse_route(["restart", "--backend"], env={})))
+        self.assertFalse(restart_include_requirements(parse_route(["restart", "--fullstack"], env={})))
+        self.assertTrue(restart_include_requirements(parse_route(["restart", "--dependencies"], env={})))
+        self.assertTrue(restart_include_requirements(parse_route(["restart", "--entire-system"], env={})))
+        self.assertTrue(restart_include_requirements(parse_route(["restart"], env={})))
         self.assertFalse(
-            StartupOrchestrator._restart_include_requirements(
+            restart_include_requirements(
                 parse_route(["restart", "--service", "Main Frontend"], env={})
             )
         )
 
     def test_non_restart_defaults_to_configured_service_types(self) -> None:
-        selected = StartupOrchestrator._restart_service_types_for_project(
+        selected = _restart_service_types_for_project(
             route=None,
             project_name="Main",
             default_service_types={"frontend"},

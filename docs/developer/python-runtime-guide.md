@@ -368,6 +368,8 @@ Core pieces:
 - `requirements/dependencies/*`: dependency definitions and env projectors
 - `requirements/orchestrator.py`: retry/failure classification and outcome contract
 - `requirements/*.py`: native adapters for postgres, redis, supabase, n8n
+- `requirements/supabase_lifecycle/*`: Supabase startup sequence, compose lifecycle,
+  readiness probes, gateway repair, native DB startup, and reliability contracts
 
 Important concepts:
 

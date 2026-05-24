@@ -48,14 +48,18 @@ Use CGC for broad graph questions:
 
 How to use CGC in this checkout:
 - This main checkout uses the main Serena project identity and CGC context.
-  Envctl-generated worktrees use generated Serena project names and CGC contexts
-  recorded in `.envctl-state/code-intelligence.json`; use those generated CGC
-  contexts for worktree-local graph queries.
+  Envctl-generated worktrees use generated Serena project names, but by default
+  inherit the already-indexed source CGC context recorded as
+  `cgc_active_context` in `.envctl-state/code-intelligence.json`. Use that
+  active context for broad graph queries unless the worktree metadata says
+  `cgc_context_managed: true`, which means envctl created or reused an isolated
+  worktree CGC context.
 - Health check: `cgc doctor`
 - Confirm the indexed repo: `cgc list --context Envctl`
 - Get graph stats: `cgc stats --context Envctl`
 - Generate a report: `cgc report --context Envctl`
-- Re-index after structural changes: `cgc index . --context Envctl`
+- Re-index after structural changes in the checkout whose context you are using:
+  `cgc index . --context Envctl`
 - Run a read-only query:
   `cgc query "MATCH (r:Repository) RETURN r.name, r.path" --context Envctl`
 

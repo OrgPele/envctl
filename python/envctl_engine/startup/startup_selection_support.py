@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
 
 from envctl_engine.planning import list_planning_files, planning_existing_counts, select_projects_for_plan_files
 from envctl_engine.runtime.command_router import MODE_TREE_TOKENS, Route
@@ -17,10 +16,6 @@ from envctl_engine.state.models import RunState
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 
 _MODE_TREE_TOKENS_NORMALIZED = {str(token).strip().lower() for token in MODE_TREE_TOKENS}
-
-
-class _RuntimeOwner(Protocol):
-    runtime: StartupRuntime
 
 
 def project_ports_text(context: ProjectContextLike) -> str:
@@ -86,8 +81,7 @@ def _route_explicit_trees_mode(route: Route) -> bool:
     return False
 
 
-def trees_start_selection_required(orchestrator: object, *, route: Route, runtime_mode: str) -> bool:
-    _ = orchestrator
+def trees_start_selection_required(*, route: Route, runtime_mode: str) -> bool:
     if runtime_mode != "trees" or route.command != "start":
         return False
     if route.projects or route.passthrough_args:
@@ -100,9 +94,8 @@ def trees_start_selection_required(orchestrator: object, *, route: Route, runtim
 
 
 def tree_preselected_projects_from_state(
-    orchestrator: object, *, runtime: StartupRuntime, project_contexts: list[ProjectContextLike]
+    *, runtime: StartupRuntime, project_contexts: list[ProjectContextLike]
 ) -> list[str]:
-    _ = orchestrator
     state = runtime._try_load_existing_state(mode="trees", strict_mode_match=True)
     available = {str(context.name).strip().lower(): str(context.name).strip() for context in project_contexts}
     if state is None:
@@ -158,9 +151,8 @@ def _tree_preselected_projects_from_plans(
 
 
 def select_start_tree_projects(
-    orchestrator: _RuntimeOwner, *, route: Route, project_contexts: list[ProjectContextLike]
+    *, runtime: StartupRuntime, route: Route, project_contexts: list[ProjectContextLike]
 ) -> list[ProjectContextLike]:
-    runtime = orchestrator.runtime
     if not project_contexts:
         return project_contexts
     can_tty = runtime._can_interactive_tty()
@@ -177,7 +169,6 @@ def select_start_tree_projects(
         return []
 
     preselected = tree_preselected_projects_from_state(
-        orchestrator,
         runtime=runtime,
         project_contexts=project_contexts,
     )
@@ -227,7 +218,7 @@ def select_start_tree_projects(
     return filtered
 
 
-def _restart_include_requirements(route: Route) -> bool:
+def restart_include_requirements(route: Route) -> bool:
     explicit = route.flags.get("restart_include_requirements")
     if explicit is not None:
         return bool(explicit)
@@ -502,6 +493,7 @@ _state_covers_selected_projects = state_covers_selected_projects
 _trees_start_selection_required = trees_start_selection_required
 _tree_preselected_projects_from_state = tree_preselected_projects_from_state
 _select_start_tree_projects = select_start_tree_projects
+_restart_include_requirements = restart_include_requirements
 _restart_target_projects = restart_target_projects
 _restart_target_projects_for_selected_services = restart_target_projects_for_selected_services
 _port_allocator = port_allocator

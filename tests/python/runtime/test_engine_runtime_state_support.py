@@ -12,7 +12,9 @@ from envctl_engine.runtime.engine_runtime_state_support import (  # noqa: E402
     load_state_artifact,
     on_port_event,
     run_state_to_json,
+    state_action,
     state_has_synthetic_services,
+    state_lookup_strict_mode_match,
 )
 from envctl_engine.state.models import RunState, ServiceRecord  # noqa: E402
 
@@ -56,6 +58,22 @@ class EngineRuntimeStateSupportTests(unittest.TestCase):
         on_port_event(runtime, "port.lock.acquire", {"port": 8000, "owner": "proj"})
 
         self.assertEqual(events, [("port.lock.acquire", {"port": 8000, "owner": "proj"})])
+
+    def test_state_lookup_strict_mode_match_delegates_to_explicit_mode_detector(self) -> None:
+        calls: list[object] = []
+        route = SimpleNamespace(command="health", mode="trees")
+        runtime = SimpleNamespace(_route_has_explicit_mode=lambda value: calls.append(value) or True)
+
+        self.assertTrue(state_lookup_strict_mode_match(runtime, route))
+        self.assertEqual(calls, [route])
+
+    def test_state_action_delegates_to_state_action_orchestrator(self) -> None:
+        calls: list[object] = []
+        route = SimpleNamespace(command="health", mode="main")
+        runtime = SimpleNamespace(state_action_orchestrator=SimpleNamespace(execute=lambda value: calls.append(value) or 42))
+
+        self.assertEqual(state_action(runtime, route), 42)
+        self.assertEqual(calls, [route])
 
     def test_load_state_artifact_and_run_state_to_json_round_trip(self) -> None:
         state = RunState(

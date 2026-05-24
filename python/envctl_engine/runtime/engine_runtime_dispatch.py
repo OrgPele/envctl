@@ -5,6 +5,29 @@ from typing import Any
 from .command_policy import dispatch_family_for_command
 from envctl_engine.runtime.inspection_support import dispatch_direct_inspection
 from envctl_engine.runtime.utility_command_support import dispatch_utility_command
+from envctl_engine.shared.process_probe import ProcessProbe
+
+
+def dispatch(runtime: Any, route: object) -> int:
+    runtime.process_probe = ProcessProbe(runtime._build_process_probe_backend())
+    effective_mode = getattr(route, "mode", "")
+    if getattr(route, "command", "") in {"start", "plan", "restart"}:
+        effective_mode = runtime._effective_start_mode(route)
+
+    runtime._configure_debug_recorder(route)
+    runtime._emit(
+        "engine.mode.selected",
+        mode=getattr(route, "mode", ""),
+        effective_mode=effective_mode,
+        command=getattr(route, "command", ""),
+    )
+    runtime._emit(
+        "command.route.selected",
+        mode=getattr(route, "mode", ""),
+        effective_mode=effective_mode,
+        command=getattr(route, "command", ""),
+    )
+    return dispatch_command(runtime, route)
 
 
 def dispatch_command(runtime: Any, route: object) -> int:

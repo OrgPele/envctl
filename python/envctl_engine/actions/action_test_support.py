@@ -1,15 +1,8 @@
 from __future__ import annotations
 
-import ast
-from dataclasses import dataclass
-import importlib.util
-import json
 from pathlib import Path
-import re
 import shutil
-import sys
-import threading
-from typing import Any, Callable, Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 from envctl_engine.actions.actions_test import (
     TestCommandSpec,
@@ -22,140 +15,45 @@ from envctl_engine.actions.actions_test import (
     is_pytest_command,
     is_unittest_command,
 )
+from envctl_engine.actions.action_test_spinner_support import (
+    TestSuiteSpinnerGroup as TestSuiteSpinnerGroup,
+    rich_progress_available as rich_progress_available,
+)
+from envctl_engine.actions.action_test_manifest_support import (
+    FailedTestManifest,
+    FailedTestManifestEntry,
+    frontend_failed_files_from_failed_tests,
+    load_failed_test_manifest,
+    normalize_unittest_test_identifier,
+    resolve_unittest_test_identifier_for_project,
+    sanitize_failed_test_identifiers,
+)
+from envctl_engine.actions.action_test_support_models import TestExecutionSpec, TestTargetContext
 from envctl_engine.shared.node_tooling import detect_package_manager, detect_python_bin
 from envctl_engine.shared.parsing import parse_bool
-from envctl_engine.test_output.parser_pytest import PytestOutputParser
-from envctl_engine.ui.color_policy import colors_enabled
 
-
-@dataclass(frozen=True)
-class TestTargetContext:
-    project_name: str
-    project_root: Path
-    target_obj: object | None
-
-
-@dataclass(frozen=True)
-class TestExecutionSpec:
-    index: int
-    spec: TestCommandSpec
-    args: list[str]
-    resolved_source: str
-    project_name: str
-    project_root: Path
-    target_obj: object | None = None
-
-
-@dataclass(frozen=True)
-class FailedTestManifestEntry:
-    source: str
-    suite: str
-    failed_tests: tuple[str, ...]
-    failed_files: tuple[str, ...]
-    invalid_failed_tests: int = 0
-
-
-@dataclass(frozen=True)
-class FailedTestManifest:
-    generated_at: str
-    head: str
-    status_hash: str
-    status_lines: int
-    entries: tuple[FailedTestManifestEntry, ...]
-
-
-def sanitize_failed_test_identifiers(*, source: str, failed_tests: Sequence[str]) -> tuple[tuple[str, ...], int]:
-    if source not in {"backend_pytest", "root_pytest"}:
-        if source == "root_unittest":
-            kept: list[str] = []
-            invalid = 0
-            seen: set[str] = set()
-            for raw in failed_tests:
-                candidate = normalize_unittest_test_identifier(str(raw).strip())
-                if not candidate:
-                    invalid += 1
-                    continue
-                if candidate in seen:
-                    continue
-                seen.add(candidate)
-                kept.append(candidate)
-            return tuple(kept), invalid
-        normalized = tuple(str(value).strip() for value in failed_tests if str(value).strip())
-        return normalized, 0
-    kept: list[str] = []
-    invalid = 0
-    seen: set[str] = set()
-    for raw in failed_tests:
-        candidate = str(raw).strip()
-        if not candidate:
-            continue
-        if not PytestOutputParser._is_valid_pytest_nodeid(candidate):
-            invalid += 1
-            continue
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        kept.append(candidate)
-    return tuple(kept), invalid
-
-
-_UNITTEST_TEST_ID_RE = r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+"
-
-
-def normalize_unittest_test_identifier(raw: str) -> str | None:
-    candidate = str(raw).strip()
-    if not candidate:
-        return None
-    if re.fullmatch(_UNITTEST_TEST_ID_RE, candidate):
-        return candidate
-    display_match = re.fullmatch(rf"[^()]+\s+\(({_UNITTEST_TEST_ID_RE})\)", candidate)
-    if display_match:
-        return display_match.group(1)
-    return None
-
-
-def resolve_unittest_test_identifier_for_project(raw: str, project_root: Path) -> str | None:
-    candidate = normalize_unittest_test_identifier(raw)
-    if not candidate:
-        return None
-    tests_root = project_root / "tests"
-    if not tests_root.is_dir():
-        return candidate
-    if _unittest_identifier_exists_for_project(candidate, project_root):
-        return candidate
-    prefixed = f"tests.{candidate}"
-    if _unittest_identifier_exists_for_project(prefixed, project_root):
-        return prefixed
-    return None
-
-
-def _unittest_identifier_exists_for_project(identifier: str, project_root: Path) -> bool:
-    parts = [part for part in str(identifier).split(".") if part]
-    if len(parts) < 3:
-        return False
-    module_parts = parts[:-2]
-    class_name = parts[-2]
-    method_name = parts[-1]
-    if not module_parts:
-        return False
-    module_path = project_root.joinpath(*module_parts)
-    file_path = module_path.with_suffix(".py")
-    if not file_path.is_file():
-        init_path = module_path / "__init__.py"
-        if not init_path.is_file():
-            return False
-        file_path = init_path
-    try:
-        tree = ast.parse(file_path.read_text(encoding="utf-8"), filename=str(file_path))
-    except (OSError, SyntaxError, UnicodeDecodeError):
-        return False
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == class_name:
-            for child in node.body:
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name == method_name:
-                    return True
-            return False
-    return False
+__all__ = [
+    "FailedTestManifest",
+    "FailedTestManifestEntry",
+    "TestExecutionSpec",
+    "TestSuiteSpinnerGroup",
+    "TestTargetContext",
+    "_configured_or_default_test_spec",
+    "_configured_test_command_cwd",
+    "_failed_rerun_spec_for_entry",
+    "_pyproject_uses_poetry",
+    "build_failed_test_execution_specs",
+    "build_test_execution_specs",
+    "build_test_target_contexts",
+    "frontend_failed_files_from_failed_tests",
+    "is_backend_only_selection",
+    "load_failed_test_manifest",
+    "normalize_backend_python_test_command",
+    "normalize_unittest_test_identifier",
+    "resolve_unittest_test_identifier_for_project",
+    "rich_progress_available",
+    "sanitize_failed_test_identifiers",
+]
 
 
 def build_test_target_contexts(targets: Sequence[object], *, repo_root: Path) -> list[TestTargetContext]:
@@ -442,88 +340,6 @@ def build_failed_test_execution_specs(
     ]
 
 
-def load_failed_test_manifest(path: Path) -> FailedTestManifest | None:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    entries_raw = payload.get("entries")
-    if not isinstance(entries_raw, list):
-        return None
-    entries: list[FailedTestManifestEntry] = []
-    for raw_entry in entries_raw:
-        if not isinstance(raw_entry, dict):
-            continue
-        source = str(raw_entry.get("source", "") or "").strip()
-        suite = str(raw_entry.get("suite", "") or "").strip()
-        sanitized_failed_tests, invalid_failed_tests = sanitize_failed_test_identifiers(
-            source=source,
-            failed_tests=[
-                value.strip() for value in raw_entry.get("failed_tests", []) if isinstance(value, str) and value.strip()
-            ],
-        )
-        raw_failed_files = [
-            value.strip() for value in raw_entry.get("failed_files", []) if isinstance(value, str) and value.strip()
-        ]
-        if source in {"frontend_package_test", "package_test"}:
-            derived_failed_files = frontend_failed_files_from_failed_tests(sanitized_failed_tests)
-            merged_failed_files: list[str] = []
-            seen_failed_files: set[str] = set()
-            for failed_file in [*raw_failed_files, *derived_failed_files]:
-                if failed_file in seen_failed_files:
-                    continue
-                seen_failed_files.add(failed_file)
-                merged_failed_files.append(failed_file)
-            failed_files = tuple(merged_failed_files)
-        else:
-            failed_files = tuple(raw_failed_files)
-        if not source or (not sanitized_failed_tests and not failed_files):
-            continue
-        entries.append(
-            FailedTestManifestEntry(
-                source=source,
-                suite=suite,
-                failed_tests=sanitized_failed_tests,
-                failed_files=failed_files,
-                invalid_failed_tests=invalid_failed_tests,
-            )
-        )
-    return FailedTestManifest(
-        generated_at=str(payload.get("generated_at", "") or ""),
-        head=str(payload.get("git_state", {}).get("head", "") or "")
-        if isinstance(payload.get("git_state"), dict)
-        else "",
-        status_hash=(
-            str(payload.get("git_state", {}).get("status_hash", "") or "")
-            if isinstance(payload.get("git_state"), dict)
-            else ""
-        ),
-        status_lines=(
-            int(payload.get("git_state", {}).get("status_lines", 0) or 0)
-            if isinstance(payload.get("git_state"), dict)
-            else 0
-        ),
-        entries=tuple(entries),
-    )
-
-
-def frontend_failed_files_from_failed_tests(failed_tests: Sequence[str]) -> list[str]:
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for raw in failed_tests:
-        text = str(raw).strip()
-        if not text:
-            continue
-        file_name = text.split("::", 1)[0].strip()
-        if not file_name or file_name in seen:
-            continue
-        seen.add(file_name)
-        ordered.append(file_name)
-    return ordered
-
-
 def _failed_rerun_spec_for_entry(
     entry: FailedTestManifestEntry,
     *,
@@ -631,261 +447,6 @@ def _failed_rerun_spec_for_entry(
             "because the previous test run used a custom configured command."
         )
     return f"Failed-only reruns are not supported for {project_name} ({source}). Run the full suite first."
-
-
-def rich_progress_available() -> tuple[bool, str]:
-    try:
-        if importlib.util.find_spec("rich.progress") is not None:
-            return True, ""
-    except Exception as exc:  # pragma: no cover - defensive
-        return False, f"find_spec_error:{type(exc).__name__}"
-    try:
-        __import__("rich.progress")
-        return True, ""
-    except Exception as exc:  # pragma: no cover - defensive
-        return False, f"import_error:{type(exc).__name__}"
-
-
-class TestSuiteSpinnerGroup:
-    def __init__(
-        self,
-        *,
-        execution_specs: list[TestExecutionSpec],
-        enabled: bool,
-        policy: Any,
-        emit: Any,
-        suite_label_resolver: Callable[[str], str],
-        multi_project: bool,
-        env: Mapping[str, str] | None = None,
-    ) -> None:
-        self._execution_specs = list(execution_specs)
-        self._enabled = bool(enabled) and str(getattr(policy, "backend", "")) == "rich"
-        self._style = str(getattr(policy, "style", "dots") or "dots")
-        self._emit = emit if callable(emit) else None
-        self._suite_label_resolver = suite_label_resolver
-        self._multi_project = bool(multi_project)
-        self._env = dict(env or {})
-        self._stream = sys.stderr
-        self._lock = threading.Lock()
-        self._progress: Any = None
-        self._tasks: dict[int, Any] = {}
-        self._labels_plain: dict[int, str] = {}
-        self._labels_render: dict[int, str] = {}
-        self._project_for_index: dict[int, str] = {}
-        ordered_projects: list[str] = []
-        for item in self._execution_specs:
-            name = str(item.project_name).strip()
-            if not name or name in ordered_projects:
-                continue
-            ordered_projects.append(name)
-        self._ordered_projects = list(ordered_projects)
-        self._project_header_color = "cyan"
-
-    def __enter__(self) -> "TestSuiteSpinnerGroup":
-        if not self._enabled:
-            return self
-        try:
-            console_module = __import__("rich.console", fromlist=["Console"])
-            progress_module = __import__("rich.progress", fromlist=["Progress", "SpinnerColumn", "TextColumn"])
-            console_cls = getattr(console_module, "Console")
-            progress_cls = getattr(progress_module, "Progress")
-            spinner_column_cls = getattr(progress_module, "SpinnerColumn")
-            text_column_cls = getattr(progress_module, "TextColumn")
-
-            class _PerTaskSpinnerColumn(spinner_column_cls):  # type: ignore[misc, valid-type]
-                def render(self, task):  # noqa: ANN001
-                    if bool(getattr(task, "fields", {}).get("is_header", False)):
-                        from rich.text import Text
-
-                        return Text(" ")
-                    if bool(getattr(task, "finished", False)):
-                        symbol = task.fields.get("finished_symbol") if hasattr(task, "fields") else None
-                        if isinstance(symbol, str) and symbol.strip():
-                            from rich.text import Text
-
-                            try:
-                                return Text.from_markup(symbol)
-                            except Exception:
-                                return Text(symbol)
-                    return super().render(task)
-
-            console = console_cls(
-                file=self._stream,
-                no_color=not colors_enabled(self._env, stream=self._stream, interactive_tty=True),
-                force_terminal=True,
-            )
-            self._progress = progress_cls(
-                _PerTaskSpinnerColumn(spinner_name=self._style, finished_text=" "),
-                text_column_cls("{task.description}", markup=True),
-                console=console,
-                transient=False,
-                auto_refresh=True,
-            )
-            self._progress.start()
-            grouped_specs: dict[str, list[TestExecutionSpec]] = {}
-            for execution in self._execution_specs:
-                grouped_specs.setdefault(execution.project_name, []).append(execution)
-
-            for project_name in self._ordered_projects:
-                execution_list = grouped_specs.get(project_name, [])
-                if self._multi_project:
-                    project_color = self._project_header_color
-                    escaped_project = self._escape_markup(project_name)
-                    header_line = f"[bold {project_color}]{escaped_project}[/]"
-                    self._progress.add_task(
-                        header_line,
-                        total=1,
-                        completed=1,
-                        finished_symbol=" ",
-                        is_header=True,
-                    )
-                for execution in execution_list:
-                    label_plain = self._descriptor(execution, render=False)
-                    label_render = self._descriptor(execution, render=True)
-                    self._labels_plain[execution.index] = label_plain
-                    self._labels_render[execution.index] = label_render
-                    self._project_for_index[execution.index] = project_name
-                    queued_line = f"  - {label_render}: [yellow]queued[/yellow]"
-                    task_id = self._progress.add_task(queued_line, total=None)
-                    self._tasks[execution.index] = task_id
-            self._emit_lifecycle("start", f"Tracking {len(self._execution_specs)} test suites")
-        except Exception:
-            self._enabled = False
-            self._progress = None
-            self._tasks.clear()
-            self._labels_plain.clear()
-            self._labels_render.clear()
-            self._project_for_index.clear()
-        return self
-
-    def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
-        _ = exc_type, exc, tb
-        with self._lock:
-            if self._progress is not None:
-                try:
-                    self._progress.stop()
-                except Exception:
-                    pass
-                self._progress = None
-            self._emit_lifecycle("stop")
-        return False
-
-    def _emit_lifecycle(self, state: str, message: str | None = None, *, suite_index: int | None = None) -> None:
-        if not callable(self._emit):
-            return
-        payload: dict[str, object] = {
-            "component": "action.test.parallel",
-            "op_id": "action.test.parallel",
-            "state": state,
-        }
-        if message:
-            payload["message"] = message
-        if suite_index is not None:
-            payload["suite_index"] = suite_index
-        self._emit("ui.spinner.lifecycle", **payload)
-
-    @staticmethod
-    def _escape_markup(text: str) -> str:
-        return str(text).replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
-
-    def _suite_color(self, source: str) -> str:
-        normalized = str(source).strip().lower()
-        if normalized in {"backend_pytest", "root_pytest", "root_unittest"}:
-            return "cyan"
-        if normalized == "frontend_package_test":
-            return "magenta"
-        if normalized == "package_test":
-            return "blue"
-        return "yellow"
-
-    def _descriptor(self, execution: TestExecutionSpec, *, render: bool) -> str:
-        suite_label = self._suite_label_resolver(execution.spec.source)
-        if not render:
-            return suite_label
-        suite_color = self._suite_color(execution.spec.source)
-        escaped_suite = self._escape_markup(suite_label)
-        return f"[{suite_color}]{escaped_suite}[/]"
-
-    def mark_running(self, execution: TestExecutionSpec) -> None:
-        index = execution.index
-        label_plain = self._labels_plain.get(index, self._descriptor(execution, render=False))
-        label_render = self._labels_render.get(index, self._descriptor(execution, render=True))
-        project_name = self._project_for_index.get(index, str(execution.project_name))
-        plain_line = f"{project_name} / {label_plain}: running"
-        render_line = f"  - {label_render}: [blue]running[/blue]"
-        self._update_line(index, plain_line=plain_line, render_line=render_line, state="update")
-
-    def mark_progress(self, execution: TestExecutionSpec, *, status_text: str) -> None:
-        index = execution.index
-        label_plain = self._labels_plain.get(index, self._descriptor(execution, render=False))
-        label_render = self._labels_render.get(index, self._descriptor(execution, render=True))
-        project_name = self._project_for_index.get(index, str(execution.project_name))
-        escaped_status = self._escape_markup(status_text)
-        plain_line = f"{project_name} / {label_plain}: {status_text}"
-        render_line = f"  - {label_render}: [blue]{escaped_status}[/blue]"
-        self._update_line(index, plain_line=plain_line, render_line=render_line, state="update")
-
-    def mark_finished(
-        self,
-        execution: TestExecutionSpec,
-        *,
-        success: bool,
-        duration_text: str,
-        parsed: object | None,
-    ) -> None:
-        passed = int(getattr(parsed, "passed", 0) or 0) if parsed is not None else 0
-        failed = int(getattr(parsed, "failed", 0) or 0) if parsed is not None else 0
-        skipped = int(getattr(parsed, "skipped", 0) or 0) if parsed is not None else 0
-        total = int(getattr(parsed, "total", 0) or 0) if parsed is not None else 0
-        status = "passed" if success else "failed"
-        label_plain = self._labels_plain.get(execution.index, self._descriptor(execution, render=False))
-        label_render = self._labels_render.get(execution.index, self._descriptor(execution, render=True))
-        project_name = self._project_for_index.get(execution.index, str(execution.project_name))
-        metrics = f" [dim]• {passed}p/{failed}f/{skipped}s[/dim]" if total > 0 else ""
-        status_text = "[green]passed[/green]" if success else "[red]failed[/red]"
-        plain_line = f"{project_name} / {label_plain}: {status} ({duration_text})"
-        render_line = f"  - {label_render}: {status_text} ({duration_text}){metrics}"
-        self._update_line(
-            execution.index,
-            plain_line=plain_line,
-            render_line=render_line,
-            state="success" if success else "fail",
-            stop_task=True,
-            finished_symbol=("[green]✓[/green]" if success else "[red]✗[/red]"),
-        )
-
-    def _update_line(
-        self,
-        index: int,
-        *,
-        plain_line: str,
-        render_line: str,
-        state: str,
-        stop_task: bool = False,
-        finished_symbol: str = "",
-    ) -> None:
-        self._emit_lifecycle(state, plain_line, suite_index=index)
-        with self._lock:
-            if self._progress is None:
-                return
-            task_id = self._tasks.get(index)
-            if task_id is None:
-                return
-            try:
-                if stop_task:
-                    self._progress.update(
-                        task_id,
-                        description=render_line,
-                        total=1,
-                        completed=1,
-                        finished_symbol=finished_symbol,
-                    )
-                else:
-                    self._progress.update(task_id, description=render_line)
-                if stop_task:
-                    self._progress.stop_task(task_id)
-            except Exception:
-                return
 
 
 def is_backend_only_selection(

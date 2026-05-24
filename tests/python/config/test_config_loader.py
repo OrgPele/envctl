@@ -93,6 +93,22 @@ class ConfigLoaderTests(unittest.TestCase):
 
             self.assertEqual(config.base_dir, worktree.resolve())
 
+    def test_load_config_from_generated_tree_path_uses_parent_envctl_without_git_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            runtime_root = root / "runtime"
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\nBACKEND_PORT_BASE=8199\n", encoding="utf-8")
+
+            config = load_config({"RUN_REPO_ROOT": str(worktree), "RUN_SH_RUNTIME_DIR": str(runtime_root)})
+
+            self.assertEqual(config.base_dir, repo.resolve())
+            self.assertEqual(config.execution_root, worktree.resolve())
+            self.assertEqual(config.backend_port_base, 8199)
+
     def test_relative_explicit_config_file_resolves_against_canonical_metadata_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

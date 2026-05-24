@@ -303,7 +303,7 @@ class PrereqPolicyTests(unittest.TestCase):
             self.assertTrue(ok)
             self.assertIsNone(reason)
 
-    def test_plan_feature_enabled_requires_cmux_and_selected_ai_cli(self) -> None:
+    def test_plan_feature_enabled_uses_available_default_transport_and_selected_ai_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -336,7 +336,7 @@ class PrereqPolicyTests(unittest.TestCase):
                 ok, reason = cli.check_prereqs(route, config)
 
             self.assertFalse(ok)
-            self.assertIn("cmux", str(reason))
+            self.assertNotIn("cmux", str(reason))
             self.assertIn("opencode", str(reason))
 
     def test_plan_omx_team_route_requires_omx_tmux_script_and_codex(self) -> None:

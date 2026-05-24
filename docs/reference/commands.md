@@ -107,18 +107,15 @@ Behavior:
 - omitting `--preset` installs all built-in presets
 - `envctl install-prompts --help` prints command-specific usage, examples, and Codex-specific guidance
 - built-in presets:
-  - `implement_plan`
   - `implement_task`
-  - `review_task_imp`
   - `review_worktree_imp`
   - `continue_task`
   - `finalize_task`
-  - `merge_trees_into_dev`
+  - `merge_implementation_branches`
   - `create_plan`
   - `create_plan_auto_codex`
   - `create_plan_auto_opencode`
   - `create_plan_auto_omx`
-  - `ship_release`
 - target roots:
   - Codex: `~/.codex/skills/envctl-*`
   - Claude Code: `~/.claude/commands`
@@ -136,8 +133,8 @@ Behavior:
 Auto-launch create-plan presets:
 
 - `create_plan` remains plan-only and approval-first; `$envctl-create-plan` writes the plan and asks before running envctl.
-- `create_plan_auto_codex` writes the plan, derives `<selector>` from `todo/plans/<category>/<slug>.md`, chooses a recommended Codex cycle count from `0` through `8`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --tmux --entire-system --headless --new-session`.
-- `create_plan_auto_opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --tmux --opencode --entire-system --headless --new-session`; OpenCode launches prepend `/ulw-loop` by default.
+- `create_plan_auto_codex` writes the plan, derives `<selector>` from `todo/plans/<category>/<slug>.md`, chooses a recommended Codex cycle count from `0` through `3`, then runs `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended> envctl --plan <selector> --cmux --entire-system --headless --new-session`.
+- `create_plan_auto_opencode` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --cmux --opencode --entire-system --headless --new-session`; OpenCode launches prepend `/ulw-loop` by default.
 - `create_plan_auto_omx` writes the plan, derives `<selector>`, then runs `envctl --plan <selector> --omx --ultragoal --entire-system --headless --new-session`.
 - Each auto preset creates/syncs implementation worktrees and starts a fresh implementation session; use it only when you want implementation to start immediately.
 - Refresh installed prompt files with `envctl install-prompts --cli codex --yes`, `envctl install-prompts --cli opencode --yes`, or `envctl install-prompts --cli all --yes`.
@@ -475,7 +472,7 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true` submits Codex `/goal` session framing before the initial implementation prompt; local Superset Codex launches use an envctl Superset host-agent wrapper that types `/goal`, presses Enter, waits for `Goal active`, then submits the implementation prompt; `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex TUI queued cycle workflow for cmux, tmux, and OMX-managed Codex sessions; the default is `2`
-- `$envctl-create-plan-auto-codex` computes a `0` through `8` recommendation and uses that command-scoped count for its launch command; the global default remains `2`
+- `$envctl-create-plan-auto-codex` computes a `0` through `3` recommendation and uses that command-scoped count for its launch command; the global default remains `2`, and values above `3` are bounded to `3`
 - OpenCode cmux and tmux launches submit the rendered prompt body directly and prepend `/ulw-loop` by default, so ULW/direct-prompt flows do not depend on an installed slash command. Use `--no-ulw-loop` to submit the rendered OpenCode prompt without that prefix for one launch.
 - For `--plan --tmux --opencode`, envctl considers the AI launch successful only after the tmux pane shows a usable OpenCode prompt and the implementation prompt can be submitted. If tmux starts but OpenCode exits, stays on a loading screen, reports a shell/config error, or leaves a stale non-OpenCode pane behind, envctl reports an AI launch failure instead of printing implementation-session attach guidance.
 - Codex installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`; envctl still resolves the shipped prompt body directly when it needs to submit a preset itself
@@ -499,7 +496,7 @@ Optional plan-agent launch config for `--plan`:
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `CYCLES` only changes the Codex cycle count and does not enable plan-agent launch by itself
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and alias forms are set
-- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`), envctl first queues a plain commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`), envctl first queues an `envctl ship` handoff follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` submits the single implementation prompt and queues enabled browser-E2E and PR review-comments follow-ups for Codex/OMX surfaces
 - `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
 
@@ -516,11 +513,11 @@ Optional dashboard review-tab launch:
 - reuses `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
 - does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`; the explicit yes/no dashboard prompt is the opt-in
 - when no explicit workspace override is set, the review tab targets a sibling workspace named `"<current workspace> reviews"`
-- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues a plain commit/push/PR/status-check follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
-- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first commit/push/PR/status-check follow-up, uses commit/push-only follow-ups for intermediate rounds, and reserves `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
+- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues an `envctl ship` handoff follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first `ship` handoff follow-up, uses `ship`-first intermediate follow-ups, and reserves `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the one-shot preset workflow
 - Superset still stays on a one-shot implementation prompt in this slice; local Codex `/goal` framing is handled by the envctl wrapper before that prompt is submitted, while Codex cycles, screen polling, tab renames, and dashboard review tabs remain cmux/tmux/OMX concerns
-- envctl only appends queued messages; it does not type `envctl test`, `git`, `gh`, `envctl commit`, or `envctl pr` commands into the shell
+- envctl only appends queued messages; it does not type `envctl test`, `git`, `gh`, `envctl ship`, `envctl commit`, or `envctl pr` commands into the shell
 
 Debug and diagnostics:
 

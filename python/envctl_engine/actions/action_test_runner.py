@@ -9,105 +9,40 @@ import threading
 import time
 from typing import Any, Callable
 
+from envctl_engine.actions.action_test_runner_failures import (
+    clean_failure_lines as _clean_failure_lines,
+    failed_summary_artifact_available as _failed_summary_artifact_available,
+    format_failure_output_for_artifact as _format_failure_output_for_artifact,
+    summarize_failure_output as _summarize_failure_output,
+)
+from envctl_engine.actions.action_test_runner_progress import (
+    format_live_collection_status as _format_live_collection_status,
+    format_live_progress_status as _format_live_progress_status,
+    format_live_progress_status_with_counts as _format_live_progress_status_with_counts,
+    format_live_progress_status_without_total as _format_live_progress_status_without_total,
+    live_failed_count as _live_failed_count,
+)
 from envctl_engine.actions.actions_test import ensure_repo_local_test_prereqs
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.test_output.parser_base import strip_ansi
-from envctl_engine.test_output.progress_markers import strip_progress_markers
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.path_links import render_path_for_terminal
+
+__all__ = [
+    "_clean_failure_lines",
+    "_failed_summary_artifact_available",
+    "_format_failure_output_for_artifact",
+    "_format_live_collection_status",
+    "_format_live_progress_status",
+    "_format_live_progress_status_with_counts",
+    "_format_live_progress_status_without_total",
+    "_live_failed_count",
+    "_summarize_failure_output",
+    "run_test_action",
+]
 
 
 def _render_command(command: list[str]) -> str:
     return " ".join(str(part) for part in command)
-
-
-def _clean_failure_lines(raw: object) -> list[str]:
-    if not isinstance(raw, str):
-        return []
-    cleaned_lines: list[str] = []
-    for line in raw.splitlines():
-        cleaned = strip_ansi(strip_progress_markers(line)).strip()
-        if cleaned:
-            cleaned_lines.append(cleaned)
-    return cleaned_lines
-
-
-def _format_failure_output_for_artifact(*, stdout: object, stderr: object, returncode: int) -> str:
-    stderr_lines = _clean_failure_lines(stderr)
-    stdout_lines = _clean_failure_lines(stdout)
-    if stderr_lines and stdout_lines:
-        return "\n".join(
-            [
-                "stderr:",
-                *stderr_lines,
-                "",
-                "stdout:",
-                *stdout_lines,
-            ]
-        )
-    lines = stderr_lines or stdout_lines
-    if not lines:
-        return f"exit:{returncode}"
-    return "\n".join(lines)
-
-
-def _summarize_failure_output(*, stdout: object, stderr: object, returncode: int) -> str:
-    chunks = _clean_failure_lines(stderr)
-    if not chunks:
-        chunks = _clean_failure_lines(stdout)
-    if not chunks:
-        return f"exit:{returncode}"
-    snippet = " | ".join(chunks[:3])
-    if len(chunks) > 3:
-        snippet += f" | +{len(chunks) - 3} more lines"
-    return snippet
-
-
-def _failed_summary_artifact_available(
-    *,
-    summary_metadata: dict[str, dict[str, object]] | None,
-    project_name: str,
-) -> bool:
-    if not isinstance(summary_metadata, dict):
-        return False
-    entry = summary_metadata.get(project_name)
-    if not isinstance(entry, dict):
-        return False
-    status = str(entry.get("status", "")).strip().lower()
-    if status and status != "failed":
-        return False
-    return bool(
-        str(entry.get("short_summary_path", "") or "").strip() or str(entry.get("summary_path", "") or "").strip()
-    )
-
-
-def _format_live_progress_status(label: str, current: int, total: int) -> str:
-    return f"Running {label}... {current}/{total} tests complete"
-
-
-def _format_live_progress_status_without_total(label: str, current: int, *, parsed: object | None) -> str:
-    failed = min(max(_live_failed_count(parsed), 0), max(current, 0))
-    passed = max(0, int(current) - failed)
-    return f"Running {label}... {current} tests complete • {passed} passed, {failed} failed"
-
-
-def _format_live_collection_status(label: str, discovered: int) -> str:
-    return f"Collecting {label} tests... {discovered} discovered"
-
-
-def _live_failed_count(parsed: object | None) -> int:
-    if parsed is None:
-        return 0
-    failed = int(getattr(parsed, "failed", 0) or 0)
-    errors = int(getattr(parsed, "errors", 0) or 0)
-    failed_tests = len(getattr(parsed, "failed_tests", ()) or ())
-    return max(failed + errors, failed_tests + errors)
-
-
-def _format_live_progress_status_with_counts(label: str, current: int, total: int, *, parsed: object | None) -> str:
-    failed = min(max(_live_failed_count(parsed), 0), max(current, 0))
-    passed = max(0, int(current) - failed)
-    return f"{_format_live_progress_status(label, current, total)} • {passed} passed, {failed} failed"
 
 
 def run_test_action(

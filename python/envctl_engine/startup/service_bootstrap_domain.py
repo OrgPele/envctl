@@ -2,33 +2,65 @@ from __future__ import annotations
 
 # pyright: reportUnusedFunction=false
 
-from dataclasses import dataclass
-import hashlib
-import json
 import re
 import time
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Mapping, Protocol
 
-from envctl_engine.shared.node_tooling import detect_package_manager, load_package_json
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool
-from envctl_engine.startup.public_urls import browser_backend_url, resolve_public_host
+from envctl_engine.startup.service_frontend_bootstrap_support import (
+    _frontend_dependency_install_required as _frontend_dependency_install_required,
+    _frontend_dependency_installed as _frontend_dependency_installed,
+    _frontend_install_commands as _frontend_install_commands,
+    _frontend_missing_direct_dependency as _frontend_missing_direct_dependency,
+    _prepare_frontend_runtime as _prepare_frontend_runtime,
+    _run_frontend_bootstrap_command as _run_frontend_bootstrap_command,
+)
+from envctl_engine.startup.service_env_support import (
+    _BACKEND_SENSITIVE_ENV_KEYS as _BACKEND_SENSITIVE_ENV_KEYS,
+    _BackendEnvContract as _BackendEnvContract,
+    _emit_backend_env_resolved as _emit_backend_env_resolved,
+    _env_assignment_key as _env_assignment_key,
+    _EnvFileResolution as _EnvFileResolution,
+    _normalize_projected_backend_env as _normalize_projected_backend_env,
+    _override_env_path as _override_env_path,
+    _read_env_file_safe as _read_env_file_safe,
+    _resolve_backend_env_contract as _resolve_backend_env_contract,
+    _resolve_backend_env_file as _resolve_backend_env_file,
+    _resolve_backend_env_file_resolution as _resolve_backend_env_file_resolution,
+    _resolve_env_file_resolution as _resolve_env_file_resolution,
+    _resolve_frontend_env_file as _resolve_frontend_env_file,
+    _resolve_frontend_env_file_resolution as _resolve_frontend_env_file_resolution,
+    _resolve_override_env_path_details as _resolve_override_env_path_details,
+    _scrub_backend_sensitive_env as _scrub_backend_sensitive_env,
+    _service_env_from_file as _service_env_from_file,
+    _skip_local_db_env as _skip_local_db_env,
+    _sync_backend_env_file as _sync_backend_env_file,
+    _sync_frontend_local_env_file as _sync_frontend_local_env_file,
+)
+from envctl_engine.startup.service_runtime_state_support import (
+    _backend_dependency_file_mentions as _backend_dependency_file_mentions,
+    _backend_dependency_fingerprint as _backend_dependency_fingerprint,
+    _backend_dependency_install_required as _backend_dependency_install_required,
+    _backend_runtime_fingerprint as _backend_runtime_fingerprint,
+    _backend_runtime_prep_required as _backend_runtime_prep_required,
+    _backend_runtime_prep_state_path as _backend_runtime_prep_state_path,
+    _backend_runtime_probe_modules as _backend_runtime_probe_modules,
+    _backend_bootstrap_state_path as _backend_bootstrap_state_path,
+    _frontend_runtime_prep_required as _frontend_runtime_prep_required,
+    _frontend_runtime_prep_state_path as _frontend_runtime_prep_state_path,
+    _poetry_backend_environment_ready as _poetry_backend_environment_ready,
+    _read_backend_bootstrap_state as _read_backend_bootstrap_state,
+    _read_backend_runtime_prep_state as _read_backend_runtime_prep_state,
+    _read_frontend_runtime_prep_state as _read_frontend_runtime_prep_state,
+    _write_backend_bootstrap_state as _write_backend_bootstrap_state,
+    _write_backend_runtime_prep_state as _write_backend_runtime_prep_state,
+    _write_frontend_runtime_prep_state as _write_frontend_runtime_prep_state,
+)
 from envctl_engine.ui.path_links import render_path_for_terminal
 
 _STATE_DIRNAME = ".envctl-state"
-_BACKEND_SENSITIVE_ENV_KEYS = (
-    "APP_ENV_FILE",
-    "DATABASE_URL",
-    "REDIS_URL",
-    "SQLALCHEMY_DATABASE_URL",
-    "ASYNC_DATABASE_URL",
-    "DB_HOST",
-    "DB_PORT",
-    "DB_USER",
-    "DB_PASSWORD",
-    "DB_NAME",
-)
 
 
 class ProjectContextLike(Protocol):
@@ -36,27 +68,23 @@ class ProjectContextLike(Protocol):
     root: Path
 
 
-@dataclass(frozen=True)
-class _EnvFileResolution:
-    path: Path | None
-    is_default: bool
-    source: str
-    override_requested: bool
-    override_resolution: str
-
-
-@dataclass(frozen=True)
-class _BackendEnvContract:
-    env: dict[str, str]
-    env_file_path: Path | None
-    env_file_is_default: bool
-    env_file_source: str
-    override_requested: bool
-    override_resolution: str
-    override_authoritative: bool
-    skip_local_db_env: bool
-    scrubbed_keys: tuple[str, ...]
-    projected_keys: tuple[str, ...]
+def configured_service_types_for_mode(config: Any, runtime_mode: str) -> list[str]:
+    if hasattr(config, "profile_for_mode"):
+        profile = config.profile_for_mode(runtime_mode)
+        configured: list[str] = []
+        if bool(getattr(profile, "backend_enable", False)):
+            configured.append("backend")
+        if bool(getattr(profile, "frontend_enable", False)):
+            configured.append("frontend")
+        return configured
+    return [
+        service_name
+        for service_name, enabled in (
+            ("backend", config.service_enabled_for_mode(runtime_mode, "backend")),
+            ("frontend", config.service_enabled_for_mode(runtime_mode, "frontend")),
+        )
+        if enabled
+    ]
 
 
 def _prepare_backend_runtime(
@@ -420,280 +448,6 @@ def _backend_migrations_enabled(self: Any, route: Route | None) -> bool:
     return parse_bool(raw, True)
 
 
-def _prepare_frontend_runtime(
-    self: Any,
-    *,
-    context: ProjectContextLike,
-    frontend_cwd: Path,
-    frontend_log_path: str,
-    project_env_base: Mapping[str, str],
-    frontend_env_file: Path | None,
-    backend_port: int,
-    route: Route | None = None,
-) -> None:
-    prepare_started = time.monotonic()
-    backend_url = ""
-    api_url = ""
-    manager = ""
-    if backend_port > 0:
-        backend_url = browser_backend_url(host=resolve_public_host(env=self.env, config=self.config), port=backend_port)
-        api_url = f"{backend_url}/api/v1"
-
-    package_json = frontend_cwd / "package.json"
-    if not package_json.is_file():
-        return
-
-    payload = load_package_json(package_json)
-    if payload is None:
-        return
-    scripts = payload.get("scripts")
-    if not isinstance(scripts, dict):
-        return
-    dev_script = scripts.get("dev")
-    if not isinstance(dev_script, str) or not dev_script.strip():
-        return
-
-    manager = detect_package_manager(frontend_cwd, command_exists=self._command_exists)
-    if manager is None:
-        return
-    missing_dependency = _frontend_missing_direct_dependency(frontend_cwd=frontend_cwd, payload=payload)
-    if missing_dependency is not None and not parse_bool(
-        self.env.get("ENVCTL_SKIP_FRONTEND_DEPENDENCY_CHECK"),
-        False,
-    ):
-        install_command, _fallback_command = _frontend_install_commands(frontend_cwd=frontend_cwd, manager=manager)
-        command_text = " ".join(install_command)
-        self._emit(
-            "service.bootstrap.dependency_check",
-            project=context.name,
-            service="frontend",
-            status="failed",
-            package=missing_dependency,
-            install_command=command_text,
-        )
-        raise RuntimeError(
-            "frontend dependency check failed for "
-            f"{context.name}: missing direct dependency {missing_dependency!r} in {frontend_cwd}. "
-            f"Run `{command_text}` in {frontend_cwd}."
-        )
-    env = self._command_env(port=0, extra=project_env_base)
-    if frontend_env_file is not None and frontend_env_file.is_file():
-        loaded_env = self._read_env_file_safe(frontend_env_file)
-        for key, value in loaded_env.items():
-            env[key] = value
-        env["APP_ENV_FILE"] = str(frontend_env_file)
-    if backend_url:
-        env["VITE_BACKEND_URL"] = backend_url
-    if api_url:
-        env["VITE_API_URL"] = api_url
-    runtime_required, runtime_reason, runtime_state = _frontend_runtime_prep_required(
-        frontend_cwd=frontend_cwd,
-        manager=manager,
-        env=env,
-        dev_script=dev_script,
-    )
-    if not runtime_required:
-        self._emit(
-            "service.bootstrap.skip",
-            project=context.name,
-            service="frontend",
-            manager=manager,
-            step="prepare",
-            reason=runtime_reason,
-        )
-        _emit_bootstrap_phase(
-            self,
-            project=context.name,
-            service="frontend",
-            phase="prepare",
-            started=prepare_started,
-            status="reused",
-            reason=runtime_reason,
-        )
-        return
-    install_check_started = time.monotonic()
-    install_required, install_reason = _frontend_dependency_install_required(
-        frontend_cwd=frontend_cwd,
-        dev_script=dev_script,
-    )
-    _emit_bootstrap_phase(
-        self,
-        project=context.name,
-        service="frontend",
-        phase="dependency_install_check",
-        started=install_check_started,
-        reason=install_reason,
-    )
-    if not install_required:
-        _write_frontend_runtime_prep_state(frontend_cwd=frontend_cwd, state=runtime_state)
-        _emit_bootstrap_phase(
-            self,
-            project=context.name,
-            service="frontend",
-            phase="dependency_install",
-            started=time.monotonic(),
-            status="reused",
-            reason=install_reason,
-        )
-        _emit_bootstrap_phase(
-            self,
-            project=context.name,
-            service="frontend",
-            phase="prepare",
-            started=prepare_started,
-        )
-        return
-
-    install_command, fallback_command = _frontend_install_commands(
-        frontend_cwd=frontend_cwd,
-        manager=manager,
-    )
-    install_started = time.monotonic()
-    self._emit(
-        "service.bootstrap",
-        project=context.name,
-        service="frontend",
-        manager=manager,
-        step="install",
-        reason=install_reason,
-    )
-    try:
-        self._run_frontend_bootstrap_command(
-            context=context,
-            command=install_command,
-            cwd=frontend_cwd,
-            frontend_log_path=frontend_log_path,
-            env=env,
-            step=f"{manager} install",
-        )
-    except RuntimeError:
-        if not fallback_command:
-            raise
-        self._emit(
-            "service.bootstrap.retry",
-            project=context.name,
-            service="frontend",
-            step="install",
-            reason="install_fallback",
-        )
-        self._run_frontend_bootstrap_command(
-            context=context,
-            command=fallback_command,
-            cwd=frontend_cwd,
-            frontend_log_path=frontend_log_path,
-            env=env,
-            step=f"{manager} install (fallback)",
-        )
-    _write_frontend_runtime_prep_state(frontend_cwd=frontend_cwd, state=runtime_state)
-    _emit_bootstrap_phase(
-        self,
-        project=context.name,
-        service="frontend",
-        phase="dependency_install",
-        started=install_started,
-        reason=install_reason,
-    )
-    _emit_bootstrap_phase(
-        self,
-        project=context.name,
-        service="frontend",
-        phase="prepare",
-        started=prepare_started,
-    )
-
-
-def _run_frontend_bootstrap_command(
-    self: Any,
-    *,
-    context: ProjectContextLike,
-    command: list[str],
-    cwd: Path,
-    frontend_log_path: str,
-    env: Mapping[str, str],
-    step: str,
-) -> None:
-    result = self.process_runner.run(
-        command,
-        cwd=cwd,
-        env=env,
-        timeout=300.0,
-    )
-    if result.returncode == 0:
-        return
-    error = self._command_result_error_text(result=result)
-    if frontend_log_path:
-        try:
-            Path(frontend_log_path).parent.mkdir(parents=True, exist_ok=True)
-            with Path(frontend_log_path).open("a", encoding="utf-8") as handle:
-                handle.write(f"[envctl] frontend bootstrap step failed ({step}): {error}\n")
-        except OSError:
-            pass
-    log_hint = f" Log: {frontend_log_path}" if frontend_log_path else ""
-    raise RuntimeError(f"frontend bootstrap failed for {context.name} during {step}: {error}{log_hint}")
-
-
-def _frontend_dependency_install_required(*, frontend_cwd: Path, dev_script: str) -> tuple[bool, str]:
-    node_modules_dir = frontend_cwd / "node_modules"
-    if not node_modules_dir.is_dir():
-        return True, "node_modules_missing"
-
-    if "vite" in dev_script.lower():
-        vite_bin = node_modules_dir / ".bin" / "vite"
-        if not vite_bin.is_file():
-            return True, "vite_binary_missing"
-    return False, "up_to_date"
-
-
-def _frontend_missing_direct_dependency(*, frontend_cwd: Path, payload: Mapping[str, object]) -> str | None:
-    node_modules_dir = frontend_cwd / "node_modules"
-    if not node_modules_dir.is_dir():
-        return None
-    declared: list[str] = []
-    for section_name in ("dependencies", "devDependencies"):
-        section = payload.get(section_name)
-        if not isinstance(section, dict):
-            continue
-        for package_name in section:
-            name = str(package_name).strip()
-            if name and not name.startswith("@types/"):
-                declared.append(name)
-    for package_name in sorted(set(declared)):
-        if not _frontend_dependency_installed(node_modules_dir=node_modules_dir, package_name=package_name):
-            return package_name
-    return None
-
-
-def _frontend_dependency_installed(*, node_modules_dir: Path, package_name: str) -> bool:
-    package_path = node_modules_dir
-    for part in package_name.split("/"):
-        if not part:
-            return False
-        package_path = package_path / part
-    return package_path.exists()
-
-
-def _frontend_install_commands(*, frontend_cwd: Path, manager: str) -> tuple[list[str], list[str] | None]:
-    if manager == "bun":
-        return ["bun", "install"], None
-
-    if manager == "pnpm":
-        if (frontend_cwd / "pnpm-lock.yaml").is_file():
-            return ["pnpm", "install", "--frozen-lockfile"], None
-        return ["pnpm", "install"], None
-
-    if manager == "yarn":
-        if (frontend_cwd / "yarn.lock").is_file():
-            return ["yarn", "install", "--frozen-lockfile"], None
-        return ["yarn", "install"], None
-
-    if (frontend_cwd / "package-lock.json").is_file():
-        return (
-            ["npm", "ci", "--include=dev", "--prefer-offline", "--no-audit"],
-            ["npm", "install", "--include=dev"],
-        )
-    return ["npm", "install", "--include=dev"], None
-
-
 def _pyproject_uses_poetry(pyproject_file: Path) -> bool:
     if not pyproject_file.is_file():
         return False
@@ -702,609 +456,6 @@ def _pyproject_uses_poetry(pyproject_file: Path) -> bool:
     except OSError:
         return False
     return "[tool.poetry]" in text or "[tool.pdm]" in text
-
-
-def _backend_dependency_install_required(
-    *,
-    backend_cwd: Path,
-    manager: str,
-    environment_ready: Callable[[], bool] | None = None,
-) -> tuple[bool, str, dict[str, object]]:
-    fingerprint = _backend_dependency_fingerprint(backend_cwd=backend_cwd, manager=manager)
-    state: dict[str, object] = {"manager": manager, "fingerprint": fingerprint}
-    existing = _read_backend_bootstrap_state(backend_cwd)
-    if manager == "poetry":
-        if existing != state:
-            return True, "dependency_files_changed", state
-        if environment_ready is not None and not environment_ready():
-            return True, "poetry_environment_missing_dependencies", state
-        return False, "up_to_date", state
-
-    env_artifact = backend_cwd / "venv"
-    alt_env_artifact = backend_cwd / ".venv"
-    if not env_artifact.exists() and not alt_env_artifact.exists():
-        return True, "environment_missing", state
-    if existing != state:
-        return True, "dependency_files_changed", state
-    return False, "up_to_date", state
-
-
-def _backend_runtime_probe_modules(backend_cwd: Path) -> tuple[str, ...]:
-    modules: list[str] = []
-    for module in ("uvicorn",):
-        if _backend_dependency_file_mentions(backend_cwd, module):
-            modules.append(module)
-    return tuple(modules)
-
-
-def _backend_dependency_file_mentions(backend_cwd: Path, dependency_name: str) -> bool:
-    normalized = dependency_name.replace("_", "[-_]")
-    pattern = re.compile(rf"(^|[^A-Za-z0-9_.-]){normalized}([^A-Za-z0-9_.-]|$)", re.IGNORECASE)
-    for candidate in (
-        backend_cwd / "pyproject.toml",
-        backend_cwd / "poetry.lock",
-        backend_cwd / "requirements.txt",
-    ):
-        if not candidate.is_file():
-            continue
-        try:
-            text = candidate.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        if pattern.search(text):
-            return True
-    return False
-
-
-def _poetry_backend_environment_ready(
-    self: Any,
-    *,
-    backend_cwd: Path,
-    env: Mapping[str, str],
-    modules: tuple[str, ...],
-) -> bool:
-    if not modules:
-        return True
-    imports = "; ".join(f"import {module}" for module in modules)
-    try:
-        result = self.process_runner.run(
-            ["poetry", "run", "python", "-c", imports],
-            cwd=backend_cwd,
-            env=env,
-            timeout=30.0,
-        )
-    except Exception:  # noqa: BLE001 - failed readiness probes should trigger a safe reinstall path.
-        return False
-    return int(getattr(result, "returncode", 1)) == 0
-
-
-def _backend_runtime_prep_required(
-    *,
-    backend_cwd: Path,
-    manager: str,
-    env: Mapping[str, str],
-    backend_env_file: Path | None,
-    backend_env_is_default: bool,
-    skip_local_db_env: bool,
-    migrations_enabled: bool,
-) -> tuple[bool, str, dict[str, object]]:
-    state: dict[str, object] = {
-        "manager": manager,
-        "dependency_fingerprint": _backend_dependency_fingerprint(backend_cwd=backend_cwd, manager=manager),
-        "runtime_fingerprint": _backend_runtime_fingerprint(
-            backend_cwd=backend_cwd,
-            env=env,
-            backend_env_file=backend_env_file,
-            backend_env_is_default=backend_env_is_default,
-            skip_local_db_env=skip_local_db_env,
-        ),
-        "migrations_enabled": migrations_enabled,
-    }
-    existing = _read_backend_runtime_prep_state(backend_cwd)
-    if migrations_enabled:
-        return True, "migration_required", state
-    if existing is None:
-        return True, "bootstrap_cache_miss", state
-    if str(existing.get("dependency_fingerprint", "")) != str(state["dependency_fingerprint"]):
-        return True, "bootstrap_cache_miss", state
-    if str(existing.get("runtime_fingerprint", "")) != str(state["runtime_fingerprint"]):
-        return True, "env_changed", state
-    return False, "service_stale_only", state
-
-
-def _backend_dependency_fingerprint(*, backend_cwd: Path, manager: str) -> str:
-    hasher = hashlib.sha256()
-    hasher.update(manager.encode("utf-8"))
-    for candidate in (
-        backend_cwd / "pyproject.toml",
-        backend_cwd / "poetry.lock",
-        backend_cwd / "requirements.txt",
-    ):
-        hasher.update(candidate.name.encode("utf-8"))
-        if not candidate.is_file():
-            hasher.update(b"<missing>")
-            continue
-        try:
-            hasher.update(candidate.read_bytes())
-        except OSError:
-            hasher.update(b"<unreadable>")
-    return hasher.hexdigest()
-
-
-def _backend_bootstrap_state_path(backend_cwd: Path) -> Path:
-    return backend_cwd / _STATE_DIRNAME / "envctl-backend-bootstrap.json"
-
-
-def _backend_runtime_prep_state_path(backend_cwd: Path) -> Path:
-    return backend_cwd / _STATE_DIRNAME / "envctl-backend-runtime-prep.json"
-
-
-def _read_backend_bootstrap_state(backend_cwd: Path) -> dict[str, object] | None:
-    path = _backend_bootstrap_state_path(backend_cwd)
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if isinstance(payload, dict):
-        return payload
-    return None
-
-
-def _write_backend_bootstrap_state(*, backend_cwd: Path, state: dict[str, object]) -> None:
-    path = _backend_bootstrap_state_path(backend_cwd)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
-    except OSError:
-        return
-
-
-def _read_backend_runtime_prep_state(backend_cwd: Path) -> dict[str, object] | None:
-    path = _backend_runtime_prep_state_path(backend_cwd)
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if isinstance(payload, dict):
-        return payload
-    return None
-
-
-def _write_backend_runtime_prep_state(*, backend_cwd: Path, state: dict[str, object]) -> None:
-    path = _backend_runtime_prep_state_path(backend_cwd)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
-    except OSError:
-        return
-
-
-def _backend_runtime_fingerprint(
-    *,
-    backend_cwd: Path,
-    env: Mapping[str, str],
-    backend_env_file: Path | None,
-    backend_env_is_default: bool,
-    skip_local_db_env: bool,
-) -> str:
-    hasher = hashlib.sha256()
-    hasher.update(str(backend_cwd).encode("utf-8"))
-    hasher.update(str(backend_env_is_default).encode("utf-8"))
-    hasher.update(str(skip_local_db_env).encode("utf-8"))
-    for key in (
-        "DATABASE_URL",
-        "REDIS_URL",
-        "SQLALCHEMY_DATABASE_URL",
-        "ASYNC_DATABASE_URL",
-        "APP_ENV_FILE",
-    ):
-        hasher.update(key.encode("utf-8"))
-        hasher.update(str(env.get(key, "")).encode("utf-8"))
-    if backend_env_file is not None:
-        hasher.update(str(backend_env_file).encode("utf-8"))
-        try:
-            stat_result = backend_env_file.stat()
-            hasher.update(str(stat_result.st_mtime_ns).encode("utf-8"))
-            hasher.update(str(stat_result.st_size).encode("utf-8"))
-        except OSError:
-            hasher.update(b"<missing>")
-    return hasher.hexdigest()
-
-
-def _frontend_runtime_prep_state_path(frontend_cwd: Path) -> Path:
-    return frontend_cwd / _STATE_DIRNAME / "envctl-frontend-runtime-prep.json"
-
-
-def _frontend_runtime_prep_required(
-    *,
-    frontend_cwd: Path,
-    manager: str,
-    env: Mapping[str, str],
-    dev_script: str,
-) -> tuple[bool, str, dict[str, object]]:
-    state: dict[str, object] = {
-        "manager": manager,
-        "runtime_fingerprint": _frontend_runtime_fingerprint(
-            frontend_cwd=frontend_cwd,
-            env=env,
-            dev_script=dev_script,
-        ),
-    }
-    existing = _read_frontend_runtime_prep_state(frontend_cwd)
-    if existing is None:
-        return True, "bootstrap_cache_miss", state
-    if str(existing.get("runtime_fingerprint", "")) != str(state["runtime_fingerprint"]):
-        return True, "env_changed", state
-    return False, "service_stale_only", state
-
-
-def _frontend_runtime_fingerprint(
-    *,
-    frontend_cwd: Path,
-    env: Mapping[str, str],
-    dev_script: str,
-) -> str:
-    hasher = hashlib.sha256()
-    hasher.update(str(frontend_cwd).encode("utf-8"))
-    hasher.update(dev_script.encode("utf-8"))
-    for candidate in (
-        frontend_cwd / "package.json",
-        frontend_cwd / "package-lock.json",
-        frontend_cwd / "pnpm-lock.yaml",
-        frontend_cwd / "yarn.lock",
-        frontend_cwd / "bun.lockb",
-        frontend_cwd / ".env.local",
-    ):
-        hasher.update(candidate.name.encode("utf-8"))
-        if not candidate.exists():
-            hasher.update(b"<missing>")
-            continue
-        try:
-            stat_result = candidate.stat()
-            hasher.update(str(stat_result.st_mtime_ns).encode("utf-8"))
-            hasher.update(str(stat_result.st_size).encode("utf-8"))
-        except OSError:
-            hasher.update(b"<unreadable>")
-    for key in ("VITE_BACKEND_URL", "VITE_API_URL", "APP_ENV_FILE"):
-        hasher.update(key.encode("utf-8"))
-        hasher.update(str(env.get(key, "")).encode("utf-8"))
-    return hasher.hexdigest()
-
-
-def _read_frontend_runtime_prep_state(frontend_cwd: Path) -> dict[str, object] | None:
-    path = _frontend_runtime_prep_state_path(frontend_cwd)
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if isinstance(payload, dict):
-        return payload
-    return None
-
-
-def _write_frontend_runtime_prep_state(*, frontend_cwd: Path, state: dict[str, object]) -> None:
-    path = _frontend_runtime_prep_state_path(frontend_cwd)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
-    except OSError:
-        return
-
-
-def _sync_frontend_local_env_file(
-    path: Path,
-    *,
-    api_url: str,
-    backend_url: str,
-) -> bool:
-    updates = {
-        "VITE_API_URL": api_url,
-        "VITE_BACKEND_URL": backend_url,
-    }
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
-    except OSError:
-        return False
-
-    replaced: set[str] = set()
-    changed = False
-    rendered: list[str] = []
-    for line in lines:
-        key = _env_assignment_key(line)
-        if key is None or key not in updates or key in replaced:
-            rendered.append(line)
-            continue
-        new_line = f"{key}={updates[key]}"
-        if line != new_line:
-            changed = True
-        rendered.append(new_line)
-        replaced.add(key)
-
-    for key, value in updates.items():
-        if key in replaced:
-            continue
-        rendered.append(f"{key}={value}")
-        changed = True
-
-    if not changed:
-        return False
-
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
-    except OSError:
-        return False
-    return True
-
-
-def _service_env_from_file(
-    self: Any,
-    *,
-    base_env: Mapping[str, str],
-    env_file: Path | None,
-    include_app_env_file: bool,
-    env_file_authoritative: bool = False,
-) -> dict[str, str]:
-    merged = dict(base_env)
-    if env_file is None or not env_file.is_file():
-        if include_app_env_file:
-            merged["RUN_DB_MIGRATIONS_ON_STARTUP"] = "false"
-        return merged
-    loaded_env = self._read_env_file_safe(env_file)
-    if env_file_authoritative:
-        merged.update(loaded_env)
-    else:
-        for key, value in loaded_env.items():
-            merged.setdefault(key, value)
-    if include_app_env_file:
-        merged["APP_ENV_FILE"] = str(env_file)
-        merged["RUN_DB_MIGRATIONS_ON_STARTUP"] = "false"
-    return merged
-
-
-def _resolve_backend_env_file(
-    self: Any,
-    *,
-    context: ProjectContextLike,
-    backend_cwd: Path,
-) -> tuple[Path | None, bool]:
-    resolution = _resolve_backend_env_file_resolution(
-        self,
-        context=context,
-        backend_cwd=backend_cwd,
-    )
-    return resolution.path, resolution.is_default
-
-
-def _resolve_frontend_env_file(
-    self: Any,
-    *,
-    context: ProjectContextLike,
-    frontend_cwd: Path,
-) -> Path | None:
-    return _resolve_frontend_env_file_resolution(
-        self,
-        context=context,
-        frontend_cwd=frontend_cwd,
-    ).path
-
-
-def _resolve_backend_env_file_resolution(
-    self: Any,
-    *,
-    context: ProjectContextLike,
-    backend_cwd: Path,
-) -> _EnvFileResolution:
-    override_raw = self._command_override_value("BACKEND_ENV_FILE_OVERRIDE")
-    if override_raw is None and context.name == "Main":
-        override_raw = self._command_override_value("MAIN_ENV_FILE_PATH")
-    return _resolve_env_file_resolution(
-        self,
-        override_raw=override_raw,
-        target_root=context.root,
-        default_env_file=backend_cwd / ".env",
-    )
-
-
-def _resolve_frontend_env_file_resolution(
-    self: Any,
-    *,
-    context: ProjectContextLike,
-    frontend_cwd: Path,
-) -> _EnvFileResolution:
-    override_raw = self._command_override_value("FRONTEND_ENV_FILE_OVERRIDE")
-    if override_raw is None and context.name == "Main":
-        override_raw = self._command_override_value("MAIN_FRONTEND_ENV_FILE_PATH")
-    return _resolve_env_file_resolution(
-        self,
-        override_raw=override_raw,
-        target_root=context.root,
-        default_env_file=frontend_cwd / ".env",
-    )
-
-
-def _resolve_env_file_resolution(
-    self: Any,
-    *,
-    override_raw: str | None,
-    target_root: Path,
-    default_env_file: Path,
-) -> _EnvFileResolution:
-    override_requested = isinstance(override_raw, str) and bool(override_raw.strip())
-    resolution = "none"
-    override_path: Path | None = None
-    if override_requested:
-        override_path, resolution = _resolve_override_env_path_details(
-            str(override_raw),
-            target_root=target_root,
-            repo_root=Path(str(getattr(self.config, "base_dir", target_root))),
-        )
-    if override_path is not None:
-        return _EnvFileResolution(
-            path=override_path,
-            is_default=False,
-            source="explicit_override",
-            override_requested=override_requested,
-            override_resolution=resolution,
-        )
-    if default_env_file.is_file():
-        return _EnvFileResolution(
-            path=default_env_file.resolve(),
-            is_default=True,
-            source="default",
-            override_requested=override_requested,
-            override_resolution=resolution,
-        )
-    return _EnvFileResolution(
-        path=None,
-        is_default=False,
-        source="none",
-        override_requested=override_requested,
-        override_resolution=resolution,
-    )
-
-
-def _resolve_override_env_path_details(raw_path: str, *, target_root: Path, repo_root: Path) -> tuple[Path | None, str]:
-    candidate = Path(raw_path.strip()).expanduser()
-    if candidate.is_absolute():
-        resolved = candidate.resolve()
-        if resolved.is_file():
-            return resolved, "absolute"
-        return None, "missing"
-
-    target_candidate = (target_root / candidate).resolve()
-    repo_candidate = (repo_root / candidate).resolve()
-    target_exists = target_candidate.is_file()
-    repo_exists = repo_candidate.is_file()
-
-    if target_exists and repo_exists and target_candidate != repo_candidate:
-        raise RuntimeError(
-            "Relative env-file override is ambiguous; the path exists under both the target root and repo root. "
-            "Use an absolute path."
-        )
-    if target_exists:
-        return target_candidate, "target_root"
-    if repo_exists:
-        return repo_candidate, "repo_root"
-    return None, "missing"
-
-
-def _resolve_backend_env_contract(
-    self: Any,
-    *,
-    context: ProjectContextLike,
-    backend_cwd: Path,
-    base_env: Mapping[str, str],
-    projected_env: Mapping[str, str],
-) -> _BackendEnvContract:
-    env_resolution = _resolve_backend_env_file_resolution(
-        self,
-        context=context,
-        backend_cwd=backend_cwd,
-    )
-    skip_local_db_env = _skip_local_db_env(
-        self,
-        backend_env_file=env_resolution.path,
-        backend_env_is_default=env_resolution.is_default,
-    )
-    env, scrubbed_keys = _scrub_backend_sensitive_env(base_env)
-    normalized_projected_env = _normalize_projected_backend_env(projected_env)
-    env.update(normalized_projected_env)
-    if env_resolution.path is not None and env_resolution.path.is_file():
-        env.update(self._read_env_file_safe(env_resolution.path))
-        env["APP_ENV_FILE"] = str(env_resolution.path)
-    if not skip_local_db_env:
-        for key, value in normalized_projected_env.items():
-            if value.strip():
-                env[key] = value
-    env["RUN_DB_MIGRATIONS_ON_STARTUP"] = "false"
-    contract = _BackendEnvContract(
-        env=env,
-        env_file_path=env_resolution.path,
-        env_file_is_default=env_resolution.is_default,
-        env_file_source=env_resolution.source,
-        override_requested=env_resolution.override_requested,
-        override_resolution=env_resolution.override_resolution,
-        override_authoritative=(env_resolution.source == "explicit_override" and skip_local_db_env),
-        skip_local_db_env=skip_local_db_env,
-        scrubbed_keys=scrubbed_keys,
-        projected_keys=tuple(sorted(normalized_projected_env)),
-    )
-    _emit_backend_env_resolved(
-        self,
-        context=context,
-        backend_cwd=backend_cwd,
-        contract=contract,
-    )
-    return contract
-
-
-def _scrub_backend_sensitive_env(base_env: Mapping[str, str]) -> tuple[dict[str, str], tuple[str, ...]]:
-    scrubbed: list[str] = []
-    merged: dict[str, str] = {}
-    for key, value in base_env.items():
-        if key in _BACKEND_SENSITIVE_ENV_KEYS and isinstance(value, str) and value.strip():
-            scrubbed.append(key)
-            continue
-        merged[str(key)] = str(value)
-    return merged, tuple(sorted(scrubbed))
-
-
-def _normalize_projected_backend_env(projected_env: Mapping[str, str]) -> dict[str, str]:
-    normalized = {
-        str(key): str(value)
-        for key, value in projected_env.items()
-        if isinstance(key, str) and isinstance(value, str) and value.strip()
-    }
-    database_url = normalized.get("DATABASE_URL")
-    if isinstance(database_url, str) and database_url.strip():
-        normalized.setdefault("SQLALCHEMY_DATABASE_URL", database_url)
-        normalized.setdefault("ASYNC_DATABASE_URL", database_url)
-    return normalized
-
-
-def _emit_backend_env_resolved(
-    self: Any,
-    *,
-    context: ProjectContextLike,
-    backend_cwd: Path,
-    contract: _BackendEnvContract,
-) -> None:
-    emitter = getattr(self, "_emit", None)
-    if not callable(emitter):
-        return
-    emitter(
-        "backend.env.resolved",
-        project=context.name,
-        project_root=str(context.root),
-        backend_cwd=str(backend_cwd),
-        env_file_path=str(contract.env_file_path) if contract.env_file_path is not None else None,
-        env_file_source=contract.env_file_source,
-        override_requested=contract.override_requested,
-        override_resolution=contract.override_resolution,
-        override_authoritative=contract.override_authoritative,
-        scrubbed_keys=list(contract.scrubbed_keys),
-        projected_keys=list(contract.projected_keys),
-    )
-
-
-def _override_env_path(raw_path: str | None, *, base_dir: Path) -> Path | None:
-    if not isinstance(raw_path, str) or not raw_path.strip():
-        return None
-    candidate = Path(raw_path.strip()).expanduser()
-    if not candidate.is_absolute():
-        candidate = (base_dir / candidate).resolve()
-    if candidate.is_file():
-        return candidate
-    return None
-
-
-def _skip_local_db_env(self: Any, *, backend_env_file: Path | None, backend_env_is_default: bool) -> bool:
-    raw = self._command_override_value("SKIP_LOCAL_DB_ENV")
-    skip = parse_bool(raw, False)
-    if backend_env_file is not None and not backend_env_is_default:
-        return True
-    return skip
 
 
 def _bootstrap_failure_suggestion(step: str, error: str, cwd: Path) -> str:
@@ -1529,72 +680,6 @@ def _rewrite_database_url_to_asyncpg(database_url: str) -> str | None:
         if value.startswith(source):
             return target + value[len(source) :]
     return None
-
-
-def _read_env_file_safe(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return values
-    for line in lines:
-        key = _env_assignment_key(line)
-        if key is None:
-            continue
-        assignment = line.strip()
-        if assignment.startswith("export "):
-            assignment = assignment[len("export ") :].strip()
-        if "=" not in assignment:
-            continue
-        raw_value = assignment.split("=", 1)[1].strip()
-        if len(raw_value) >= 2 and raw_value[0] == raw_value[-1] and raw_value[0] in {"'", '"'}:
-            raw_value = raw_value[1:-1]
-        values[key] = raw_value
-    return values
-
-
-def _sync_backend_env_file(self: Any, path: Path, *, env: Mapping[str, str]) -> None:
-    _ = env
-    removals = {"SQLALCHEMY_DATABASE_URL", "ASYNC_DATABASE_URL"}
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return
-
-    replaced: set[str] = set()
-    changed = False
-    rendered: list[str] = []
-    for line in lines:
-        key = self._env_assignment_key(line)
-        if key is None or key in replaced:
-            rendered.append(line)
-            continue
-        if key in removals:
-            changed = True
-            replaced.add(key)
-            continue
-        rendered.append(line)
-
-    if not changed:
-        return
-    try:
-        path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
-    except OSError:
-        return
-
-
-def _env_assignment_key(line: str) -> str | None:
-    text = line.strip()
-    if not text or text.startswith("#"):
-        return None
-    if text.startswith("export "):
-        text = text[len("export ") :].strip()
-    if "=" not in text:
-        return None
-    key = text.split("=", 1)[0].strip()
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-        return None
-    return key
 
 
 def _emit_bootstrap_phase(

@@ -1,41 +1,129 @@
 from __future__ import annotations
 
-# pyright: reportUnusedFunction=false
-
-import json
-import os
-import re
 import sys
 from collections import OrderedDict
 from collections.abc import Mapping
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from envctl_engine.actions.actions_worktree import delete_worktree_path
+from envctl_engine.planning.worktree_creation_commands import (
+    run_worktree_add as _run_worktree_add_impl,
+    worktree_branch_exists as _worktree_branch_exists_impl,
+    worktree_branch_name as _worktree_branch_name_impl,
+    worktree_start_point as _worktree_start_point_impl,
+)
+from envctl_engine.planning.worktree_identity import worktree_project_name as _worktree_project_name_impl
+from envctl_engine.planning.worktree_creation_recovery import (
+    recover_partial_worktree_creation as _recover_partial_worktree_creation_impl,
+    setup_worktree_placeholder_fallback_enabled as _setup_worktree_placeholder_fallback_enabled_impl,
+    worktree_add_failure as _worktree_add_failure_impl,
+    worktree_target_created as _worktree_target_created_impl,
+)
+from envctl_engine.planning.worktree_git_hooks import (
+    worktree_git_hooks_disabled as _worktree_git_hooks_disabled_impl,
+    worktree_git_hooks_policy as _worktree_git_hooks_policy_impl,
+)
+from envctl_engine.planning.worktree_main_task import (
+    move_plan_to_done as _move_plan_to_done_impl,
+    next_available_iteration as _next_available_iteration_impl,
+    seed_main_task_from_plan as _seed_main_task_from_plan_impl,
+)
+from envctl_engine.planning.worktree_menu_terminal_support import (
+    decode_planning_menu_escape as _decode_planning_menu_escape_impl,
+    planning_menu_apply_key as _planning_menu_apply_key_impl,
+    read_planning_menu_escape_sequence as _read_planning_menu_escape_sequence_impl,
+    read_planning_menu_key as _read_planning_menu_key_impl,
+    render_planning_selection_menu as _render_planning_selection_menu_impl,
+    terminal_size as _terminal_size_impl,
+    to_terminal_lines as _to_terminal_lines_impl,
+    truncate_text as _truncate_text_impl,
+)
+from envctl_engine.planning.worktree_plan_selection import (
+    adjust_plan_counts_for_fresh_ai_launch as _adjust_plan_counts_for_fresh_ai_launch_impl,
+    fresh_ai_launch_transport as _fresh_ai_launch_transport_impl,
+    planning_keep_plan_enabled as _planning_keep_plan_enabled_impl,
+    route_requests_fresh_ai_worktree as _route_requests_fresh_ai_worktree_impl,
+)
+from envctl_engine.planning.worktree_plan_project_selection import (
+    select_plan_projects as _select_plan_projects_impl,
+)
+from envctl_engine.planning.worktree_prompt_selection import (
+    prompt_planning_selection as _prompt_planning_selection_impl,
+)
+from envctl_engine.planning.worktree_planning_menu import (
+    run_planning_selection_menu as _run_planning_selection_menu_impl,
+)
+from envctl_engine.planning.worktree_project_catalog import (
+    cleanup_empty_feature_root as _cleanup_empty_feature_root_impl,
+    feature_project_candidates as _feature_project_candidates_impl,
+    project_sort_key_for_feature as _project_sort_key_for_feature_impl,
+)
+from envctl_engine.planning.worktree_selection_memory import (
+    initial_plan_selected_counts as _initial_plan_selected_counts_impl,
+    load_plan_selection_memory as _load_plan_selection_memory_impl,
+    plan_selection_memory_path as _plan_selection_memory_path_impl,
+    save_plan_selection_memory as _save_plan_selection_memory_impl,
+)
+from envctl_engine.planning.worktree_shared_artifacts import (
+    link_repo_local_shared_artifacts as _link_repo_local_shared_artifacts_impl,
+)
+from envctl_engine.planning.worktree_setup_entries import (
+    apply_multi_setup_entry as _apply_multi_setup_entry_impl,
+    apply_single_setup_entry as _apply_single_setup_entry_impl,
+    coerce_setup_entries as _coerce_setup_entries_impl,
+    resolve_included_setup_worktrees as _resolve_included_setup_worktrees_impl,
+)
+from envctl_engine.planning.worktree_setup_coordinator import (
+    apply_setup_worktree_selection as _apply_setup_worktree_selection_impl,
+)
+from envctl_engine.planning.worktree_spinner_support import (
+    worktree_spinner_fail as _worktree_spinner_fail_impl,
+    worktree_spinner_finish as _worktree_spinner_finish_impl,
+    worktree_spinner_policy as _worktree_spinner_policy_impl,
+    worktree_spinner_start as _worktree_spinner_start_impl,
+    worktree_spinner_stop as _worktree_spinner_stop_impl,
+    worktree_spinner_update as _worktree_spinner_update_impl,
+)
+from envctl_engine.planning.worktree_sync_deletion import (
+    delete_feature_worktrees as _delete_feature_worktrees_impl,
+)
+from envctl_engine.planning.worktree_sync_orchestration import (
+    sync_plan_worktrees_from_plan_counts as _sync_plan_worktrees_from_plan_counts_impl,
+    sync_single_plan_worktree_target as _sync_single_plan_worktree_target_impl,
+)
+from envctl_engine.planning.worktree_code_intelligence import (
+    prepare_worktree_code_intelligence as _prepare_worktree_code_intelligence_impl,
+)
+from envctl_engine.planning.worktree_path_support import (
+    planning_done_root as _planning_done_root_impl,
+    planning_root as _planning_root_impl,
+    preferred_tree_root_for_feature as _preferred_tree_root_for_feature_impl,
+    render_planning_path as _render_planning_path_impl,
+    resolve_planning_selection_target as _resolve_planning_selection_target_impl,
+    setup_worktree_requested as _setup_worktree_requested_impl,
+    trees_root_for_worktree as _trees_root_for_worktree_impl,
+)
+from envctl_engine.planning.worktree_provenance import (
+    active_fresh_ai_worktree_protection_reason as _active_fresh_ai_worktree_protection_reason_impl,
+    build_worktree_provenance as _build_worktree_provenance_impl,
+    detect_default_branch as _detect_default_branch_impl,
+    fresh_ai_launch_marker_is_fresh as _fresh_ai_launch_marker_is_fresh_impl,
+    git_command_output as _git_command_output_impl,
+    read_worktree_provenance as _read_worktree_provenance_impl,
+    resolve_branch_ref as _resolve_branch_ref_impl,
+    write_worktree_provenance as _write_worktree_provenance_impl,
+)
 from envctl_engine.planning.plan_agent.models import (
     CreatedPlanWorktree,
     PlanSelectionResult,
     PlanWorktreeSyncResult,
 )
-from envctl_engine.runtime.codex_tmux_support import _tmux_session_exists
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.planning import (
     discover_tree_projects,
-    filter_projects_for_plan,
-    list_planning_files,
-    planning_existing_counts,
-    planning_feature_name,
-    predict_plan_projects,
-    resolve_planning_files,
-    select_projects_for_plan_files,
 )
-from envctl_engine.ui.path_links import render_path_fragment_for_terminal
-from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
-from envctl_engine.ui.spinner import spinner, use_spinner_policy
-from envctl_engine.ui.spinner_service import SpinnerPolicy, emit_spinner_policy, resolve_spinner_policy
+from envctl_engine.ui.spinner_service import SpinnerPolicy
 from envctl_engine.ui.textual.screens.planning_selector import select_planning_counts_textual
 
 
@@ -44,40 +132,8 @@ class ProjectContextLike(Protocol):
     root: Path
 
 
-WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
-WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
-WORKTREE_CODE_INTELLIGENCE_SCHEMA_VERSION = 1
-WORKTREE_CODE_INTELLIGENCE_PATH = Path(".envctl-state") / "code-intelligence.json"
-WORKTREE_CGC_DATABASE_DEFAULT = "kuzudb"
-FRESH_AI_LAUNCH_IN_PROGRESS_TTL_SECONDS = 24 * 60 * 60
-_WORKTREE_GIT_HOOKS_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "false", "0", "no"))
-_WORKTREE_GIT_HOOKS_INHERITED_VALUES = frozenset(
-    ("inherit", "inherited", "enabled", "enable", "on", "true", "1", "yes")
-)
-_WORKTREE_CODE_INTELLIGENCE_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "false", "0", "no"))
-_WORKTREE_CODE_INTELLIGENCE_ENABLED_VALUES = frozenset(("auto", "enabled", "enable", "on", "true", "1", "yes"))
-_WORKTREE_CGC_INDEX_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "false", "0", "no"))
-_WORKTREE_CGC_INDEX_ENABLED_VALUES = frozenset(("enabled", "enable", "on", "true", "1", "yes"))
-_WORKTREE_CGC_INDEX_AUTO_VALUES = frozenset(("auto",))
-
-
-@dataclass(frozen=True)
-class _WorktreeCodeIntelligenceIdentity:
-    worktree_name: str
-    feature: str
-    iteration: str
-    cgc_context: str
-    serena_project_name: str
-
-
 def _worktree_spinner_policy(self: Any, *, op_id: str) -> SpinnerPolicy:
-    policy = resolve_spinner_policy(getattr(self, "env", {}))
-    emit_spinner_policy(
-        getattr(self, "_emit", None),
-        policy,
-        context={"component": "worktree_planning", "op_id": op_id},
-    )
-    return policy
+    return _worktree_spinner_policy_impl(self, op_id=op_id)
 
 
 def _worktree_spinner_update(
@@ -89,17 +145,14 @@ def _worktree_spinner_update(
     message: str,
     terminal_message: str | None = None,
 ) -> None:
-    if enabled:
-        active_spinner.update(terminal_message or message)
-        self._emit(  # type: ignore[attr-defined]
-            "ui.spinner.lifecycle",
-            component="worktree_planning",
-            op_id=op_id,
-            state="update",
-            message=message,
-        )
-        return
-    print(terminal_message or message)
+    _worktree_spinner_update_impl(
+        self,
+        enabled=enabled,
+        active_spinner=active_spinner,
+        op_id=op_id,
+        message=message,
+        terminal_message=terminal_message,
+    )
 
 
 def _render_planning_path(
@@ -109,8 +162,8 @@ def _render_planning_path(
     display_text: str,
     interactive_tty: bool | None = None,
 ) -> str:
-    return render_path_fragment_for_terminal(
-        absolute_path,
+    return _render_planning_path_impl(
+        absolute_path=absolute_path,
         display_text=display_text,
         env=getattr(self, "env", {}),
         stream=sys.stdout,
@@ -126,16 +179,11 @@ def _worktree_spinner_start(
     op_id: str,
     message: str,
 ) -> None:
-    if not enabled:
-        import sys  # noqa: PLC0415
-        print(f"  {message}", file=sys.stderr, flush=True)
-        return
-    active_spinner.start()
-    self._emit(  # type: ignore[attr-defined]
-        "ui.spinner.lifecycle",
-        component="worktree_planning",
+    _worktree_spinner_start_impl(
+        self,
+        enabled=enabled,
+        active_spinner=active_spinner,
         op_id=op_id,
-        state="start",
         message=message,
     )
 
@@ -148,16 +196,11 @@ def _worktree_spinner_finish(
     op_id: str,
     message: str,
 ) -> None:
-    if not enabled:
-        import sys  # noqa: PLC0415
-        print(f"✓ {message}", file=sys.stderr, flush=True)
-        return
-    active_spinner.succeed(message)
-    self._emit(  # type: ignore[attr-defined]
-        "ui.spinner.lifecycle",
-        component="worktree_planning",
+    _worktree_spinner_finish_impl(
+        self,
+        enabled=enabled,
+        active_spinner=active_spinner,
         op_id=op_id,
-        state="success",
         message=message,
     )
 
@@ -170,29 +213,17 @@ def _worktree_spinner_fail(
     op_id: str,
     message: str,
 ) -> None:
-    if not enabled:
-        import sys  # noqa: PLC0415
-        print(f"✗ {message}", file=sys.stderr, flush=True)
-        return
-    active_spinner.fail(message)
-    self._emit(  # type: ignore[attr-defined]
-        "ui.spinner.lifecycle",
-        component="worktree_planning",
+    _worktree_spinner_fail_impl(
+        self,
+        enabled=enabled,
+        active_spinner=active_spinner,
         op_id=op_id,
-        state="fail",
         message=message,
     )
 
 
 def _worktree_spinner_stop(self: Any, *, enabled: bool, op_id: str) -> None:
-    if not enabled:
-        return
-    self._emit(  # type: ignore[attr-defined]
-        "ui.spinner.lifecycle",
-        component="worktree_planning",
-        op_id=op_id,
-        state="stop",
-    )
+    _worktree_spinner_stop_impl(self, enabled=enabled, op_id=op_id)
 
 
 def _coerce_setup_entries(
@@ -202,25 +233,7 @@ def _coerce_setup_entries(
     flag_name: str,
     value_name: str,
 ) -> list[tuple[str, str]]:
-    raw = route.flags.get(flag_name)
-    if raw is None:
-        return []
-    if not isinstance(raw, list):
-        raise RuntimeError(f"Invalid {flag_name} flag payload.")
-    entries: list[tuple[str, str]] = []
-    for item in raw:
-        if not isinstance(item, Mapping):
-            raise RuntimeError(f"Invalid {flag_name} flag payload.")
-        feature = str(item.get("feature", "")).strip()
-        value = str(item.get(value_name, "")).strip()
-        if not feature:
-            raise RuntimeError(f"Missing feature for {flag_name}.")
-        if "/" in feature or feature in {".", ".."}:
-            raise RuntimeError(f"Invalid feature name for {flag_name}: {feature}")
-        if not value:
-            raise RuntimeError(f"Missing {value_name} for {flag_name}.")
-        entries.append((feature, value))
-    return entries
+    return _coerce_setup_entries_impl(flags=route.flags, flag_name=flag_name, value_name=value_name)
 
 
 def _create_single_worktree(self, *, feature: str, iteration: str) -> str | None:
@@ -247,143 +260,18 @@ def _create_single_worktree(self, *, feature: str, iteration: str) -> str | None
 def _apply_setup_worktree_selection(
     self: Any, route: Route, project_contexts: list[ProjectContextLike]
 ) -> list[ProjectContextLike]:
-    if not self._setup_worktree_requested(route):
-        return project_contexts
-    if bool(route.flags.get("docker")):
-        raise RuntimeError("setup-worktrees is not supported in Docker mode.")
-
-    multi_entries = self._coerce_setup_entries(
+    return _apply_setup_worktree_selection_impl(
         route=route,
-        flag_name="setup_worktrees",
-        value_name="count",
+        project_contexts=project_contexts,
+        setup_worktree_requested=self._setup_worktree_requested,
+        env=getattr(self, "env", {}),
+        emit=getattr(self, "_emit", None),
+        coerce_setup_entries=self._coerce_setup_entries,
+        apply_multi_setup_entry=lambda **kwargs: _apply_multi_setup_entry(self, **kwargs),
+        apply_single_setup_entry=lambda **kwargs: _apply_single_setup_entry(self, **kwargs),
+        resolve_included_setup_worktrees=_resolve_included_setup_worktrees_impl,
+        contexts_from_raw_projects=self._contexts_from_raw_projects,
     )
-    single_entries = self._coerce_setup_entries(
-        route=route,
-        flag_name="setup_worktree",
-        value_name="iteration",
-    )
-    include_tokens = route.flags.get("include_existing_worktrees")
-    include_list: list[str] = []
-    if isinstance(include_tokens, list):
-        include_list = [str(token).strip() for token in include_tokens if str(token).strip()]
-
-    setup_worktree_existing = bool(route.flags.get("setup_worktree_existing"))
-    setup_worktree_recreate = bool(route.flags.get("setup_worktree_recreate"))
-    if setup_worktree_existing and setup_worktree_recreate:
-        raise RuntimeError("Use only one of --setup-worktree-existing or --setup-worktree-recreate.")
-
-    raw_projects = [(context.name, context.root) for context in project_contexts]
-    selected_names: set[str] = set()
-    setup_features: list[str] = []
-    policy = _worktree_spinner_policy(self, op_id="worktree.setup")
-    enabled = bool(policy.enabled)
-
-    with (
-        use_spinner_policy(policy),
-        spinner(
-            "Setting up worktrees...",
-            enabled=enabled,
-            start_immediately=False,
-        ) as active_spinner,
-    ):
-        _worktree_spinner_start(
-            self,
-            enabled=enabled,
-            active_spinner=active_spinner,
-            op_id="worktree.setup",
-            message="Setting up worktrees...",
-        )
-        try:
-            for feature, count_raw in multi_entries:
-                raw_projects, created_names = _apply_multi_setup_entry(
-                    self,
-                    feature=feature,
-                    count_raw=count_raw,
-                    raw_projects=raw_projects,
-                    enabled=enabled,
-                    active_spinner=active_spinner,
-                    op_id="worktree.setup",
-                )
-                setup_features.append(feature)
-                selected_names.update(created_names)
-
-            for feature, iteration_raw in single_entries:
-                raw_projects, selected_name = _apply_single_setup_entry(
-                    self,
-                    feature=feature,
-                    iteration_raw=iteration_raw,
-                    raw_projects=raw_projects,
-                    setup_worktree_existing=setup_worktree_existing,
-                    setup_worktree_recreate=setup_worktree_recreate,
-                    enabled=enabled,
-                    active_spinner=active_spinner,
-                    op_id="worktree.setup",
-                )
-                setup_features.append(feature)
-                selected_names.add(selected_name)
-
-            if include_list:
-                project_lookup = {name.lower(): name for name, _root in raw_projects}
-                missing: list[str] = []
-                for token in include_list:
-                    direct = project_lookup.get(token.lower())
-                    if direct is not None:
-                        selected_names.add(direct)
-                        continue
-                    resolved = None
-                    if token.isdigit():
-                        for feature in setup_features:
-                            candidate_name = f"{feature}-{token}"
-                            candidate = project_lookup.get(candidate_name.lower())
-                            if candidate is not None:
-                                resolved = candidate
-                                break
-                    if resolved is not None:
-                        selected_names.add(resolved)
-                    else:
-                        missing.append(token)
-                if missing:
-                    _worktree_spinner_update(
-                        self,
-                        enabled=enabled,
-                        active_spinner=active_spinner,
-                        op_id="worktree.setup",
-                        message="Skipping non-existent additional worktrees: " + ",".join(missing) + ".",
-                    )
-
-            refreshed_contexts = self._contexts_from_raw_projects(raw_projects)
-            if not selected_names:
-                _worktree_spinner_finish(
-                    self,
-                    enabled=enabled,
-                    active_spinner=active_spinner,
-                    op_id="worktree.setup",
-                    message="Worktree setup completed",
-                )
-                return refreshed_contexts
-            selected_lower = {name.lower() for name in selected_names}
-            filtered = [context for context in refreshed_contexts if context.name.lower() in selected_lower]
-            if not filtered:
-                raise RuntimeError("No worktrees selected to run.")
-            _worktree_spinner_finish(
-                self,
-                enabled=enabled,
-                active_spinner=active_spinner,
-                op_id="worktree.setup",
-                message="Worktree setup completed",
-            )
-            return filtered
-        except Exception:
-            _worktree_spinner_fail(
-                self,
-                enabled=enabled,
-                active_spinner=active_spinner,
-                op_id="worktree.setup",
-                message="Worktree setup failed",
-            )
-            raise
-        finally:
-            _worktree_spinner_stop(self, enabled=enabled, op_id="worktree.setup")
 
 
 def _apply_multi_setup_entry(
@@ -396,29 +284,21 @@ def _apply_multi_setup_entry(
     active_spinner: Any,
     op_id: str,
 ) -> tuple[list[tuple[str, Path]], set[str]]:
-    count = parse_int(count_raw, -1)
-    if count < 1:
-        raise RuntimeError(f"Invalid count for --setup-worktrees {feature}: {count_raw}")
-    before = {name for name, _root in self._feature_project_candidates(projects=raw_projects, feature=feature)}
-    _worktree_spinner_update(
-        self,
-        enabled=enabled,
-        active_spinner=active_spinner,
-        op_id=op_id,
-        message=f"Setting up {count} worktree(s) for {feature}...",
-    )
-    create_error = self._create_feature_worktrees(
+    return _apply_multi_setup_entry_impl(
         feature=feature,
-        count=count,
-        plan_file=f"_setup/{feature}.md",
+        count_raw=count_raw,
+        raw_projects=raw_projects,
+        feature_project_candidates=self._feature_project_candidates,
+        update=lambda message: _worktree_spinner_update(
+            self,
+            enabled=enabled,
+            active_spinner=active_spinner,
+            op_id=op_id,
+            message=message,
+        ),
+        create_feature_worktrees=self._create_feature_worktrees,
+        discover_tree_projects=lambda: discover_tree_projects(self.config.base_dir, self.config.trees_dir_name),
     )
-    if create_error:
-        raise RuntimeError(create_error)
-    raw_projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
-    candidates = self._feature_project_candidates(projects=raw_projects, feature=feature)
-    after = {name for name, _root in candidates}
-    created = after.difference(before)
-    return raw_projects, (created or after)
 
 
 def _apply_single_setup_entry(
@@ -433,391 +313,66 @@ def _apply_single_setup_entry(
     active_spinner: Any,
     op_id: str,
 ) -> tuple[list[tuple[str, Path]], str]:
-    if not iteration_raw.isdigit() or int(iteration_raw) < 1:
-        raise RuntimeError(f"Invalid iteration for --setup-worktree {feature}: {iteration_raw}")
-    iteration = str(int(iteration_raw))
-    feature_root = self._preferred_tree_root_for_feature(feature)
-    target_root = feature_root / iteration
-    _worktree_spinner_update(
-        self,
-        enabled=enabled,
-        active_spinner=active_spinner,
-        op_id=op_id,
-        message=f"Ensuring worktree {feature}/{iteration}...",
+    return _apply_single_setup_entry_impl(
+        feature=feature,
+        iteration_raw=iteration_raw,
+        raw_projects=raw_projects,
+        preferred_tree_root_for_feature=self._preferred_tree_root_for_feature,
+        trees_root_for_worktree=self._trees_root_for_worktree,
+        delete_worktree=lambda **kwargs: (
+            (result := delete_worktree_path(**kwargs)).success,
+            result.message,
+        ),
+        create_single_worktree=self._create_single_worktree,
+        discover_tree_projects=lambda: discover_tree_projects(self.config.base_dir, self.config.trees_dir_name),
+        update=lambda message: _worktree_spinner_update(
+            self,
+            enabled=enabled,
+            active_spinner=active_spinner,
+            op_id=op_id,
+            message=message,
+        ),
+        repo_root=self.config.base_dir,
+        process_runner=self.process_runner,
+        setup_worktree_existing=setup_worktree_existing,
+        setup_worktree_recreate=setup_worktree_recreate,
     )
-    if target_root.exists():
-        if setup_worktree_recreate:
-            result = delete_worktree_path(
-                repo_root=self.config.base_dir,
-                trees_root=self._trees_root_for_worktree(target_root),
-                worktree_root=target_root,
-                process_runner=self.process_runner,
-            )
-            if not result.success:
-                raise RuntimeError(result.message)
-        elif not setup_worktree_existing:
-            raise RuntimeError(
-                f"Worktree {feature}/{iteration} already exists. "
-                "Use --setup-worktree-existing or --setup-worktree-recreate."
-            )
-    if not target_root.exists():
-        create_error = self._create_single_worktree(feature=feature, iteration=iteration)
-        if create_error:
-            raise RuntimeError(create_error)
-    refreshed_projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
-    return refreshed_projects, f"{feature}-{iteration}"
 
 
 def _preferred_tree_root_for_feature(self, feature: str) -> Path:
-    normalized = str(self.config.trees_dir_name).strip().rstrip("/")
-    if not normalized:
-        return self.config.base_dir / "trees" / feature
-    flat_candidate = self.config.base_dir / f"{normalized}-{feature}"
-    if flat_candidate.is_dir():
-        return flat_candidate
-    return self.config.base_dir / normalized / feature
+    return _preferred_tree_root_for_feature_impl(
+        base_dir=self.config.base_dir,
+        trees_dir_name=self.config.trees_dir_name,
+        feature=feature,
+    )
 
 
 def _trees_root_for_worktree(self, worktree_root: Path) -> Path:
-    normalized = str(self.config.trees_dir_name).strip().rstrip("/")
-    nested_root = self.config.base_dir / (normalized or "trees")
-    flat_parent = nested_root.parent
-    flat_prefix = f"{Path(normalized).name}-" if normalized else "trees-"
-    resolved_target = worktree_root.resolve()
-    resolved_nested = nested_root.resolve()
-    if resolved_nested == resolved_target or resolved_nested in resolved_target.parents:
-        return nested_root
-
-    current = resolved_target
-    while current != flat_parent and flat_parent in current.parents:
-        if current.parent == flat_parent and current.name.startswith(flat_prefix):
-            return current
-        current = current.parent
-    return nested_root
+    return _trees_root_for_worktree_impl(
+        base_dir=self.config.base_dir,
+        trees_dir_name=self.config.trees_dir_name,
+        worktree_root=worktree_root,
+    )
 
 
 def _select_plan_projects(
     self: Any, route: Route, project_contexts: list[ProjectContextLike]
 ) -> list[ProjectContextLike]:
     setattr(self, "_last_plan_selection_result", PlanSelectionResult(raw_projects=[], selected_contexts=[]))
-    raw_projects = [(ctx.name, ctx.root) for ctx in project_contexts]
-    planning_files = list_planning_files(self.config.planning_dir)
-    selection_raw = ",".join(route.passthrough_args).strip()
-    keep_plan = self._planning_keep_plan_enabled(route)
-
-    if selection_raw:
-        if planning_files:
-            try:
-                plan_counts = resolve_planning_files(
-                    selection_raw=selection_raw,
-                    planning_files=planning_files,
-                    base_dir=self.config.base_dir,
-                    planning_dir=self.config.planning_dir,
-                    requested_cli=str(
-                        self.env.get("ENVCTL_PLAN_AGENT_CLI")
-                        or self.config.raw.get("ENVCTL_PLAN_AGENT_CLI")
-                        or ""
-                    ),
-                )
-                plan_counts = _adjust_plan_counts_for_fresh_ai_launch(
-                    raw_projects=raw_projects,
-                    plan_counts=plan_counts,
-                    route=route,
-                )
-                if bool(getattr(route, "flags", {}).get("dry_run")):
-                    predictions = predict_plan_projects(
-                        projects=raw_projects,
-                        plan_counts=plan_counts,
-                        base_dir=self.config.base_dir,
-                        trees_dir_name=self.config.trees_dir_name,
-                    )
-                    predicted_raw_projects = [(prediction.name, Path(prediction.root)) for prediction in predictions]
-                    selected_contexts = self._contexts_from_raw_projects(predicted_raw_projects)
-                    created_worktrees = tuple(
-                        CreatedPlanWorktree(
-                            name=prediction.name,
-                            root=Path(prediction.root),
-                            plan_file=prediction.plan_file,
-                        )
-                        for prediction in predictions
-                        if prediction.action == "create"
-                    )
-                    setattr(
-                        self,
-                        "_last_plan_selection_result",
-                        PlanSelectionResult(
-                            raw_projects=predicted_raw_projects,
-                            selected_contexts=selected_contexts,
-                            created_worktrees=created_worktrees,
-                        ),
-                    )
-                    return selected_contexts
-            except ValueError as exc:
-                self._emit("planning.selection.invalid", selection=selection_raw, error=str(exc))
-                print(str(exc))
-                setattr(
-                    self,
-                    "_last_plan_selection_result",
-                    PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error=str(exc)),
-                )
-                return []
-            sync_result = self._sync_plan_worktrees_from_plan_counts(
-                plan_counts=plan_counts,
-                raw_projects=raw_projects,
-                keep_plan=keep_plan,
-                fresh_ai_launch=_route_requests_fresh_ai_worktree(route),
-                launch_transport=_fresh_ai_launch_transport(route),
-            )
-            raw_projects = list(sync_result.raw_projects)
-            if sync_result.error:
-                print(sync_result.error)
-                setattr(
-                    self,
-                    "_last_plan_selection_result",
-                    PlanSelectionResult(
-                        raw_projects=raw_projects,
-                        selected_contexts=[],
-                        created_worktrees=sync_result.created_worktrees,
-                        error=sync_result.error,
-                    ),
-                )
-                return []
-            refreshed_contexts = self._contexts_from_raw_projects(raw_projects)
-            duplicate_error = self._duplicate_project_context_error(refreshed_contexts)
-            if duplicate_error:
-                print(duplicate_error)
-                setattr(
-                    self,
-                    "_last_plan_selection_result",
-                    PlanSelectionResult(
-                        raw_projects=raw_projects,
-                        selected_contexts=[],
-                        created_worktrees=sync_result.created_worktrees,
-                        error=duplicate_error,
-                    ),
-                )
-                return []
-            filtered = select_projects_for_plan_files(projects=raw_projects, plan_counts=plan_counts)
-            if _route_requests_fresh_ai_worktree(route) and sync_result.created_worktrees:
-                created_names = {item.name for item in sync_result.created_worktrees}
-                filtered = [project for project in filtered if project[0] in created_names]
-            if filtered:
-                self._emit(
-                    "planning.selection.resolved",
-                    selection=selection_raw,
-                    selected=[name for name, _ in filtered],
-                    plans=list(plan_counts.keys()),
-                )
-                selected_names = {name for name, _ in filtered}
-                selected_contexts = [ctx for ctx in refreshed_contexts if ctx.name in selected_names]
-                setattr(
-                    self,
-                    "_last_plan_selection_result",
-                    PlanSelectionResult(
-                        raw_projects=raw_projects,
-                        selected_contexts=selected_contexts,
-                        created_worktrees=sync_result.created_worktrees,
-                    ),
-                )
-                return selected_contexts
-            print("No tree paths found for selected planning file(s).")
-            setattr(
-                self,
-                "_last_plan_selection_result",
-                PlanSelectionResult(
-                    raw_projects=raw_projects,
-                    selected_contexts=[],
-                    created_worktrees=sync_result.created_worktrees,
-                    error="No tree paths found for selected planning file(s).",
-                ),
-            )
-            return []
-
-        filtered = filter_projects_for_plan(
-            raw_projects,
-            route.passthrough_args,
-            strict_no_match=self.config.plan_strict_selection,
-        )
-        if not filtered:
-            print("No tree paths found for requested project filter(s): " + ", ".join(route.passthrough_args) + ".")
-            setattr(
-                self,
-                "_last_plan_selection_result",
-                PlanSelectionResult(
-                    raw_projects=raw_projects,
-                    selected_contexts=[],
-                    error="No tree paths found for requested project filter(s).",
-                ),
-            )
-            return []
-        selected_names = {name for name, _ in filtered}
-        selected_contexts = [ctx for ctx in project_contexts if ctx.name in selected_names]
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=selected_contexts),
-        )
-        return selected_contexts
-
-    if not planning_files:
-        print(
-            f"No planning files found in {self.config.planning_dir}. "
-            "Pass explicit selectors (for example: envctl --plan feature-a) or use --trees."
-        )
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No planning files found."),
-        )
-        return []
-
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        print(
-            "No TTY available for planning selection. "
-            "Run 'envctl --list-trees --json' and retry with '--headless --plan <selector>'."
-        )
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No TTY available."),
-        )
-        return []
-
-    dry_run = bool(getattr(route, "flags", {}).get("dry_run"))
-    plan_counts = self._prompt_planning_selection(planning_files, raw_projects, persist_memory=not dry_run)
-    if plan_counts is None:
-        print("Planning selection cancelled.")
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="Planning selection cancelled."),
-        )
-        return []
-    if not plan_counts:
-        print("No planning files selected.")
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No planning files selected."),
-        )
-        return []
-
-    positive_plan_counts: OrderedDict[str, int] = OrderedDict(
-        (plan_file, int(count)) for plan_file, count in plan_counts.items() if int(count) > 0
+    selection_result = _select_plan_projects_impl(
+        route=route,
+        project_contexts=project_contexts,
+        config=self.config,
+        env=getattr(self, "env", {}),
+        emit=self._emit,
+        contexts_from_raw_projects=self._contexts_from_raw_projects,
+        duplicate_project_context_error=self._duplicate_project_context_error,
+        planning_keep_plan_enabled=self._planning_keep_plan_enabled,
+        prompt_planning_selection=self._prompt_planning_selection,
+        sync_plan_worktrees_from_plan_counts=self._sync_plan_worktrees_from_plan_counts,
     )
-    if dry_run:
-        predictions = predict_plan_projects(
-            projects=raw_projects,
-            plan_counts=positive_plan_counts,
-            base_dir=self.config.base_dir,
-            trees_dir_name=self.config.trees_dir_name,
-        )
-        predicted_raw_projects = [(prediction.name, Path(prediction.root)) for prediction in predictions]
-        selected_contexts = self._contexts_from_raw_projects(predicted_raw_projects)
-        created_worktrees = tuple(
-            CreatedPlanWorktree(
-                name=prediction.name,
-                root=Path(prediction.root),
-                plan_file=prediction.plan_file,
-            )
-            for prediction in predictions
-            if prediction.action == "create"
-        )
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(
-                raw_projects=predicted_raw_projects,
-                selected_contexts=selected_contexts,
-                created_worktrees=created_worktrees,
-            ),
-        )
-        return selected_contexts
-
-    sync_result = self._sync_plan_worktrees_from_plan_counts(
-        plan_counts=plan_counts,
-        raw_projects=raw_projects,
-        keep_plan=keep_plan,
-        fresh_ai_launch=_route_requests_fresh_ai_worktree(route),
-        launch_transport=_fresh_ai_launch_transport(route),
-    )
-    raw_projects = list(sync_result.raw_projects)
-    if sync_result.error:
-        print(sync_result.error)
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(
-                raw_projects=raw_projects,
-                selected_contexts=[],
-                created_worktrees=sync_result.created_worktrees,
-                error=sync_result.error,
-            ),
-        )
-        return []
-    refreshed_contexts = self._contexts_from_raw_projects(raw_projects)
-    duplicate_error = self._duplicate_project_context_error(refreshed_contexts)
-    if duplicate_error:
-        print(duplicate_error)
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(
-                raw_projects=raw_projects,
-                selected_contexts=[],
-                created_worktrees=sync_result.created_worktrees,
-                error=duplicate_error,
-            ),
-        )
-        return []
-
-    if not positive_plan_counts:
-        print("Planning counts scaled to zero; no worktrees remain.")
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(
-                raw_projects=raw_projects,
-                selected_contexts=[],
-                created_worktrees=sync_result.created_worktrees,
-                error="Planning counts scaled to zero; no worktrees remain.",
-            ),
-        )
-        return []
-
-    filtered = select_projects_for_plan_files(projects=raw_projects, plan_counts=positive_plan_counts)
-    if not filtered:
-        print("No tree paths found for selected planning file(s).")
-        setattr(
-            self,
-            "_last_plan_selection_result",
-            PlanSelectionResult(
-                raw_projects=raw_projects,
-                selected_contexts=[],
-                created_worktrees=sync_result.created_worktrees,
-                error="No tree paths found for selected planning file(s).",
-            ),
-        )
-        return []
-
-    self._emit(
-        "planning.selection.resolved",
-        selection="interactive",
-        selected=[name for name, _ in filtered],
-        plans=list(positive_plan_counts.keys()),
-    )
-    selected_names = {name for name, _ in filtered}
-    selected_contexts = [ctx for ctx in refreshed_contexts if ctx.name in selected_names]
-    setattr(
-        self,
-        "_last_plan_selection_result",
-        PlanSelectionResult(
-            raw_projects=raw_projects,
-            selected_contexts=selected_contexts,
-            created_worktrees=sync_result.created_worktrees,
-        ),
-    )
-    return selected_contexts
+    setattr(self, "_last_plan_selection_result", selection_result)
+    return selection_result.selected_contexts
 
 
 def _prompt_planning_selection(
@@ -827,39 +382,18 @@ def _prompt_planning_selection(
     *,
     persist_memory: bool = True,
 ) -> dict[str, int]:
-    existing_counts = planning_existing_counts(projects=raw_projects, planning_files=planning_files)
-    selected_counts = self._initial_plan_selected_counts(
+    return _prompt_planning_selection_impl(
         planning_files=planning_files,
-        existing_counts=existing_counts,
+        raw_projects=raw_projects,
+        initial_plan_selected_counts=self._initial_plan_selected_counts,
+        run_planning_selection_menu=self._run_planning_selection_menu,
+        save_plan_selection_memory=self._save_plan_selection_memory,
+        persist_memory=persist_memory,
     )
-    chosen = self._run_planning_selection_menu(
-        planning_files=planning_files,
-        selected_counts=selected_counts,
-        existing_counts=existing_counts,
-    )
-    if chosen and persist_memory:
-        self._save_plan_selection_memory(chosen)
-    return chosen
 
 
-def _route_requests_fresh_ai_worktree(route: Route) -> bool:
-    flags = getattr(route, "flags", {}) or {}
-    if not bool(flags.get("new_session")):
-        return False
-    if bool(flags.get("dry_run")):
-        return False
-    return bool(flags.get("cmux") or flags.get("tmux") or flags.get("omx"))
-
-
-def _fresh_ai_launch_transport(route: Route) -> str:
-    flags = getattr(route, "flags", {}) or {}
-    if bool(flags.get("omx")):
-        return "omx"
-    if bool(flags.get("tmux")):
-        return "tmux"
-    if bool(flags.get("cmux")):
-        return "cmux"
-    return ""
+_route_requests_fresh_ai_worktree = _route_requests_fresh_ai_worktree_impl
+_fresh_ai_launch_transport = _fresh_ai_launch_transport_impl
 
 
 def _adjust_plan_counts_for_fresh_ai_launch(
@@ -868,13 +402,11 @@ def _adjust_plan_counts_for_fresh_ai_launch(
     plan_counts: OrderedDict[str, int],
     route: Route,
 ) -> OrderedDict[str, int]:
-    if not _route_requests_fresh_ai_worktree(route):
-        return plan_counts
-    existing_counts = planning_existing_counts(projects=raw_projects, planning_files=list(plan_counts.keys()))
-    adjusted: OrderedDict[str, int] = OrderedDict()
-    for plan_file, requested_count in plan_counts.items():
-        adjusted[plan_file] = int(requested_count) + int(existing_counts.get(plan_file, 0))
-    return adjusted
+    return _adjust_plan_counts_for_fresh_ai_launch_impl(
+        raw_projects=raw_projects,
+        plan_counts=plan_counts,
+        route=route,
+    )
 
 
 def _initial_plan_selected_counts(
@@ -884,12 +416,11 @@ def _initial_plan_selected_counts(
     existing_counts: dict[str, int],
 ) -> dict[str, int]:
     remembered = self._load_plan_selection_memory()
-    selected_counts: dict[str, int] = {}
-    for plan_file in planning_files:
-        existing = int(existing_counts.get(plan_file, 0))
-        remembered_value = int(remembered.get(plan_file, 0))
-        selected_counts[plan_file] = existing if existing > 0 else max(remembered_value, 0)
-    return selected_counts
+    return _initial_plan_selected_counts_impl(
+        planning_files=planning_files,
+        existing_counts=existing_counts,
+        remembered_counts=remembered,
+    )
 
 
 def _run_planning_selection_menu(
@@ -899,27 +430,14 @@ def _run_planning_selection_menu(
     selected_counts: dict[str, int],
     existing_counts: dict[str, int],
 ) -> dict[str, int] | None:
-    from envctl_engine.ui.terminal_session import _reset_terminal_escape_modes, normalize_standard_tty_state
-
-    try:
-        self._flush_pending_interactive_input()
-        chosen = select_planning_counts_textual(
-            planning_files=planning_files,
-            selected_counts=selected_counts,
-            existing_counts=existing_counts,
-            emit=getattr(self, "_emit", None),
-        )
-        if chosen is None:
-            return None
-        if not isinstance(chosen, dict):
-            return None
-        return {str(plan_file): int(count) for plan_file, count in chosen.items()}
-    except Exception:
-        return {str(plan_file): int(count) for plan_file, count in selected_counts.items() if int(count) > 0}
-    finally:
-        emit = getattr(self, "_emit", None)
-        normalize_standard_tty_state(emit=emit, component="planning.worktree_domain")
-        _reset_terminal_escape_modes(emit=emit)
+    return _run_planning_selection_menu_impl(
+        planning_files=planning_files,
+        selected_counts=selected_counts,
+        existing_counts=existing_counts,
+        flush_pending_interactive_input=self._flush_pending_interactive_input,
+        emit=getattr(self, "_emit", None),
+        select_planning_counts=select_planning_counts_textual,
+    )
 
 
 def _render_planning_selection_menu(
@@ -933,7 +451,8 @@ def _render_planning_selection_menu(
     terminal_width: int | None = None,
     terminal_height: int | None = None,
 ) -> str:
-    return self.terminal_ui.planning_menu.render(
+    return _render_planning_selection_menu_impl(
+        self.terminal_ui,
         planning_files=planning_files,
         selected_counts=selected_counts,
         existing_counts=existing_counts,
@@ -945,38 +464,19 @@ def _render_planning_selection_menu(
 
 
 def _terminal_size(self: Any) -> tuple[int, int]:
-    return self.terminal_ui.planning_menu.terminal_size()
+    return _terminal_size_impl(self.terminal_ui)
 
 
-def _truncate_text(value: str, max_len: int) -> str:
-    return RuntimeTerminalUI().planning_menu.truncate_text(value, max_len)
-
-
-def _to_terminal_lines(frame: str) -> str:
-    return RuntimeTerminalUI().planning_menu.to_terminal_lines(frame)
+_truncate_text = _truncate_text_impl
+_to_terminal_lines = _to_terminal_lines_impl
 
 
 def _read_planning_menu_key(self: Any, *, fd: int, selector: Callable[..., object]) -> str:
-    return self.terminal_ui.planning_menu.read_key(fd=fd, selector=selector)
+    return _read_planning_menu_key_impl(self.terminal_ui, fd=fd, selector=selector)
 
 
-def _read_planning_menu_escape_sequence(
-    *,
-    fd: int,
-    selector: Callable[..., object],
-    timeout: float,
-    max_bytes: int,
-) -> bytes:
-    return RuntimeTerminalUI().planning_menu.read_escape_sequence(
-        fd=fd,
-        selector=selector,
-        timeout=timeout,
-        max_bytes=max_bytes,
-    )
-
-
-def _decode_planning_menu_escape(sequence: bytes) -> str | None:
-    return RuntimeTerminalUI().planning_menu.decode_escape(sequence)
+_read_planning_menu_escape_sequence = _read_planning_menu_escape_sequence_impl
+_decode_planning_menu_escape = _decode_planning_menu_escape_impl
 
 
 def _planning_menu_apply_key(
@@ -988,7 +488,8 @@ def _planning_menu_apply_key(
     selected_counts: dict[str, int],
     existing_counts: dict[str, int],
 ) -> tuple[int, str, str]:
-    return self.terminal_ui.planning_menu.apply_key(
+    return _planning_menu_apply_key_impl(
+        self.terminal_ui,
         key=key,
         cursor=cursor,
         planning_files=planning_files,
@@ -1003,99 +504,43 @@ def _resolve_planning_selection_target(
     target_token: str,
     planning_files: list[str],
 ) -> str:
-    token = target_token.strip()
-    if not token:
-        raise ValueError("Missing planning selection target.")
-    if token.isdigit():
-        index = int(token)
-        if 1 <= index <= len(planning_files):
-            return planning_files[index - 1]
-        raise ValueError(f"Invalid plan index: {token}")
-
-    normalized = token.replace("\\", "/").lstrip("./")
-    planning_raw = str(self.config.planning_dir).replace("\\", "/").rstrip("/")
-    base_raw = str(self.config.base_dir).replace("\\", "/").rstrip("/")
-    if normalized.startswith(f"{planning_raw}/"):
-        normalized = normalized[len(planning_raw) + 1 :]
-    if normalized.startswith(f"{base_raw}/"):
-        normalized = normalized[len(base_raw) + 1 :]
-    planning_rel = ""
-    try:
-        planning_rel = str(self.config.planning_dir.relative_to(self.config.base_dir)).replace("\\", "/").rstrip("/")
-    except ValueError:
-        planning_rel = ""
-    if planning_rel and normalized.startswith(f"{planning_rel}/"):
-        normalized = normalized[len(planning_rel) + 1 :]
-    if not normalized.endswith(".md"):
-        normalized = f"{normalized}.md"
-
-    if normalized in planning_files:
-        return normalized
-    basename_matches = [plan for plan in planning_files if Path(plan).name == Path(normalized).name]
-    if len(basename_matches) == 1:
-        return basename_matches[0]
-    if len(basename_matches) > 1:
-        raise ValueError(f"Planning file name '{target_token}' is ambiguous. Use folder/name.")
-    raise ValueError(f"Planning file not found: {target_token}")
+    return _resolve_planning_selection_target_impl(
+        target_token=target_token,
+        planning_files=planning_files,
+        planning_dir=self.config.planning_dir,
+        base_dir=self.config.base_dir,
+    )
 
 
 def _plan_selection_memory_path(self: Any) -> Path:
-    return self.runtime_root / "planning_selection.json"
+    return _plan_selection_memory_path_impl(runtime_root=self.runtime_root)
 
 
 def _planning_root(self: Any) -> Path:
-    return self.config.planning_dir
+    return _planning_root_impl(planning_dir=self.config.planning_dir)
 
 
 def _planning_done_root(self: Any) -> Path:
-    return self._planning_root().parent / "done"
+    return _planning_done_root_impl(planning_dir=self.config.planning_dir)
 
 
 def _load_plan_selection_memory(self: Any) -> dict[str, int]:
-    path = self._plan_selection_memory_path()
-    legacy_path = self.runtime_legacy_root / "planning_selection.json"
-    for candidate in (path, legacy_path):
-        if not candidate.is_file():
-            continue
-        try:
-            payload = json.loads(candidate.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        if not isinstance(payload, dict):
-            continue
-        remembered = payload.get("selected_counts", {})
-        if not isinstance(remembered, dict):
-            continue
-        result: dict[str, int] = {}
-        for key, value in remembered.items():
-            try:
-                parsed = int(value)
-            except (TypeError, ValueError):
-                continue
-            if parsed >= 0:
-                result[str(key)] = parsed
-        if result:
-            return result
-    return {}
+    return _load_plan_selection_memory_impl(
+        runtime_root=self.runtime_root,
+        runtime_legacy_root=self.runtime_legacy_root,
+    )
 
 
 def _save_plan_selection_memory(self: Any, selected_counts: dict[str, int]) -> None:
-    path = self._plan_selection_memory_path()
-    payload = {
-        "selected_counts": dict(sorted({k: int(v) for k, v in selected_counts.items() if int(v) > 0}.items())),
-        "saved_at": datetime.now(UTC).isoformat(),
-    }
-    text = json.dumps(payload, indent=2, sort_keys=True)
-    path.write_text(text, encoding="utf-8")
-    self.runtime_legacy_root.mkdir(parents=True, exist_ok=True)
-    (self.runtime_legacy_root / "planning_selection.json").write_text(text, encoding="utf-8")
+    _save_plan_selection_memory_impl(
+        runtime_root=self.runtime_root,
+        runtime_legacy_root=self.runtime_legacy_root,
+        selected_counts=selected_counts,
+    )
 
 
 def _planning_keep_plan_enabled(self: Any, route: Route) -> bool:
-    if bool(route.flags.get("keep_plan")):
-        return True
-    raw = self.env.get("PLANNING_KEEP_PLAN") or self.config.raw.get("PLANNING_KEEP_PLAN")
-    return parse_bool(raw, False)
+    return _planning_keep_plan_enabled_impl(route=route, env=self.env, config_raw=self.config.raw)
 
 
 def _sync_plan_worktrees_from_plan_counts(
@@ -1107,80 +552,20 @@ def _sync_plan_worktrees_from_plan_counts(
     fresh_ai_launch: bool = False,
     launch_transport: str = "",
 ) -> PlanWorktreeSyncResult:
-    projects = list(raw_projects)
-    created_worktrees: list[CreatedPlanWorktree] = []
-    removed_worktrees: list[str] = []
-    archived_plan_files: list[str] = []
-    trees_root = self.config.base_dir / self.config.trees_dir_name
-    trees_root.mkdir(parents=True, exist_ok=True)
-    policy = _worktree_spinner_policy(self, op_id="worktree.sync")
-    enabled = bool(policy.enabled)
-
-    with (
-        use_spinner_policy(policy),
-        spinner(
-            "Syncing planning worktrees...",
-            enabled=enabled,
-            start_immediately=False,
-        ) as active_spinner,
-    ):
-        _worktree_spinner_start(
-            self,
-            enabled=enabled,
-            active_spinner=active_spinner,
-            op_id="worktree.sync",
-            message="Syncing planning worktrees...",
-        )
-        try:
-            for plan_file, desired_raw in plan_counts.items():
-                target_result = _sync_single_plan_worktree_target(
-                    self,
-                    plan_file=plan_file,
-                    desired_raw=desired_raw,
-                    projects=projects,
-                    keep_plan=keep_plan,
-                    fresh_ai_launch=fresh_ai_launch,
-                    launch_transport=launch_transport,
-                    enabled=enabled,
-                    active_spinner=active_spinner,
-                    op_id="worktree.sync",
-                )
-                projects = list(target_result.raw_projects)
-                created_worktrees.extend(target_result.created_worktrees)
-                removed_worktrees.extend(target_result.removed_worktrees)
-                archived_plan_files.extend(target_result.archived_plan_files)
-                if target_result.error is not None:
-                    return PlanWorktreeSyncResult(
-                        raw_projects=projects,
-                        created_worktrees=tuple(created_worktrees),
-                        removed_worktrees=tuple(removed_worktrees),
-                        archived_plan_files=tuple(archived_plan_files),
-                        error=target_result.error,
-                    )
-            _worktree_spinner_finish(
-                self,
-                enabled=enabled,
-                active_spinner=active_spinner,
-                op_id="worktree.sync",
-                message="Planning worktree sync completed",
-            )
-            return PlanWorktreeSyncResult(
-                raw_projects=projects,
-                created_worktrees=tuple(created_worktrees),
-                removed_worktrees=tuple(removed_worktrees),
-                archived_plan_files=tuple(archived_plan_files),
-            )
-        except Exception:
-            _worktree_spinner_fail(
-                self,
-                enabled=enabled,
-                active_spinner=active_spinner,
-                op_id="worktree.sync",
-                message="Planning worktree sync failed",
-            )
-            raise
-        finally:
-            _worktree_spinner_stop(self, enabled=enabled, op_id="worktree.sync")
+    return _sync_plan_worktrees_from_plan_counts_impl(
+        plan_counts=plan_counts,
+        raw_projects=raw_projects,
+        keep_plan=keep_plan,
+        fresh_ai_launch=fresh_ai_launch,
+        launch_transport=launch_transport,
+        ensure_trees_root=lambda: (self.config.base_dir / self.config.trees_dir_name).mkdir(
+            parents=True,
+            exist_ok=True,
+        ),
+        env=getattr(self, "env", {}),
+        emit=getattr(self, "_emit", None),
+        sync_single_plan_worktree_target=lambda **kwargs: _sync_single_plan_worktree_target(self, **kwargs),
+    )
 
 
 def _sync_single_plan_worktree_target(
@@ -1196,102 +581,30 @@ def _sync_single_plan_worktree_target(
     fresh_ai_launch: bool = False,
     launch_transport: str = "",
 ) -> PlanWorktreeSyncResult:
-    desired = max(0, int(desired_raw))
-    feature = planning_feature_name(plan_file)
-    candidates = self._feature_project_candidates(projects=projects, feature=feature)
-    existing = len(candidates)
-    created_worktrees: tuple[CreatedPlanWorktree, ...] = ()
-    removed_worktrees: tuple[str, ...] = ()
-    archived_plan_files: tuple[str, ...] = ()
-
-    if desired > existing:
-        create_count = desired - existing
-        rendered_plan_path = _render_planning_path(
+    return _sync_single_plan_worktree_target_impl(
+        plan_file=plan_file,
+        desired_raw=desired_raw,
+        projects=projects,
+        keep_plan=keep_plan,
+        fresh_ai_launch=fresh_ai_launch,
+        launch_transport=launch_transport,
+        enabled=enabled,
+        active_spinner=active_spinner,
+        op_id=op_id,
+        feature_project_candidates=self._feature_project_candidates,
+        create_feature_worktrees_result=lambda **kwargs: _create_feature_worktrees_result(self, **kwargs),
+        discover_tree_projects=lambda: discover_tree_projects(self.config.base_dir, self.config.trees_dir_name),
+        delete_feature_worktrees=self._delete_feature_worktrees,
+        cleanup_empty_feature_root=self._cleanup_empty_feature_root,
+        move_plan_to_done=self._move_plan_to_done,
+        render_planning_path=lambda *, plan_file, interactive_tty: _render_planning_path(
             self,
             absolute_path=self._planning_root() / plan_file,
             display_text=plan_file,
-            interactive_tty=(True if enabled else None),
-        )
-        _worktree_spinner_update(
-            self,
-            enabled=enabled,
-            active_spinner=active_spinner,
-            op_id=op_id,
-            message=f"Setting up {create_count} worktree(s) for {plan_file} -> {feature}...",
-            terminal_message=(
-                f"Setting up {create_count} worktree(s) for "
-                f"{rendered_plan_path} -> {feature}..."
-            ),
-        )
-        create_result = _create_feature_worktrees_result(
-            self,
-            feature=feature,
-            count=create_count,
-            plan_file=plan_file,
-            created_for_fresh_ai_launch=fresh_ai_launch,
-            launch_transport=launch_transport,
-        )
-        if create_result.error:
-            return PlanWorktreeSyncResult(raw_projects=projects, error=create_result.error)
-        created_worktrees = create_result.created_worktrees
-        projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
-        candidates = self._feature_project_candidates(projects=projects, feature=feature)
-        existing = len(candidates)
-
-    if desired < existing:
-        remove_count = existing - desired
-        rendered_plan_path = _render_planning_path(
-            self,
-            absolute_path=self._planning_root() / plan_file,
-            display_text=plan_file,
-            interactive_tty=(True if enabled else None),
-        )
-        _worktree_spinner_update(
-            self,
-            enabled=enabled,
-            active_spinner=active_spinner,
-            op_id=op_id,
-            message=(
-                f"Selected count for {plan_file} ({desired}) is below existing ({existing}); "
-                f"removing {remove_count} worktree(s)."
-            ),
-            terminal_message=(
-                f"Selected count for "
-                f"{rendered_plan_path} "
-                f"({desired}) is below existing ({existing}); removing {remove_count} worktree(s)."
-            ),
-        )
-        remove_error = self._delete_feature_worktrees(
-            feature=feature,
-            candidates=candidates,
-            remove_count=remove_count,
-        )
-        if remove_error:
-            return PlanWorktreeSyncResult(
-                raw_projects=projects,
-                created_worktrees=created_worktrees,
-                error=remove_error,
-            )
-        projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
-        current_names = {name for name, _root in projects}
-        removed_worktrees = tuple(name for name, _root in candidates if name not in current_names)
-        print(
-            f"Blasted and deleted {len(removed_worktrees)} worktree(s) for "
-            f"{rendered_plan_path}."
-        )
-        if desired == 0:
-            self._cleanup_empty_feature_root(feature=feature)
-            projects = discover_tree_projects(self.config.base_dir, self.config.trees_dir_name)
-
-    remaining_feature_worktrees = self._feature_project_candidates(projects=projects, feature=feature)
-    if desired == 0 and existing > 0 and not keep_plan and not remaining_feature_worktrees:
-        self._move_plan_to_done(plan_file)
-        archived_plan_files = (plan_file,)
-    return PlanWorktreeSyncResult(
-        raw_projects=projects,
-        created_worktrees=created_worktrees,
-        removed_worktrees=removed_worktrees,
-        archived_plan_files=archived_plan_files,
+            interactive_tty=interactive_tty,
+        ),
+        update=lambda **kwargs: _worktree_spinner_update(self, **kwargs),
+        output=print,
     )
 
 
@@ -1367,7 +680,7 @@ def _create_feature_worktrees_result(
         worktree_cli = cli_sequence[index] if index < len(cli_sequence) else ""
         created_worktrees.append(
             CreatedPlanWorktree(
-                name=f"{feature}-{iteration}",
+                name=_worktree_project_name_impl(feature=feature, iteration=iteration),
                 root=target.resolve(),
                 plan_file=plan_file,
                 cli=worktree_cli,
@@ -1378,34 +691,19 @@ def _create_feature_worktrees_result(
 
 
 def _worktree_add_failure(self: Any, *, feature: str, iteration: str, target: Path, result: object) -> str | None:
-    reason = self._command_result_error_text(result=result)
-    if self._setup_worktree_placeholder_fallback_enabled():
-        target.mkdir(parents=True, exist_ok=True)
-        marker = target / ".envctl_worktree_placeholder"
-        marker.write_text(
-            (
-                "envctl placeholder worktree created after git worktree add failure\n"
-                f"feature={feature}\n"
-                f"iteration={iteration}\n"
-                f"error={reason}\n"
-            ),
-            encoding="utf-8",
-        )
-        _link_repo_local_shared_artifacts(self, target=target)
-        self._emit(
-            "setup.worktree.placeholder_fallback",
-            feature=feature,
-            iteration=iteration,
-            target=str(target),
-            reason=reason,
-        )
-        return None
-    target_status = "target exists" if target.exists() else "target missing"
-    hook_policy_hint = (
-        "envctl disables repo-local Git hooks during managed worktree creation by default; "
-        "set ENVCTL_WORKTREE_GIT_HOOKS=inherit to opt into hooks."
+    return _worktree_add_failure_impl(
+        feature=feature,
+        iteration=iteration,
+        target=target,
+        result=result,
+        placeholder_fallback_enabled=self._setup_worktree_placeholder_fallback_enabled(),
+        command_result_error_text=lambda command_result: self._command_result_error_text(result=command_result),
+        link_repo_local_shared_artifacts=lambda linked_target: _link_repo_local_shared_artifacts(
+            self,
+            target=linked_target,
+        ),
+        emit=self._emit,
     )
-    return f"failed creating worktree {feature}/{iteration}: {reason} ({target_status}). {hook_policy_hint}"
 
 
 def _recover_partial_worktree_creation(
@@ -1416,94 +714,63 @@ def _recover_partial_worktree_creation(
     target: Path,
     result: object,
 ) -> bool:
-    if not _worktree_git_hooks_disabled(self):
-        return False
-    if not _worktree_target_created(target):
-        return False
-    reason = self._command_result_error_text(result=result)
-    self._emit(
-        "setup.worktree.partial_git_failure_recovered",
+    return _recover_partial_worktree_creation_impl(
+        git_hooks_disabled=_worktree_git_hooks_disabled(self),
+        target=target,
         feature=feature,
         iteration=iteration,
-        target=str(target),
-        reason=reason,
+        result=result,
+        command_result_error_text=lambda command_result: self._command_result_error_text(result=command_result),
+        emit=self._emit,
     )
-    return True
 
 
 def _worktree_target_created(target: Path) -> bool:
-    return target.is_dir() and (target / ".git").exists()
+    return _worktree_target_created_impl(target)
 
 
 def _run_worktree_add(self: Any, *, feature: str, iteration: str, target: Path, env: Mapping[str, str]) -> object:
-    branch_name = _worktree_branch_name(feature=feature, iteration=iteration)
-    start_point = _worktree_start_point(self)
-    branch_flag = "-B" if _worktree_branch_exists(self, branch_name=branch_name) else "-b"
-    command = ["git"]
-    if _worktree_git_hooks_disabled(self):
-        command.extend(["-c", "core.hooksPath=/dev/null"])
-    command.extend(
-        [
-            "-C",
-            str(self.config.base_dir),
-            "worktree",
-            "add",
-            branch_flag,
-            branch_name,
-            str(target),
-        ]
-    )
-    if start_point:
-        command.append(start_point)
-    return self.process_runner.run(
-        command,
-        cwd=self.config.base_dir,
+    return _run_worktree_add_impl(
+        repo_root=self.config.base_dir,
+        feature=feature,
+        iteration=iteration,
+        target=target,
         env=env,
-        timeout=120.0,
+        git_hooks_disabled=_worktree_git_hooks_disabled(self),
+        branch_exists=lambda branch_name: _worktree_branch_exists(self, branch_name=branch_name),
+        start_point=lambda: _worktree_start_point(self),
+        run=self.process_runner.run,
     )
 
 
 def _worktree_branch_name(*, feature: str, iteration: str) -> str:
-    return f"{feature}-{iteration}"
+    return _worktree_branch_name_impl(feature=feature, iteration=iteration)
 
 
 def _worktree_branch_exists(self: Any, *, branch_name: str) -> bool:
-    normalized = branch_name.strip()
-    if not normalized:
-        return False
-    return bool(_git_command_output(self, ["rev-parse", "--verify", f"refs/heads/{normalized}"]).strip())
+    return _worktree_branch_exists_impl(
+        branch_name=branch_name,
+        git_command_output=lambda args: _git_command_output(self, args),
+    )
 
 
 def _worktree_start_point(self: Any) -> str | None:
-    provenance = _build_worktree_provenance(self) or {}
-    for key in ("source_ref", "source_branch"):
-        candidate = str(provenance.get(key, "")).strip()
-        if candidate and _git_command_output(self, ["rev-parse", "--verify", candidate]).strip():
-            return candidate
-    head_commit = _git_command_output(self, ["rev-parse", "HEAD"]).strip()
-    return head_commit or None
+    return _worktree_start_point_impl(
+        provenance=_build_worktree_provenance(self) or {},
+        git_command_output=lambda args: _git_command_output(self, args),
+    )
 
 
 def _setup_worktree_placeholder_fallback_enabled(self: Any) -> bool:
-    raw = self.env.get("ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK") or self.config.raw.get(
-        "ENVCTL_SETUP_WORKTREE_PLACEHOLDER_FALLBACK"
-    )
-    return parse_bool(raw, False)
+    return _setup_worktree_placeholder_fallback_enabled_impl(env=self.env, config_raw=self.config.raw)
 
 
 def _worktree_git_hooks_policy(self: Any) -> str:
-    raw = self.env.get("ENVCTL_WORKTREE_GIT_HOOKS") or self.config.raw.get("ENVCTL_WORKTREE_GIT_HOOKS") or "disabled"
-    normalized = str(raw).strip().lower()
-    if normalized in _WORKTREE_GIT_HOOKS_DISABLED_VALUES:
-        return "disabled"
-    if normalized in _WORKTREE_GIT_HOOKS_INHERITED_VALUES:
-        return "inherit"
-    allowed = ", ".join(sorted(_WORKTREE_GIT_HOOKS_DISABLED_VALUES | _WORKTREE_GIT_HOOKS_INHERITED_VALUES))
-    raise RuntimeError(f"Invalid ENVCTL_WORKTREE_GIT_HOOKS value {raw!r}; expected one of: {allowed}.")
+    return _worktree_git_hooks_policy_impl(self)
 
 
 def _worktree_git_hooks_disabled(self: Any) -> bool:
-    return _worktree_git_hooks_policy(self) == "disabled"
+    return _worktree_git_hooks_disabled_impl(self)
 
 
 def _write_worktree_provenance(
@@ -1514,473 +781,25 @@ def _write_worktree_provenance(
     created_for_fresh_ai_launch: bool = False,
     launch_transport: str = "",
 ) -> None:
-    provenance = _build_worktree_provenance(
+    _write_worktree_provenance_impl(
         self,
+        target=target,
         plan_file=plan_file,
         created_for_fresh_ai_launch=created_for_fresh_ai_launch,
         launch_transport=launch_transport,
     )
-    if provenance is None or not target.is_dir():
-        return
-    path = target / WORKTREE_PROVENANCE_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        path.write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
-    except OSError:
-        return
 
 
 def _link_repo_local_shared_artifacts(self: Any, *, target: Path) -> None:
-    if not target.is_dir():
-        return
-    # Compatibility links are intentionally limited to setup-worktree and placeholder fallback paths.
-    # Plan-agent launches prepare per-worktree dependencies before prompt submission instead of relying
-    # on shared repo-local node_modules/venv artifacts that can go stale across branches.
-    repo_root = self.config.base_dir
-    link_specs = (
-        ("backend/venv", repo_root / "backend" / "venv"),
-        ("backend/.env", repo_root / "backend" / ".env"),
-        ("frontend/node_modules", repo_root / "frontend" / "node_modules"),
-    )
-    for relative_target, source_path in link_specs:
-        if not source_path.exists():
-            continue
-        worktree_path = target / relative_target
-        worktree_path.parent.mkdir(parents=True, exist_ok=True)
-        if os.path.lexists(worktree_path):
-            try:
-                if worktree_path.is_symlink() and worktree_path.resolve() == source_path.resolve():
-                    continue
-            except OSError:
-                pass
-            if worktree_path.is_symlink():
-                try:
-                    worktree_path.unlink()
-                except OSError:
-                    continue
-            else:
-                continue
-        try:
-            worktree_path.symlink_to(source_path)
-        except OSError:
-            continue
+    _link_repo_local_shared_artifacts_impl(repo_root=self.config.base_dir, target=target)
 
 
 def _prepare_worktree_code_intelligence(self: Any, *, target: Path) -> None:
-    if not target.is_dir() or not _worktree_code_intelligence_enabled(self):
-        return
-    identity = _worktree_code_intelligence_identity(self, target=target)
-    copied_files: dict[str, bool] = {}
-    cgc_result: dict[str, object] = {
-        "cgc_index_requested": False,
-        "cgc_available": None,
-        "cgc_context_created": False,
-        "cgc_context_already_exists": False,
-        "cgc_context_returncode": None,
-        "cgc_index_succeeded": False,
-        "cgc_index_returncode": None,
-        "cgc_commands": [],
-    }
-    copied_files[".serena/project.yml"] = _copy_worktree_serena_project_file(
-        source=self.config.base_dir / ".serena" / "project.yml",
-        target=target / ".serena" / "project.yml",
-        project_name=identity.serena_project_name,
-        emit=getattr(self, "_emit", None),
-    )
-    copied_files[".serena/.gitignore"] = _copy_worktree_code_intelligence_file(
-        source=self.config.base_dir / ".serena" / ".gitignore",
-        target=target / ".serena" / ".gitignore",
-    )
-    copied_files[".cgcignore"] = _copy_worktree_code_intelligence_file(
-        source=self.config.base_dir / ".cgcignore",
-        target=target / ".cgcignore",
-    )
-    if _worktree_cgc_index_enabled(self):
-        cgc_result = _index_worktree_with_cgc(self, target=target, context=identity.cgc_context)
-    _write_worktree_code_intelligence_metadata(
+    _prepare_worktree_code_intelligence_impl(
+        self,
         target=target,
-        identity=identity,
-        copied_files=copied_files,
-        cgc_database=_worktree_cgc_database(self),
-        cgc_result=cgc_result,
+        trees_root_for_worktree=_trees_root_for_worktree,
     )
-
-
-def _copy_worktree_code_intelligence_file(*, source: Path, target: Path) -> bool:
-    if not source.is_file() or target.exists() or target.is_symlink():
-        return False
-    try:
-        text = source.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
-    except OSError:
-        return False
-    return True
-
-
-def _copy_worktree_serena_project_file(
-    *,
-    source: Path,
-    target: Path,
-    project_name: str,
-    emit: Callable[..., object] | None,
-) -> bool:
-    if not source.is_file() or target.exists() or target.is_symlink():
-        return False
-    try:
-        text = source.read_text(encoding="utf-8")
-    except OSError as exc:
-        if emit:
-            emit(
-                "setup.worktree.code_intelligence.serena_config",
-                target=str(target),
-                project_name=project_name,
-                success=False,
-                error=str(exc),
-            )
-        return False
-    rewritten = _rewrite_serena_project_name(text, project_name=project_name)
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(rewritten, encoding="utf-8")
-    except OSError as exc:
-        if emit:
-            emit(
-                "setup.worktree.code_intelligence.serena_config",
-                target=str(target),
-                project_name=project_name,
-                success=False,
-                error=str(exc),
-            )
-        return False
-    if emit:
-        emit(
-            "setup.worktree.code_intelligence.serena_config",
-            target=str(target),
-            project_name=project_name,
-            success=True,
-        )
-    return True
-
-
-def _rewrite_serena_project_name(text: str, *, project_name: str) -> str:
-    pattern = re.compile(
-        r"^(?P<prefix>project_name:\s*)(?P<quote>[\"']?)(?P<value>.*?)(?P=quote)(?P<suffix>\s*)$",
-        re.MULTILINE,
-    )
-    match = pattern.search(text)
-    if not match:
-        return f"project_name: {project_name}\n{text}"
-    quote = match.group("quote") or ""
-    replacement = f"{match.group('prefix')}{quote}{project_name}{quote}{match.group('suffix')}"
-    return text[: match.start()] + replacement + text[match.end() :]
-
-
-def _worktree_code_intelligence_enabled(self: Any) -> bool:
-    raw = str(
-        self.env.get("ENVCTL_WORKTREE_CODE_INTELLIGENCE")
-        or self.config.raw.get("ENVCTL_WORKTREE_CODE_INTELLIGENCE")
-        or "auto"
-    ).strip().lower()
-    if raw in _WORKTREE_CODE_INTELLIGENCE_ENABLED_VALUES:
-        return True
-    if raw in _WORKTREE_CODE_INTELLIGENCE_DISABLED_VALUES:
-        return False
-    raise RuntimeError(
-        "Invalid ENVCTL_WORKTREE_CODE_INTELLIGENCE value. "
-        "Use auto/on/true or off/false."
-    )
-
-
-def _worktree_cgc_index_enabled(self: Any) -> bool:
-    raw = str(
-        self.env.get("ENVCTL_WORKTREE_CGC_INDEX")
-        or self.config.raw.get("ENVCTL_WORKTREE_CGC_INDEX")
-        or "auto"
-    ).strip().lower()
-    if raw in _WORKTREE_CGC_INDEX_ENABLED_VALUES:
-        return True
-    if raw in _WORKTREE_CGC_INDEX_DISABLED_VALUES:
-        return False
-    if raw in _WORKTREE_CGC_INDEX_AUTO_VALUES:
-        repo_root = self.config.base_dir
-        return (repo_root / ".cgcignore").is_file() or (repo_root / ".codegraphcontext").exists()
-    raise RuntimeError("Invalid ENVCTL_WORKTREE_CGC_INDEX value. Use auto/on/true or off/false.")
-
-
-def _worktree_code_intelligence_identity(self: Any, *, target: Path) -> _WorktreeCodeIntelligenceIdentity:
-    source_project = _read_source_serena_project_name(self.config.base_dir) or self.config.base_dir.name or "project"
-    worktree_name, feature, iteration = _worktree_identity_parts(self, target=target)
-    serena_template = _worktree_template_value(
-        self,
-        env_key="ENVCTL_WORKTREE_SERENA_PROJECT_TEMPLATE",
-        default="{project}-{worktree}",
-    )
-    cgc_template = _worktree_template_value(
-        self,
-        env_key="ENVCTL_WORKTREE_CGC_CONTEXT_TEMPLATE",
-        default="{project}-{worktree}",
-    )
-    serena_project = _render_worktree_identity_template(
-        serena_template,
-        project=_sanitize_worktree_identity(source_project, lowercase=True),
-        worktree=worktree_name,
-        feature=feature,
-        iteration=iteration,
-    )
-    cgc_context = _render_worktree_identity_template(
-        cgc_template,
-        project=_sanitize_worktree_identity(source_project, titlecase=True),
-        worktree=worktree_name,
-        feature=feature,
-        iteration=iteration,
-    )
-    return _WorktreeCodeIntelligenceIdentity(
-        worktree_name=worktree_name,
-        feature=feature,
-        iteration=iteration,
-        serena_project_name=serena_project,
-        cgc_context=cgc_context,
-    )
-
-
-def _read_source_serena_project_name(repo_root: Path) -> str:
-    path = repo_root / ".serena" / "project.yml"
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    match = re.search(r"^project_name:\s*[\"']?(.*?)[\"']?\s*$", text, flags=re.MULTILINE)
-    return str(match.group(1)).strip() if match else ""
-
-
-def _worktree_identity_parts(self: Any, *, target: Path) -> tuple[str, str, str]:
-    trees_root = _trees_root_for_worktree(self, target)
-    try:
-        relative = target.resolve().relative_to(trees_root.resolve())
-    except ValueError:
-        relative = Path(target.name)
-    parts = list(relative.parts)
-    if not parts:
-        parts = [target.name]
-    iteration = _sanitize_worktree_identity(parts[-1])
-    feature_raw = "_".join(parts[:-1]) if len(parts) > 1 else parts[0]
-    feature = _sanitize_worktree_identity(feature_raw)
-    worktree_name = _sanitize_worktree_identity(f"{feature}-{iteration}")
-    return worktree_name, feature, iteration
-
-
-def _worktree_template_value(self: Any, *, env_key: str, default: str) -> str:
-    raw = self.env.get(env_key) or self.config.raw.get(env_key) or default
-    value = str(raw).strip()
-    return value or default
-
-
-def _render_worktree_identity_template(
-    template: str,
-    *,
-    project: str,
-    worktree: str,
-    feature: str,
-    iteration: str,
-) -> str:
-    values = {
-        "project": project,
-        "worktree": worktree,
-        "feature": feature,
-        "iteration": iteration,
-    }
-    rendered = template
-    for key, value in values.items():
-        rendered = rendered.replace("{" + key + "}", value)
-    return _sanitize_worktree_identity(rendered) or worktree
-
-
-def _sanitize_worktree_identity(raw: str, *, lowercase: bool = False, titlecase: bool = False, limit: int = 96) -> str:
-    text = str(raw or "").strip()
-    if lowercase:
-        text = text.lower()
-    text = text.replace("/", "_").replace("\\", "_").replace(".", "-")
-    text = re.sub(r"[^A-Za-z0-9_-]+", "_", text)
-    text = re.sub(r"_+", "_", text)
-    text = re.sub(r"-+", "-", text)
-    text = text.strip("_-")
-    if titlecase:
-        pieces = re.split(r"([_-])", text)
-        text = "".join(piece[:1].upper() + piece[1:] if piece not in {"_", "-"} else piece for piece in pieces)
-    if len(text) > limit:
-        text = text[:limit].rstrip("_-")
-    return text or "worktree"
-
-
-def _worktree_cgc_database(self: Any) -> str:
-    for raw in (
-        self.env.get("ENVCTL_WORKTREE_CGC_DATABASE"),
-        self.config.raw.get("ENVCTL_WORKTREE_CGC_DATABASE"),
-    ):
-        value = str(raw or "").strip()
-        if value:
-            return _sanitize_worktree_identity(value)
-    return WORKTREE_CGC_DATABASE_DEFAULT
-
-
-def _short_command_output(value: object, *, limit: int = 500) -> str:
-    text = str(value or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
-
-
-def _cgc_context_already_exists(result: object) -> bool:
-    combined = f"{getattr(result, 'stdout', '')}\n{getattr(result, 'stderr', '')}".lower()
-    return "already exists" in combined or "already exist" in combined
-
-
-def _index_worktree_with_cgc(self: Any, *, target: Path, context: str) -> dict[str, object]:
-    database = _worktree_cgc_database(self)
-    metadata: dict[str, object] = {
-        "cgc_index_requested": True,
-        "cgc_available": False,
-        "cgc_context_created": False,
-        "cgc_context_already_exists": False,
-        "cgc_context_returncode": None,
-        "cgc_index_succeeded": False,
-        "cgc_index_returncode": None,
-        "cgc_commands": [],
-    }
-    if not getattr(self, "_command_exists", lambda _name: False)("cgc"):
-        return metadata
-    metadata["cgc_available"] = True
-    context_command = ["cgc", "context", "create", context]
-    if database:
-        context_command.extend(["--database", database])
-    commands = metadata["cgc_commands"]
-    assert isinstance(commands, list)
-    try:
-        context_result = self.process_runner.run(
-            context_command,
-            cwd=target,
-            env=self._command_env(port=0),
-            timeout=600.0,
-        )
-    except OSError as exc:
-        self._emit(
-            "setup.worktree.code_intelligence.cgc_context",
-            target=str(target.resolve()),
-            context=context,
-            database=database,
-            success=False,
-            error=str(exc),
-        )
-        commands.append({"command": context_command, "error": str(exc)})
-        return metadata
-    context_returncode = getattr(context_result, "returncode", 1)
-    already_exists = context_returncode != 0 and _cgc_context_already_exists(context_result)
-    context_success = context_returncode == 0 or already_exists
-    metadata["cgc_context_returncode"] = context_returncode
-    metadata["cgc_context_created"] = context_returncode == 0
-    metadata["cgc_context_already_exists"] = already_exists
-    commands.append(
-        {
-            "command": context_command,
-            "returncode": context_returncode,
-            "stdout": _short_command_output(getattr(context_result, "stdout", "")),
-            "stderr": _short_command_output(getattr(context_result, "stderr", "")),
-        }
-    )
-    context_payload: dict[str, object] = {
-        "target": str(target.resolve()),
-        "context": context,
-        "database": database,
-        "created": context_returncode == 0,
-        "already_exists": already_exists,
-        "success": context_success,
-        "returncode": context_returncode,
-    }
-    if not context_success:
-        context_payload["stdout"] = _short_command_output(getattr(context_result, "stdout", ""))
-        context_payload["stderr"] = _short_command_output(getattr(context_result, "stderr", ""))
-    self._emit("setup.worktree.code_intelligence.cgc_context", **context_payload)
-    if not context_success:
-        return metadata
-
-    index_command = ["cgc", "index", str(target), "--context", context]
-    try:
-        result = self.process_runner.run(
-            index_command,
-            cwd=target,
-            env=self._command_env(port=0),
-            timeout=600.0,
-        )
-    except OSError as exc:
-        self._emit(
-            "setup.worktree.code_intelligence.cgc_index",
-            target=str(target.resolve()),
-            context=context,
-            command=index_command,
-            success=False,
-            error=str(exc),
-        )
-        commands.append({"command": index_command, "error": str(exc)})
-        return metadata
-    returncode = getattr(result, "returncode", 1)
-    metadata["cgc_index_returncode"] = returncode
-    metadata["cgc_index_succeeded"] = returncode == 0
-    commands.append(
-        {
-            "command": index_command,
-            "returncode": returncode,
-            "stdout": _short_command_output(getattr(result, "stdout", "")),
-            "stderr": _short_command_output(getattr(result, "stderr", "")),
-        }
-    )
-    index_payload: dict[str, object] = {
-        "target": str(target.resolve()),
-        "context": context,
-        "command": index_command,
-        "returncode": returncode,
-        "success": returncode == 0,
-    }
-    if returncode != 0:
-        index_payload["stdout"] = _short_command_output(getattr(result, "stdout", ""))
-        index_payload["stderr"] = _short_command_output(getattr(result, "stderr", ""))
-    self._emit(
-        "setup.worktree.code_intelligence.cgc_index",
-        **index_payload,
-    )
-    return metadata
-
-
-def _write_worktree_code_intelligence_metadata(
-    *,
-    target: Path,
-    identity: _WorktreeCodeIntelligenceIdentity,
-    copied_files: Mapping[str, bool],
-    cgc_database: str,
-    cgc_result: Mapping[str, object],
-) -> None:
-    if not target.is_dir():
-        return
-    payload: dict[str, object] = {
-        "schema_version": WORKTREE_CODE_INTELLIGENCE_SCHEMA_VERSION,
-        "serena_project_name": identity.serena_project_name,
-        "cgc_context": identity.cgc_context,
-        "worktree_name": identity.worktree_name,
-        "feature": identity.feature,
-        "iteration": identity.iteration,
-        "files": dict(copied_files),
-        "cgc_database": cgc_database,
-    }
-    payload.update(dict(cgc_result))
-    path = target / WORKTREE_CODE_INTELLIGENCE_PATH
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    except OSError:
-        return
 
 
 def _build_worktree_provenance(
@@ -1990,106 +809,28 @@ def _build_worktree_provenance(
     created_for_fresh_ai_launch: bool = False,
     launch_transport: str = "",
 ) -> dict[str, object] | None:
-    source_branch = _git_command_output(self, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
-    if source_branch and source_branch != "HEAD":
-        return _worktree_provenance_payload(
-            self,
-            source_branch=source_branch,
-            resolution_reason="attached_branch",
-            plan_file=plan_file,
-            created_for_fresh_ai_launch=created_for_fresh_ai_launch,
-            launch_transport=launch_transport,
-        )
-
-    default_branch = _detect_default_branch(self)
-    if not default_branch:
-        return None
-    return _worktree_provenance_payload(
+    return _build_worktree_provenance_impl(
         self,
-        source_branch=default_branch,
-        resolution_reason="default_branch_detached_head",
         plan_file=plan_file,
         created_for_fresh_ai_launch=created_for_fresh_ai_launch,
         launch_transport=launch_transport,
     )
 
 
-def _worktree_provenance_payload(
-    self: Any,
-    *,
-    source_branch: str,
-    resolution_reason: str,
-    plan_file: str | None = None,
-    created_for_fresh_ai_launch: bool = False,
-    launch_transport: str = "",
-) -> dict[str, object]:
-    source_ref = _resolve_branch_ref(self, source_branch=source_branch)
-    payload: dict[str, object] = {
-        "schema_version": WORKTREE_PROVENANCE_SCHEMA_VERSION,
-        "source_branch": source_branch,
-        "source_ref": source_ref or source_branch,
-        "resolution_reason": resolution_reason,
-        "created_from_repo": str(self.config.base_dir.resolve()),
-        "recorded_at": datetime.now(tz=UTC).isoformat(),
-    }
-    normalized_plan_file = str(plan_file or "").strip()
-    if normalized_plan_file:
-        payload["plan_file"] = normalized_plan_file
-    if created_for_fresh_ai_launch:
-        payload["created_for_fresh_ai_launch"] = True
-        payload["fresh_ai_launch_status"] = "launching"
-    normalized_transport = str(launch_transport or "").strip().lower()
-    if normalized_transport:
-        payload["launch_transport"] = normalized_transport
-    return payload
-
-
 def _resolve_branch_ref(self: Any, *, source_branch: str) -> str:
-    normalized = source_branch.strip()
-    if not normalized:
-        return ""
-    for candidate in (f"origin/{normalized}", normalized):
-        if _git_command_output(self, ["rev-parse", "--verify", candidate]).strip():
-            return candidate
-    return normalized
+    return _resolve_branch_ref_impl(self, source_branch=source_branch)
 
 
 def _detect_default_branch(self: Any) -> str:
-    ref = _git_command_output(self, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
-    if ref.startswith("origin/"):
-        return ref.split("origin/", 1)[1]
-    for candidate in ("main", "master"):
-        if _git_command_output(self, ["rev-parse", "--verify", candidate]).strip():
-            return candidate
-    return "main"
+    return _detect_default_branch_impl(self)
 
 
 def _git_command_output(self: Any, args: list[str]) -> str:
-    result = self.process_runner.run(
-        ["git", "-C", str(self.config.base_dir), *args],
-        cwd=self.config.base_dir,
-        env=self._command_env(port=0),
-        timeout=30.0,
-    )
-    if getattr(result, "returncode", 1) != 0:
-        return ""
-    return str(getattr(result, "stdout", ""))
+    return _git_command_output_impl(self, args)
 
 
 def _seed_main_task_from_plan(*, target: Path, plan_path: Path) -> None:
-    if not plan_path.is_file() or not target.is_dir():
-        return
-    try:
-        plan_text = plan_path.read_text(encoding="utf-8")
-    except OSError:
-        return
-    if not plan_text.strip():
-        return
-    main_task_path = target / "MAIN_TASK.md"
-    try:
-        main_task_path.write_text(plan_text if plan_text.endswith("\n") else f"{plan_text}\n", encoding="utf-8")
-    except OSError:
-        return
+    _seed_main_task_from_plan_impl(target=target, plan_path=plan_path)
 
 
 def _delete_feature_worktrees(
@@ -2099,126 +840,51 @@ def _delete_feature_worktrees(
     candidates: list[tuple[str, Path]],
     remove_count: int,
 ) -> str | None:
-    if remove_count <= 0:
-        return None
-    ordered = sorted(
-        candidates,
-        key=lambda item: self._project_sort_key_for_feature(item[0], feature),
-        reverse=True,
+    return _delete_feature_worktrees_impl(
+        feature=feature,
+        candidates=candidates,
+        remove_count=remove_count,
+        project_sort_key_for_feature=self._project_sort_key_for_feature,
+        active_protection_reason=lambda *, name, root: _active_fresh_ai_worktree_protection_reason(
+            self,
+            name=name,
+            root=root,
+        ),
+        blast_worktree_before_delete=getattr(self, "_blast_worktree_before_delete", None),
+        delete_worktree=delete_worktree_path,
+        repo_root=self.config.base_dir,
+        trees_root_for_worktree=self._trees_root_for_worktree,
+        process_runner=self.process_runner,
+        emit=self._emit,
     )
-    deleted_count = 0
-    for _name, root in ordered:
-        if deleted_count >= remove_count:
-            break
-        protection_reason = _active_fresh_ai_worktree_protection_reason(self, name=_name, root=root)
-        if protection_reason:
-            self._emit(  # type: ignore[attr-defined]
-                "planning.worktree.cleanup.skipped_active_ai_session",
-                worktree=_name,
-                root=str(Path(root).resolve(strict=False)),
-                reason=protection_reason,
-            )
-            continue
-        blast_cleanup = getattr(self, "_blast_worktree_before_delete", None)
-        if callable(blast_cleanup):
-            warnings = blast_cleanup(
-                project_name=_name,
-                project_root=root,
-                source_command="blast-worktree",
-            )
-            if not isinstance(warnings, list):
-                warnings = []
-            for warning in warnings:
-                self._emit(  # type: ignore[attr-defined]
-                    "cleanup.worktree.warning",
-                    project=_name,
-                    warning=warning,
-                    source_command="blast-worktree",
-                )
-        result = delete_worktree_path(
-            repo_root=self.config.base_dir,
-            trees_root=self._trees_root_for_worktree(root),
-            worktree_root=root,
-            process_runner=self.process_runner,
-        )
-        if not result.success:
-            return result.message
-        deleted_count += 1
-    return None
 
 
 def _active_fresh_ai_worktree_protection_reason(self: Any, *, name: str, root: Path) -> str:
-    provenance = _read_worktree_provenance(root)
-    if not parse_bool(provenance.get("created_for_fresh_ai_launch"), False):
-        return ""
-    status = str(provenance.get("fresh_ai_launch_status") or "").strip().lower()
-    if status in {"launching", "queued", "starting"}:
-        recorded_at = str(provenance.get("recorded_at") or "").strip()
-        if _fresh_ai_launch_marker_is_fresh(recorded_at):
-            return "fresh_ai_launch_in_progress"
-    session_name = str(provenance.get("session_name") or provenance.get("native_session_id") or "").strip()
-    if session_name and _tmux_session_exists(self, session_name):
-        return "active_ai_session"
-    return ""
+    return _active_fresh_ai_worktree_protection_reason_impl(self, name=name, root=root)
 
 
-def _fresh_ai_launch_marker_is_fresh(recorded_at: str) -> bool:
-    if not recorded_at:
-        return True
-    try:
-        parsed = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
-    except ValueError:
-        return True
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    age = datetime.now(tz=UTC) - parsed.astimezone(UTC)
-    return age.total_seconds() <= FRESH_AI_LAUNCH_IN_PROGRESS_TTL_SECONDS
-
-
-def _read_worktree_provenance(root: Path) -> dict[str, object]:
-    path = Path(root) / WORKTREE_PROVENANCE_PATH
-    if not path.is_file():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+_fresh_ai_launch_marker_is_fresh = _fresh_ai_launch_marker_is_fresh_impl
+_read_worktree_provenance = _read_worktree_provenance_impl
 
 
 def _cleanup_empty_feature_root(self: Any, *, feature: str) -> None:
-    feature_root = self._preferred_tree_root_for_feature(feature)
-    if not feature_root.is_dir():
-        return
-    try:
-        next(feature_root.iterdir())
-    except StopIteration:
-        try:
-            feature_root.rmdir()
-        except OSError:
-            return
+    _cleanup_empty_feature_root_impl(
+        preferred_tree_root_for_feature=self._preferred_tree_root_for_feature,
+        feature=feature,
+    )
 
 
 def _move_plan_to_done(self: Any, plan_file: str) -> None:
-    src = self._planning_root() / plan_file
-    if not src.is_file():
-        return
-    rel_dir = Path(plan_file).parent
-    if str(rel_dir) in {"", "."}:
-        rel_dir = Path("_misc")
-    done_dir = self._planning_done_root() / rel_dir
-    done_dir.mkdir(parents=True, exist_ok=True)
-    dest = done_dir / src.name
-    if dest.exists():
-        stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-        dest = done_dir / f"{src.stem}-{stamp}{src.suffix}"
-    src.replace(dest)
-    relative_done = dest.relative_to(self._planning_done_root())
-    print(
-        "Moved "
-        f"{_render_planning_path(self, absolute_path=src, display_text=plan_file)} "
-        "to "
-        f"{_render_planning_path(self, absolute_path=dest, display_text=f'done/{relative_done}') }."
+    _move_plan_to_done_impl(
+        plan_file=plan_file,
+        planning_root=self._planning_root(),
+        planning_done_root=self._planning_done_root(),
+        render_path=lambda *, absolute_path, display_text: _render_planning_path(
+            self,
+            absolute_path=absolute_path,
+            display_text=display_text,
+        ),
+        emit_message=print,
     )
 
 
@@ -2228,39 +894,9 @@ def _feature_project_candidates(
     projects: list[tuple[str, Path]],
     feature: str,
 ) -> list[tuple[str, Path]]:
-    lowered_feature = feature.lower()
-    prefix = f"{lowered_feature}-"
-    candidates = [
-        project
-        for project in projects
-        if project[0].lower() == lowered_feature or project[0].lower().startswith(prefix)
-    ]
-    candidates.sort(key=lambda item: self._project_sort_key_for_feature(item[0], feature))
-    return candidates
+    return _feature_project_candidates_impl(projects=projects, feature=feature)
 
 
-def _project_sort_key_for_feature(project_name: str, feature: str) -> tuple[int, object]:
-    lowered = project_name.lower()
-    feature_prefix = f"{feature.lower()}-"
-    if lowered == feature.lower():
-        return (0, 0)
-    if not lowered.startswith(feature_prefix):
-        return (3, lowered)
-    suffix = lowered[len(feature_prefix) :]
-    if suffix.isdigit():
-        return (1, int(suffix))
-    iter_match = re.fullmatch(r"iter[-_]?(\d+)", suffix)
-    if iter_match:
-        return (1, int(iter_match.group(1)))
-    return (2, suffix)
-
-
-def _next_available_iteration(existing_iters: set[int]) -> int:
-    candidate = 1
-    while candidate in existing_iters:
-        candidate += 1
-    return candidate
-
-
-def _setup_worktree_requested(route: Route) -> bool:
-    return bool(route.flags.get("setup_worktrees")) or bool(route.flags.get("setup_worktree"))
+_project_sort_key_for_feature = _project_sort_key_for_feature_impl
+_next_available_iteration = _next_available_iteration_impl
+_setup_worktree_requested = _setup_worktree_requested_impl

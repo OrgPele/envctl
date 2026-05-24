@@ -72,6 +72,18 @@ def repo_root_with_readable_main_config_from_worktree(worktree_root: Path) -> Pa
     return main_repo_root
 
 
+def is_envctl_managed_worktree_root(worktree_root: Path, main_repo_root: Path) -> bool:
+    worktree_root = worktree_root.resolve()
+    main_repo_root = main_repo_root.resolve()
+    try:
+        relative = worktree_root.relative_to(main_repo_root)
+    except ValueError:
+        return False
+    if len(relative.parts) != 3 or relative.parts[0] != "trees":
+        return False
+    return (worktree_root / ".envctl-state" / "worktree-provenance.json").is_file()
+
+
 def canonical_envctl_project_root(candidate: Path) -> Path:
     """Resolve the envctl control-plane root for a path inside a Git checkout.
 
@@ -84,7 +96,10 @@ def canonical_envctl_project_root(candidate: Path) -> Path:
     repo_root = find_repo_root(candidate)
     if repo_root is None:
         return Path(candidate).expanduser().resolve()
-    main_config_root = repo_root_with_readable_main_config_from_worktree(repo_root)
-    if main_config_root is not None:
-        return main_config_root
+    readable_main_root = repo_root_with_readable_main_config_from_worktree(repo_root)
+    if readable_main_root is not None:
+        return readable_main_root
+    main_repo_root = main_repo_root_for_linked_worktree(repo_root)
+    if main_repo_root is not None and is_envctl_managed_worktree_root(repo_root, main_repo_root):
+        return main_repo_root
     return repo_root
