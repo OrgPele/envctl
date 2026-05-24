@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 
 from envctl_engine.actions.action_target_support import ActionCommandResolution
-from envctl_engine.actions.project_action_execution_support import run_project_action
+from envctl_engine.actions.project_action_support import run_project_action
 from envctl_engine.runtime.command_router import parse_route
 
 
