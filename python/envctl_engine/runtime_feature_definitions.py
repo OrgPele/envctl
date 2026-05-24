@@ -306,11 +306,17 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         shell_source_of_truth=(),
         python_source_of_truth=(
             "python/envctl_engine/actions/action_protected_artifacts.py",
+            "python/envctl_engine/actions/action_ship_checks.py",
+            "python/envctl_engine/actions/action_ship_conflicts.py",
+            "python/envctl_engine/actions/action_ship_contract.py",
+            "python/envctl_engine/actions/action_ship_support.py",
             "python/envctl_engine/actions/project_action_domain.py",
             "python/envctl_engine/actions/actions_git.py",
         ),
         evidence_tests=(
-            "tests/python/actions/test_actions_cli.py",
+            "tests/python/actions/test_action_ship_owner_support.py",
+            "tests/python/actions/test_action_ship_support.py",
+            "tests/python/actions/test_actions_cli_ship.py",
             "tests/python/runtime/test_cli_router_parity.py",
         ),
         parity_status="verified_python",

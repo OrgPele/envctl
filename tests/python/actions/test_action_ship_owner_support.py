@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from envctl_engine.actions.action_ship_checks import normalize_github_pr_checks as normalize_checks_from_owner
+from envctl_engine.actions.action_ship_conflicts import parse_merge_tree_conflicts as parse_conflicts_from_owner
+from envctl_engine.actions.action_ship_contract import ship_payload as ship_payload_from_owner
 from envctl_engine.actions.action_ship_support import (
     existing_merge_conflict_report,
     normalize_github_pr_checks,
@@ -153,3 +156,9 @@ def test_ship_payload_and_result_output_keep_json_contract(tmp_path: Path, capsy
     assert printed["checks_state"] == "checks_passed"
     assert printed["protected_local_artifacts_skipped"] == [".envctl-state/code-intelligence.json"]
     assert parse_ship_json_output(_Context("Main", tmp_path, tmp_path, {"ENVCTL_ACTION_JSON": "true"})) is True
+
+
+def test_ship_support_reexports_cohesive_owner_modules() -> None:
+    assert ship_payload is ship_payload_from_owner
+    assert parse_merge_tree_conflicts is parse_conflicts_from_owner
+    assert normalize_github_pr_checks is normalize_checks_from_owner
