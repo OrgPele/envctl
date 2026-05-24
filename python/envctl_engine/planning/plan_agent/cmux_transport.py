@@ -34,6 +34,7 @@ import envctl_engine.planning.plan_agent.cmux_workflow_submission_support as cmu
 import envctl_engine.planning.plan_agent.cmux_goal_support as cmux_goal_support
 import envctl_engine.planning.plan_agent.cmux_bootstrap_support as cmux_bootstrap_support
 import envctl_engine.planning.plan_agent.cmux_worktree_launch_support as cmux_worktree_launch_support
+import envctl_engine.planning.plan_agent.cmux_review_launch_support as cmux_review_launch_support
 from envctl_engine.planning.plan_agent.constants import *
 from envctl_engine.planning.plan_agent.models import *
 from envctl_engine.planning.plan_agent.config import *
@@ -42,31 +43,13 @@ from envctl_engine.planning.plan_agent.terminal_screen import *
 from envctl_engine.planning.plan_agent.recovery import *
 
 def review_agent_launch_readiness(runtime: Any) -> ReviewAgentLaunchReadiness:
-    launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
-    if launch_config.transport == "superset":
-        return ReviewAgentLaunchReadiness(
-            ready=False,
-            reason="unsupported_superset_review_tab",
-            cli=launch_config.cli,
-        )
-    missing_commands = tuple(_missing_launch_commands(runtime, launch_config))
-    if missing_commands:
-        return ReviewAgentLaunchReadiness(
-            ready=False,
-            reason="missing_executables",
-            cli=launch_config.cli,
-            missing=missing_commands,
-        )
-    if launch_config.cmux_workspace:
-        return ReviewAgentLaunchReadiness(ready=True, reason="ready", cli=launch_config.cli)
-    if _default_target_workspace_title(runtime, launch_config, workspace_mode="reviews"):
-        return ReviewAgentLaunchReadiness(ready=True, reason="ready", cli=launch_config.cli)
-    reason = (
-        "missing_cmux_context"
-        if _missing_required_cmux_context(runtime, launch_config)
-        else "workspace_unavailable"
+    return cmux_review_launch_support.resolve_review_agent_launch_readiness(
+        runtime,
+        resolve_launch_config_fn=resolve_plan_agent_launch_config,
+        missing_launch_commands_fn=_missing_launch_commands,
+        default_target_workspace_title_fn=_default_target_workspace_title,
+        missing_required_cmux_context_fn=_missing_required_cmux_context,
     )
-    return ReviewAgentLaunchReadiness(ready=False, reason=reason, cli=launch_config.cli)
 
 
 def launch_review_agent_terminal(
@@ -77,82 +60,20 @@ def launch_review_agent_terminal(
     project_root: Path,
     review_bundle_path: Path | None = None,
 ) -> AgentTerminalLaunchResult:
-    launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}))
-    if launch_config.transport == "superset":
-        runtime._emit(
-            "dashboard.review_tab.failed",
-            reason="unsupported_superset_review_tab",
-            project=project_name,
-            cli=launch_config.cli,
-        )
-        return AgentTerminalLaunchResult(status="failed", reason="unsupported_superset_review_tab")
-    missing_commands = _missing_launch_commands(runtime, launch_config)
-    if missing_commands:
-        runtime._emit(
-            "dashboard.review_tab.failed",
-            reason="missing_executables",
-            project=project_name,
-            cli=launch_config.cli,
-            missing=missing_commands,
-        )
-        return AgentTerminalLaunchResult(status="failed", reason="missing_executables")
-    workspace_target = _ensure_workspace_id(
+    return cmux_review_launch_support.launch_cmux_review_agent_terminal(
         runtime,
-        launch_config,
-        workspace_mode="reviews",
-        event_prefix="dashboard.review_tab",
-    )
-    if workspace_target is None:
-        reason = (
-            "missing_cmux_context"
-            if _missing_required_cmux_context(runtime, launch_config)
-            else "workspace_unavailable"
-        )
-        runtime._emit(
-            "dashboard.review_tab.failed",
-            reason=reason,
-            project=project_name,
-            cli=launch_config.cli,
-        )
-        return AgentTerminalLaunchResult(status="failed", reason=reason)
-    workspace_id = workspace_target.workspace_id
-    surface_id, create_error = _create_surface(runtime, workspace_id=workspace_id)
-    if create_error or surface_id is None:
-        runtime._emit(
-            "dashboard.review_tab.failed",
-            reason="surface_create_failed",
-            project=project_name,
-            workspace_id=workspace_id,
-            error=create_error,
-            cli=launch_config.cli,
-        )
-        return AgentTerminalLaunchResult(status="failed", reason=create_error or "surface_create_failed")
-    runtime._emit(
-        "dashboard.review_tab.surface_created",
-        project=project_name,
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        cli=launch_config.cli,
-    )
-    _start_background_review_surface_bootstrap(
-        runtime,
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        launch_config=launch_config,
         repo_root=repo_root,
         project_name=project_name,
         project_root=project_root,
         review_bundle_path=review_bundle_path,
+        resolve_launch_config_fn=resolve_plan_agent_launch_config,
+        missing_launch_commands_fn=_missing_launch_commands,
+        ensure_workspace_id_fn=_ensure_workspace_id,
+        missing_required_cmux_context_fn=_missing_required_cmux_context,
+        create_surface_fn=_create_surface,
+        start_background_review_surface_bootstrap_fn=_start_background_review_surface_bootstrap,
+        print_launch_summary_fn=_print_launch_summary,
     )
-    runtime._emit(
-        "dashboard.review_tab.launched",
-        project=project_name,
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        cli=launch_config.cli,
-    )
-    _print_launch_summary(f"Opened origin review tab for {project_name}.")
-    return AgentTerminalLaunchResult(status="launched", reason="launched", surface_id=surface_id)
 
 
 def _launch_single_worktree(

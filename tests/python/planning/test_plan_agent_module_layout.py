@@ -41,6 +41,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "cmux_bootstrap_support.py",
             "cmux_goal_support.py",
             "cmux_worktree_launch_support.py",
+            "cmux_review_launch_support.py",
             "config.py",
             "constants.py",
             "launch.py",
@@ -276,6 +277,10 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             },
             "cmux_worktree_launch_support.py": {
                 "launch_single_worktree",
+            },
+            "cmux_review_launch_support.py": {
+                "launch_cmux_review_agent_terminal",
+                "resolve_review_agent_launch_readiness",
             },
             "cmux_workspace_support.py": {
                 "ensure_workspace_id",
