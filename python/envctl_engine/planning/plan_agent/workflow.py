@@ -16,6 +16,7 @@ from typing import Any, Literal, Mapping
 
 from envctl_engine.planning import planning_feature_name
 from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
+from envctl_engine.runtime.runtime_context import optional_state_repository
 from envctl_engine.runtime.codex_tmux_support import (
     _attach_interactive,
     _completed_process_error_text as _tmux_completed_process_error_text,
@@ -324,7 +325,7 @@ def _runtime_addresses_prompt_section(runtime: Any, *, worktree: CreatedPlanWork
 
 
 def _latest_runtime_state(runtime: Any) -> RunState | None:
-    state_repository = getattr(runtime, "state_repository", None)
+    state_repository = optional_state_repository(runtime)
     if state_repository is not None and hasattr(state_repository, "load_latest"):
         try:
             state = state_repository.load_latest()

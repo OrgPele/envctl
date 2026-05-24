@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 from envctl_engine.requirements.supabase_auth_users import SupabaseAuthAdminClient, SupabaseAuthAdminError
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.runtime_context import optional_state_repository
 from envctl_engine.runtime.supabase_user_command_support import _connection_from_requirements
 from envctl_engine.state.project_runtime import (
     active_project_names,
@@ -407,7 +408,7 @@ def _write_artifact(
 
 
 def _artifact_path(runtime: Any, run_id: str) -> Path:
-    repository = getattr(runtime, "state_repository", None)
+    repository = optional_state_repository(runtime)
     run_dir = getattr(repository, "run_dir_path", None)
     if callable(run_dir):
         return Path(run_dir(run_id)) / "qa-user-ensure.json"

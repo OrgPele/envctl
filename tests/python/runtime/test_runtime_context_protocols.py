@@ -105,6 +105,44 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
         self.assertIs(_lifecycle_cleanup.LifecycleCleanupOrchestrator._process_runtime(runtime), runtime.process_runner)
         self.assertIs(_lifecycle_cleanup.LifecycleCleanupOrchestrator._port_allocator(runtime), runtime.port_planner)
 
+    def test_optional_accessors_prefer_context_and_return_none_when_missing(self) -> None:
+        context_state_repository = object()
+        context_process_runtime = object()
+        runtime = SimpleNamespace(
+            runtime_context=RuntimeContext(
+                config=object(),
+                env={},
+                process_runtime=context_process_runtime,
+                port_allocator=object(),
+                state_repository=context_state_repository,
+                terminal_ui=object(),
+                emit=lambda *_args, **_kwargs: None,
+            ),
+            state_repository=object(),
+            process_runner=object(),
+        )
+
+        self.assertIs(_runtime_context.optional_state_repository(runtime), context_state_repository)
+        self.assertIs(_runtime_context.optional_process_runtime(runtime), context_process_runtime)
+        self.assertIsNone(_runtime_context.optional_state_repository(SimpleNamespace()))
+        self.assertIsNone(_runtime_context.optional_process_runtime(SimpleNamespace()))
+
+    def test_command_support_uses_runtime_context_dependency_helpers(self) -> None:
+        support_paths = [
+            REPO_ROOT / "python/envctl_engine/runtime/engine_runtime_event_support.py",
+            REPO_ROOT / "python/envctl_engine/planning/plan_agent/workflow.py",
+            REPO_ROOT / "python/envctl_engine/actions/action_test_interrupt_support.py",
+            REPO_ROOT / "python/envctl_engine/runtime/playwright_command_support.py",
+            REPO_ROOT / "python/envctl_engine/runtime/qa_user_command_support.py",
+            REPO_ROOT / "python/envctl_engine/runtime/codex_tmux_support.py",
+        ]
+        for support_path in support_paths:
+            raw = support_path.read_text(encoding="utf-8")
+            self.assertIn("envctl_engine.runtime.runtime_context", raw)
+            self.assertNotIn('getattr(runtime, "state_repository"', raw)
+            self.assertNotIn('getattr(runtime, "process_runner"', raw)
+            self.assertNotIn('getattr(self.runtime, "process_runner"', raw)
+
     def test_runtime_context_stays_synced_when_runtime_collaborators_are_reassigned(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
