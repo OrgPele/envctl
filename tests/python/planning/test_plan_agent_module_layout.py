@@ -200,6 +200,16 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "_ensure_workspace_id",
                 "launch_review_agent_terminal",
             },
+            "cmux_surface_support.py": {
+                "prepare_surface",
+                "run_cmux_command",
+                "send_surface_key",
+            },
+            "cmux_workspace_support.py": {
+                "ensure_workspace_id",
+                "workspace_entries_from_list_output",
+                "surface_ids_from_list_output",
+            },
             "omx_transport.py": {
                 "_spawn_omx_session_for_worktree",
                 "_find_existing_omx_attach_target",
