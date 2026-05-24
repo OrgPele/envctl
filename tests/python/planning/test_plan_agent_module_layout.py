@@ -56,6 +56,8 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "tmux_surface_support.py",
             "tmux_identity_support.py",
             "tmux_attach_support.py",
+            "tmux_window_support.py",
+            "tmux_health_support.py",
             "tmux_transport.py",
             "workflow.py",
         }
@@ -208,6 +210,16 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "tmux_attach_support.py": {
                 "find_existing_tmux_attach_target",
                 "resolve_tmux_attach_target",
+            },
+            "tmux_window_support.py": {
+                "enable_tmux_mouse_scrollback",
+                "ensure_tmux_window",
+                "tmux_window_exists",
+                "wait_for_tmux_window_ready",
+            },
+            "tmux_health_support.py": {
+                "existing_tmux_session_health",
+                "existing_tmux_session_looks_healthy",
             },
             "tmux_transport.py": {
                 "_run_tmux_worktree_bootstrap",

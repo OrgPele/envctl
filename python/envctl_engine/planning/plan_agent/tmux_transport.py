@@ -44,6 +44,8 @@ from envctl_engine.planning.plan_agent.tmux_identity_support import (
 import envctl_engine.planning.plan_agent.tmux_workflow_submission_support as tmux_workflow_submission_support
 import envctl_engine.planning.plan_agent.tmux_surface_support as tmux_surface_support
 import envctl_engine.planning.plan_agent.tmux_attach_support as tmux_attach_support
+import envctl_engine.planning.plan_agent.tmux_window_support as tmux_window_support
+import envctl_engine.planning.plan_agent.tmux_health_support as tmux_health_support
 
 def _launch_plan_agent_tmux_terminals(
     runtime: Any,
@@ -288,35 +290,34 @@ def _tmux_target(session_name: str, window_name: str) -> str:
 
 
 def _enable_tmux_mouse_scrollback(runtime: Any, *, session_name: str) -> str | None:
-    result = _run_tmux_probe(
+    return tmux_window_support.enable_tmux_mouse_scrollback(
         runtime,
-        ("tmux", "set-option", "-t", session_name, "mouse", "on"),
-        cwd=Path(runtime.config.base_dir).resolve(),
+        session_name=session_name,
+        run_tmux_probe_fn=_run_tmux_probe,
+        completed_process_error_text_fn=_tmux_completed_process_error_text,
     )
-    if result.returncode == 0:
-        return None
-    return _tmux_completed_process_error_text(result)
 
 
 def _wait_for_tmux_window_ready(runtime: Any, *, session_name: str, window_name: str) -> str | None:
-    deadline = time.monotonic() + _TMUX_WINDOW_READY_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        if _tmux_window_exists(runtime, session_name=session_name, window_name=window_name):
-            return None
-        time.sleep(_TMUX_WINDOW_READY_POLL_INTERVAL_SECONDS)
-    return f"tmux_window_unavailable: can't find window: {window_name}"
+    return tmux_window_support.wait_for_tmux_window_ready(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        tmux_window_exists_fn=_tmux_window_exists,
+        monotonic_fn=time.monotonic,
+        sleep_fn=time.sleep,
+        timeout_seconds=_TMUX_WINDOW_READY_TIMEOUT_SECONDS,
+        poll_interval_seconds=_TMUX_WINDOW_READY_POLL_INTERVAL_SECONDS,
+    )
 
 
 def _tmux_window_exists(runtime: Any, *, session_name: str, window_name: str) -> bool:
-    result = _run_tmux_probe(
+    return tmux_window_support.tmux_window_exists(
         runtime,
-        ("tmux", "list-windows", "-t", session_name, "-F", "#{window_name}"),
-        cwd=Path(runtime.config.base_dir).resolve(),
+        session_name=session_name,
+        window_name=window_name,
+        run_tmux_probe_fn=_run_tmux_probe,
     )
-    if result.returncode != 0:
-        return False
-    windows = {str(line).strip() for line in str(getattr(result, "stdout", "")).splitlines() if str(line).strip()}
-    return window_name in windows
 
 
 def _resolve_tmux_attach_target(
@@ -367,27 +368,25 @@ def _find_existing_tmux_attach_target(
 
 
 def _existing_tmux_session_looks_healthy(runtime: Any, *, session_name: str, window_name: str, cli: str) -> bool:
-    return _existing_tmux_session_health(
+    return tmux_health_support.existing_tmux_session_looks_healthy(
         runtime,
         session_name=session_name,
         window_name=window_name,
         cli=cli,
-    ).ready
+        existing_session_health_fn=_existing_tmux_session_health,
+    )
 
 
 def _existing_tmux_session_health(runtime: Any, *, session_name: str, window_name: str, cli: str) -> AiCliReadyResult:
-    normalized_cli = str(cli).strip().lower()
-    if normalized_cli not in {"opencode", "codex"}:
-        return AiCliReadyResult(ready=True, reason="health_check_not_required")
-    screen = _read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
-    if not str(screen or "").strip():
-        return AiCliReadyResult(ready=False, reason=f"existing_{normalized_cli}_session_empty", screen_excerpt="")
-    if _screen_looks_ready(normalized_cli, screen) or _screen_looks_active(normalized_cli, screen):
-        return AiCliReadyResult(ready=True, reason="healthy", screen_excerpt=_screen_excerpt(screen))
-    return AiCliReadyResult(
-        ready=False,
-        reason=f"existing_{normalized_cli}_session_unhealthy",
-        screen_excerpt=_screen_excerpt(screen),
+    return tmux_health_support.existing_tmux_session_health(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        cli=cli,
+        read_tmux_screen_fn=_read_tmux_screen,
+        screen_looks_ready_fn=_screen_looks_ready,
+        screen_looks_active_fn=_screen_looks_active,
+        screen_excerpt_fn=_screen_excerpt,
     )
 
 
@@ -861,44 +860,18 @@ def _ensure_tmux_window(
     launch_config: PlanAgentLaunchConfig,
     worktree: CreatedPlanWorktree,
 ) -> str | None:
-    cwd = Path(worktree.root).resolve()
-    shell_command = launch_config.shell
-    if _tmux_session_exists(runtime, session_name):
-        command = (
-            "tmux",
-            "new-window",
-            "-d",
-            "-t",
-            session_name,
-            "-n",
-            window_name,
-            "-c",
-            str(cwd),
-            shell_command,
-        )
-    else:
-        command = (
-            "tmux",
-            "new-session",
-            "-d",
-            "-s",
-            session_name,
-            "-n",
-            window_name,
-            "-c",
-            str(cwd),
-            shell_command,
-        )
-    result = _run_tmux_probe(runtime, command, cwd=Path(runtime.config.base_dir).resolve())
-    if result.returncode == 0:
-        option_error = _enable_tmux_mouse_scrollback(runtime, session_name=session_name)
-        if option_error is not None:
-            return option_error
-        wait_error = _wait_for_tmux_window_ready(runtime, session_name=session_name, window_name=window_name)
-        if wait_error is None:
-            return None
-        return wait_error
-    return _tmux_completed_process_error_text(result)
+    return tmux_window_support.ensure_tmux_window(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        launch_config=launch_config,
+        worktree=worktree,
+        tmux_session_exists_fn=_tmux_session_exists,
+        run_tmux_probe_fn=_run_tmux_probe,
+        completed_process_error_text_fn=_tmux_completed_process_error_text,
+        enable_mouse_scrollback_fn=_enable_tmux_mouse_scrollback,
+        wait_for_window_ready_fn=_wait_for_tmux_window_ready,
+    )
 
 
 __all__ = tuple(name for name in globals() if not name.startswith("__"))
