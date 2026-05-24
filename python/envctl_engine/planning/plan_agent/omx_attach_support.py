@@ -458,7 +458,8 @@ def wait_for_omx_attach_target(
         ),
         previous_tmux_session_names,
     )
-    while monotonic_fn() < deadline:
+
+    def _discover_attach_target() -> PlanAgentAttachTarget | None:
         for record in omx_session_records_for_worktree_fn(runtime, worktree):
             attach_target = attach_target_from_omx_record_fn(
                 runtime,
@@ -481,5 +482,11 @@ def wait_for_omx_attach_target(
         )
         if attach_target is not None:
             return attach_target
+        return None
+
+    while monotonic_fn() < deadline:
+        attach_target = _discover_attach_target()
+        if attach_target is not None:
+            return attach_target
         sleep_fn(session_ready_poll_interval_seconds)
-    return None
+    return _discover_attach_target()
