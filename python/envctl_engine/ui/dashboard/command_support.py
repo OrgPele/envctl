@@ -14,7 +14,6 @@ from envctl_engine.ui.debug_anomaly_rules import detect_dispatch_anomaly
 RETURN_TO_DASHBOARD_PROMPT = "Press Enter to return to dashboard (manual confirmation required): "
 PAUSE_BEFORE_DASHBOARD_COMMANDS = {"test", "review", "logs", "errors", "health", "clear-logs"}
 
-
 def run_interactive_command(owner: Any, raw: str, state: RunState, rt: object) -> tuple[bool, RunState]:
     runtime_any = cast(Any, rt)
     raw_input = raw
@@ -200,8 +199,9 @@ def repo_root_for_project(project_root: Path) -> Path | None:
     return command_input_support.repo_root_for_project(project_root)
 
 
-def dispatch_kill_session(runtime_any: Any, *, selector_fn: Any) -> None:
-    command_input_support.dispatch_kill_session(runtime_any, selector_fn=selector_fn)
+def dispatch_kill_session(runtime_any: Any, *, selector_fn: Any | None = None) -> None:
+    kwargs = {} if selector_fn is None else {"selector_fn": selector_fn}
+    command_input_support.dispatch_kill_session(runtime_any, **kwargs)
 
 
 def sanitize_interactive_input(raw: str) -> str:
