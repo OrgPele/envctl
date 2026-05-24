@@ -20,6 +20,14 @@ from envctl_engine.startup.service_execution_policy import (
     service_attach_parallel_enabled,
     service_prep_parallel_enabled,
 )
+from envctl_engine.startup.service_execution_environment import (
+    configured_service_types_for_mode,
+    make_service_dependency_emitter,
+    make_service_retry_emitter,
+    project_env_for_service as _project_env_for_service,
+    project_service_log_paths,
+    resolve_service_workdirs,
+)
 from envctl_engine.startup.service_execution_records import (
     LaunchedServiceRuntime as LaunchedServiceRuntime,
     PreparedServiceLaunch as PreparedServiceLaunch,
@@ -46,12 +54,7 @@ def start_project_services(
     effective_mode = str(route.mode if route is not None else "main").strip().lower() or "main"
     backend_plan = context.ports["backend"]
     frontend_plan = context.ports["frontend"]
-    backend_cwd = context.root / str(getattr(rt.config, "backend_dir_name", "backend"))
-    frontend_cwd = context.root / str(getattr(rt.config, "frontend_dir_name", "frontend"))
-    if not backend_cwd.is_dir():
-        backend_cwd = context.root
-    if not frontend_cwd.is_dir():
-        frontend_cwd = context.root
+    backend_cwd, frontend_cwd = resolve_service_workdirs(config=rt.config, project_root=context.root)
 
     services_hook = rt._invoke_envctl_hook(context=context, hook_name="envctl_define_services")
     if services_hook.found:
@@ -69,10 +72,11 @@ def start_project_services(
                 "but returned no services"
             )
 
-    run_logs_dir = rt._run_dir_path(run_id)
-    safe_project_name = context.name.replace("/", "_").replace(" ", "_")
-    backend_log_path = str(run_logs_dir / f"{safe_project_name}_backend.txt")
-    frontend_log_path = str(run_logs_dir / f"{safe_project_name}_frontend.txt")
+    log_paths = project_service_log_paths(runtime=rt, run_id=run_id, project_name=context.name)
+    run_logs_dir = log_paths.run_logs_dir
+    safe_project_name = log_paths.safe_project_name
+    backend_log_path = log_paths.backend_log_path
+    frontend_log_path = log_paths.frontend_log_path
     project_env_internal_builder = getattr(rt, "_project_service_env_internal", None)
     if callable(project_env_internal_builder):
         project_env_internal = project_env_internal_builder(context, requirements=requirements, route=route)
@@ -80,17 +84,13 @@ def start_project_services(
         project_env_internal = rt._project_service_env(context, requirements=requirements, route=route)
 
     def project_env_for_service(service_name: str) -> dict[str, str]:
-        try:
-            return rt._project_service_env(
-                context,
-                requirements=requirements,
-                route=route,
-                service_name=service_name,
-            )
-        except TypeError as exc:
-            if "service_name" not in str(exc):
-                raise
-            return rt._project_service_env(context, requirements=requirements, route=route)
+        return _project_env_for_service(
+            rt,
+            context,
+            requirements=requirements,
+            route=route,
+            service_name=service_name,
+        )
 
     backend_project_env_base = project_env_for_service("backend")
     frontend_project_env_base = project_env_for_service("frontend")
@@ -130,36 +130,18 @@ def start_project_services(
         frontend_env_extra.update(
             overlay_builder(service_name="frontend", base_env={**project_env_internal, **frontend_env_extra})
         )
-    all_service_names_for_mode = getattr(rt.config, "all_app_service_names_for_mode", None)
-    if callable(all_service_names_for_mode):
-        try:
-            configured_service_types = {
-                service_name for service_name in all_service_names_for_mode(effective_mode, project_root=context.root)
-            }
-        except TypeError:
-            configured_service_types = {service_name for service_name in all_service_names_for_mode(effective_mode)}
-    else:
-        configured_service_types = {
-            service_name
-            for service_name in ("backend", "frontend")
-            if rt._service_enabled_for_mode(effective_mode, service_name)
-        }
+    configured_service_types = configured_service_types_for_mode(rt, effective_mode, context.root)
     configured_additional_services = tuple(
         service
         for service in getattr(rt.config, "additional_services", ())
         if additional_service_enabled_for_context(service, mode=effective_mode, project_root=context.root)
     )
 
-    def emit_service_dependency(**payload: object) -> None:
-        rt._emit("service.dependency.selected", **payload)
-        if requirements_timing_enabled(orchestrator, route) and not orchestrator._suppress_timing_output(route):
-            print(
-                "Starting dependency service "
-                f"{payload.get('dependency')} because {payload.get('service')} depends_on={payload.get('dependency')}"
-            )
-
     if route is not None:
-        route.flags.setdefault("emit_service_dependency", emit_service_dependency)
+        route.flags.setdefault(
+            "emit_service_dependency",
+            make_service_dependency_emitter(orchestrator=orchestrator, runtime=rt, route=route),
+        )
     backend_listener_expected = backend_listener_expected_for_mode(rt.config, effective_mode)
     selected_service_types = _restart_service_types_for_project(
         route=route,
@@ -627,22 +609,7 @@ def start_project_services(
         )
         return requested
 
-    def on_service_retry(
-        service_type: str,
-        failed_port: int,
-        retry_port: int,
-        attempt: int,
-        error: str | None,
-    ) -> None:
-        rt._emit(
-            "service.retry",
-            project=context.name,
-            service=service_type,
-            failed_port=failed_port,
-            retry_port=retry_port,
-            attempt=attempt,
-            error=(error or "").strip() or None,
-        )
+    on_service_retry = make_service_retry_emitter(runtime=rt, project_name=context.name)
 
     rt._emit(
         "service.attach.execution",

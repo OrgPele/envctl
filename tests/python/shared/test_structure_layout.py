@@ -1185,12 +1185,19 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertLessEqual(len(facade_text.splitlines()), 500)
 
     def test_service_execution_policy_has_owned_module(self) -> None:
+        env_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_execution_environment.py"
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_execution_policy.py"
         records_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_execution_records.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_execution.py"
 
+        self.assertTrue(env_owner.is_file())
         self.assertTrue(owner.is_file())
         self.assertTrue(records_owner.is_file())
+        env_text = env_owner.read_text(encoding="utf-8")
+        self.assertIn("def resolve_service_workdirs", env_text)
+        self.assertIn("def configured_service_types_for_mode", env_text)
+        self.assertIn("def make_service_dependency_emitter", env_text)
+        self.assertIn("def make_service_retry_emitter", env_text)
         owner_text = owner.read_text(encoding="utf-8")
         self.assertIn("def resolve_command_env_builder", owner_text)
         self.assertIn("def ordered_service_layers", owner_text)
@@ -1200,9 +1207,10 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class PreparedServiceLaunch", records_text)
         self.assertIn("def finalize_launched_service_records", records_text)
         facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.startup.service_execution_environment import", facade_text)
         self.assertIn("from envctl_engine.startup.service_execution_policy import", facade_text)
         self.assertIn("from envctl_engine.startup.service_execution_records import", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 800)
+        self.assertLessEqual(len(facade_text.splitlines()), 760)
 
     def test_service_launch_diagnostics_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_launch_diagnostics.py"
@@ -1212,7 +1220,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def record_runtime_launch_diagnostics", owner.read_text(encoding="utf-8"))
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.startup.service_launch_diagnostics import", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 800)
+        self.assertLessEqual(len(facade_text.splitlines()), 760)
 
     def test_resume_restore_policy_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "resume_restore_policy.py"
