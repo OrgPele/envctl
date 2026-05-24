@@ -266,7 +266,6 @@ class StructureLayoutTests(unittest.TestCase):
         ship_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_support.py"
         ship_conflict_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_conflict_support.py"
         ship_check_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_check_support.py"
-        ship_result_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_result_support.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_domain.py"
 
         self.assertTrue(commit_owner.is_file())
@@ -281,7 +280,6 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(ship_owner.is_file())
         self.assertTrue(ship_conflict_owner.is_file())
         self.assertTrue(ship_check_owner.is_file())
-        self.assertTrue(ship_result_owner.is_file())
         commit_text = commit_owner.read_text(encoding="utf-8")
         self.assertIn("def run_commit_workflow", commit_text)
         self.assertIn("def resolve_commit_message", commit_text)
@@ -305,12 +303,12 @@ class StructureLayoutTests(unittest.TestCase):
         ship_text = ship_owner.read_text(encoding="utf-8")
         self.assertIn("action_ship_conflict_support", ship_text)
         self.assertIn("action_ship_check_support", ship_text)
-        self.assertIn("action_ship_result_support", ship_text)
         self.assertIn("def run_ship_workflow", ship_text)
+        self.assertIn("def ship_payload", ship_text)
+        self.assertIn("def print_ship_result", ship_text)
         self.assertIn("predicted_merge_conflict_report", ship_conflict_owner.read_text(encoding="utf-8"))
         self.assertIn("normalize_github_pr_checks", ship_check_owner.read_text(encoding="utf-8"))
-        self.assertIn("ship_payload", ship_result_owner.read_text(encoding="utf-8"))
-        self.assertLessEqual(len(ship_text.splitlines()), 260)
+        self.assertLessEqual(len(ship_text.splitlines()), 340)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("action_commit_support", facade_text)
         self.assertIn("action_protected_artifacts", facade_text)
@@ -781,6 +779,7 @@ class StructureLayoutTests(unittest.TestCase):
         ui_tests = REPO_ROOT / "tests" / "python" / "ui"
         expected = [
             "dashboard_rendering_parity_test_support.py",
+            "test_dashboard_snapshot_support.py",
             "test_dashboard_rendering_parity_ai_sessions.py",
             "test_dashboard_rendering_parity_dependencies.py",
             "test_dashboard_rendering_parity_links.py",
@@ -835,15 +834,21 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_dashboard_rendering_has_service_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "service_rendering.py"
+        snapshot_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "snapshot_support.py"
         rendering = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "rendering.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(snapshot_owner.is_file())
         owner_text = owner.read_text(encoding="utf-8")
         self.assertIn("def print_dashboard_service_row", owner_text)
         self.assertIn("def print_dashboard_additional_service_rows", owner_text)
         self.assertIn("def dashboard_visible_stopped_service_count", owner_text)
+        snapshot_text = snapshot_owner.read_text(encoding="utf-8")
+        self.assertIn("class DashboardSnapshotModel", snapshot_text)
+        self.assertIn("def build_dashboard_snapshot_model", snapshot_text)
         rendering_text = rendering.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.ui.dashboard import service_rendering", rendering_text)
+        self.assertIn("from envctl_engine.ui.dashboard.snapshot_support import", rendering_text)
         self.assertLessEqual(len(rendering_text.splitlines()), 745)
 
     def test_bats_harness_is_absent(self) -> None:

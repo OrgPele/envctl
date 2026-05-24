@@ -12,7 +12,7 @@ from envctl_engine.actions.action_ship_conflict_support import (
     parse_merge_tree_conflicts,
     predicted_merge_conflict_report,
 )
-from envctl_engine.actions.action_ship_result_support import (
+from envctl_engine.actions.action_ship_support import (
     parse_ship_json_output,
     print_ship_result,
     ship_payload,
