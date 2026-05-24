@@ -412,19 +412,27 @@ class StructureLayoutTests(unittest.TestCase):
         planning_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_planning_facade.py"
         startup_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_startup_facade.py"
         action_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_action_facade.py"
+        truth_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_truth_facade.py"
+        lifecycle_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_lifecycle_facade.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
 
         self.assertTrue(planning_owner.is_file())
         self.assertTrue(startup_owner.is_file())
         self.assertTrue(action_owner.is_file())
+        self.assertTrue(truth_owner.is_file())
+        self.assertTrue(lifecycle_owner.is_file())
         self.assertIn("RuntimePlanningFacadeMixin", planning_owner.read_text(encoding="utf-8"))
         self.assertIn("RuntimeStartupFacadeMixin", startup_owner.read_text(encoding="utf-8"))
         self.assertIn("RuntimeActionFacadeMixin", action_owner.read_text(encoding="utf-8"))
+        self.assertIn("RuntimeTruthFacadeMixin", truth_owner.read_text(encoding="utf-8"))
+        self.assertIn("RuntimeLifecycleFacadeMixin", lifecycle_owner.read_text(encoding="utf-8"))
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("RuntimePlanningFacadeMixin", facade_text)
         self.assertIn("RuntimeStartupFacadeMixin", facade_text)
         self.assertIn("RuntimeActionFacadeMixin", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 670)
+        self.assertIn("RuntimeTruthFacadeMixin", facade_text)
+        self.assertIn("RuntimeLifecycleFacadeMixin", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 430)
 
     def test_dashboard_command_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_support.py"
