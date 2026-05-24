@@ -140,6 +140,9 @@ class StructureLayoutTests(unittest.TestCase):
             "lifecycle_parity_test_support.py",
             "test_lifecycle_parity_blast.py",
             "test_lifecycle_parity_mode_scope.py",
+            "test_lifecycle_parity_restore_startup.py",
+            "test_lifecycle_parity_resume_legacy.py",
+            "test_lifecycle_parity_resume_policy.py",
             "test_lifecycle_parity_resume_restore.py",
             "test_lifecycle_parity_state_actions.py",
             "test_lifecycle_parity_stop_health.py",
@@ -151,6 +154,8 @@ class StructureLayoutTests(unittest.TestCase):
 
         legacy = runtime_tests / "test_lifecycle_parity.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
+        resume_restore_breadcrumb = runtime_tests / "test_lifecycle_parity_resume_restore.py"
+        self.assertLessEqual(len(resume_restore_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
 
     def test_runtime_command_parity_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
