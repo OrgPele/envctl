@@ -208,6 +208,8 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         shell_source_of_truth=(),
         python_source_of_truth=(
             "python/envctl_engine/actions/action_test_runner.py",
+            "python/envctl_engine/actions/action_test_execution_support.py",
+            "python/envctl_engine/actions/action_test_suite_execution_support.py",
             "python/envctl_engine/actions/action_command_orchestrator.py",
         ),
         evidence_tests=(
@@ -215,7 +217,10 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "tests/python/actions/test_action_spinner_integration.py",
         ),
         parity_status="verified_python",
-        notes="Python test execution, progress reporting, and failure summarization are covered by action and streaming fallback tests.",
+        notes=(
+            "Python test planning, suite execution, progress reporting, and failure summarization are covered by "
+            "action and streaming fallback tests."
+        ),
         current_behavior="Python test execution works across native and helper-backed paths, but the shell runtime still embodies older test-runner edge semantics.",
         missing_python_behavior="Stabilize target selection, helper integration, streaming/progress output, and failure summarization so shell is no longer needed as the fallback oracle.",
         python_owner_module="python/envctl_engine/actions/action_test_runner.py",
