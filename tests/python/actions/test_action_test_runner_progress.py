@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest import TestCase
 
-from envctl_engine.actions.action_test_runner_progress import ParallelTestProgressTracker
+from envctl_engine.actions.action_test_runner_progress import LiveTestProgressReporter, ParallelTestProgressTracker
 
 
 def _execution(*, index: int = 1, source: str = "backend", project_name: str = "feature-a") -> SimpleNamespace:
@@ -83,4 +83,67 @@ class ParallelTestProgressTrackerTests(TestCase):
         self.assertIn(
             "done: suite-1 (FAIL), suite-2 (PASS), suite-3 (PASS), +1 more",
             messages[-1],
+        )
+
+
+class LiveTestProgressReporterTests(TestCase):
+    def test_collection_progress_is_deduped_and_ignored_after_running_starts(self) -> None:
+        messages: list[str] = []
+        spinner_updates: list[str] = []
+        reporter = LiveTestProgressReporter(
+            label="backend",
+            emit_status=messages.append,
+            parsed_provider=lambda: None,
+            spinner_progress=spinner_updates.append,
+        )
+
+        reporter.emit(current=-1, total=12)
+        reporter.emit(current=-1, total=12)
+        reporter.emit(current=3, total=12)
+        reporter.emit(current=-1, total=20)
+
+        self.assertEqual(
+            messages,
+            [
+                "Collecting backend tests... 12 discovered",
+                "Running backend... 3/12 tests complete • 3 passed, 0 failed",
+            ],
+        )
+        self.assertEqual(spinner_updates, ["12 discovered", "3/12 complete • 3 passed, 0 failed"])
+
+    def test_unknown_total_progress_merges_monotonic_current_and_failed_counts(self) -> None:
+        parsed = SimpleNamespace(failed=1, errors=1, failed_tests=())
+        messages: list[str] = []
+        spinner_updates: list[str] = []
+        reporter = LiveTestProgressReporter(
+            label="frontend",
+            emit_status=messages.append,
+            parsed_provider=lambda: parsed,
+            spinner_progress=spinner_updates.append,
+        )
+
+        reporter.emit(current=4, total=0)
+        reporter.emit(current=2, total=0)
+
+        self.assertEqual(messages, ["Running frontend... 4 tests complete • 2 passed, 2 failed"])
+        self.assertEqual(spinner_updates, ["4 complete • 2 passed, 2 failed"])
+
+    def test_late_total_discovery_preserves_existing_current(self) -> None:
+        messages: list[str] = []
+        reporter = LiveTestProgressReporter(
+            label="backend",
+            emit_status=messages.append,
+            parsed_provider=lambda: SimpleNamespace(failed=1, errors=0, failed_tests=()),
+            spinner_progress=None,
+        )
+
+        reporter.emit(current=5, total=0)
+        reporter.emit(current=0, total=9)
+
+        self.assertEqual(
+            messages,
+            [
+                "Running backend... 5 tests complete • 4 passed, 1 failed",
+                "Running backend... 5/9 tests complete • 4 passed, 1 failed",
+            ],
         )
