@@ -2,11 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-import hashlib
-import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -15,6 +12,7 @@ import time
 from typing import Mapping
 
 import envctl_engine.actions.action_pr_message_support as pr_message_support
+import envctl_engine.actions.action_review_plan_support as review_plan_support
 import envctl_engine.actions.action_ship_support as ship_support
 from envctl_engine.actions.action_protected_artifacts import (
     EnvctlProtectedPathPartition,
@@ -24,14 +22,10 @@ from envctl_engine.actions.action_protected_artifacts import (
 )
 from envctl_engine.actions.action_review_output_support import (
     display_path as _display_path,
-    parse_review_stats as _parse_review_stats,
     print_review_completion as _print_review_completion,
     print_review_completion_rich as _print_review_completion_rich,
-    print_review_failure as _print_review_failure,
-    prune_review_output_dir as _prune_review_output_dir,
     review_colorizer as _review_colorizer,
 )
-from envctl_engine.planning import planning_feature_name
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.path_links import render_paths_in_terminal_text
 
@@ -95,22 +89,9 @@ class ActionProjectContext:
         return parse_bool(self.env.get("ENVCTL_ACTION_INTERACTIVE"), False) and bool(sys.stdin.isatty())
 
 
-@dataclass(frozen=True, slots=True)
-class ReviewBaseResolution:
-    base_branch: str
-    base_ref: str
-    source: str
-    merge_base: str
-
-
-class ReviewBaseResolutionError(RuntimeError):
-    """Raised when envctl cannot determine a usable review base."""
-
-
-@dataclass(frozen=True, slots=True)
-class OriginalPlanResolution:
-    path: Path | None
-    source: str
+ReviewBaseResolution = review_plan_support.ReviewBaseResolution
+ReviewBaseResolutionError = review_plan_support.ReviewBaseResolutionError
+OriginalPlanResolution = review_plan_support.OriginalPlanResolution
 
 
 @dataclass(frozen=True, slots=True)
@@ -758,117 +739,16 @@ def sanitize_label(value: str) -> str:
 
 
 def _resolve_original_plan(context: ActionProjectContext) -> OriginalPlanResolution:
-    if context.project_root.resolve() == context.repo_root.resolve():
-        return OriginalPlanResolution(path=None, source="not_applicable")
-
-    provenance = _read_worktree_provenance(context.project_root)
-    recorded_plan = str(provenance.get("plan_file", "")).strip()
-    resolved = _resolve_plan_file_from_record(provenance_root=context.repo_root, recorded_plan=recorded_plan)
-    if resolved is not None:
-        return OriginalPlanResolution(path=resolved, source="provenance")
-
-    inferred = _infer_original_plan_file(
-        context.repo_root,
-        feature_name=_feature_name_from_project_name(context.project_name),
-    )
-    if inferred is not None:
-        return OriginalPlanResolution(path=inferred, source="feature_inference")
-    return OriginalPlanResolution(path=None, source="unresolved")
+    return review_plan_support.resolve_original_plan(context)
 
 
-def _read_worktree_provenance(project_root: Path) -> dict[str, object]:
-    path = project_root / WORKTREE_PROVENANCE_PATH
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _resolve_plan_file_from_record(*, provenance_root: Path, recorded_plan: str) -> Path | None:
-    normalized = str(recorded_plan or "").strip()
-    if not normalized:
-        return None
-    relative = Path(normalized.replace("\\", "/").lstrip("./"))
-    for root in (PLANNING_ROOT, DONE_PLANNING_ROOT):
-        candidate = provenance_root / root / relative
-        if candidate.is_file():
-            return candidate.resolve()
-    return None
-
-
-def _infer_original_plan_file(repo_root: Path, *, feature_name: str) -> Path | None:
-    normalized_feature = str(feature_name).strip()
-    if not normalized_feature:
-        return None
-    matches: list[Path] = []
-    for root in (PLANNING_ROOT, DONE_PLANNING_ROOT):
-        planning_root = repo_root / root
-        if not planning_root.is_dir():
-            continue
-        for candidate in sorted(planning_root.glob("*/*.md")):
-            if candidate.name == "README.md":
-                continue
-            relative = candidate.relative_to(planning_root)
-            if planning_feature_name(str(relative).replace("\\", "/")) != normalized_feature:
-                continue
-            matches.append(candidate.resolve())
-    if len(matches) == 1:
-        return matches[0]
-    return None
-
-
-def _feature_name_from_project_name(project_name: str) -> str:
-    normalized = str(project_name).strip()
-    return re.sub(r"-\d+$", "", normalized)
-
-
-def _original_plan_markdown_lines(resolution: OriginalPlanResolution, *, include_contents: bool) -> list[str]:
-    resolved_path = str(resolution.path) if resolution.path is not None else "(unresolved)"
-    lines = [
-        "## Original plan file",
-        resolved_path,
-        "",
-        "## Original plan resolution",
-        resolution.source,
-        "",
-    ]
-    if include_contents:
-        plan_text = _read_text(resolution.path) if resolution.path is not None else ""
-        lines.extend(
-            [
-                "## Original plan",
-                plan_text or "(unavailable)",
-                "",
-            ]
-        )
-    return lines
-
-
-def _augment_review_output_dir(output_dir: Path, *, original_plan: OriginalPlanResolution) -> None:
-    _augment_review_markdown_file(output_dir / "all.md", original_plan=original_plan, include_contents=True)
-    _augment_review_markdown_file(output_dir / "summary.md", original_plan=original_plan, include_contents=False)
-
-
-def _augment_review_markdown_file(path: Path, *, original_plan: OriginalPlanResolution, include_contents: bool) -> None:
-    if not path.is_file():
-        return
-    original_text = _read_text(path)
-    if not original_text:
-        return
-    if "## Original plan file" in original_text:
-        return
-    metadata_block = "\n".join(_original_plan_markdown_lines(original_plan, include_contents=include_contents)).strip()
-    if not metadata_block:
-        return
-    lines = original_text.splitlines()
-    if lines and lines[0].startswith("# "):
-        title = lines[0]
-        remainder = "\n".join(lines[1:]).strip()
-        rewritten = f"{title}\n\n{metadata_block}\n\n{remainder}".rstrip() + "\n"
-    else:
-        rewritten = f"{metadata_block}\n\n{original_text.strip()}".rstrip() + "\n"
-    _atomic_write(path, rewritten)
+_read_worktree_provenance = review_plan_support.read_worktree_provenance
+_resolve_plan_file_from_record = review_plan_support.resolve_plan_file_from_record
+_infer_original_plan_file = review_plan_support.infer_original_plan_file
+_feature_name_from_project_name = review_plan_support.feature_name_from_project_name
+_original_plan_markdown_lines = review_plan_support.original_plan_markdown_lines
+_augment_review_output_dir = review_plan_support.augment_review_output_dir
+_augment_review_markdown_file = review_plan_support.augment_review_markdown_file
 
 
 def _resolve_commit_message(
@@ -957,39 +837,15 @@ def _resolve_pr_base_branch(context: ActionProjectContext, git_root: Path) -> st
 
 
 def _resolve_analyze_mode(context: ActionProjectContext) -> str:
-    explicit = str(context.env.get("ENVCTL_ANALYZE_MODE", "")).strip().lower()
-    if explicit in {"single", "grouped"}:
-        return explicit
-    return "single"
+    return review_plan_support.resolve_analyze_mode(context)
 
 
 def _resolve_review_base(context: ActionProjectContext, git_root: Path) -> ReviewBaseResolution:
-    explicit = str(context.env.get("ENVCTL_REVIEW_BASE", "")).strip()
-    if explicit:
-        resolved = _resolve_review_base_candidate(git_root, base_branch=explicit, source="explicit")
-        if resolved is None:
-            raise ReviewBaseResolutionError(
-                f"Review base '{explicit}' could not be resolved. "
-                + "Supply --review-base <branch> with an existing branch."
-            )
-        return resolved
-
-    if context.project_root.resolve() != context.repo_root.resolve():
-        provenance = _load_worktree_provenance(context.project_root)
-        resolved = _resolve_provenance_review_base(git_root, provenance)
-        if resolved is not None:
-            return resolved
-
-    resolved = _resolve_upstream_review_base(git_root)
-    if resolved is not None:
-        return resolved
-
-    default_branch = detect_default_branch(git_root).strip()
-    resolved = _resolve_review_base_candidate(git_root, base_branch=default_branch, source="default_branch")
-    if resolved is not None:
-        return resolved
-    raise ReviewBaseResolutionError(
-        "Unable to resolve a review base automatically. Supply --review-base <branch>."
+    return review_plan_support.resolve_review_base(
+        context,
+        git_root,
+        detect_default_branch_fn=detect_default_branch,
+        git_output_fn=_git_output,
     )
 
 
@@ -997,40 +853,15 @@ def _resolve_provenance_review_base(
     git_root: Path,
     provenance: Mapping[str, object] | None,
 ) -> ReviewBaseResolution | None:
-    if not provenance:
-        return None
-    source_branch = str(provenance.get("source_branch", "")).strip()
-    source_ref = str(provenance.get("source_ref", "")).strip()
-    if source_branch:
-        return _resolve_review_base_candidate(
-            git_root,
-            base_branch=source_branch,
-            source="provenance",
-            preferred_ref=source_ref,
-        )
-    if source_ref:
-        return _resolve_review_base_candidate(
-            git_root,
-            base_branch=_branch_name_from_ref(source_ref),
-            source="provenance",
-            preferred_ref=source_ref,
-        )
-    return None
+    return review_plan_support.resolve_provenance_review_base(
+        git_root,
+        provenance,
+        git_output_fn=_git_output,
+    )
 
 
 def _resolve_upstream_review_base(git_root: Path) -> ReviewBaseResolution | None:
-    head_branch = _git_output(git_root, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
-    if not head_branch or head_branch == "HEAD":
-        return None
-    upstream_ref = _git_output(git_root, ["rev-parse", "--abbrev-ref", f"{head_branch}@{{upstream}}"]).strip()
-    if not upstream_ref or upstream_ref == "HEAD":
-        return None
-    return _resolve_review_base_candidate(
-        git_root,
-        base_branch=_branch_name_from_ref(upstream_ref),
-        source="upstream",
-        preferred_ref=upstream_ref,
-    )
+    return review_plan_support.resolve_upstream_review_base(git_root, git_output_fn=_git_output)
 
 
 def _resolve_review_base_candidate(
@@ -1040,57 +871,26 @@ def _resolve_review_base_candidate(
     source: str,
     preferred_ref: str = "",
 ) -> ReviewBaseResolution | None:
-    normalized_branch = _branch_name_from_ref(base_branch)
-    base_ref = _resolve_review_base_ref(git_root, base_branch=base_branch, preferred_ref=preferred_ref)
-    if not base_ref:
-        return None
-    merge_base = _git_output(git_root, ["merge-base", "HEAD", base_ref]).strip()
-    return ReviewBaseResolution(
-        base_branch=normalized_branch or base_branch.strip(),
-        base_ref=base_ref,
+    return review_plan_support.resolve_review_base_candidate(
+        git_root,
+        base_branch=base_branch,
         source=source,
-        merge_base=merge_base,
+        preferred_ref=preferred_ref,
+        git_output_fn=_git_output,
     )
 
 
 def _resolve_review_base_ref(git_root: Path, *, base_branch: str, preferred_ref: str = "") -> str:
-    branch = base_branch.strip()
-    candidates: list[str] = []
-    for candidate in (
-        preferred_ref.strip(),
-        branch,
-        "" if not branch or branch.startswith("origin/") else f"origin/{branch}",
-        "" if not branch.startswith("origin/") else branch.split("origin/", 1)[1],
-    ):
-        if candidate and candidate not in candidates:
-            candidates.append(candidate)
-    for candidate in candidates:
-        if _git_output(git_root, ["rev-parse", "--verify", candidate]).strip():
-            return candidate
-    return ""
+    return review_plan_support.resolve_review_base_ref(
+        git_root,
+        base_branch=base_branch,
+        preferred_ref=preferred_ref,
+        git_output_fn=_git_output,
+    )
 
 
-def _branch_name_from_ref(ref: str) -> str:
-    cleaned = ref.strip()
-    if cleaned.startswith("origin/"):
-        return cleaned.split("origin/", 1)[1]
-    return cleaned
-
-
-def _load_worktree_provenance(project_root: Path) -> Mapping[str, object] | None:
-    path = project_root / WORKTREE_PROVENANCE_PATH
-    if not path.is_file():
-        return None
-    try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(loaded, dict):
-        return None
-    schema_version = int(loaded.get("schema_version", 0) or 0)
-    if schema_version > WORKTREE_PROVENANCE_SCHEMA_VERSION:
-        return None
-    return loaded
+_branch_name_from_ref = review_plan_support.branch_name_from_ref
+_load_worktree_provenance = review_plan_support.load_worktree_provenance
 
 
 def _write_commit_message_file(message: str) -> Path:
@@ -1120,47 +920,11 @@ def _atomic_write(path: Path, text: str) -> None:
 
 
 def _analysis_iterations(context: ActionProjectContext, *, mode: str) -> list[str]:
-    project_root = context.project_root.resolve()
-    if project_root == context.repo_root.resolve():
-        return []
-    family_dir = _project_family_dir(project_root)
-    if family_dir is None:
-        return []
-
-    iterations = _git_iteration_dirs(family_dir)
-    if not iterations:
-        return []
-    if mode == "single":
-        current_name = project_root.name
-        if current_name in iterations:
-            return [current_name]
-        return [iterations[0]]
-    return iterations
+    return review_plan_support.analysis_iterations(context, mode=mode)
 
 
-def _project_family_dir(project_root: Path) -> Path | None:
-    parent = project_root.parent
-    if parent == project_root:
-        return None
-    if project_root.name.isdigit() and parent.is_dir():
-        return parent
-    child_git_dirs = _git_iteration_dirs(parent)
-    if child_git_dirs:
-        return parent
-    return None
-
-
-def _git_iteration_dirs(root: Path) -> list[str]:
-    if not root.is_dir():
-        return []
-    iterations: list[str] = []
-    for child in sorted(root.iterdir()):
-        if not child.is_dir():
-            continue
-        git_marker = child / ".git"
-        if git_marker.is_file() or git_marker.is_dir():
-            iterations.append(child.name)
-    return iterations
+_project_family_dir = review_plan_support.project_family_dir
+_git_iteration_dirs = review_plan_support.git_iteration_dirs
 
 
 def _run_analyze_helper(
@@ -1173,72 +937,17 @@ def _run_analyze_helper(
     review_base: ReviewBaseResolution | None,
     original_plan: OriginalPlanResolution,
 ) -> int:
-    project_root = context.project_root.resolve()
-    family_dir = _project_family_dir(project_root)
-    if family_dir is None:
-        return 1
-
-    approach = "combine" if mode == "grouped" and len(iterations) > 1 else "optimal"
-    output_dir = _tree_diffs_root(context) / (
-        f"analysis_{sanitize_label(context.project_name)}_{sanitize_label(scope)}_{mode}_"
-        f"{datetime.now(tz=UTC).strftime('%Y%m%d_%H%M%S')}"
+    return review_plan_support.run_analyze_helper(
+        context=context,
+        helper=helper,
+        iterations=iterations,
+        mode=mode,
+        scope=scope,
+        review_base=review_base,
+        original_plan=original_plan,
+        sanitize_label_fn=sanitize_label,
+        run_process_fn=subprocess.run,
     )
-    args = [
-        f"trees={','.join(iterations)}",
-        f"approach={approach}",
-        "output-dir=" + str(output_dir),
-    ]
-    if review_base is not None:
-        args.extend(
-            [
-                f"base-branch={review_base.base_branch}",
-                f"base-source={review_base.source}",
-                f"base-ref={review_base.base_ref}",
-            ]
-        )
-    if scope != "all":
-        args.append(f"scope={scope}")
-    if not (mode == "grouped" and len(iterations) > 1):
-        args.extend(["security-check=true", "performance-check=true"])
-
-    env_map = dict(os.environ)
-    env_map.update(context.env)
-    env_map["BASE_DIR"] = str(context.repo_root)
-    env_map["TREES_DIR_NAME"] = str(family_dir)
-    if original_plan.path is not None:
-        env_map["ENVCTL_REVIEW_ORIGINAL_PLAN_FILE"] = str(original_plan.path)
-    env_map["ENVCTL_REVIEW_ORIGINAL_PLAN_SOURCE"] = original_plan.source
-
-    result = subprocess.run(
-        [str(helper), *args],
-        cwd=str(context.repo_root),
-        env=env_map,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode == 0:
-        _augment_review_output_dir(output_dir, original_plan=original_plan)
-        short_summary_path = output_dir / "summary_short.txt"
-        stats = _parse_review_stats(short_summary_path)
-        _prune_review_output_dir(output_dir, keep_names={"summary.md", "all.md"})
-        _print_review_completion(
-            context,
-            mode=mode,
-            scope=scope,
-            output_dir=output_dir,
-            summary_path=_first_existing_path(output_dir / "summary.md", output_dir / "all.md"),
-            all_in_one_path=output_dir / "all.md",
-            stats=stats,
-            tree_count=len(iterations),
-        )
-    else:
-        _print_review_failure(
-            context,
-            output_dir=output_dir,
-            result=result,
-        )
-    return result.returncode
 
 
 def _tree_changelog_path(context: ActionProjectContext) -> Path | None:
@@ -1266,14 +975,7 @@ def _summary_output_path(repo_root: Path, directory: str, prefix: str, label: st
 
 
 def _tree_diffs_root(context: ActionProjectContext) -> Path:
-    explicit = str(context.env.get("ENVCTL_ACTION_TREE_DIFFS_ROOT", "")).strip()
-    if explicit:
-        root = Path(explicit).expanduser()
-    else:
-        repo_hash = hashlib.sha256(str(context.repo_root.resolve()).encode("utf-8")).hexdigest()[:12]
-        root = Path(tempfile.gettempdir()) / "envctl-tree-diffs" / repo_hash
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+    return review_plan_support.tree_diffs_root(context)
 
 
 def _tree_diffs_output_path(
@@ -1282,12 +984,13 @@ def _tree_diffs_output_path(
     prefix: str,
     label: str | None = None,
 ) -> Path:
-    output_dir = _tree_diffs_root(context) / directory
-    output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
-    if label:
-        return output_dir / f"{prefix}_{sanitize_label(label)}_{timestamp}.md"
-    return output_dir / f"{prefix}_{timestamp}.md"
+    return review_plan_support.tree_diffs_output_path(
+        context,
+        directory,
+        prefix,
+        label,
+        sanitize_label_fn=sanitize_label,
+    )
 
 
 def _write_markdown_lines(path: Path, lines: list[str]) -> None:

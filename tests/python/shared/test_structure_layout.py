@@ -116,23 +116,27 @@ class StructureLayoutTests(unittest.TestCase):
         protected_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_protected_artifacts.py"
         pr_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_pr_message_support.py"
         review_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_output_support.py"
+        review_plan_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_plan_support.py"
         ship_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_support.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_domain.py"
 
         self.assertTrue(protected_owner.is_file())
         self.assertTrue(pr_owner.is_file())
         self.assertTrue(review_owner.is_file())
+        self.assertTrue(review_plan_owner.is_file())
         self.assertTrue(ship_owner.is_file())
         self.assertIn("partition_envctl_protected_paths", protected_owner.read_text(encoding="utf-8"))
         self.assertIn("pr_body", pr_owner.read_text(encoding="utf-8"))
         self.assertIn("print_review_completion", review_owner.read_text(encoding="utf-8"))
+        self.assertIn("resolve_original_plan", review_plan_owner.read_text(encoding="utf-8"))
         self.assertIn("ship_payload", ship_owner.read_text(encoding="utf-8"))
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("action_protected_artifacts", facade_text)
         self.assertIn("action_pr_message_support", facade_text)
         self.assertIn("action_review_output_support", facade_text)
+        self.assertIn("action_review_plan_support", facade_text)
         self.assertIn("action_ship_support", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 1350)
+        self.assertLessEqual(len(facade_text.splitlines()), 1100)
 
     def test_runtime_lifecycle_parity_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
