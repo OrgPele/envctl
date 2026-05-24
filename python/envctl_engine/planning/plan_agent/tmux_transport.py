@@ -20,7 +20,6 @@ from envctl_engine.runtime.codex_tmux_support import (
     _attach_interactive,
     _completed_process_error_text as _tmux_completed_process_error_text,
     _run_probe as _run_tmux_probe,
-    _sanitize_name as _sanitize_tmux_name,
     _tmux_session_exists,
 )
 from envctl_engine.runtime.prompt_install_support import (
@@ -37,6 +36,11 @@ from envctl_engine.planning.plan_agent.workflow import *
 from envctl_engine.planning.plan_agent.terminal_screen import *
 from envctl_engine.planning.plan_agent.recovery import *
 from envctl_engine.planning.plan_agent.tmux_session import *
+from envctl_engine.planning.plan_agent.tmux_identity_support import (
+    next_available_tmux_session_name as _next_available_tmux_session_name,
+    tmux_session_name_for_worktree as _tmux_session_name_for_worktree,
+    tmux_window_name_for_worktree as _tmux_window_name_for_worktree,
+)
 import envctl_engine.planning.plan_agent.tmux_workflow_submission_support as tmux_workflow_submission_support
 import envctl_engine.planning.plan_agent.tmux_surface_support as tmux_surface_support
 
@@ -193,26 +197,6 @@ def _launch_plan_agent_tmux_terminals(
     )
 
 
-def _tmux_session_name_for_worktree(repo_root: Path, worktree: CreatedPlanWorktree, *, cli: str) -> str:
-    repo_root = Path(repo_root).resolve()
-    worktree_root = Path(worktree.root).resolve()
-    relative = worktree_root.relative_to(repo_root)
-    relative_slug = _sanitize_tmux_name(str(relative), fallback=worktree.name)
-    cli_slug = _sanitize_tmux_name(str(cli).strip().lower(), fallback="cli")
-    return _sanitize_tmux_name(f"envctl-{repo_root.name}-{relative_slug}-{cli_slug}", fallback="envctl-worktree")
-
-
-def _next_available_tmux_session_name(runtime: Any, session_name: str) -> str:
-    if not _tmux_session_exists(runtime, session_name):
-        return session_name
-    index = 2
-    while True:
-        candidate = _sanitize_tmux_name(f"{session_name}-{index}", fallback=session_name)
-        if not _tmux_session_exists(runtime, candidate):
-            return candidate
-        index += 1
-
-
 def _launch_single_tmux_worktree(
     runtime: Any,
     *,
@@ -296,10 +280,6 @@ def _launch_single_tmux_worktree(
         surface_id=None,
         status="launched",
     )
-
-
-def _tmux_window_name_for_worktree(worktree: CreatedPlanWorktree) -> str:
-    return _sanitize_tmux_name(_tab_title_for_worktree(worktree.name), fallback="implementation")
 
 
 def _tmux_target(session_name: str, window_name: str) -> str:

@@ -54,6 +54,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "superset_transport.py",
             "terminal_screen.py",
             "tmux_surface_support.py",
+            "tmux_identity_support.py",
             "tmux_transport.py",
             "workflow.py",
         }
@@ -198,8 +199,12 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "_codex_queue_screen_looks_ready",
                 "_codex_queue_message_needs_tab",
             },
+            "tmux_identity_support.py": {
+                "next_available_tmux_session_name",
+                "tmux_session_name_for_worktree",
+                "tmux_window_name_for_worktree",
+            },
             "tmux_transport.py": {
-                "_tmux_session_name_for_worktree",
                 "_run_tmux_worktree_bootstrap",
             },
             "tmux_workflow_submission_support.py": {
