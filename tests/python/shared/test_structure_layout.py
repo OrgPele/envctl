@@ -309,6 +309,24 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("action_ship_support", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 700)
 
+    def test_action_migrate_support_is_split_by_responsibility(self) -> None:
+        context_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_migrate_context_support.py"
+        failure_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_migrate_failure_support.py"
+        result_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_migrate_result_support.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_migrate_support.py"
+
+        self.assertTrue(context_owner.is_file())
+        self.assertTrue(failure_owner.is_file())
+        self.assertTrue(result_owner.is_file())
+        self.assertIn("def migrate_project_context", context_owner.read_text(encoding="utf-8"))
+        self.assertIn("def migrate_failure_hint_lines", failure_owner.read_text(encoding="utf-8"))
+        self.assertIn("def print_migrate_result_records", result_owner.read_text(encoding="utf-8"))
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("action_migrate_context_support", facade_text)
+        self.assertIn("action_migrate_failure_support", facade_text)
+        self.assertIn("action_migrate_result_support", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 120)
+
     def test_runtime_lifecycle_parity_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
         expected = [
