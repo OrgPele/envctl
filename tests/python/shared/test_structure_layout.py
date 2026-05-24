@@ -80,6 +80,30 @@ class StructureLayoutTests(unittest.TestCase):
         legacy_stack = requirements_tests / "test_requirements_supabase_stack_contracts.py"
         self.assertLessEqual(len(legacy_stack.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_requirement_adapter_base_has_policy_and_cleanup_owners(self) -> None:
+        policy_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "adapter_policy.py"
+        cleanup_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "adapter_port_cleanup.py"
+        model_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "adapter_lifecycle_models.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "adapter_base.py"
+
+        self.assertTrue(policy_owner.is_file())
+        self.assertTrue(cleanup_owner.is_file())
+        self.assertTrue(model_owner.is_file())
+        policy_text = policy_owner.read_text(encoding="utf-8")
+        cleanup_text = cleanup_owner.read_text(encoding="utf-8")
+        model_text = model_owner.read_text(encoding="utf-8")
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("def env_bool", policy_text)
+        self.assertIn("def port_mismatch_policy", policy_text)
+        self.assertIn("def cleanup_envctl_owned_port_containers", cleanup_text)
+        self.assertIn("def format_bind_conflict_guidance", cleanup_text)
+        self.assertIn("class AdapterLifecycleEvent", model_text)
+        self.assertIn("class ContainerLifecycleTemplate", model_text)
+        self.assertIn("from .adapter_policy import", facade_text)
+        self.assertIn("from .adapter_port_cleanup import", facade_text)
+        self.assertIn("from .adapter_lifecycle_models import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 780)
+
     def test_action_cli_tests_are_split_by_owner(self) -> None:
         actions_tests = REPO_ROOT / "tests" / "python" / "actions"
         expected = [
