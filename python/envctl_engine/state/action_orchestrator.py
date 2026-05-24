@@ -5,6 +5,7 @@ import json
 import sys
 from typing import Any
 
+from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.browser_diagnostics import build_runtime_diagnostics
 from envctl_engine.state.models import RunState
@@ -539,6 +540,9 @@ class StateActionOrchestrator(StateActionLogSupport, StateActionHealthSupport):
 
     def _runtime_is_truthy(self, value: object) -> bool:
         return self.runtime.is_truthy(value)
+
+    def _dependency_definitions(self) -> tuple[object, ...]:
+        return tuple(dependency_definitions())
 
     def _human_output_no_color(self, route: Route) -> bool:
         if self._runtime_is_truthy(self.runtime.env.get("NO_COLOR")):

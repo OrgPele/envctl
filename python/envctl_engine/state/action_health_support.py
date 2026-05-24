@@ -4,7 +4,7 @@ import sys
 from typing import Any
 
 from envctl_engine.requirements.component_ports import component_resource_ports, dependency_display_port
-from envctl_engine.requirements.core import dependency_definitions
+from envctl_engine.requirements.core import dependency_definitions as _dependency_definitions
 from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.state.project_runtime import dependency_mode_summary
 from envctl_engine.ui.color_policy import colors_enabled
@@ -153,9 +153,10 @@ class StateActionHealthSupport:
 
     def requirement_health_rows(self, state: RunState) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
-        component_order = {definition.id: index for index, definition in enumerate(dependency_definitions())}
+        definitions = tuple(self._dependency_definitions())
+        component_order = {definition.id: index for index, definition in enumerate(definitions)}
         for project, requirements in state.requirements.items():
-            for definition in dependency_definitions():
+            for definition in definitions:
                 component = definition.id
                 data = requirements.component(component)
                 if not bool(data.get("enabled", False)):
@@ -212,6 +213,9 @@ class StateActionHealthSupport:
         )
         rows.sort(key=lambda row: (str(row["project"]).lower(), str(row["name"]).lower()))
         return rows
+
+    def _dependency_definitions(self) -> tuple[object, ...]:
+        return tuple(_dependency_definitions())
 
     @staticmethod
     def health_project_order(
