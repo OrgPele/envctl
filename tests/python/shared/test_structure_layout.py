@@ -418,6 +418,7 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_config_dependency_env_templates_have_owned_module(self) -> None:
         models_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "models.py"
+        command_defaults_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "command_defaults.py"
         defaults_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "defaults.py"
         service_parsing_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "service_parsing.py"
         persistence_values_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "persistence_values.py"
@@ -428,6 +429,7 @@ class StructureLayoutTests(unittest.TestCase):
         facade = REPO_ROOT / "python" / "envctl_engine" / "config" / "__init__.py"
 
         self.assertTrue(models_owner.is_file())
+        self.assertTrue(command_defaults_owner.is_file())
         self.assertTrue(defaults_owner.is_file())
         self.assertTrue(service_parsing_owner.is_file())
         self.assertTrue(persistence_values_owner.is_file())
@@ -438,6 +440,10 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class EngineConfig", models_text)
         self.assertIn("class LocalConfigState", models_text)
         self.assertIn("class StartupProfile", models_text)
+        command_defaults_text = command_defaults_owner.read_text(encoding="utf-8")
+        self.assertIn("def resolved_backend_dir_name", command_defaults_text)
+        self.assertIn("def resolved_backend_test_cmd", command_defaults_text)
+        self.assertIn("def resolved_frontend_test_path", command_defaults_text)
         defaults_text = defaults_owner.read_text(encoding="utf-8")
         self.assertIn("DEFAULTS: dict[str, str]", defaults_text)
         self.assertIn("MANAGED_CONFIG_KEYS", defaults_text)
@@ -469,10 +475,11 @@ class StructureLayoutTests(unittest.TestCase):
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.config.dependency_env_templates import", facade_text)
         self.assertIn("from envctl_engine.config.models import", facade_text)
+        self.assertIn("from envctl_engine.config.command_defaults import", facade_text)
         self.assertIn("from envctl_engine.config.defaults import", facade_text)
         self.assertIn("from envctl_engine.config.service_parsing import", facade_text)
         self.assertIn("from envctl_engine.config.source_discovery import", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 760)
+        self.assertLessEqual(len(facade_text.splitlines()), 685)
 
     def test_prompt_install_support_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
