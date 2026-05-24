@@ -181,22 +181,29 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertLessEqual(len(support_text.splitlines()), 520)
 
     def test_action_test_runner_has_progress_and_failure_owners(self) -> None:
+        execution_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_execution_support.py"
         progress_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_runner_progress.py"
         failure_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_runner_failures.py"
         runner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_runner.py"
 
+        self.assertTrue(execution_owner.is_file())
         self.assertTrue(progress_owner.is_file())
         self.assertTrue(failure_owner.is_file())
+        execution_text = execution_owner.read_text(encoding="utf-8")
         progress_text = progress_owner.read_text(encoding="utf-8")
         failure_text = failure_owner.read_text(encoding="utf-8")
+        self.assertIn("class TestActionExecutionPlan", execution_text)
+        self.assertIn("def build_test_action_execution_plan", execution_text)
+        self.assertIn("def resolve_suite_spinner_decision", execution_text)
         self.assertIn("def format_live_progress_status", progress_text)
         self.assertIn("def format_live_progress_status_with_counts", progress_text)
         self.assertIn("def summarize_failure_output", failure_text)
         self.assertIn("def format_failure_output_for_artifact", failure_text)
         runner_text = runner.read_text(encoding="utf-8")
+        self.assertIn("action_test_execution_support", runner_text)
         self.assertIn("action_test_runner_progress", runner_text)
         self.assertIn("action_test_runner_failures", runner_text)
-        self.assertLessEqual(len(runner_text.splitlines()), 730)
+        self.assertLessEqual(len(runner_text.splitlines()), 460)
 
     def test_actions_test_has_models_path_and_classification_owners(self) -> None:
         models_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_models.py"

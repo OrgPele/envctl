@@ -7,6 +7,13 @@ import sys
 import time
 from typing import Any, Callable
 
+from envctl_engine.actions.action_test_execution_support import (
+    build_test_action_execution_plan,
+    emit_suite_spinner_decision,
+    emit_test_execution_mode,
+    print_test_execution_mode,
+    resolve_suite_spinner_decision,
+)
 from envctl_engine.actions.action_test_interrupt_support import TestSuiteInterruptRegistry
 from envctl_engine.actions.action_test_runner_failures import (
     clean_failure_lines as _clean_failure_lines,
@@ -23,7 +30,6 @@ from envctl_engine.actions.action_test_runner_progress import (
     format_live_progress_status_without_total as _format_live_progress_status_without_total,
     live_failed_count as _live_failed_count,
 )
-from envctl_engine.actions.actions_test import ensure_repo_local_test_prereqs
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.path_links import render_path_for_terminal
@@ -61,118 +67,45 @@ def run_test_action(
     resolve_spinner_policy: Callable[[dict[str, str]], Any],
 ) -> int:
     rt = orchestrator.runtime
-    run_all = bool(route.flags.get("all"))
-    untested = bool(route.flags.get("untested"))
-    failed_only = bool(route.flags.get("failed"))
-    project_names = [str(getattr(target, "name")) for target in targets if hasattr(target, "name")]
-    orchestrator._emit_status(
-        orchestrator._test_scope_status(project_names, run_all=run_all, untested=untested, failed=failed_only)
-    )
-    interactive_command = bool(route.flags.get("interactive_command"))
-    backend_flag = route.flags.get("backend")
-    frontend_flag = route.flags.get("frontend")
-    include_backend, include_frontend = orchestrator._test_service_selection(route, backend_flag, frontend_flag)
-
-    target_contexts = orchestrator._test_target_contexts(targets)
     try:
-        seen_roots: set[Path] = set()
-        for context in target_contexts:
-            project_root = Path(context.project_root).resolve()
-            if project_root in seen_roots:
-                continue
-            seen_roots.add(project_root)
-            ensure_repo_local_test_prereqs(project_root, emit_status=orchestrator._emit_status)
+        plan = build_test_action_execution_plan(orchestrator, route, targets)
     except RuntimeError as exc:
         print(str(exc))
         return 1
-    try:
-        execution_specs = orchestrator._build_test_execution_specs(
-            route=route,
-            targets=targets,
-            target_contexts=target_contexts,
-            include_backend=include_backend,
-            include_frontend=include_frontend,
-            run_all=run_all,
-            untested=untested,
-        )
-    except RuntimeError as exc:
-        print(str(exc))
-        return 1
+    execution_specs = plan.execution_specs
+    failed_only = plan.failed_only
+    interactive_command = plan.interactive_command
     if not execution_specs:
         print("No test command configured. Set Backend test command or Frontend test command in envctl config.")
         return 1
 
-    parallel = orchestrator._test_parallel_enabled(route, execution_specs)
-    distinct_projects = {
-        spec.project_name.strip().lower()
-        for spec in execution_specs
-        if spec.project_name.strip() and spec.project_name != "all-targets"
-    }
-    rt._emit(  # type: ignore[attr-defined]
-        "test.suite.plan",
-        suites=[spec.spec.source for spec in execution_specs],
-        total=len(execution_specs),
-        parallel=parallel,
-        projects=sorted(distinct_projects),
-    )
-    execution_mode = "parallel" if parallel else "sequential"
-    parallel_workers = orchestrator._test_parallel_max_workers(route, execution_specs) if parallel else 1
-    multi_project = len(distinct_projects) > 1
     spinner_policy = resolve_spinner_policy(getattr(rt, "env", {}))
-    rich_progress_supported, rich_progress_error = rich_progress_available()
-    suite_policy_enabled, suite_policy_reason = orchestrator._test_suite_spinner_policy_enabled(spinner_policy)
-    use_suite_spinner_group = bool(interactive_command and suite_policy_enabled and rich_progress_supported)
-    suite_spinner_reason = "enabled"
-    if not interactive_command:
-        suite_spinner_reason = "non_interactive"
-    elif not suite_policy_enabled:
-        suite_spinner_reason = f"suite_spinner_policy_disabled:{suite_policy_reason}"
-    elif not rich_progress_supported:
-        suite_spinner_reason = "rich_progress_unavailable"
-    rt._emit(  # type: ignore[attr-defined]
-        "test.suite_spinner_group.policy",
-        enabled=use_suite_spinner_group,
-        reason=suite_spinner_reason,
-        backend=str(getattr(spinner_policy, "backend", "")),
-        rich_progress_supported=rich_progress_supported,
-        rich_progress_error=rich_progress_error,
-        python_executable=sys.executable,
-        suite_policy_reason=suite_policy_reason,
+    suite_spinner_decision = resolve_suite_spinner_decision(
+        interactive_command=interactive_command,
+        spinner_policy=spinner_policy,
+        rich_progress_available_fn=rich_progress_available,
+        suite_policy_enabled_fn=orchestrator._test_suite_spinner_policy_enabled,
     )
+    use_suite_spinner_group = suite_spinner_decision.use_suite_spinner_group
+    emit_suite_spinner_decision(rt, suite_spinner_decision)
     if interactive_command and not use_suite_spinner_group:
-        print(f"Suite spinner rows disabled: {suite_spinner_reason}")
-    rt._emit(  # type: ignore[attr-defined]
-        "test.execution.mode",
-        mode=execution_mode,
-        total=len(execution_specs),
-        projects=len(distinct_projects) or 1,
-        max_workers=parallel_workers,
-        suite_spinner_group=use_suite_spinner_group,
-    )
+        print(f"Suite spinner rows disabled: {suite_spinner_decision.reason}")
+    emit_test_execution_mode(rt, plan, suite_spinner_group=use_suite_spinner_group)
     if interactive_command:
-        mode_color = "green" if parallel else "yellow"
-        if len(distinct_projects) > 1:
-            text = (
-                f"Test execution mode: {execution_mode} "
-                f"({len(execution_specs)} suites across {len(distinct_projects)} projects)"
-            )
-            print(orchestrator._colorize(text, fg=mode_color, bold=True))
-        else:
-            text = f"Test execution mode: {execution_mode} ({len(execution_specs)} suites)"
-            print(orchestrator._colorize(text, fg=mode_color, bold=True))
+        print_test_execution_mode(orchestrator, plan)
     progress_tracker = ParallelTestProgressTracker(
-        enabled=parallel and not use_suite_spinner_group,
+        enabled=plan.parallel and not use_suite_spinner_group,
         total_suites=len(execution_specs),
-        max_workers=parallel_workers,
-        multi_project=multi_project,
+        max_workers=plan.parallel_workers,
+        multi_project=plan.multi_project,
         failed_only=failed_only,
         emit_status=orchestrator._emit_status,
         suite_display_name=orchestrator._suite_display_name,
     )
 
-    if parallel and not use_suite_spinner_group:
+    if plan.parallel and not use_suite_spinner_group:
         orchestrator._emit_status(
-            f"Running {len(execution_specs)} test suites in parallel (max {parallel_workers} concurrent)..."
+            f"Running {len(execution_specs)} test suites in parallel (max {plan.parallel_workers} concurrent)..."
         )
         progress_tracker.emit_status(phase="queued")
     suite_spinner_group = suite_spinner_group_cls(
@@ -181,7 +114,7 @@ def run_test_action(
         policy=spinner_policy,
         emit=getattr(rt, "_emit", None),
         suite_label_resolver=lambda source: orchestrator._suite_display_name(source, failed_only=failed_only),
-        multi_project=multi_project,
+        multi_project=plan.multi_project,
         env=getattr(rt, "env", {}),
     )
 
@@ -189,7 +122,7 @@ def run_test_action(
     interrupt_registry = TestSuiteInterruptRegistry(
         runtime=rt,
         emit_status=orchestrator._emit_status,
-        execution_mode=execution_mode,
+        execution_mode=plan.execution_mode,
     )
 
     def run_spec(execution: Any) -> tuple[int, str]:
@@ -206,13 +139,13 @@ def run_test_action(
             source=resolved_source,
             cwd=spec.cwd,
         )
-        if multi_project:
+        if plan.multi_project:
             status = f"{project_name}: {status}"
         status += f" [{index}/{len(execution_specs)}]" if len(execution_specs) > 1 else ""
         if not use_suite_spinner_group:
             orchestrator._emit_status(status)
         if interactive_command:
-            started_label = f"{project_name} / {suite_label}" if multi_project else suite_label
+            started_label = f"{project_name} / {suite_label}" if plan.multi_project else suite_label
             if not use_suite_spinner_group:
                 index_text = orchestrator._colorize(f"[{index}/{len(execution_specs)}]", fg="yellow")
                 suite_text = orchestrator._colorize(started_label, fg="cyan", bold=True)
@@ -229,7 +162,7 @@ def run_test_action(
                 )
                 print(f"      command: {command_text}")
                 print(f"      cwd: {cwd_text}")
-        live_label = f"{project_name} / {suite_label}" if multi_project else suite_label
+        live_label = f"{project_name} / {suite_label}" if plan.multi_project else suite_label
         live_progress_reporter: LiveTestProgressReporter | None = None
 
         def emit_live_progress(current: int, total: int) -> None:
@@ -308,7 +241,7 @@ def run_test_action(
         parsed = runner.last_result
         if parsed is not None:
             counts_detected = bool(getattr(parsed, "counts_detected", False))
-            if not (interactive_command and parallel and multi_project):
+            if not (interactive_command and plan.parallel and plan.multi_project):
                 if counts_detected:
                     orchestrator._emit_status(
                         f"{project_name} / {spec.source} summary: "
@@ -333,7 +266,7 @@ def run_test_action(
         duration_ms = round((time.monotonic() - started_at) * 1000.0, 1)
         if interactive_command and not use_suite_spinner_group:
             suite_status = "passed" if completed.returncode == 0 else "failed"
-            finished_label = f"{project_name} / {suite_label}" if multi_project else suite_label
+            finished_label = f"{project_name} / {suite_label}" if plan.multi_project else suite_label
             counts_suffix = ""
             counts_detected = bool(getattr(parsed, "counts_detected", False)) if parsed is not None else False
             if parsed is not None and counts_detected:
@@ -422,8 +355,8 @@ def run_test_action(
         executor: Any | None = None
         future_map: dict[object, Any] = {}
         try:
-            if parallel:
-                executor = futures_module.ThreadPoolExecutor(max_workers=parallel_workers)
+            if plan.parallel:
+                executor = futures_module.ThreadPoolExecutor(max_workers=plan.parallel_workers)
                 future_map = {executor.submit(run_spec, spec): spec for spec in execution_specs}
                 for future in futures_module.as_completed(future_map):
                     execution = future_map[future]
@@ -444,7 +377,7 @@ def run_test_action(
         except KeyboardInterrupt:
             queued_cancelled = 0
             executor_shutdown = getattr(executor, "shutdown", None) if executor is not None else None
-            if parallel and callable(executor_shutdown):
+            if plan.parallel and callable(executor_shutdown):
                 try:
                     executor_shutdown(wait=False, cancel_futures=True)
                 except TypeError:
@@ -466,7 +399,7 @@ def run_test_action(
             raise
         finally:
             executor_shutdown = getattr(executor, "shutdown", None) if executor is not None else None
-            if parallel and callable(executor_shutdown):
+            if plan.parallel and callable(executor_shutdown):
                 try:
                     executor_shutdown(
                         wait=not interrupt_registry.interrupt_received,
