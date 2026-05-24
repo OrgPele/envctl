@@ -14,6 +14,7 @@ from envctl_engine.planning.plan_agent.cmux_transport import launch_review_agent
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.dashboard.pr_flow import run_pr_flow
+from envctl_engine.ui.dashboard import review_tab_support
 from envctl_engine.ui.selection_support import (
     no_target_selected_message as selection_no_target_selected_message,
 )
@@ -240,114 +241,40 @@ def project_roots_for_route(owner: Any, route: Route, state: RunState, runtime: 
     return project_roots
 
 def maybe_offer_review_tab_launch(owner: Any, route: Route, state: RunState, rt: object) -> None:
-    runtime_any = cast(Any, rt)
-    if not bool(route.flags.get(_REVIEW_TAB_LAUNCH_FLAG)):
-        return
-    target = owner._review_tab_target(route, state, runtime_any)
-    if target is None:
-        runtime_any._emit("dashboard.review_tab.skipped", command="review", reason="ineligible_target_scope")
-        return
-    project_name, project_root = target
-    launch_review_agent_terminal(
-        runtime_any,
-        repo_root=repo_root_from_runtime(runtime_any),
-        project_name=project_name,
-        project_root=project_root,
-        review_bundle_path=review_bundle_path(state, project_name=project_name),
+    return review_tab_support.maybe_offer_review_tab_launch(
+        owner,
+        route,
+        state,
+        rt,
+        launch_review_agent_terminal_fn=launch_review_agent_terminal,
+        repo_root_from_runtime_fn=repo_root_from_runtime,
     )
 
 def apply_review_tab_launch_selection(owner: Any, route: Route, state: RunState, rt: object) -> Route:
-    runtime_any = cast(Any, rt)
-    route.flags = {key: value for key, value in route.flags.items() if key != _REVIEW_TAB_LAUNCH_FLAG}
-    target = owner._review_tab_target(route, state, runtime_any)
-    runtime_any._emit(
-        "dashboard.review_tab.evaluate",
-        command="review",
-        project_count=len(route.projects or []),
-        eligible=target is not None,
+    return review_tab_support.apply_review_tab_launch_selection(
+        owner,
+        route,
+        state,
+        rt,
+        review_agent_launch_readiness_fn=review_agent_launch_readiness,
     )
-    if target is None:
-        runtime_any._emit("dashboard.review_tab.skipped", command="review", reason="ineligible_target_scope")
-        return route
-    project_name, _project_root = target
-    readiness = review_agent_launch_readiness(runtime_any)
-    if not readiness.ready:
-        runtime_any._emit(
-            "dashboard.review_tab.skipped",
-            command="review",
-            reason=readiness.reason,
-            project=project_name,
-            cli=readiness.cli,
-            missing=list(readiness.missing),
-        )
-        message = review_tab_unavailable_message(readiness.reason, readiness.missing)
-        if message:
-            print(message)
-        return route
-    runtime_any._emit("dashboard.review_tab.prompt", command="review", project=project_name, cli=readiness.cli)
-    decision = owner._prompt_review_tab_menu(runtime_any, project_name=project_name)
-    if decision != "commit":
-        runtime_any._emit(
-            "dashboard.review_tab.declined",
-            command="review",
-            project=project_name,
-            cli=readiness.cli,
-        )
-        return route
-    runtime_any._emit("dashboard.review_tab.accepted", command="review", project=project_name, cli=readiness.cli)
-    route.flags = {**route.flags, _REVIEW_TAB_LAUNCH_FLAG: True}
-    return route
 
 def review_tab_target(owner: Any, route: Route, state: RunState, runtime: Any) -> tuple[str, Path] | None:
-    repo_root = repo_root_from_runtime(runtime)
-    project_roots = project_roots_for_route(owner, route, state, runtime)
-    distinct_targets: list[tuple[str, Path]] = []
-    seen_git_roots: set[str] = set()
-    for project_name in route.projects or []:
-        project_root = project_roots.get(project_name)
-        if project_root is None:
-            continue
-        git_root = resolve_git_root(project_root, repo_root)
-        if git_root == repo_root and project_root != repo_root and not (project_root / ".git").exists():
-            git_root = project_root
-        git_root_key = str(git_root.resolve())
-        if git_root_key in seen_git_roots:
-            continue
-        seen_git_roots.add(git_root_key)
-        distinct_targets.append((project_name, project_root))
-    if len(distinct_targets) != 1:
-        return None
-    project_name, project_root = distinct_targets[0]
-    if str(project_name).strip().casefold() == "main":
-        return None
-    if project_root.resolve() == repo_root:
-        return None
-    return project_name, project_root
+    return review_tab_support.review_tab_target(
+        owner,
+        route,
+        state,
+        runtime,
+        repo_root_from_runtime_fn=repo_root_from_runtime,
+        project_roots_for_route_fn=project_roots_for_route,
+        resolve_git_root_fn=resolve_git_root,
+    )
 
 def review_tab_unavailable_message(reason: str, missing: tuple[str, ...]) -> str:
-    if reason == "missing_executables" and missing:
-        return f"Origin review tab unavailable: missing required executables: {', '.join(missing)}."
-    if reason in {"missing_cmux_context", "workspace_unavailable"}:
-        return "Origin review tab unavailable: current cmux workspace context is unavailable."
-    return ""
+    return review_tab_support.review_tab_unavailable_message(reason, missing)
 
 def review_bundle_path(state: RunState, *, project_name: str) -> Path | None:
-    metadata = state.metadata if isinstance(state.metadata, dict) else {}
-    reports = metadata.get("project_action_reports")
-    if not isinstance(reports, dict):
-        return None
-    project_entry = reports.get(project_name)
-    if not isinstance(project_entry, dict):
-        return None
-    review_entry = project_entry.get("review")
-    if not isinstance(review_entry, dict):
-        return None
-    if str(review_entry.get("status", "")).strip().lower() != "success":
-        return None
-    raw_path = str(review_entry.get("bundle_path", "") or "").strip()
-    if not raw_path:
-        return None
-    return Path(raw_path).expanduser()
+    return review_tab_support.review_bundle_path(state, project_name=project_name)
 
 def dirty_pr_prompt(dirty_targets: list[DirtyWorktreeReport]) -> str:
     if len(dirty_targets) == 1:
@@ -357,36 +284,16 @@ def dirty_pr_prompt(dirty_targets: list[DirtyWorktreeReport]) -> str:
 
 def prompt_review_tab_menu(runtime: Any, *, project_name: str) -> DirtyPrDecision:
     prompt = f"Open an origin-side AI review tab for {project_name}?"
-    values = _run_selector_with_impl(
-        prompt=prompt,
-        options=[
-            SelectorItem(
-                id="review-tab:open",
-                label="Yes",
-                kind="",
-                token=_REVIEW_TAB_OPEN_TOKEN,
-                scope_signature=("review-tab:open",),
-            ),
-            SelectorItem(
-                id="review-tab:skip",
-                label="No",
-                kind="",
-                token=_REVIEW_TAB_SKIP_TOKEN,
-                scope_signature=("review-tab:skip",),
-            ),
-        ],
-        multi=False,
-        initial_tokens=[_REVIEW_TAB_SKIP_TOKEN],
-        emit=getattr(runtime, "_emit", None),
+    return review_tab_support.prompt_review_tab_menu(
+        runtime,
+        project_name=project_name,
+        run_selector_fn=_run_selector_with_impl,
+        prompt_yes_no_dialog_fn=lambda runtime_arg: prompt_yes_no_dialog(
+            runtime_arg,
+            title="Open origin review tab?",
+            prompt=prompt,
+        ),
     )
-    if not values:
-        return "skip"
-    chosen = str(values[0]).strip()
-    if chosen == _REVIEW_TAB_OPEN_TOKEN:
-        return "commit"
-    if chosen == _REVIEW_TAB_SKIP_TOKEN:
-        return "skip"
-    return prompt_yes_no_dialog(runtime, title="Open origin review tab?", prompt=prompt)
 
 def dirty_categories(report: DirtyWorktreeReport) -> list[str]:
     categories: list[str] = []

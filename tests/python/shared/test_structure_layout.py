@@ -335,10 +335,12 @@ class StructureLayoutTests(unittest.TestCase):
     def test_dashboard_command_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_support.py"
         target_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "project_target_support.py"
+        review_tab_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "review_tab_support.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator.py"
 
         self.assertTrue(owner.is_file())
         self.assertTrue(target_owner.is_file())
+        self.assertTrue(review_tab_owner.is_file())
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("import envctl_engine.ui.dashboard.command_support as command_support", facade_text)
         self.assertIn("from envctl_engine.ui.dashboard import project_target_support", facade_text)
