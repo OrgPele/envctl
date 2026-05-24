@@ -479,6 +479,19 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.ui.dashboard import ai_session_rendering", rendering_text)
         self.assertLessEqual(len(rendering_text.splitlines()), 1100)
 
+    def test_dashboard_rendering_has_dependency_owner(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "dependency_rendering.py"
+        rendering = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "rendering.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        self.assertIn("def print_dashboard_dependency_rows", owner_text)
+        self.assertIn("def dashboard_dependency_scope", owner_text)
+        self.assertIn("def requirements_has_dashboard_dependencies", owner_text)
+        rendering_text = rendering.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.ui.dashboard import dependency_rendering", rendering_text)
+        self.assertLessEqual(len(rendering_text.splitlines()), 1005)
+
     def test_bats_harness_is_absent(self) -> None:
         self.assertFalse((REPO_ROOT / "tests" / "bats").exists())
 

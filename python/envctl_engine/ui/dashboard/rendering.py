@@ -18,7 +18,6 @@ from envctl_engine.dashboard_metadata import (
     normalize_dashboard_service_types,
 )
 from envctl_engine.state.models import RequirementsResult, RunState
-from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.shared.services import service_display_name
 from envctl_engine.ui.color_policy import colors_enabled
@@ -26,10 +25,10 @@ from envctl_engine.ui.path_links import render_path_for_terminal
 from envctl_engine.ui.dashboard.failure_detail_support import summary_display_path
 from envctl_engine.ui.status_symbols import (
     STATUS_NEUTRAL,
-    dependency_status_badge,
     service_status_badge,
 )
 from envctl_engine.ui.dashboard import ai_session_rendering
+from envctl_engine.ui.dashboard import dependency_rendering
 
 _DASHBOARD_VISUAL_HOST_ENV = "ENVCTL_UI_VISUAL_HOST"
 _DASHBOARD_PUBLIC_HOST_ENV = "ENVCTL_PUBLIC_HOST"
@@ -434,16 +433,22 @@ def _print_dashboard_dependency_rows(
     label_color: str,
     reset: str,
 ) -> None:
-    requirements = state.requirements.get(project)
-    if requirements is None:
-        return
-    _print_dashboard_requirement_component_rows(
+    dependency_rendering.print_dashboard_dependency_rows(
         self,
-        requirements=requirements,
+        state=state,
+        project=project,
         ok_color=ok_color,
         warn_color=warn_color,
         bad_color=bad_color,
+        label_color=label_color,
         reset=reset,
+        visual_url_fn=_dashboard_visual_url,
+        severity_color_fn=lambda severity: _dashboard_color_for_severity(
+            severity,
+            ok_color=ok_color,
+            warn_color=warn_color,
+            bad_color=bad_color,
+        ),
     )
 
 
@@ -457,19 +462,22 @@ def _print_dashboard_shared_dependency_rows(
     label_color: str,
     reset: str,
 ) -> None:
-    requirements = _dashboard_shared_dependency_requirements(state)
-    if requirements is None or not _requirements_has_dashboard_dependencies(requirements):
-        return
-    print(f"  {label_color}Shared dependencies:{reset}")
-    _print_dashboard_requirement_component_rows(
+    dependency_rendering.print_dashboard_shared_dependency_rows(
         self,
-        requirements=requirements,
+        state=state,
         ok_color=ok_color,
         warn_color=warn_color,
         bad_color=bad_color,
+        label_color=label_color,
         reset=reset,
+        visual_url_fn=_dashboard_visual_url,
+        severity_color_fn=lambda severity: _dashboard_color_for_severity(
+            severity,
+            ok_color=ok_color,
+            warn_color=warn_color,
+            bad_color=bad_color,
+        ),
     )
-    print("")
 
 
 def _print_dashboard_requirement_component_rows(
@@ -481,20 +489,21 @@ def _print_dashboard_requirement_component_rows(
     bad_color: str,
     reset: str,
 ) -> None:
-    for definition in dependency_definitions():
-        line = _dashboard_dependency_line(
-            self,
-            requirements=requirements,
-            dependency_id=definition.id,
-            display_name=definition.display_name,
+    dependency_rendering.print_dashboard_requirement_component_rows(
+        self,
+        requirements=requirements,
+        ok_color=ok_color,
+        warn_color=warn_color,
+        bad_color=bad_color,
+        reset=reset,
+        visual_url_fn=_dashboard_visual_url,
+        severity_color_fn=lambda severity: _dashboard_color_for_severity(
+            severity,
             ok_color=ok_color,
             warn_color=warn_color,
             bad_color=bad_color,
-            reset=reset,
-        )
-        if line is None:
-            continue
-        print(line)
+        ),
+    )
 
 
 def _dashboard_dependency_line(
@@ -508,121 +517,42 @@ def _dashboard_dependency_line(
     bad_color: str,
     reset: str,
 ) -> str | None:
-    component = requirements.component(dependency_id)
-    if not bool(component.get("enabled", False)) or dependency_id == "postgres":
-        return None
-    port = component.get("final") or component.get("requested")
-    runtime_status = str(component.get("runtime_status", "")).strip().lower()
-    badge = dependency_status_badge(
-        runtime_status,
-        success=bool(component.get("success", False)),
-        simulated=bool(component.get("simulated", False)),
-        failure_count=len(requirements.failures or []),
+    return dependency_rendering.dashboard_dependency_line(
+        self,
+        requirements=requirements,
+        dependency_id=dependency_id,
+        display_name=display_name,
+        reset=reset,
+        visual_url_fn=_dashboard_visual_url,
+        severity_color_fn=lambda severity: _dashboard_color_for_severity(
+            severity,
+            ok_color=ok_color,
+            warn_color=warn_color,
+            bad_color=bad_color,
+        ),
     )
-    color = _dashboard_color_for_severity(
-        badge.severity,
-        ok_color=ok_color,
-        warn_color=warn_color,
-        bad_color=bad_color,
-    )
-    external_url = str(component.get("external_url") or "").strip()
-    if badge.severity == "failure":
-        url = external_url or "n/a"
-    elif external_url:
-        url = external_url
-    else:
-        url = _dashboard_visual_url(self, port) if isinstance(port, int) and port > 0 else "n/a"
-    label = f"External {badge.label}" if bool(component.get("external", False)) else badge.label
-    return f"    {color}{badge.symbol}{reset} {display_name}: {url} [{label}]"
 
 
 def _dashboard_dependency_scope(state: RunState) -> str:
-    raw = state.metadata.get("dashboard_dependency_scope")
-    if isinstance(raw, str) and raw.strip().lower() in {"shared", "isolated", "none"}:
-        return raw.strip().lower()
-    if _dashboard_legacy_tree_requirements_are_shared(state):
-        return "shared"
-    return "isolated"
+    return dependency_rendering.dashboard_dependency_scope(state)
 
 
 def _dashboard_legacy_tree_requirements_are_shared(state: RunState) -> bool:
-    if state.mode != "trees":
-        return False
-    dependency_projects: set[str] = set()
-    dependency_keys: set[str] = set()
-    dependency_signatures: set[tuple[tuple[str, tuple[tuple[str, object], ...]], ...]] = set()
-    for key, requirements in state.requirements.items():
-        if not isinstance(requirements, RequirementsResult):
-            continue
-        if not _requirements_has_dashboard_dependencies(requirements):
-            continue
-        requirement_project = str(getattr(requirements, "project", "") or "").strip()
-        if requirement_project:
-            dependency_projects.add(requirement_project)
-        dependency_signatures.add(_dashboard_dependency_signature(requirements))
-        dependency_keys.add(str(key).strip())
-    if len(dependency_keys) < 2:
-        return False
-    if not dependency_projects:
-        return len(dependency_signatures) == 1
-    if not dependency_projects or len(dependency_projects) != 1:
-        return False
-    shared_project = next(iter(dependency_projects))
-    return bool(dependency_keys) and all(key != shared_project for key in dependency_keys)
+    return dependency_rendering.dashboard_legacy_tree_requirements_are_shared(state)
 
 
 def _dashboard_dependency_signature(
     requirements: RequirementsResult,
 ) -> tuple[tuple[str, tuple[tuple[str, object], ...]], ...]:
-    signature: list[tuple[str, tuple[tuple[str, object], ...]]] = []
-    for definition in dependency_definitions():
-        if definition.id == "postgres":
-            continue
-        component = requirements.component(definition.id)
-        if not bool(component.get("enabled", False)):
-            continue
-        component_signature = tuple(
-            (field, component.get(field))
-            for field in (
-                "enabled",
-                "requested",
-                "final",
-                "runtime_status",
-                "success",
-                "simulated",
-                "container_name",
-            )
-        )
-        signature.append((definition.id, component_signature))
-    return tuple(signature)
+    return dependency_rendering.dashboard_dependency_signature(requirements)
 
 
 def _dashboard_shared_dependency_requirements(state: RunState) -> RequirementsResult | None:
-    project_raw = state.metadata.get("dashboard_shared_dependency_project")
-    project = str(project_raw or "").strip() if isinstance(project_raw, str) else ""
-    if project:
-        direct = state.requirements.get(project)
-        if isinstance(direct, RequirementsResult):
-            return direct
-        for requirements in state.requirements.values():
-            if str(getattr(requirements, "project", "") or "").strip() == project:
-                return requirements
-    main = state.requirements.get("Main")
-    if isinstance(main, RequirementsResult):
-        return main
-    for requirements in state.requirements.values():
-        if _requirements_has_dashboard_dependencies(requirements):
-            return requirements
-    return None
+    return dependency_rendering.dashboard_shared_dependency_requirements(state)
 
 
 def _requirements_has_dashboard_dependencies(requirements: RequirementsResult) -> bool:
-    for definition in dependency_definitions():
-        if definition.id == "postgres":
-            continue
-        if bool(requirements.component(definition.id).get("enabled", False)):
-            return True
-    return False
+    return dependency_rendering.requirements_has_dashboard_dependencies(requirements)
 
 
 def _print_dashboard_n8n_row(*args: object, **kwargs: object) -> None:
