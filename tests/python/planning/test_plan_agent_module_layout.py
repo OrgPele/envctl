@@ -53,6 +53,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "superset_desktop_support.py",
             "superset_transport.py",
             "terminal_screen.py",
+            "tmux_surface_support.py",
             "tmux_transport.py",
             "workflow.py",
         }
@@ -211,6 +212,14 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "wait_for_tmux_cli_ready",
                 "wait_for_tmux_prompt_accepted",
                 "wait_for_tmux_prompt_ready_after_goal",
+            },
+            "tmux_surface_support.py": {
+                "read_tmux_screen",
+                "run_tmux_command",
+                "send_tmux_key",
+                "send_tmux_prompt",
+                "send_tmux_text",
+                "tmux_target",
             },
             "cmux_transport.py": {
                 "_prepare_surface",

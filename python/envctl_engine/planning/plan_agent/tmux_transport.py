@@ -38,6 +38,7 @@ from envctl_engine.planning.plan_agent.terminal_screen import *
 from envctl_engine.planning.plan_agent.recovery import *
 from envctl_engine.planning.plan_agent.tmux_session import *
 import envctl_engine.planning.plan_agent.tmux_workflow_submission_support as tmux_workflow_submission_support
+import envctl_engine.planning.plan_agent.tmux_surface_support as tmux_surface_support
 
 def _launch_plan_agent_tmux_terminals(
     runtime: Any,
@@ -302,12 +303,7 @@ def _tmux_window_name_for_worktree(worktree: CreatedPlanWorktree) -> str:
 
 
 def _tmux_target(session_name: str, window_name: str) -> str:
-    normalized_window = str(window_name).strip()
-    if normalized_window.startswith("%"):
-        return normalized_window
-    if not normalized_window:
-        return session_name
-    return f"{session_name}:{normalized_window}"
+    return tmux_surface_support.tmux_target(session_name, window_name)
 
 
 def _enable_tmux_mouse_scrollback(runtime: Any, *, session_name: str) -> str | None:
@@ -496,13 +492,12 @@ def _run_tmux_command(
     emit_failure_event: bool = True,
     failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
-    result = _run_tmux_probe(runtime, command, cwd=Path(runtime.config.base_dir).resolve())
-    if result.returncode == 0:
-        return None
-    error = _tmux_completed_process_error_text(result)
-    if emit_failure_event:
-        runtime._emit(failure_event, reason="tmux_command_failed", command=command[1], error=error)
-    return error
+    return tmux_surface_support.run_tmux_command(
+        runtime,
+        command,
+        emit_failure_event=emit_failure_event,
+        failure_event=failure_event,
+    )
 
 
 def _send_tmux_text(
@@ -514,9 +509,11 @@ def _send_tmux_text(
     emit_failure_event: bool = True,
     failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
-    return _run_tmux_command(
+    return tmux_surface_support.send_tmux_text(
         runtime,
-        ("tmux", "send-keys", "-t", _tmux_target(session_name, window_name), "-l", text),
+        session_name=session_name,
+        window_name=window_name,
+        text=text,
         emit_failure_event=emit_failure_event,
         failure_event=failure_event,
     )
@@ -531,22 +528,18 @@ def _send_tmux_key(
     emit_failure_event: bool = True,
     failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
-    key_name = {"enter": "Enter"}.get(str(key).strip().lower(), key)
-    return _run_tmux_command(
+    return tmux_surface_support.send_tmux_key(
         runtime,
-        ("tmux", "send-keys", "-t", _tmux_target(session_name, window_name), key_name),
+        session_name=session_name,
+        window_name=window_name,
+        key=key,
         emit_failure_event=emit_failure_event,
         failure_event=failure_event,
     )
 
 
 def _read_tmux_screen(runtime: Any, *, session_name: str, window_name: str) -> str:
-    target = _tmux_target(session_name, window_name)
-    for command in (("tmux", "capture-pane", "-p", "-a", "-t", target), ("tmux", "capture-pane", "-p", "-t", target)):
-        result = _run_tmux_probe(runtime, command, cwd=Path(runtime.config.base_dir).resolve())
-        if result.returncode == 0:
-            return str(getattr(result, "stdout", ""))
-    return ""
+    return tmux_surface_support.read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
 
 
 def _run_tmux_existing_session_workflow(
@@ -737,35 +730,12 @@ def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: st
 
 
 def _send_tmux_prompt(runtime: Any, *, session_name: str, window_name: str, text: str) -> str | None:
-    target = _tmux_target(session_name, window_name)
-    tmux_env = dict(os.environ)
-    tmux_env.update(dict(getattr(runtime, "env", {}) or {}))
-    load_result = subprocess.run(
-        ["tmux", "load-buffer", "-t", target, "-"],
-        input=text,
-        capture_output=True,
-        text=True,
-        cwd=Path(runtime.config.base_dir).resolve(),
-        env=tmux_env,
-        timeout=10.0,
+    return tmux_surface_support.send_tmux_prompt(
+        runtime,
+        session_name=session_name,
+        window_name=window_name,
+        text=text,
     )
-    if load_result.returncode != 0:
-        error = (load_result.stderr or "").strip()[:200]
-        runtime._emit("planning.agent_launch.failed", reason="tmux_load_buffer_failed", error=error)
-        return f"tmux_load_buffer_failed: {error}"
-    paste_result = subprocess.run(
-        ["tmux", "paste-buffer", "-dpr", "-t", target],
-        capture_output=True,
-        text=True,
-        cwd=Path(runtime.config.base_dir).resolve(),
-        env=tmux_env,
-        timeout=10.0,
-    )
-    if paste_result.returncode != 0:
-        error = (paste_result.stderr or "").strip()[:200]
-        runtime._emit("planning.agent_launch.failed", reason="tmux_paste_buffer_failed", error=error)
-        return f"tmux_paste_buffer_failed: {error}"
-    return None
 
 
 def _submit_tmux_prompt_workflow_step(
