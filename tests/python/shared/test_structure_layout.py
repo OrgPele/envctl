@@ -572,6 +572,33 @@ class StructureLayoutTests(unittest.TestCase):
             facade.read_text(encoding="utf-8"),
         )
 
+    def test_worktree_path_support_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_path_support.py"
+        menu_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_menu_terminal_support.py"
+        spinner_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_spinner_support.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertTrue(menu_owner.is_file())
+        self.assertTrue(spinner_owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        menu_owner_text = menu_owner.read_text(encoding="utf-8")
+        spinner_owner_text = spinner_owner.read_text(encoding="utf-8")
+        self.assertIn("def preferred_tree_root_for_feature", owner_text)
+        self.assertIn("def trees_root_for_worktree", owner_text)
+        self.assertIn("def resolve_planning_selection_target", owner_text)
+        self.assertIn("def setup_worktree_requested", owner_text)
+        self.assertIn("def render_planning_selection_menu", menu_owner_text)
+        self.assertIn("def planning_menu_apply_key", menu_owner_text)
+        self.assertIn("def worktree_spinner_policy", spinner_owner_text)
+        self.assertIn("def worktree_spinner_update", spinner_owner_text)
+        self.assertIn("def worktree_spinner_stop", spinner_owner_text)
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.planning.worktree_path_support import", facade_text)
+        self.assertIn("from envctl_engine.planning.worktree_menu_terminal_support import", facade_text)
+        self.assertIn("from envctl_engine.planning.worktree_spinner_support import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 920)
+
     def test_worktree_provenance_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_provenance.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"

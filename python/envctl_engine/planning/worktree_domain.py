@@ -29,6 +29,16 @@ from envctl_engine.planning.worktree_main_task import (
     next_available_iteration as _next_available_iteration_impl,
     seed_main_task_from_plan as _seed_main_task_from_plan_impl,
 )
+from envctl_engine.planning.worktree_menu_terminal_support import (
+    decode_planning_menu_escape as _decode_planning_menu_escape_impl,
+    planning_menu_apply_key as _planning_menu_apply_key_impl,
+    read_planning_menu_escape_sequence as _read_planning_menu_escape_sequence_impl,
+    read_planning_menu_key as _read_planning_menu_key_impl,
+    render_planning_selection_menu as _render_planning_selection_menu_impl,
+    terminal_size as _terminal_size_impl,
+    to_terminal_lines as _to_terminal_lines_impl,
+    truncate_text as _truncate_text_impl,
+)
 from envctl_engine.planning.worktree_plan_selection import (
     adjust_plan_counts_for_fresh_ai_launch as _adjust_plan_counts_for_fresh_ai_launch_impl,
     fresh_ai_launch_transport as _fresh_ai_launch_transport_impl,
@@ -67,6 +77,14 @@ from envctl_engine.planning.worktree_setup_entries import (
 from envctl_engine.planning.worktree_setup_coordinator import (
     apply_setup_worktree_selection as _apply_setup_worktree_selection_impl,
 )
+from envctl_engine.planning.worktree_spinner_support import (
+    worktree_spinner_fail as _worktree_spinner_fail_impl,
+    worktree_spinner_finish as _worktree_spinner_finish_impl,
+    worktree_spinner_policy as _worktree_spinner_policy_impl,
+    worktree_spinner_start as _worktree_spinner_start_impl,
+    worktree_spinner_stop as _worktree_spinner_stop_impl,
+    worktree_spinner_update as _worktree_spinner_update_impl,
+)
 from envctl_engine.planning.worktree_sync_deletion import (
     delete_feature_worktrees as _delete_feature_worktrees_impl,
 )
@@ -76,6 +94,15 @@ from envctl_engine.planning.worktree_sync_orchestration import (
 )
 from envctl_engine.planning.worktree_code_intelligence import (
     prepare_worktree_code_intelligence as _prepare_worktree_code_intelligence_impl,
+)
+from envctl_engine.planning.worktree_path_support import (
+    planning_done_root as _planning_done_root_impl,
+    planning_root as _planning_root_impl,
+    preferred_tree_root_for_feature as _preferred_tree_root_for_feature_impl,
+    render_planning_path as _render_planning_path_impl,
+    resolve_planning_selection_target as _resolve_planning_selection_target_impl,
+    setup_worktree_requested as _setup_worktree_requested_impl,
+    trees_root_for_worktree as _trees_root_for_worktree_impl,
 )
 from envctl_engine.planning.worktree_provenance import (
     active_fresh_ai_worktree_protection_reason as _active_fresh_ai_worktree_protection_reason_impl,
@@ -96,9 +123,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.planning import (
     discover_tree_projects,
 )
-from envctl_engine.ui.path_links import render_path_fragment_for_terminal
-from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
-from envctl_engine.ui.spinner_service import SpinnerPolicy, emit_spinner_policy, resolve_spinner_policy
+from envctl_engine.ui.spinner_service import SpinnerPolicy
 from envctl_engine.ui.textual.screens.planning_selector import select_planning_counts_textual
 
 
@@ -108,13 +133,7 @@ class ProjectContextLike(Protocol):
 
 
 def _worktree_spinner_policy(self: Any, *, op_id: str) -> SpinnerPolicy:
-    policy = resolve_spinner_policy(getattr(self, "env", {}))
-    emit_spinner_policy(
-        getattr(self, "_emit", None),
-        policy,
-        context={"component": "worktree_planning", "op_id": op_id},
-    )
-    return policy
+    return _worktree_spinner_policy_impl(self, op_id=op_id)
 
 
 def _worktree_spinner_update(
@@ -126,17 +145,14 @@ def _worktree_spinner_update(
     message: str,
     terminal_message: str | None = None,
 ) -> None:
-    if enabled:
-        active_spinner.update(terminal_message or message)
-        self._emit(  # type: ignore[attr-defined]
-            "ui.spinner.lifecycle",
-            component="worktree_planning",
-            op_id=op_id,
-            state="update",
-            message=message,
-        )
-        return
-    print(terminal_message or message)
+    _worktree_spinner_update_impl(
+        self,
+        enabled=enabled,
+        active_spinner=active_spinner,
+        op_id=op_id,
+        message=message,
+        terminal_message=terminal_message,
+    )
 
 
 def _render_planning_path(
@@ -146,8 +162,8 @@ def _render_planning_path(
     display_text: str,
     interactive_tty: bool | None = None,
 ) -> str:
-    return render_path_fragment_for_terminal(
-        absolute_path,
+    return _render_planning_path_impl(
+        absolute_path=absolute_path,
         display_text=display_text,
         env=getattr(self, "env", {}),
         stream=sys.stdout,
@@ -163,16 +179,11 @@ def _worktree_spinner_start(
     op_id: str,
     message: str,
 ) -> None:
-    if not enabled:
-        import sys  # noqa: PLC0415
-        print(f"  {message}", file=sys.stderr, flush=True)
-        return
-    active_spinner.start()
-    self._emit(  # type: ignore[attr-defined]
-        "ui.spinner.lifecycle",
-        component="worktree_planning",
+    _worktree_spinner_start_impl(
+        self,
+        enabled=enabled,
+        active_spinner=active_spinner,
         op_id=op_id,
-        state="start",
         message=message,
     )
 
@@ -185,16 +196,11 @@ def _worktree_spinner_finish(
     op_id: str,
     message: str,
 ) -> None:
-    if not enabled:
-        import sys  # noqa: PLC0415
-        print(f"✓ {message}", file=sys.stderr, flush=True)
-        return
-    active_spinner.succeed(message)
-    self._emit(  # type: ignore[attr-defined]
-        "ui.spinner.lifecycle",
-        component="worktree_planning",
+    _worktree_spinner_finish_impl(
+        self,
+        enabled=enabled,
+        active_spinner=active_spinner,
         op_id=op_id,
-        state="success",
         message=message,
     )
 
@@ -207,29 +213,17 @@ def _worktree_spinner_fail(
     op_id: str,
     message: str,
 ) -> None:
-    if not enabled:
-        import sys  # noqa: PLC0415
-        print(f"✗ {message}", file=sys.stderr, flush=True)
-        return
-    active_spinner.fail(message)
-    self._emit(  # type: ignore[attr-defined]
-        "ui.spinner.lifecycle",
-        component="worktree_planning",
+    _worktree_spinner_fail_impl(
+        self,
+        enabled=enabled,
+        active_spinner=active_spinner,
         op_id=op_id,
-        state="fail",
         message=message,
     )
 
 
 def _worktree_spinner_stop(self: Any, *, enabled: bool, op_id: str) -> None:
-    if not enabled:
-        return
-    self._emit(  # type: ignore[attr-defined]
-        "ui.spinner.lifecycle",
-        component="worktree_planning",
-        op_id=op_id,
-        state="stop",
-    )
+    _worktree_spinner_stop_impl(self, enabled=enabled, op_id=op_id)
 
 
 def _coerce_setup_entries(
@@ -346,31 +340,19 @@ def _apply_single_setup_entry(
 
 
 def _preferred_tree_root_for_feature(self, feature: str) -> Path:
-    normalized = str(self.config.trees_dir_name).strip().rstrip("/")
-    if not normalized:
-        return self.config.base_dir / "trees" / feature
-    flat_candidate = self.config.base_dir / f"{normalized}-{feature}"
-    if flat_candidate.is_dir():
-        return flat_candidate
-    return self.config.base_dir / normalized / feature
+    return _preferred_tree_root_for_feature_impl(
+        base_dir=self.config.base_dir,
+        trees_dir_name=self.config.trees_dir_name,
+        feature=feature,
+    )
 
 
 def _trees_root_for_worktree(self, worktree_root: Path) -> Path:
-    normalized = str(self.config.trees_dir_name).strip().rstrip("/")
-    nested_root = self.config.base_dir / (normalized or "trees")
-    flat_parent = nested_root.parent
-    flat_prefix = f"{Path(normalized).name}-" if normalized else "trees-"
-    resolved_target = worktree_root.resolve()
-    resolved_nested = nested_root.resolve()
-    if resolved_nested == resolved_target or resolved_nested in resolved_target.parents:
-        return nested_root
-
-    current = resolved_target
-    while current != flat_parent and flat_parent in current.parents:
-        if current.parent == flat_parent and current.name.startswith(flat_prefix):
-            return current
-        current = current.parent
-    return nested_root
+    return _trees_root_for_worktree_impl(
+        base_dir=self.config.base_dir,
+        trees_dir_name=self.config.trees_dir_name,
+        worktree_root=worktree_root,
+    )
 
 
 def _select_plan_projects(
@@ -410,12 +392,8 @@ def _prompt_planning_selection(
     )
 
 
-def _route_requests_fresh_ai_worktree(route: Route) -> bool:
-    return _route_requests_fresh_ai_worktree_impl(route)
-
-
-def _fresh_ai_launch_transport(route: Route) -> str:
-    return _fresh_ai_launch_transport_impl(route)
+_route_requests_fresh_ai_worktree = _route_requests_fresh_ai_worktree_impl
+_fresh_ai_launch_transport = _fresh_ai_launch_transport_impl
 
 
 def _adjust_plan_counts_for_fresh_ai_launch(
@@ -473,7 +451,8 @@ def _render_planning_selection_menu(
     terminal_width: int | None = None,
     terminal_height: int | None = None,
 ) -> str:
-    return self.terminal_ui.planning_menu.render(
+    return _render_planning_selection_menu_impl(
+        self.terminal_ui,
         planning_files=planning_files,
         selected_counts=selected_counts,
         existing_counts=existing_counts,
@@ -485,38 +464,19 @@ def _render_planning_selection_menu(
 
 
 def _terminal_size(self: Any) -> tuple[int, int]:
-    return self.terminal_ui.planning_menu.terminal_size()
+    return _terminal_size_impl(self.terminal_ui)
 
 
-def _truncate_text(value: str, max_len: int) -> str:
-    return RuntimeTerminalUI().planning_menu.truncate_text(value, max_len)
-
-
-def _to_terminal_lines(frame: str) -> str:
-    return RuntimeTerminalUI().planning_menu.to_terminal_lines(frame)
+_truncate_text = _truncate_text_impl
+_to_terminal_lines = _to_terminal_lines_impl
 
 
 def _read_planning_menu_key(self: Any, *, fd: int, selector: Callable[..., object]) -> str:
-    return self.terminal_ui.planning_menu.read_key(fd=fd, selector=selector)
+    return _read_planning_menu_key_impl(self.terminal_ui, fd=fd, selector=selector)
 
 
-def _read_planning_menu_escape_sequence(
-    *,
-    fd: int,
-    selector: Callable[..., object],
-    timeout: float,
-    max_bytes: int,
-) -> bytes:
-    return RuntimeTerminalUI().planning_menu.read_escape_sequence(
-        fd=fd,
-        selector=selector,
-        timeout=timeout,
-        max_bytes=max_bytes,
-    )
-
-
-def _decode_planning_menu_escape(sequence: bytes) -> str | None:
-    return RuntimeTerminalUI().planning_menu.decode_escape(sequence)
+_read_planning_menu_escape_sequence = _read_planning_menu_escape_sequence_impl
+_decode_planning_menu_escape = _decode_planning_menu_escape_impl
 
 
 def _planning_menu_apply_key(
@@ -528,7 +488,8 @@ def _planning_menu_apply_key(
     selected_counts: dict[str, int],
     existing_counts: dict[str, int],
 ) -> tuple[int, str, str]:
-    return self.terminal_ui.planning_menu.apply_key(
+    return _planning_menu_apply_key_impl(
+        self.terminal_ui,
         key=key,
         cursor=cursor,
         planning_files=planning_files,
@@ -543,40 +504,12 @@ def _resolve_planning_selection_target(
     target_token: str,
     planning_files: list[str],
 ) -> str:
-    token = target_token.strip()
-    if not token:
-        raise ValueError("Missing planning selection target.")
-    if token.isdigit():
-        index = int(token)
-        if 1 <= index <= len(planning_files):
-            return planning_files[index - 1]
-        raise ValueError(f"Invalid plan index: {token}")
-
-    normalized = token.replace("\\", "/").lstrip("./")
-    planning_raw = str(self.config.planning_dir).replace("\\", "/").rstrip("/")
-    base_raw = str(self.config.base_dir).replace("\\", "/").rstrip("/")
-    if normalized.startswith(f"{planning_raw}/"):
-        normalized = normalized[len(planning_raw) + 1 :]
-    if normalized.startswith(f"{base_raw}/"):
-        normalized = normalized[len(base_raw) + 1 :]
-    planning_rel = ""
-    try:
-        planning_rel = str(self.config.planning_dir.relative_to(self.config.base_dir)).replace("\\", "/").rstrip("/")
-    except ValueError:
-        planning_rel = ""
-    if planning_rel and normalized.startswith(f"{planning_rel}/"):
-        normalized = normalized[len(planning_rel) + 1 :]
-    if not normalized.endswith(".md"):
-        normalized = f"{normalized}.md"
-
-    if normalized in planning_files:
-        return normalized
-    basename_matches = [plan for plan in planning_files if Path(plan).name == Path(normalized).name]
-    if len(basename_matches) == 1:
-        return basename_matches[0]
-    if len(basename_matches) > 1:
-        raise ValueError(f"Planning file name '{target_token}' is ambiguous. Use folder/name.")
-    raise ValueError(f"Planning file not found: {target_token}")
+    return _resolve_planning_selection_target_impl(
+        target_token=target_token,
+        planning_files=planning_files,
+        planning_dir=self.config.planning_dir,
+        base_dir=self.config.base_dir,
+    )
 
 
 def _plan_selection_memory_path(self: Any) -> Path:
@@ -584,11 +517,11 @@ def _plan_selection_memory_path(self: Any) -> Path:
 
 
 def _planning_root(self: Any) -> Path:
-    return self.config.planning_dir
+    return _planning_root_impl(planning_dir=self.config.planning_dir)
 
 
 def _planning_done_root(self: Any) -> Path:
-    return self._planning_root().parent / "done"
+    return _planning_done_root_impl(planning_dir=self.config.planning_dir)
 
 
 def _load_plan_selection_memory(self: Any) -> dict[str, int]:
@@ -930,12 +863,8 @@ def _active_fresh_ai_worktree_protection_reason(self: Any, *, name: str, root: P
     return _active_fresh_ai_worktree_protection_reason_impl(self, name=name, root=root)
 
 
-def _fresh_ai_launch_marker_is_fresh(recorded_at: str) -> bool:
-    return _fresh_ai_launch_marker_is_fresh_impl(recorded_at)
-
-
-def _read_worktree_provenance(root: Path) -> dict[str, object]:
-    return _read_worktree_provenance_impl(root)
+_fresh_ai_launch_marker_is_fresh = _fresh_ai_launch_marker_is_fresh_impl
+_read_worktree_provenance = _read_worktree_provenance_impl
 
 
 def _cleanup_empty_feature_root(self: Any, *, feature: str) -> None:
@@ -968,13 +897,6 @@ def _feature_project_candidates(
     return _feature_project_candidates_impl(projects=projects, feature=feature)
 
 
-def _project_sort_key_for_feature(project_name: str, feature: str) -> tuple[int, object]:
-    return _project_sort_key_for_feature_impl(project_name, feature)
-
-
-def _next_available_iteration(existing_iters: set[int]) -> int:
-    return _next_available_iteration_impl(existing_iters)
-
-
-def _setup_worktree_requested(route: Route) -> bool:
-    return bool(route.flags.get("setup_worktrees")) or bool(route.flags.get("setup_worktree"))
+_project_sort_key_for_feature = _project_sort_key_for_feature_impl
+_next_available_iteration = _next_available_iteration_impl
+_setup_worktree_requested = _setup_worktree_requested_impl
