@@ -103,6 +103,25 @@ class ActionTestSummarySupportTests(unittest.TestCase):
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["git_state"], {"head": "HEAD", "status_hash": "hash", "status_lines": 2})
 
+    def test_write_failed_tests_summary_uses_single_safe_project_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "run"
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir()
+
+            result = write_failed_tests_summary(
+                run_dir=run_dir,
+                project_name="Feature/API v2",
+                project_root=project_root,
+                outcomes=[{"project_name": "Feature/API v2", "suite": "backend_pytest", "returncode": 0}],
+                git_state_components=lambda _root: ("HEAD", "hash", 0),
+            )
+
+            summary_path = Path(str(result["summary_path"]))
+            self.assertEqual(summary_path.parent, run_dir / "Feature_API_v2")
+            self.assertTrue(summary_path.is_file())
+            self.assertFalse((run_dir / "Feature").exists())
+
     def test_persist_test_summary_artifacts_updates_state_metadata_and_emits_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

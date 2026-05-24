@@ -172,6 +172,7 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
             self.assertNotIn('getattr(runtime, "state_repository"', raw)
             self.assertNotIn('getattr(runtime, "process_runner"', raw)
             self.assertNotIn('getattr(self.runtime, "process_runner"', raw)
+            self.assertNotIn("runtime.state_repository.save_resume_state", raw)
             self.assertNotIn("runtime.state_repository.run_dir_path", raw)
             self.assertNotIn("runtime.state_repository.test_results_dir_path", raw)
 

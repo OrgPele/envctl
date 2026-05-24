@@ -73,6 +73,19 @@ def test_results_dir_path(runtime: object, run_id: str | None) -> Path:
     return run_dir_path(runtime, raw_run_id) / "test-results"
 
 
+def save_resume_state(
+    runtime: object,
+    *,
+    state: object,
+    runtime_map_builder: Callable[[object], dict[str, object]],
+) -> dict[str, object]:
+    return resolve_state_repository(runtime).save_resume_state(
+        state=state,
+        emit=getattr(runtime, "emit"),
+        runtime_map_builder=runtime_map_builder,
+    )
+
+
 def _optional_runtime_dependency(runtime: object, context_attr: str, legacy_attr: str) -> object | None:
     runtime_context = getattr(runtime, "runtime_context", None)
     candidate = getattr(runtime_context, context_attr, None)

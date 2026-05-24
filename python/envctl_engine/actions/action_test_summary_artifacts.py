@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Callable
 
+from envctl_engine.shared.artifact_names import project_artifact_dir
 from envctl_engine.actions.action_test_summary_collection import (
     collect_failed_test_manifest_entries,
     collect_failed_tests,
@@ -15,7 +16,7 @@ from envctl_engine.actions.action_test_summary_collection import (
 from envctl_engine.actions.action_test_summary_formatting import format_summary_error_lines
 from envctl_engine.actions.action_test_summary_git import default_git_state_components
 from envctl_engine.actions.action_test_support import load_failed_test_manifest
-from envctl_engine.runtime.runtime_context import test_results_dir_path
+from envctl_engine.runtime.runtime_context import save_resume_state, test_results_dir_path
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.test_output.failure_summary import extract_failure_summary_excerpt
 from envctl_engine.test_output.parser_base import strip_ansi
@@ -71,9 +72,9 @@ def persist_test_summary_artifacts(
     state.metadata["project_test_results_root"] = str(run_dir)
     state.metadata["project_test_results_updated_at"] = datetime.now(tz=UTC).isoformat()
 
-    runtime.state_repository.save_resume_state(  # type: ignore[attr-defined]
+    save_resume_state(
+        runtime,
         state=state,
-        emit=runtime.emit,  # type: ignore[attr-defined]
         runtime_map_builder=runtime_map_builder,
     )
     runtime.emit(  # type: ignore[attr-defined]
@@ -135,8 +136,7 @@ def write_failed_tests_summary(
     format_summary_error_lines: Callable[[str], list[str]] = format_summary_error_lines,
     git_state_components: Callable[[Path], tuple[str, str, int]] | None = None,
 ) -> dict[str, object]:
-    safe_project = project_name.replace(" ", "_")
-    output_dir = run_dir / safe_project
+    output_dir = project_artifact_dir(run_dir, project_name)
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "failed_tests_summary.txt"
     short_summary_path = short_failed_summary_path(run_dir=run_dir, project_name=project_name)

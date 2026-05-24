@@ -13,7 +13,8 @@ from envctl_engine.actions.action_command_support import (
 )
 from envctl_engine.actions.action_target_support import ActionCommandResolution
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.runtime.runtime_context import run_dir_path
+from envctl_engine.runtime.runtime_context import resolve_state_repository, run_dir_path, save_resume_state
+from envctl_engine.shared.artifact_names import project_command_artifact_path
 from envctl_engine.test_output.parser_base import strip_ansi
 
 
@@ -43,12 +44,13 @@ def action_env(
     route_mode = getattr(route, "mode", None)
     state = runtime.load_existing_state(mode=route_mode) if isinstance(route_mode, str) else None
     run_id = getattr(state, "run_id", None)
-    tree_diffs_root = runtime.state_repository.tree_diffs_dir_path(run_id)
+    state_repository = resolve_state_repository(runtime)
+    tree_diffs_root = state_repository.tree_diffs_dir_path(run_id)  # type: ignore[attr-defined]
     return build_action_env(
         process_env=os.environ if process_env is None else process_env,
         runtime_env=runtime.env,
         repo_root=runtime.config.base_dir,
-        runtime_root=runtime.state_repository.runtime_root,
+        runtime_root=state_repository.runtime_root,  # type: ignore[attr-defined]
         run_id=run_id,
         tree_diffs_root=tree_diffs_root,
         command_name=command_name,
@@ -363,8 +365,7 @@ def write_project_action_failure_report(
 ) -> Path:
     results_root = run_dir_path(runtime, run_id)
     results_root.mkdir(parents=True, exist_ok=True)
-    safe_project = project_name.replace(" ", "_")
-    report_path = results_root / f"{safe_project}_{command_name}.txt"
+    report_path = project_command_artifact_path(results_root, project_name=project_name, command_name=command_name)
     report_path.write_text((output or "Command failed.").rstrip() + "\n", encoding="utf-8")
     return report_path
 
@@ -441,8 +442,8 @@ def persist_project_action_result(
     project_metadata[command_name] = entry
     metadata[project_name] = project_metadata
     state.metadata["project_action_reports"] = metadata
-    runtime.state_repository.save_resume_state(
+    save_resume_state(
+        runtime,
         state=state,
-        emit=runtime.emit,
         runtime_map_builder=runtime_map_builder,
     )
