@@ -422,6 +422,7 @@ class StructureLayoutTests(unittest.TestCase):
         service_parsing_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "service_parsing.py"
         persistence_values_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "persistence_values.py"
         persistence_rendering_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "persistence_rendering.py"
+        source_discovery_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "source_discovery.py"
         persistence_facade = REPO_ROOT / "python" / "envctl_engine" / "config" / "persistence.py"
         owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "dependency_env_templates.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "config" / "__init__.py"
@@ -431,6 +432,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(service_parsing_owner.is_file())
         self.assertTrue(persistence_values_owner.is_file())
         self.assertTrue(persistence_rendering_owner.is_file())
+        self.assertTrue(source_discovery_owner.is_file())
         self.assertTrue(owner.is_file())
         models_text = models_owner.read_text(encoding="utf-8")
         self.assertIn("class EngineConfig", models_text)
@@ -451,6 +453,10 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def render_managed_block", persistence_rendering_text)
         self.assertIn("def merge_managed_block", persistence_rendering_text)
         self.assertIn("def config_review_text", persistence_rendering_text)
+        source_discovery_text = source_discovery_owner.read_text(encoding="utf-8")
+        self.assertIn("def discover_local_config_state", source_discovery_text)
+        self.assertIn("def generated_worktree_control_root", source_discovery_text)
+        self.assertIn("def parse_envctl_text", source_discovery_text)
         persistence_facade_text = persistence_facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.config.persistence_values import", persistence_facade_text)
         self.assertIn("from envctl_engine.config.persistence_rendering import", persistence_facade_text)
@@ -465,7 +471,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.config.models import", facade_text)
         self.assertIn("from envctl_engine.config.defaults import", facade_text)
         self.assertIn("from envctl_engine.config.service_parsing import", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 980)
+        self.assertIn("from envctl_engine.config.source_discovery import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 760)
 
     def test_prompt_install_support_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"

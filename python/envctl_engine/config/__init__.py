@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 from typing import Literal, Mapping
 
@@ -70,14 +69,22 @@ from envctl_engine.config.service_parsing import (
     _service_env_suffix,
     _validate_additional_service_dependencies,
 )
+from envctl_engine.config.source_discovery import (
+    CONFIG_PRIMARY_FILENAME,
+    LEGACY_CONFIG_FILENAMES,
+    control_root_from_generated_tree_shape as _control_root_from_generated_tree_shape,
+    control_root_from_worktree_provenance as _control_root_from_worktree_provenance,
+    discover_local_config_state,
+    generated_worktree_control_root as _generated_worktree_control_root,
+    parse_envctl_text as _parse_envctl_text,
+    resolve_explicit_path as _resolve_explicit_path,
+)
 from envctl_engine.runtime.command_resolution import suggest_service_directory, suggest_service_start_command
-from envctl_engine.shared.parsing import parse_bool, parse_int, strip_quotes
+from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.shared.repo_roots import canonical_envctl_project_root
 
 CONFIG_MANAGED_BLOCK_START = "# >>> envctl managed startup config >>>"
 CONFIG_MANAGED_BLOCK_END = "# <<< envctl managed startup config <<<"
-CONFIG_PRIMARY_FILENAME = ".envctl"
-LEGACY_CONFIG_FILENAMES = (".envctl.sh", ".supportopia-config")
 __all__ = (
     "AppServiceConfig",
     "CONFIG_BACKEND_DEPENDENCY_ENV_END",
@@ -114,6 +121,8 @@ __all__ = (
     "SupabaseAuthUserConfig",
     "_any_dependency_env_section_markers_present",
     "_backend_dependency_env_section_bounds",
+    "_control_root_from_generated_tree_shape",
+    "_control_root_from_worktree_provenance",
     "_dependency_env_section_bounds",
     "_extract_backend_dependency_env_section",
     "_extract_dependency_env_section",
@@ -126,6 +135,7 @@ __all__ = (
     "_parse_envctl_text",
     "_parse_json_object_value",
     "_parse_supabase_auth_users",
+    "_resolve_explicit_path",
     "_service_env_suffix",
     "_strip_template_sections",
     "_validate_additional_service_dependencies",
@@ -386,57 +396,6 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
     )
 
 
-def _generated_worktree_control_root(
-    *,
-    requested_root: Path,
-    execution_root: Path,
-    trees_dir_name: str,
-) -> Path | None:
-    for candidate in (execution_root, requested_root):
-        resolved = Path(candidate).expanduser()
-        if resolved.is_file():
-            resolved = resolved.parent
-        resolved = resolved.resolve()
-        provenance_root = _control_root_from_worktree_provenance(resolved)
-        if provenance_root is not None:
-            return provenance_root
-        shaped_root = _control_root_from_generated_tree_shape(resolved, trees_dir_name=trees_dir_name)
-        if shaped_root is not None:
-            return shaped_root
-    return None
-
-
-def _control_root_from_worktree_provenance(worktree_root: Path) -> Path | None:
-    path = worktree_root / ".envctl-state" / "worktree-provenance.json"
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    raw_root = str(payload.get("created_from_repo", "") or "").strip()
-    if not raw_root:
-        return None
-    root = Path(raw_root).expanduser().resolve()
-    if (root / CONFIG_PRIMARY_FILENAME).is_file():
-        return root
-    return None
-
-
-def _control_root_from_generated_tree_shape(path: Path, *, trees_dir_name: str) -> Path | None:
-    normalized_trees = str(trees_dir_name or DEFAULTS["TREES_DIR_NAME"]).strip().rstrip("/") or "trees"
-    current = path.resolve()
-    while current.parent != current:
-        if current.parent.name and current.parent.parent.name == Path(normalized_trees).name:
-            repo_root = current.parent.parent.parent
-            if (repo_root / CONFIG_PRIMARY_FILENAME).is_file():
-                return repo_root.resolve()
-        if (current / ".git").is_dir() or (current / ".git").is_file():
-            return None
-        current = current.parent
-    return None
-
-
 _POSTGRES_TEMPLATE_SOURCE_TOKENS = (
     "${ENVCTL_SOURCE_DATABASE_URL}",
     "${ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL}",
@@ -578,158 +537,6 @@ def _apply_plan_agent_aliases(resolved: dict[str, str], *, explicit_values: Mapp
         resolved["ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT"] = "superset"
     if "ENVCTL_PLAN_AGENT_CODEX_CYCLES" not in explicit_values and "CYCLES" in explicit_values:
         resolved["ENVCTL_PLAN_AGENT_CODEX_CYCLES"] = str(explicit_values.get("CYCLES", ""))
-
-
-def discover_local_config_state(base_dir: Path, explicit_path: str | None = None) -> LocalConfigState:
-    base_dir = Path(base_dir).resolve()
-    resolved_explicit = _resolve_explicit_path(base_dir, explicit_path)
-    primary_path = base_dir / CONFIG_PRIMARY_FILENAME
-    file_path = primary_path
-    file_exists = primary_path.is_file()
-    source: Literal["envctl", "legacy_prefill", "defaults"] = "envctl" if file_exists else "defaults"
-    active_source_path: Path | None = primary_path if file_exists else None
-    legacy_source_path: Path | None = None
-
-    if resolved_explicit is not None and resolved_explicit.is_file():
-        active_source_path = resolved_explicit
-        if resolved_explicit.name == CONFIG_PRIMARY_FILENAME:
-            file_path = resolved_explicit
-            file_exists = True
-            source = "envctl"
-        else:
-            file_exists = primary_path.is_file()
-            source = "legacy_prefill" if not file_exists else "envctl"
-            legacy_source_path = resolved_explicit
-    elif file_exists:
-        source = "envctl"
-    else:
-        for candidate_name in LEGACY_CONFIG_FILENAMES:
-            candidate = base_dir / candidate_name
-            if candidate.is_file():
-                active_source_path = candidate
-                legacy_source_path = candidate
-                source = "legacy_prefill"
-                break
-
-    file_text = ""
-    parsed_values: dict[str, str] = {}
-    dependency_env_templates: tuple[DependencyEnvTemplateEntry, ...] = ()
-    dependency_env_section_present = False
-    dependency_env_template_errors: tuple[str, ...] = ()
-    backend_dependency_env_templates: tuple[DependencyEnvTemplateEntry, ...] = ()
-    backend_dependency_env_section_present = False
-    backend_dependency_env_template_errors: tuple[str, ...] = ()
-    frontend_dependency_env_templates: tuple[DependencyEnvTemplateEntry, ...] = ()
-    frontend_dependency_env_section_present = False
-    frontend_dependency_env_template_errors: tuple[str, ...] = ()
-    main_backend_dependency_env_templates: tuple[DependencyEnvTemplateEntry, ...] = ()
-    main_backend_dependency_env_section_present = False
-    main_backend_dependency_env_template_errors: tuple[str, ...] = ()
-    main_frontend_dependency_env_templates: tuple[DependencyEnvTemplateEntry, ...] = ()
-    main_frontend_dependency_env_section_present = False
-    main_frontend_dependency_env_template_errors: tuple[str, ...] = ()
-    trees_backend_dependency_env_templates: tuple[DependencyEnvTemplateEntry, ...] = ()
-    trees_backend_dependency_env_section_present = False
-    trees_backend_dependency_env_template_errors: tuple[str, ...] = ()
-    trees_frontend_dependency_env_templates: tuple[DependencyEnvTemplateEntry, ...] = ()
-    trees_frontend_dependency_env_section_present = False
-    trees_frontend_dependency_env_template_errors: tuple[str, ...] = ()
-    service_dependency_env_templates: dict[str, tuple[DependencyEnvTemplateEntry, ...]] = {}
-    service_dependency_env_section_present: dict[str, bool] = {}
-    service_dependency_env_template_errors: dict[str, tuple[str, ...]] = {}
-    mode_service_dependency_env_templates: dict[tuple[str, str], tuple[DependencyEnvTemplateEntry, ...]] = {}
-    mode_service_dependency_env_section_present: dict[tuple[str, str], bool] = {}
-    mode_service_dependency_env_template_errors: dict[tuple[str, str], tuple[str, ...]] = {}
-    if active_source_path is not None and active_source_path.is_file():
-        try:
-            file_text = active_source_path.read_text(encoding="utf-8")
-        except OSError:
-            file_text = ""
-        parsed_values = _parse_envctl_text(file_text)
-        (
-            dependency_env_templates,
-            dependency_env_section_present,
-            dependency_env_template_errors,
-        ) = _extract_dependency_env_section(file_text)
-        (
-            backend_dependency_env_templates,
-            backend_dependency_env_section_present,
-            backend_dependency_env_template_errors,
-        ) = _extract_backend_dependency_env_section(file_text)
-        (
-            frontend_dependency_env_templates,
-            frontend_dependency_env_section_present,
-            frontend_dependency_env_template_errors,
-        ) = _extract_frontend_dependency_env_section(file_text)
-        (
-            main_backend_dependency_env_templates,
-            main_backend_dependency_env_section_present,
-            main_backend_dependency_env_template_errors,
-        ) = _extract_mode_service_dependency_env_section(file_text, mode="main", service_name="backend")
-        (
-            main_frontend_dependency_env_templates,
-            main_frontend_dependency_env_section_present,
-            main_frontend_dependency_env_template_errors,
-        ) = _extract_mode_service_dependency_env_section(file_text, mode="main", service_name="frontend")
-        (
-            trees_backend_dependency_env_templates,
-            trees_backend_dependency_env_section_present,
-            trees_backend_dependency_env_template_errors,
-        ) = _extract_mode_service_dependency_env_section(file_text, mode="trees", service_name="backend")
-        (
-            trees_frontend_dependency_env_templates,
-            trees_frontend_dependency_env_section_present,
-            trees_frontend_dependency_env_template_errors,
-        ) = _extract_mode_service_dependency_env_section(file_text, mode="trees", service_name="frontend")
-        (
-            service_dependency_env_templates,
-            service_dependency_env_section_present,
-            service_dependency_env_template_errors,
-        ) = _extract_generic_service_dependency_env_sections(file_text)
-        (
-            mode_service_dependency_env_templates,
-            mode_service_dependency_env_section_present,
-            mode_service_dependency_env_template_errors,
-        ) = _extract_generic_mode_service_dependency_env_sections(file_text)
-
-    return LocalConfigState(
-        base_dir=base_dir,
-        config_file_path=file_path,
-        config_file_exists=file_exists,
-        config_source=source,
-        active_source_path=active_source_path,
-        legacy_source_path=legacy_source_path,
-        explicit_path=resolved_explicit,
-        parsed_values=parsed_values,
-        file_text=file_text,
-        dependency_env_templates=dependency_env_templates,
-        dependency_env_section_present=dependency_env_section_present,
-        dependency_env_template_errors=dependency_env_template_errors,
-        backend_dependency_env_templates=backend_dependency_env_templates,
-        backend_dependency_env_section_present=backend_dependency_env_section_present,
-        backend_dependency_env_template_errors=backend_dependency_env_template_errors,
-        frontend_dependency_env_templates=frontend_dependency_env_templates,
-        frontend_dependency_env_section_present=frontend_dependency_env_section_present,
-        frontend_dependency_env_template_errors=frontend_dependency_env_template_errors,
-        main_backend_dependency_env_templates=main_backend_dependency_env_templates,
-        main_backend_dependency_env_section_present=main_backend_dependency_env_section_present,
-        main_backend_dependency_env_template_errors=main_backend_dependency_env_template_errors,
-        main_frontend_dependency_env_templates=main_frontend_dependency_env_templates,
-        main_frontend_dependency_env_section_present=main_frontend_dependency_env_section_present,
-        main_frontend_dependency_env_template_errors=main_frontend_dependency_env_template_errors,
-        trees_backend_dependency_env_templates=trees_backend_dependency_env_templates,
-        trees_backend_dependency_env_section_present=trees_backend_dependency_env_section_present,
-        trees_backend_dependency_env_template_errors=trees_backend_dependency_env_template_errors,
-        trees_frontend_dependency_env_templates=trees_frontend_dependency_env_templates,
-        trees_frontend_dependency_env_section_present=trees_frontend_dependency_env_section_present,
-        trees_frontend_dependency_env_template_errors=trees_frontend_dependency_env_template_errors,
-        service_dependency_env_templates=service_dependency_env_templates,
-        service_dependency_env_section_present=service_dependency_env_section_present,
-        service_dependency_env_template_errors=service_dependency_env_template_errors,
-        mode_service_dependency_env_templates=mode_service_dependency_env_templates,
-        mode_service_dependency_env_section_present=mode_service_dependency_env_section_present,
-        mode_service_dependency_env_template_errors=mode_service_dependency_env_template_errors,
-    )
 
 
 def _resolved_backend_start_cmd(*, base_dir: Path, resolved: Mapping[str, str]) -> str:
@@ -878,30 +685,6 @@ def _runtime_scope_id(*, base_dir: Path, env: Mapping[str, str], resolved: Mappi
         return normalized or "repo"
     digest = hashlib.sha256(str(base_dir).encode("utf-8")).hexdigest()[:12]
     return f"repo-{digest}"
-
-
-def _resolve_explicit_path(base_dir: Path, explicit_path: str | None) -> Path | None:
-    if not explicit_path:
-        return None
-    path = Path(explicit_path).expanduser()
-    if not path.is_absolute():
-        path = (base_dir / path).resolve()
-    return path
-
-
-def _parse_envctl_text(text: str) -> dict[str, str]:
-    parsed: dict[str, str] = {}
-    for raw_line in _strip_template_sections(text).splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :].strip()
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        parsed[key.strip()] = strip_quotes(value.strip())
-    return parsed
 
 
 def _resolve_path(base_dir: Path, raw: str) -> Path:
