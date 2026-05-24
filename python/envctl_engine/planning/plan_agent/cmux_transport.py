@@ -2,7 +2,6 @@ from __future__ import annotations
 
 # ruff: noqa: F401,F403,F405
 import os
-import shlex
 import shutil
 import subprocess
 import sys
@@ -196,123 +195,25 @@ def _run_surface_bootstrap(
     launch_config: PlanAgentLaunchConfig,
     worktree: CreatedPlanWorktree,
 ) -> str | None:
-    workflow = _build_plan_agent_workflow(
-        cli=launch_config.cli,
-        preset=launch_config.preset,
-        codex_cycles=launch_config.codex_cycles,
-        direct_prompt_enabled=launch_config.direct_prompt_enabled,
-        browser_e2e_followup_enable=launch_config.browser_e2e_followup_enable,
-        pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
-    )
-    error = _prepare_surface(
-        runtime,
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        tab_title=_tab_title_for_worktree(worktree.name),
-        shell_command=_surface_respawn_command(launch_config, worktree),
-    )
-    if error is not None:
-        return error
-    send_errors = _launch_cli_bootstrap_commands(
-        runtime,
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        cwd=worktree.root,
-        cli_command=launch_config.cli_command,
-    )
-    for error in send_errors:
-        if error is not None:
-            return error
-    _wait_for_cli_ready(
-        runtime,
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        cli=launch_config.cli,
-    )
-    goal_error = _maybe_submit_surface_codex_goal(
+    return cmux_bootstrap_support.run_surface_bootstrap(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
         launch_config=launch_config,
-        workflow=workflow,
         worktree=worktree,
+        build_plan_agent_workflow_fn=_build_plan_agent_workflow,
+        prepare_surface_fn=_prepare_surface,
+        tab_title_for_worktree_fn=_tab_title_for_worktree,
+        surface_respawn_command_fn=_surface_respawn_command,
+        launch_cli_bootstrap_commands_fn=_launch_cli_bootstrap_commands,
+        wait_for_cli_ready_fn=_wait_for_cli_ready,
+        maybe_submit_surface_codex_goal_fn=_maybe_submit_surface_codex_goal,
+        workflow_step_prompt_text_fn=_workflow_step_prompt_text,
+        submit_direct_prompt_workflow_step_fn=_submit_direct_prompt_workflow_step,
+        submit_prompt_workflow_step_fn=_submit_prompt_workflow_step,
+        queue_codex_workflow_steps_fn=_queue_codex_workflow_steps,
+        queue_failure_event_context_fn=_queue_failure_event_context,
     )
-    if goal_error is not None:
-        return goal_error
-    if goal_error is None and launch_config.codex_goal_enable and launch_config.cli == "codex":
-        _wait_for_cli_ready(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            cli=launch_config.cli,
-        )
-    initial_step = workflow.steps[0]
-    prompt_text, resolution_error = _workflow_step_prompt_text(
-        runtime,
-        launch_config=launch_config,
-        cli=launch_config.cli,
-        step=initial_step,
-        worktree=worktree,
-    )
-    if resolution_error is not None:
-        return resolution_error
-    if initial_step.kind == "submit_direct_prompt":
-        submit_error = _submit_direct_prompt_workflow_step(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            prompt_text=prompt_text,
-        )
-    else:
-        submit_error = _submit_prompt_workflow_step(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            cli=launch_config.cli,
-            prompt_text=prompt_text,
-        )
-    if submit_error is not None:
-        return submit_error
-    queued_steps = workflow.steps[1:]
-    if queued_steps and launch_config.cli == "codex":
-        queue_error_reason = _queue_codex_workflow_steps(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            worktree=worktree,
-            workflow=workflow,
-            queued_steps=queued_steps,
-            launch_config=launch_config,
-            cli=launch_config.cli,
-        )
-        if queue_error_reason is not None:
-            failure_context = _queue_failure_event_context(queue_error_reason)
-            runtime._emit(
-                "planning.agent_launch.workflow_queue_failed",
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                worktree=worktree.name,
-                cli=launch_config.cli,
-                workflow_mode=workflow.mode,
-                codex_cycles=workflow.codex_cycles,
-                reason=queue_error_reason,
-                transport="cmux",
-                **failure_context,
-            )
-            runtime._emit(
-                "planning.agent_launch.workflow_fallback",
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                worktree=worktree.name,
-                cli=launch_config.cli,
-                workflow_mode=workflow.mode,
-                codex_cycles=workflow.codex_cycles,
-                reason=queue_error_reason,
-                transport="cmux",
-                **failure_context,
-            )
-            return None
-    return None
 
 
 def _run_review_surface_bootstrap(
@@ -326,63 +227,25 @@ def _run_review_surface_bootstrap(
     project_root: Path,
     review_bundle_path: Path | None,
 ) -> str | None:
-    error = _prepare_surface(
+    return cmux_bootstrap_support.run_review_surface_bootstrap(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
-        tab_title=_tab_title_for_worktree(project_name),
-        shell_command=launch_config.shell,
-        failure_event="dashboard.review_tab.failed",
-    )
-    if error is not None:
-        return error
-    send_errors = _launch_cli_bootstrap_commands(
-        runtime,
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        cwd=repo_root,
-        cli_command=launch_config.cli_command,
-        failure_event="dashboard.review_tab.failed",
-    )
-    for send_error in send_errors:
-        if send_error is not None:
-            return send_error
-    _wait_for_cli_ready(
-        runtime,
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        cli=launch_config.cli,
-    )
-    review_arguments = _review_prompt_arguments(
+        launch_config=launch_config,
+        repo_root=repo_root,
         project_name=project_name,
         project_root=project_root,
         review_bundle_path=review_bundle_path,
-        original_plan_path=_review_original_plan_path(project_name, project_root, repo_root=repo_root),
-    )
-    prompt_text, resolution_error = _resolve_preset_submission_text(
-        runtime,
-        launch_config=launch_config,
-        cli=launch_config.cli,
-        preset=_REVIEW_WORKTREE_PRESET,
-        arguments=review_arguments,
-    )
-    if resolution_error is not None:
-        return resolution_error
-    if _uses_direct_submission(cli=launch_config.cli, direct_prompt_enabled=launch_config.direct_prompt_enabled):
-        return _submit_direct_prompt_workflow_step(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            prompt_text=prompt_text,
-            failure_event="dashboard.review_tab.failed",
-        )
-    return _submit_prompt_workflow_step(
-        runtime,
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        cli=launch_config.cli,
-        prompt_text=prompt_text,
-        failure_event="dashboard.review_tab.failed",
+        prepare_surface_fn=_prepare_surface,
+        tab_title_for_worktree_fn=_tab_title_for_worktree,
+        launch_cli_bootstrap_commands_fn=_launch_cli_bootstrap_commands,
+        wait_for_cli_ready_fn=_wait_for_cli_ready,
+        review_prompt_arguments_fn=_review_prompt_arguments,
+        review_original_plan_path_fn=_review_original_plan_path,
+        resolve_preset_submission_text_fn=_resolve_preset_submission_text,
+        uses_direct_submission_fn=_uses_direct_submission,
+        submit_direct_prompt_workflow_step_fn=_submit_direct_prompt_workflow_step,
+        submit_prompt_workflow_step_fn=_submit_prompt_workflow_step,
     )
 
 
@@ -548,37 +411,16 @@ def _launch_cli_bootstrap_commands(
     cli_command: str,
     failure_event: str = "planning.agent_launch.failed",
 ) -> list[str | None]:
-    typed_root = shlex.quote(str(cwd))
-    return [
-        _send_surface_text(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            text=f"cd {typed_root}",
-            failure_event=failure_event,
-        ),
-        _send_surface_key(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            key="enter",
-            failure_event=failure_event,
-        ),
-        _send_surface_text(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            text=cli_command,
-            failure_event=failure_event,
-        ),
-        _send_surface_key(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            key="enter",
-            failure_event=failure_event,
-        ),
-    ]
+    return cmux_workflow_submission_support.launch_cli_bootstrap_commands(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        cwd=cwd,
+        cli_command=cli_command,
+        send_surface_text_fn=_send_surface_text,
+        send_surface_key_fn=_send_surface_key,
+        failure_event=failure_event,
+    )
 
 
 def _surface_id_from_output(raw: str) -> str | None:

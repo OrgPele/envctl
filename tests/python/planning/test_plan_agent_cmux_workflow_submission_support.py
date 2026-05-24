@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from envctl_engine.planning.plan_agent.cmux_workflow_submission_support import (
+    launch_cli_bootstrap_commands,
     queue_codex_workflow_steps,
     submit_direct_prompt_workflow_step,
     submit_prompt_workflow_step,
@@ -37,6 +38,39 @@ def _launch_config(*, codex_goal_enable: bool = True) -> PlanAgentLaunchConfig:
 
 
 class PlanAgentCmuxWorkflowSubmissionSupportTests(unittest.TestCase):
+    def test_launch_cli_bootstrap_commands_cd_then_launches_cli(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def send_surface_text_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003
+            calls.append(("text", kwargs["text"]))
+            return None
+
+        def send_surface_key_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003
+            calls.append(("key", kwargs["key"]))
+            return None
+
+        self.assertEqual(
+            launch_cli_bootstrap_commands(
+                SimpleNamespace(),
+                workspace_id="workspace:1",
+                surface_id="surface:2",
+                cwd=Path("/repo/trees/feature a/1"),
+                cli_command="codex --flag",
+                send_surface_text_fn=send_surface_text_fn,
+                send_surface_key_fn=send_surface_key_fn,
+            ),
+            [None, None, None, None],
+        )
+        self.assertEqual(
+            calls,
+            [
+                ("text", "cd '/repo/trees/feature a/1'"),
+                ("key", "enter"),
+                ("text", "codex --flag"),
+                ("key", "enter"),
+            ],
+        )
+
     def test_prompt_submission_preserves_picker_and_submit_sequence(self) -> None:
         calls: list[tuple[str, str]] = []
 

@@ -263,10 +263,13 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "cmux_bootstrap_support.py": {
                 "complete_review_surface_bootstrap",
                 "complete_surface_bootstrap",
+                "run_review_surface_bootstrap",
+                "run_surface_bootstrap",
                 "start_background_review_surface_bootstrap",
                 "start_background_surface_bootstrap",
             },
             "cmux_workflow_submission_support.py": {
+                "launch_cli_bootstrap_commands",
                 "queue_codex_workflow_steps",
                 "submit_direct_prompt_workflow_step",
                 "submit_prompt_workflow_step",

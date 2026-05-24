@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import shlex
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from envctl_engine.planning.plan_agent.constants import (
@@ -32,6 +34,50 @@ WaitForPromptReadyFn = Callable[..., None]
 WorkflowStepPromptTextFn = Callable[..., tuple[str, str | None]]
 QueueCodexMessageFn = Callable[..., bool]
 CodexGoalTextForWorktreeFn = Callable[..., str]
+
+
+def launch_cli_bootstrap_commands(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    cwd: Path,
+    cli_command: str,
+    send_surface_text_fn: SendPromptTextFn,
+    send_surface_key_fn: SendSurfaceKeyFn,
+    failure_event: str = "planning.agent_launch.failed",
+) -> list[str | None]:
+    typed_root = shlex.quote(str(cwd))
+    return [
+        send_surface_text_fn(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            text=f"cd {typed_root}",
+            failure_event=failure_event,
+        ),
+        send_surface_key_fn(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            key="enter",
+            failure_event=failure_event,
+        ),
+        send_surface_text_fn(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            text=cli_command,
+            failure_event=failure_event,
+        ),
+        send_surface_key_fn(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            key="enter",
+            failure_event=failure_event,
+        ),
+    ]
 
 
 def submit_prompt_workflow_step(
