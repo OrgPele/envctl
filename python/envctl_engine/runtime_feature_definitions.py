@@ -371,6 +371,8 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         python_source_of_truth=(
             "python/envctl_engine/runtime/inspection_support.py",
             "python/envctl_engine/state/action_orchestrator.py",
+            "python/envctl_engine/state/action_command_support.py",
+            "python/envctl_engine/state/action_log_support.py",
         ),
         evidence_tests=("tests/python/runtime/test_logs_parity.py",),
         parity_status="verified_python",
@@ -383,6 +385,8 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         shell_source_of_truth=(),
         python_source_of_truth=(
             "python/envctl_engine/state/action_orchestrator.py",
+            "python/envctl_engine/state/action_command_support.py",
+            "python/envctl_engine/state/action_log_support.py",
             "python/envctl_engine/runtime/inspection_support.py",
         ),
         evidence_tests=(
@@ -400,6 +404,8 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         python_source_of_truth=(
             "python/envctl_engine/runtime/inspection_support.py",
             "python/envctl_engine/runtime/engine_runtime_service_truth.py",
+            "python/envctl_engine/state/action_command_support.py",
+            "python/envctl_engine/state/action_health_support.py",
         ),
         evidence_tests=("tests/python/runtime/test_runtime_health_truth.py",),
         parity_status="verified_python",
@@ -413,6 +419,8 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         python_source_of_truth=(
             "python/envctl_engine/runtime/inspection_support.py",
             "python/envctl_engine/runtime/engine_runtime_service_truth.py",
+            "python/envctl_engine/state/action_command_support.py",
+            "python/envctl_engine/state/action_log_support.py",
         ),
         evidence_tests=(
             "tests/python/runtime/test_runtime_health_truth.py",

@@ -420,22 +420,28 @@ class StructureLayoutTests(unittest.TestCase):
     def test_state_action_orchestrator_has_log_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_log_support.py"
         health_owner = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_health_support.py"
+        command_owner = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_command_support.py"
         orchestrator = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_orchestrator.py"
 
         self.assertTrue(owner.is_file())
         self.assertTrue(health_owner.is_file())
+        self.assertTrue(command_owner.is_file())
         owner_text = owner.read_text(encoding="utf-8")
         health_owner_text = health_owner.read_text(encoding="utf-8")
+        command_owner_text = command_owner.read_text(encoding="utf-8")
         self.assertIn("class StateActionLogSupport", owner_text)
         self.assertIn("def logs_payload", owner_text)
         self.assertIn("def clear_service_logs", owner_text)
         self.assertIn("class StateActionHealthSupport", health_owner_text)
         self.assertIn("def health_payload", health_owner_text)
         self.assertIn("def health_service_rows", health_owner_text)
+        self.assertIn("class StateActionCommandRunner", command_owner_text)
+        self.assertIn("def execute_state_action", command_owner_text)
         orchestrator_text = orchestrator.read_text(encoding="utf-8")
         self.assertIn("StateActionLogSupport", orchestrator_text)
         self.assertIn("StateActionHealthSupport", orchestrator_text)
-        self.assertLessEqual(len(orchestrator_text.splitlines()), 760)
+        self.assertIn("execute_state_action", orchestrator_text)
+        self.assertLessEqual(len(orchestrator_text.splitlines()), 360)
 
     def test_runtime_feature_inventory_has_contract_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_contracts.py"

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-24T19:52:27+00:00",
+  "generated_at": "2026-05-24T20:00:39+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -459,6 +459,8 @@
       "shell_source_of_truth": [],
       "python_source_of_truth": [
         "python/envctl_engine/state/action_orchestrator.py",
+        "python/envctl_engine/state/action_command_support.py",
+        "python/envctl_engine/state/action_log_support.py",
         "python/envctl_engine/runtime/inspection_support.py"
       ],
       "evidence_tests": [
@@ -708,7 +710,9 @@
       "shell_source_of_truth": [],
       "python_source_of_truth": [
         "python/envctl_engine/runtime/inspection_support.py",
-        "python/envctl_engine/runtime/engine_runtime_service_truth.py"
+        "python/envctl_engine/runtime/engine_runtime_service_truth.py",
+        "python/envctl_engine/state/action_command_support.py",
+        "python/envctl_engine/state/action_log_support.py"
       ],
       "evidence_tests": [
         "tests/python/runtime/test_runtime_health_truth.py",
@@ -746,7 +750,9 @@
       "shell_source_of_truth": [],
       "python_source_of_truth": [
         "python/envctl_engine/runtime/inspection_support.py",
-        "python/envctl_engine/runtime/engine_runtime_service_truth.py"
+        "python/envctl_engine/runtime/engine_runtime_service_truth.py",
+        "python/envctl_engine/state/action_command_support.py",
+        "python/envctl_engine/state/action_health_support.py"
       ],
       "evidence_tests": [
         "tests/python/runtime/test_runtime_health_truth.py"
@@ -864,7 +870,9 @@
       "shell_source_of_truth": [],
       "python_source_of_truth": [
         "python/envctl_engine/runtime/inspection_support.py",
-        "python/envctl_engine/state/action_orchestrator.py"
+        "python/envctl_engine/state/action_orchestrator.py",
+        "python/envctl_engine/state/action_command_support.py",
+        "python/envctl_engine/state/action_log_support.py"
       ],
       "evidence_tests": [
         "tests/python/runtime/test_logs_parity.py"
