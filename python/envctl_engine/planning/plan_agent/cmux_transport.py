@@ -33,6 +33,7 @@ import envctl_engine.planning.plan_agent.cmux_surface_support as cmux_surface_su
 import envctl_engine.planning.plan_agent.cmux_workflow_submission_support as cmux_workflow_submission_support
 import envctl_engine.planning.plan_agent.cmux_goal_support as cmux_goal_support
 import envctl_engine.planning.plan_agent.cmux_bootstrap_support as cmux_bootstrap_support
+import envctl_engine.planning.plan_agent.cmux_worktree_launch_support as cmux_worktree_launch_support
 from envctl_engine.planning.plan_agent.constants import *
 from envctl_engine.planning.plan_agent.models import *
 from envctl_engine.planning.plan_agent.config import *
@@ -162,46 +163,14 @@ def _launch_single_worktree(
     worktree: CreatedPlanWorktree,
     starter_surface_id: str | None = None,
 ) -> PlanAgentLaunchOutcome:
-    surface_source = "starter_reused" if starter_surface_id else "new_surface"
-    if starter_surface_id:
-        surface_id = starter_surface_id
-        create_error = None
-    else:
-        surface_id, create_error = _create_surface(runtime, workspace_id=workspace_id)
-    if create_error or surface_id is None:
-        runtime._emit(
-            "planning.agent_launch.failed",
-            reason="surface_create_failed",
-            workspace_id=workspace_id,
-            worktree=worktree.name,
-            error=create_error,
-        )
-        return PlanAgentLaunchOutcome(
-            worktree_name=worktree.name,
-            worktree_root=worktree.root,
-            surface_id=None,
-            status="failed",
-            reason=create_error or "surface_create_failed",
-        )
-    runtime._emit(
-        "planning.agent_launch.surface_created",
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        worktree=worktree.name,
-        source=surface_source,
-    )
-    _start_background_surface_bootstrap(
+    return cmux_worktree_launch_support.launch_single_worktree(
         runtime,
         workspace_id=workspace_id,
-        surface_id=surface_id,
         launch_config=launch_config,
         worktree=worktree,
-    )
-    return PlanAgentLaunchOutcome(
-        worktree_name=worktree.name,
-        worktree_root=worktree.root,
-        surface_id=surface_id,
-        status="launched",
+        starter_surface_id=starter_surface_id,
+        create_surface_fn=_create_surface,
+        start_background_surface_bootstrap_fn=_start_background_surface_bootstrap,
     )
 
 

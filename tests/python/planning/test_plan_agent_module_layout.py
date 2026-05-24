@@ -40,6 +40,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "cmux_transport.py",
             "cmux_bootstrap_support.py",
             "cmux_goal_support.py",
+            "cmux_worktree_launch_support.py",
             "config.py",
             "constants.py",
             "launch.py",
@@ -272,6 +273,9 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "maybe_submit_surface_codex_goal",
                 "submit_surface_codex_goal",
                 "wait_for_surface_codex_goal_active",
+            },
+            "cmux_worktree_launch_support.py": {
+                "launch_single_worktree",
             },
             "cmux_workspace_support.py": {
                 "ensure_workspace_id",
