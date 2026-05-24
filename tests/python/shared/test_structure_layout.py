@@ -194,6 +194,10 @@ class StructureLayoutTests(unittest.TestCase):
             "test_plan_agent_launch_superset.py",
             "test_plan_agent_launch_tmux.py",
             "test_plan_agent_launch_workflow.py",
+            "test_plan_agent_launch_workflow_build.py",
+            "test_plan_agent_launch_workflow_prompt.py",
+            "test_plan_agent_launch_workflow_queue.py",
+            "test_plan_agent_launch_workflow_titles.py",
         ]
 
         for filename in expected:
@@ -206,6 +210,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertLessEqual(len(cmux_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
         omx_breadcrumb = planning_tests / "test_plan_agent_launch_omx.py"
         self.assertLessEqual(len(omx_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
+        workflow_breadcrumb = planning_tests / "test_plan_agent_launch_workflow.py"
+        self.assertLessEqual(len(workflow_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
 
     def test_planning_worktree_setup_tests_are_split_by_owner(self) -> None:
         planning_tests = REPO_ROOT / "tests" / "python" / "planning"
