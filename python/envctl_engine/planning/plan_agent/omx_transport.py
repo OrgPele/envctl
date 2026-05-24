@@ -2,9 +2,6 @@ from __future__ import annotations
 
 # ruff: noqa: F401,F403,F405
 import json
-import os
-import re
-import shlex
 import shutil
 import subprocess
 import threading
@@ -36,6 +33,7 @@ from envctl_engine.planning.plan_agent.workflow import *
 from envctl_engine.planning.plan_agent.terminal_screen import *
 from envctl_engine.planning.plan_agent.recovery import *
 from envctl_engine.planning.plan_agent.tmux_session import *
+from envctl_engine.planning.plan_agent import omx_spawn_support
 
 
 def _launch_plan_agent_omx_terminals(
@@ -365,12 +363,11 @@ def _cleanup_stale_omx_tmux_locks_under_root(root: Path) -> bool:
 
 
 def _utc_timestamp_from_epoch(value: float | None = None) -> str:
-    timestamp = time.time() if value is None else value
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp))
+    return omx_spawn_support.utc_timestamp_from_epoch(value)
 
 
 def _bounded_process_output_excerpt(value: object) -> str:
-    return str(value or "")[:_OMX_SPAWN_OUTPUT_EXCERPT_CHARS]
+    return omx_spawn_support.bounded_process_output_excerpt(value)
 
 
 def _omx_spawn_metadata_payload(
@@ -383,31 +380,23 @@ def _omx_spawn_metadata_payload(
     started_at: str,
     madmax: bool,
 ) -> dict[str, object]:
-    return {
-        "pid": getattr(process, "pid", None),
-        "command": list(command),
-        "popen_command": list(popen_command),
-        "worktree": worktree.name,
-        "worktree_root": str(Path(worktree.root).resolve(strict=False)),
-        "omx_root": str(Path(omx_root).resolve(strict=False)),
-        "transport": "omx",
-        "madmax": bool(madmax),
-        "started_at": started_at,
-        "phase": "spawn",
-    }
+    return omx_spawn_support.omx_spawn_metadata_payload(
+        process=process,
+        command=command,
+        popen_command=popen_command,
+        worktree=worktree,
+        omx_root=omx_root,
+        started_at=started_at,
+        madmax=madmax,
+    )
 
 
 def _retained_omx_spawn_process(record: object) -> object:
-    return getattr(record, "process", record)
+    return omx_spawn_support.retained_omx_spawn_process(record)
 
 
 def _retained_omx_spawn_returncode(record: object) -> object:
-    process = _retained_omx_spawn_process(record)
-    poll = getattr(process, "poll", None)
-    try:
-        return poll() if callable(poll) else getattr(process, "returncode", None)
-    except Exception:
-        return None
+    return omx_spawn_support.retained_omx_spawn_returncode(record)
 
 
 def _retained_omx_spawn_event_payload(
@@ -417,49 +406,20 @@ def _retained_omx_spawn_event_payload(
     worktree: CreatedPlanWorktree | None,
     returncode: object,
 ) -> dict[str, object]:
-    process = _retained_omx_spawn_process(record)
-    record_worktree_root = getattr(record, "worktree_root", None)
-    if record_worktree_root is None and worktree is not None:
-        record_worktree_root = worktree.root
-    record_omx_root = getattr(record, "omx_root", None)
-    if record_omx_root is None and worktree is not None:
-        record_omx_root = _deterministic_omx_root_for_worktree(worktree)
-    command = getattr(record, "command", None) or getattr(process, "args", None) or ()
-    popen_command = getattr(record, "popen_command", None) or getattr(process, "args", None) or ()
-    payload: dict[str, object] = {
-        "pid": getattr(process, "pid", None),
-        "returncode": returncode,
-        "session_name": session_name,
-        "command": [str(part) for part in command],
-        "popen_command": [str(part) for part in popen_command],
-        "worktree": str(getattr(record, "worktree_name", "") or getattr(worktree, "name", "") or "") or None,
-        "transport": "omx",
-    }
-    if record_worktree_root is not None:
-        payload["worktree_root"] = str(Path(record_worktree_root).resolve(strict=False))
-    if record_omx_root is not None:
-        payload["omx_root"] = str(Path(record_omx_root).resolve(strict=False))
-    if getattr(record, "started_at", ""):
-        payload["started_at"] = str(getattr(record, "started_at"))
-    if hasattr(record, "madmax"):
-        payload["madmax"] = bool(getattr(record, "madmax"))
-    return payload
+    return omx_spawn_support.retained_omx_spawn_event_payload(
+        record,
+        session_name=session_name,
+        worktree=worktree,
+        returncode=returncode,
+    )
 
 
 def _deterministic_omx_root_for_worktree(worktree: CreatedPlanWorktree) -> Path:
-    token = _sanitize_omx_tmux_token(worktree.name)
-    return Path(worktree.root).resolve() / ".envctl-state" / "omx" / token
+    return omx_spawn_support.deterministic_omx_root_for_worktree(worktree)
 
 
 def _omx_spawn_failure_text(*, returncode: object, stdout: str, stderr: str) -> str:
-    for stream in (stderr, stdout):
-        lines = [line.strip() for line in str(stream or "").splitlines() if line.strip()]
-        if lines:
-            return lines[0]
-    normalized_code = "" if returncode is None else str(returncode).strip()
-    if normalized_code:
-        return f"omx exited with status {normalized_code}"
-    return "omx exited before creating a managed session"
+    return omx_spawn_support.omx_spawn_failure_text(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 def _omx_attach_target_state_check(
@@ -919,8 +879,7 @@ def _omx_attach_discovery_diagnostics(runtime: Any, worktree: CreatedPlanWorktre
 
 
 def _sanitize_omx_tmux_token(value: str) -> str:
-    cleaned = re.sub(r"[^a-z0-9]+", "-", str(value).strip().lower()).strip("-")
-    return cleaned or "unknown"
+    return omx_spawn_support.sanitize_omx_tmux_token(value)
 
 
 def _git_branch_name(cwd: Path) -> str | None:
@@ -971,28 +930,11 @@ def _omx_tmux_session_name(worktree_root: Path, session_id: str) -> str:
 
 
 def _omx_launch_env(runtime: Any) -> dict[str, str]:
-    env = dict(os.environ)
-    env.update(dict(getattr(runtime, "env", {})))
-    home = str(env.get("HOME") or "").strip()
-    if home and not str(env.get("CODEX_HOME") or "").strip():
-        codex_home = Path(home).expanduser() / ".codex"
-        if codex_home.exists():
-            env["CODEX_HOME"] = str(codex_home)
-    env.pop("TMUX", None)
-    env.pop("TMUX_PANE", None)
-    return env
+    return omx_spawn_support.omx_launch_env(runtime)
 
 
 def _retain_omx_spawn_process(runtime: Any, record: object) -> None:
-    retained = getattr(runtime, "_omx_spawn_processes", None)
-    if not isinstance(retained, list):
-        retained = []
-        try:
-            setattr(runtime, "_omx_spawn_processes", retained)
-        except Exception:
-            return
-    retained[:] = [item for item in retained if _retained_omx_spawn_returncode(item) is None]
-    retained.append(record)
+    omx_spawn_support.retain_omx_spawn_process(runtime, record)
 
 
 def _find_existing_omx_attach_target(
@@ -1078,96 +1020,18 @@ def _spawn_omx_session_for_worktree(
     launch_config: PlanAgentLaunchConfig,
     worktree: CreatedPlanWorktree,
 ) -> str | None:
-    omx_root = _omx_runtime_root_for_worktree(runtime, worktree)
-    try:
-        omx_root.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        return str(exc)
-    _cleanup_stale_omx_tmux_locks(runtime, worktree_root=worktree.root, omx_root=omx_root)
-    cli_command = shlex.split(launch_config.cli_command) if str(launch_config.cli_command).strip() else []
-    wants_bypass = any(token == _CODEX_BYPASS_FLAGS for token in cli_command[1:])
-    command = ["omx", "--tmux"]
-    if wants_bypass:
-        command.append("--madmax")
-    popen_command = ["script", "-qfc", shlex.join(command), "/dev/null"]
-    env = _omx_launch_env(runtime)
-    env["OMX_ROOT"] = str(omx_root)
-    env["OMX_LAUNCH_POLICY"] = "detached-tmux"
-    if launch_config.omx_workflow == "team":
-        env["OMX_TEAM_WORKER_LAUNCH_ARGS"] = _CODEX_BYPASS_FLAGS
-    runtime._emit(
-        "planning.agent_launch.omx_state_root_selected",
-        worktree=worktree.name,
-        omx_root=str(omx_root),
-        transport="omx",
-    )
-    started_at = _utc_timestamp_from_epoch()
-    try:
-        process = subprocess.Popen(
-            popen_command,
-            cwd=str(Path(worktree.root).resolve()),
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
-    except OSError as exc:
-        return str(exc)
-    spawn_payload = _omx_spawn_metadata_payload(
-        process=process,
-        command=tuple(command),
-        popen_command=tuple(popen_command),
-        worktree=worktree,
-        omx_root=omx_root,
-        started_at=started_at,
-        madmax=wants_bypass,
-    )
-    runtime._emit("planning.agent_launch.omx_spawn.started", **spawn_payload)
-    if process.poll() is not None:
-        if _read_omx_session_id(runtime, worktree):
-            return None
-        try:
-            stdout, stderr = process.communicate(timeout=0.5)
-        except TypeError:
-            stdout, stderr = process.communicate()
-        except Exception:
-            stdout, stderr = "", ""
-        error = _omx_spawn_failure_text(
-            returncode=getattr(process, "returncode", None),
-            stdout=stdout,
-            stderr=stderr,
-        )
-        runtime._emit(
-            "planning.agent_launch.omx_spawn.failed",
-            **spawn_payload,
-            returncode=getattr(process, "returncode", None),
-            error=error,
-            stdout_excerpt=_bounded_process_output_excerpt(stdout),
-            stderr_excerpt=_bounded_process_output_excerpt(stderr),
-        )
-        return error
-    process_stdout = getattr(process, "stdout", None)
-    if process_stdout is not None:
-        process_stdout.close()
-    process_stderr = getattr(process, "stderr", None)
-    if process_stderr is not None:
-        process_stderr.close()
-    _retain_omx_spawn_process(
+    return omx_spawn_support.spawn_omx_session_for_worktree(
         runtime,
-        _OmxSpawnProcessRecord(
-            process=process,
-            command=tuple(command),
-            popen_command=tuple(popen_command),
-            worktree_name=worktree.name,
-            worktree_root=Path(worktree.root).resolve(strict=False),
-            omx_root=Path(omx_root).resolve(strict=False),
-            started_at=started_at,
-            madmax=wants_bypass,
-        ),
+        launch_config=launch_config,
+        worktree=worktree,
+        omx_runtime_root_for_worktree_fn=_omx_runtime_root_for_worktree,
+        cleanup_stale_locks_fn=_cleanup_stale_omx_tmux_locks,
+        omx_launch_env_fn=_omx_launch_env,
+        utc_timestamp_from_epoch_fn=_utc_timestamp_from_epoch,
+        read_omx_session_id_fn=_read_omx_session_id,
+        retain_omx_spawn_process_fn=_retain_omx_spawn_process,
+        popen_factory=subprocess.Popen,
     )
-    return None
 
 
 __all__ = tuple(name for name in globals() if not name.startswith("__"))
