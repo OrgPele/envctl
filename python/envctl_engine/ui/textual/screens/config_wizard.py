@@ -31,6 +31,7 @@ from envctl_engine.ui.textual.list_row_styles import (
     selectable_list_row_classes,
 )
 from . import config_wizard_components as component_policy
+from . import config_wizard_values as value_policy
 from .config_wizard_components import ComponentRow
 from .config_wizard_fields import (
     CONFIG_ROW_STYLES_CSS,
@@ -51,7 +52,6 @@ from .config_wizard_fields import (
     _directory_hint_id,
     _directory_input_id,
     _directory_validation_message,
-    _entrypoint_validation_message,
     _field_label_id,
     _field_placeholder,
     _hydrate_wizard_values,
@@ -862,33 +862,7 @@ def run_config_wizard_textual(
                 self.query_one("#btn-next", Button).focus()
 
         def _field_value(self, field_name: str) -> int | str:
-            if field_name == "backend_dir_name":
-                return self.values.backend_dir_name
-            if field_name == "frontend_dir_name":
-                return self.values.frontend_dir_name
-            if field_name == "backend_start_cmd":
-                return self.values.backend_start_cmd
-            if field_name == "frontend_start_cmd":
-                return self.values.frontend_start_cmd
-            if field_name == "backend_test_cmd":
-                return self.values.backend_test_cmd
-            if field_name == "frontend_test_cmd":
-                return self.values.frontend_test_cmd
-            if field_name == "frontend_test_path":
-                return self.values.frontend_test_path
-            if field_name == "backend_port_base":
-                return self.values.port_defaults.backend_port_base
-            if field_name == "frontend_port_base":
-                return self.values.port_defaults.frontend_port_base
-            if field_name == "db_port_base":
-                return self.values.port_defaults.db_port_base
-            if field_name == "redis_port_base":
-                return self.values.port_defaults.redis_port_base
-            if field_name == "n8n_port_base":
-                return self.values.port_defaults.n8n_port_base
-            if field_name == "port_spacing":
-                return self.values.port_defaults.port_spacing
-            return 0
+            return value_policy.wizard_field_value(self.values, field_name)
 
         def _sync_startup_enable_flags(self) -> None:
             component_policy.sync_startup_enable_flags(
@@ -1256,53 +1230,41 @@ def run_config_wizard_textual(
                 if self._current_step() == "directories"
                 else _visible_command_fields(self.values)
             )
+            raw_values: dict[str, str] = {}
             for field_name, label in visible_fields:
                 directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
                 raw = directory_input.value.strip()
-                if field_name in {"backend_start_cmd", "frontend_start_cmd"}:
-                    directory_error = _entrypoint_validation_message(label, raw)
-                elif field_name in {"backend_test_cmd", "frontend_test_cmd"}:
-                    directory_error = None
-                elif field_name == "frontend_test_path":
-                    directory_error = _directory_validation_message(local_state.base_dir, label, raw) if raw else None
-                else:
-                    directory_error = _directory_validation_message(local_state.base_dir, label, raw)
+                raw_values[field_name] = raw
                 self._refresh_directory_validation(field_name, raw=raw)
                 self._refresh_field_hint(field_name, raw=raw)
-                if directory_error is not None:
-                    self._refresh_status(directory_error)
-                    directory_input.focus()
-                    return False
-                setattr(self.values, field_name, raw)
+            result = value_policy.apply_text_field_values(
+                self.values,
+                base_dir=local_state.base_dir,
+                visible_fields=visible_fields,
+                raw_values=raw_values,
+            )
+            if not result.valid:
+                self._refresh_status(result.error_message or "Invalid configuration value.")
+                if result.focus_field is not None:
+                    self.query_one(f"#{_directory_input_id(result.focus_field)}", Input).focus()
+                return False
             return True
 
         def _apply_port_inputs(self) -> bool:
-            new_values: dict[str, int] = {}
-            for field_name, label in _visible_port_fields(self.values):
+            raw_values: dict[str, str] = {}
+            visible_fields = _visible_port_fields(self.values)
+            for field_name, _label in visible_fields:
                 port_input = self.query_one(f"#{_port_input_id(field_name)}", Input)
-                raw = port_input.value.strip()
-                if not raw.isdigit() or int(raw) < 1:
-                    self._refresh_status(f"{label} must be a positive integer.")
-                    port_input.focus()
-                    return False
-                new_values[field_name] = int(raw)
-            for field_name, value in new_values.items():
-                if field_name == "backend_port_base":
-                    self.values.port_defaults.backend_port_base = value
-                elif field_name == "frontend_port_base":
-                    self.values.port_defaults.frontend_port_base = value
-                elif field_name == "db_port_base":
-                    self.values.port_defaults.dependency_ports.setdefault("postgres", {})["primary"] = value
-                    self.values.port_defaults.dependency_ports.setdefault("supabase", {})["db"] = value
-                elif field_name == "redis_port_base":
-                    self.values.port_defaults.dependency_ports.setdefault("redis", {})["primary"] = value
-                elif field_name == "n8n_port_base":
-                    self.values.port_defaults.dependency_ports.setdefault("n8n", {})["primary"] = value
-                elif field_name == "port_spacing":
-                    self.values.port_defaults.port_spacing = value
-            validation = validate_managed_values(self.values)
-            if not validation.valid:
-                self._refresh_status(validation.errors[0])
+                raw_values[field_name] = port_input.value.strip()
+            result = value_policy.apply_port_field_values(
+                self.values,
+                visible_fields=visible_fields,
+                raw_values=raw_values,
+            )
+            if not result.valid:
+                self._refresh_status(result.error_message or "Invalid port configuration.")
+                if result.focus_field is not None:
+                    self.query_one(f"#{_port_input_id(result.focus_field)}", Input).focus()
                 return False
             return True
 
