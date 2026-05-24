@@ -419,11 +419,13 @@ class StructureLayoutTests(unittest.TestCase):
     def test_config_dependency_env_templates_have_owned_module(self) -> None:
         models_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "models.py"
         defaults_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "defaults.py"
+        service_parsing_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "service_parsing.py"
         owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "dependency_env_templates.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "config" / "__init__.py"
 
         self.assertTrue(models_owner.is_file())
         self.assertTrue(defaults_owner.is_file())
+        self.assertTrue(service_parsing_owner.is_file())
         self.assertTrue(owner.is_file())
         models_text = models_owner.read_text(encoding="utf-8")
         self.assertIn("class EngineConfig", models_text)
@@ -432,6 +434,10 @@ class StructureLayoutTests(unittest.TestCase):
         defaults_text = defaults_owner.read_text(encoding="utf-8")
         self.assertIn("DEFAULTS: dict[str, str]", defaults_text)
         self.assertIn("MANAGED_CONFIG_KEYS", defaults_text)
+        service_parsing_text = service_parsing_owner.read_text(encoding="utf-8")
+        self.assertIn("def _parse_additional_services", service_parsing_text)
+        self.assertIn("def _parse_supabase_auth_users", service_parsing_text)
+        self.assertIn("def _validate_additional_service_dependencies", service_parsing_text)
         owner_text = owner.read_text(encoding="utf-8")
         self.assertIn("class DependencyEnvTemplateEntry", owner_text)
         self.assertIn("def parse_dependency_env_section", owner_text)
@@ -441,7 +447,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.config.dependency_env_templates import", facade_text)
         self.assertIn("from envctl_engine.config.models import", facade_text)
         self.assertIn("from envctl_engine.config.defaults import", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 1200)
+        self.assertIn("from envctl_engine.config.service_parsing import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 980)
 
     def test_prompt_install_support_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
