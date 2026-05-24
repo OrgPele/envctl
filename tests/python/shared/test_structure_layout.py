@@ -717,16 +717,23 @@ class StructureLayoutTests(unittest.TestCase):
     def test_service_bootstrap_env_has_owned_module(self) -> None:
         env_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_env_support.py"
         runtime_state_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_runtime_state_support.py"
+        frontend_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_frontend_bootstrap_support.py"
+        )
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_bootstrap_domain.py"
 
         self.assertTrue(env_owner.is_file())
         self.assertTrue(runtime_state_owner.is_file())
+        self.assertTrue(frontend_owner.is_file())
         owner_text = env_owner.read_text(encoding="utf-8")
         self.assertIn("def _resolve_backend_env_contract", owner_text)
         self.assertIn("def _service_env_from_file", owner_text)
         runtime_state_text = runtime_state_owner.read_text(encoding="utf-8")
         self.assertIn("def _backend_runtime_prep_required", runtime_state_text)
         self.assertIn("def _frontend_runtime_prep_required", runtime_state_text)
+        frontend_text = frontend_owner.read_text(encoding="utf-8")
+        self.assertIn("def _prepare_frontend_runtime", frontend_text)
+        self.assertIn("def _frontend_install_commands", frontend_text)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn(
             "from envctl_engine.startup.service_env_support import",
@@ -736,7 +743,11 @@ class StructureLayoutTests(unittest.TestCase):
             "from envctl_engine.startup.service_runtime_state_support import",
             facade_text,
         )
-        self.assertLessEqual(len(facade_text.splitlines()), 1050)
+        self.assertIn(
+            "from envctl_engine.startup.service_frontend_bootstrap_support import",
+            facade_text,
+        )
+        self.assertLessEqual(len(facade_text.splitlines()), 850)
 
     def test_repo_local_launcher_is_python_script(self) -> None:
         launcher = REPO_ROOT / "bin" / "envctl"
