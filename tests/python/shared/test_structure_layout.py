@@ -255,6 +255,13 @@ class StructureLayoutTests(unittest.TestCase):
         pr_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_pr_message_support.py"
         review_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_output_support.py"
         review_plan_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_plan_support.py"
+        review_original_plan_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_original_plan_support.py"
+        )
+        review_base_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_base_support.py"
+        review_iteration_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_iteration_support.py"
+        )
         git_state_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_git_state_support.py"
         ship_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_support.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_domain.py"
@@ -264,6 +271,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(pr_owner.is_file())
         self.assertTrue(review_owner.is_file())
         self.assertTrue(review_plan_owner.is_file())
+        self.assertTrue(review_original_plan_owner.is_file())
+        self.assertTrue(review_base_owner.is_file())
+        self.assertTrue(review_iteration_owner.is_file())
         self.assertTrue(git_state_owner.is_file())
         self.assertTrue(ship_owner.is_file())
         commit_text = commit_owner.read_text(encoding="utf-8")
@@ -273,7 +283,14 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("partition_envctl_protected_paths", protected_owner.read_text(encoding="utf-8"))
         self.assertIn("pr_body", pr_owner.read_text(encoding="utf-8"))
         self.assertIn("print_review_completion", review_owner.read_text(encoding="utf-8"))
-        self.assertIn("resolve_original_plan", review_plan_owner.read_text(encoding="utf-8"))
+        self.assertIn("resolve_original_plan", review_original_plan_owner.read_text(encoding="utf-8"))
+        self.assertIn("resolve_review_base", review_base_owner.read_text(encoding="utf-8"))
+        self.assertIn("run_analyze_helper", review_iteration_owner.read_text(encoding="utf-8"))
+        review_plan_text = review_plan_owner.read_text(encoding="utf-8")
+        self.assertIn("action_review_original_plan_support", review_plan_text)
+        self.assertIn("action_review_base_support", review_plan_text)
+        self.assertIn("action_review_iteration_support", review_plan_text)
+        self.assertLessEqual(len(review_plan_text.splitlines()), 180)
         git_state_text = git_state_owner.read_text(encoding="utf-8")
         self.assertIn("class DirtyWorktreeReport", git_state_text)
         self.assertIn("def probe_dirty_worktree", git_state_text)
