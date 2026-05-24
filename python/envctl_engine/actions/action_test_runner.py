@@ -9,6 +9,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from envctl_engine.actions.action_test_interrupt_support import TestSuiteInterruptRegistry
 from envctl_engine.actions.action_test_runner_failures import (
     clean_failure_lines as _clean_failure_lines,
     failed_summary_artifact_available as _failed_summary_artifact_available,
@@ -37,6 +38,7 @@ __all__ = [
     "_format_live_progress_status_without_total",
     "_live_failed_count",
     "_summarize_failure_output",
+    "TestSuiteInterruptRegistry",
     "run_test_action",
 ]
 
@@ -210,96 +212,11 @@ def run_test_action(
     )
 
     suite_outcomes: list[dict[str, object]] = []
-    active_suite_lock = threading.Lock()
-    active_suite_registry: dict[int, dict[str, object]] = {}
-    termination_results: dict[int, bool] = {}
-    interrupt_state = {"received": False}
-
-    def _clear_registered_suite_by_index(suite_index: int, *, pid: int | None = None) -> None:
-        with active_suite_lock:
-            current = active_suite_registry.get(suite_index)
-            if not isinstance(current, dict):
-                return
-            current_pid = int(current.get("pid", 0) or 0)
-            if pid is not None and current_pid != int(pid):
-                return
-            active_suite_registry.pop(suite_index, None)
-
-    def _terminate_registered_pid(pid: int) -> bool:
-        if pid <= 0:
-            return True
-        with active_suite_lock:
-            if pid in termination_results:
-                return termination_results[pid]
-        process_runner = getattr(rt, "process_runner", None)
-        terminator = getattr(process_runner, "terminate_process_group", None)
-        if not callable(terminator):
-            terminator = getattr(process_runner, "terminate", None)
-        result = False
-        if callable(terminator):
-            result = bool(terminator(pid, term_timeout=2.0, kill_timeout=1.0))
-        with active_suite_lock:
-            termination_results[pid] = result
-        return result
-
-    def _register_started_suite(execution: Any, pid: int) -> None:
-        normalized_pid = int(pid or 0)
-        if normalized_pid <= 0:
-            return
-        suite_index = int(getattr(execution, "index", 0) or 0)
-        suite_entry = {
-            "index": suite_index,
-            "suite": str(getattr(execution.spec, "source", "")),
-            "project_name": str(getattr(execution, "project_name", "")),
-            "pid": normalized_pid,
-        }
-        with active_suite_lock:
-            active_suite_registry[suite_index] = suite_entry
-        if interrupt_state["received"]:
-            if _terminate_registered_pid(normalized_pid):
-                _clear_registered_suite_by_index(suite_index, pid=normalized_pid)
-
-    def _cleanup_interrupted_suites(*, queued_cancelled: int) -> None:
-        interrupt_state["received"] = True
-        cleanup_started = time.monotonic()
-        orchestrator._emit_status("Interrupt received, stopping active test suites...")
-        with active_suite_lock:
-            active_snapshot = [dict(entry) for entry in active_suite_registry.values()]
-        rt._emit(  # type: ignore[attr-defined]
-            "test.interrupt.received",
-            active_suites=len(active_snapshot),
-            queued_cancelled=queued_cancelled,
-            mode=execution_mode,
-        )
-        signaled_pids: set[int] = set()
-        survivors: set[int] = set()
-        for pass_index in range(2):
-            if pass_index > 0:
-                time.sleep(0.05)
-            with active_suite_lock:
-                pending_entries = [dict(entry) for entry in active_suite_registry.values()]
-            for entry in pending_entries:
-                pid = int(entry.get("pid", 0) or 0)
-                if pid <= 0 or pid in signaled_pids:
-                    continue
-                signaled_pids.add(pid)
-                if _terminate_registered_pid(pid):
-                    _clear_registered_suite_by_index(int(entry.get("index", 0) or 0), pid=pid)
-                else:
-                    survivors.add(pid)
-        with active_suite_lock:
-            for entry in active_suite_registry.values():
-                pid = int(entry.get("pid", 0) or 0)
-                if pid > 0:
-                    survivors.add(pid)
-        rt._emit(  # type: ignore[attr-defined]
-            "test.interrupt.cleanup",
-            active_suites=len(active_snapshot),
-            queued_cancelled=queued_cancelled,
-            signaled_pids=sorted(signaled_pids),
-            survivors=len(survivors),
-            cleanup_duration_ms=round((time.monotonic() - cleanup_started) * 1000.0, 1),
-        )
+    interrupt_registry = TestSuiteInterruptRegistry(
+        runtime=rt,
+        emit_status=orchestrator._emit_status,
+        execution_mode=execution_mode,
+    )
 
     def run_spec(execution: Any) -> tuple[int, str]:
         index = execution.index
@@ -511,7 +428,9 @@ def run_test_action(
         if interactive_command and "progress_callback" in run_test_parameters:
             run_test_kwargs["progress_callback"] = emit_live_progress
         if "process_started_callback" in run_test_parameters:
-            run_test_kwargs["process_started_callback"] = lambda pid: _register_started_suite(execution, int(pid))
+            run_test_kwargs["process_started_callback"] = lambda pid: interrupt_registry.register_started_suite(
+                execution, int(pid)
+            )
 
         completed = runner.run_tests(command, **run_test_kwargs)
         parsed = runner.last_result
@@ -605,7 +524,7 @@ def run_test_action(
             project=project_name,
             project_root=str(project_root),
         )
-        _clear_registered_suite_by_index(int(index))
+        interrupt_registry.clear_by_index(int(index))
         with progress_lock:
             if parallel:
                 progress_state["running"] = max(0, int(progress_state["running"]) - 1)
@@ -683,15 +602,18 @@ def run_test_action(
                             cancelled = False
                     if cancelled:
                         queued_cancelled += 1
-            _cleanup_interrupted_suites(queued_cancelled=queued_cancelled)
+            interrupt_registry.cleanup_interrupted_suites(queued_cancelled=queued_cancelled)
             raise
         finally:
             executor_shutdown = getattr(executor, "shutdown", None) if executor is not None else None
             if parallel and callable(executor_shutdown):
                 try:
-                    executor_shutdown(wait=not interrupt_state["received"], cancel_futures=interrupt_state["received"])
+                    executor_shutdown(
+                        wait=not interrupt_registry.interrupt_received,
+                        cancel_futures=interrupt_registry.interrupt_received,
+                    )
                 except TypeError:
-                    executor_shutdown(wait=not interrupt_state["received"])
+                    executor_shutdown(wait=not interrupt_registry.interrupt_received)
 
     summary_metadata = orchestrator._persist_test_summary_artifacts(
         route=route,
