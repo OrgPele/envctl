@@ -46,9 +46,12 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_supabase_startup_sequence_has_lifecycle_orchestrator(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "orchestrator.py"
+        auth_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "auth_flow.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(auth_owner.is_file())
+        self.assertIn("def complete_supabase_auth_startup", auth_owner.read_text(encoding="utf-8"))
         self.assertIn(
             "from envctl_engine.requirements.supabase_lifecycle.orchestrator import start_supabase_stack",
             facade.read_text(encoding="utf-8"),
