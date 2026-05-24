@@ -187,6 +187,19 @@ class StructureLayoutTests(unittest.TestCase):
         resume_restore_breadcrumb = runtime_tests / "test_lifecycle_parity_resume_restore.py"
         self.assertLessEqual(len(resume_restore_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
 
+    def test_runtime_lifecycle_cleanup_has_blast_owner(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "lifecycle_blast_support.py"
+        orchestrator = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "lifecycle_cleanup_orchestrator.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        self.assertIn("class LifecycleBlastCleanupSupport", owner_text)
+        self.assertIn("def blast_all_docker_cleanup", owner_text)
+        self.assertIn("def blast_all_kill_orchestrator_processes", owner_text)
+        orchestrator_text = orchestrator.read_text(encoding="utf-8")
+        self.assertIn("LifecycleBlastCleanupSupport", orchestrator_text)
+        self.assertLessEqual(len(orchestrator_text.splitlines()), 760)
+
     def test_runtime_command_parity_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
         expected = [
