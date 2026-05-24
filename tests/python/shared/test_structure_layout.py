@@ -1005,19 +1005,26 @@ class StructureLayoutTests(unittest.TestCase):
     def test_runtime_help_rendering_has_metadata_and_general_owners(self) -> None:
         metadata_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_metadata.py"
         general_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_general.py"
+        topics_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_topics.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_text.py"
 
         self.assertTrue(metadata_owner.is_file())
         self.assertTrue(general_owner.is_file())
+        self.assertTrue(topics_owner.is_file())
         metadata_text = metadata_owner.read_text(encoding="utf-8")
         general_text = general_owner.read_text(encoding="utf-8")
+        topics_text = topics_owner.read_text(encoding="utf-8")
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("def default_interactivity", metadata_text)
         self.assertIn("def ordered_known_commands", metadata_text)
         self.assertIn("def render_general_help", general_text)
+        self.assertIn("COMMAND_HELP_TOPICS", topics_text)
+        self.assertIn("def help_text_for_route", topics_text)
+        self.assertIn("def render_command_help", topics_text)
         self.assertIn("from envctl_engine.runtime.help_general import render_general_help", facade_text)
         self.assertIn("from envctl_engine.runtime.help_metadata import", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 920)
+        self.assertIn("from envctl_engine.runtime.help_topics import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 80)
 
     def test_engine_runtime_doctor_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_doctor_support.py"
