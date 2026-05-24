@@ -394,98 +394,22 @@ def _run_tmux_existing_session_workflow(
     workflow: _PlanAgentWorkflow,
     worktree: CreatedPlanWorktree,
 ) -> str | None:
-    ready_result = _wait_for_tmux_cli_ready(
-        runtime,
-        session_name=session_name,
-        window_name=window_name,
-        cli=launch_config.cli,
-    )
-    if ready_result is not None and not ready_result.ready:
-        return _format_ai_cli_ready_failure(ready_result)
-    goal_error = _maybe_submit_tmux_codex_goal(
+    return tmux_workflow_submission_support.run_existing_tmux_session_workflow(
         runtime,
         session_name=session_name,
         window_name=window_name,
         launch_config=launch_config,
         workflow=workflow,
         worktree=worktree,
-        transport="omx",
+        wait_for_tmux_cli_ready_fn=_wait_for_tmux_cli_ready,
+        format_ai_cli_ready_failure_fn=_format_ai_cli_ready_failure,
+        maybe_submit_tmux_codex_goal_fn=_maybe_submit_tmux_codex_goal,
+        workflow_step_prompt_text_fn=_workflow_step_prompt_text,
+        wrap_omx_initial_prompt_for_workflow_fn=_wrap_omx_initial_prompt_for_workflow,
+        submit_tmux_prompt_workflow_step_fn=_submit_tmux_prompt_workflow_step,
+        queue_tmux_codex_workflow_steps_fn=_queue_tmux_codex_workflow_steps,
+        queue_failure_event_context_fn=_queue_failure_event_context,
     )
-    if goal_error is not None and goal_error != "codex_goal_ready_timeout":
-        return goal_error
-    if goal_error is None and launch_config.codex_goal_enable and launch_config.cli == "codex":
-        ready_result = _wait_for_tmux_cli_ready(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            cli=launch_config.cli,
-        )
-        if ready_result is not None and not ready_result.ready:
-            return _format_ai_cli_ready_failure(ready_result)
-    prompt_text, resolution_error = _workflow_step_prompt_text(
-        runtime,
-        launch_config=launch_config,
-        cli=launch_config.cli,
-        step=workflow.steps[0],
-        worktree=worktree,
-    )
-    if resolution_error is not None:
-        return resolution_error
-    prompt_text = _wrap_omx_initial_prompt_for_workflow(prompt_text, workflow=launch_config.omx_workflow)
-    submit_error = _submit_tmux_prompt_workflow_step(
-        runtime,
-        session_name=session_name,
-        window_name=window_name,
-        prompt_text=prompt_text,
-        cli=launch_config.cli,
-    )
-    if submit_error is not None:
-        return submit_error
-    queued_steps = workflow.steps[1:]
-    if (
-        queued_steps
-        and launch_config.cli == "codex"
-        and (launch_config.transport != "omx" or workflow.codex_cycles > 0)
-    ):
-        queue_error_reason = _queue_tmux_codex_workflow_steps(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            worktree=worktree,
-            workflow=workflow,
-            queued_steps=queued_steps,
-            launch_config=launch_config,
-            cli=launch_config.cli,
-            transport="omx",
-        )
-        if queue_error_reason is not None:
-            failure_context = _queue_failure_event_context(queue_error_reason)
-            runtime._emit(
-                "planning.agent_launch.workflow_queue_failed",
-                session_name=session_name,
-                window_name=window_name,
-                worktree=worktree.name,
-                cli=launch_config.cli,
-                workflow_mode=workflow.mode,
-                codex_cycles=workflow.codex_cycles,
-                reason=queue_error_reason,
-                transport="omx",
-                **failure_context,
-            )
-            runtime._emit(
-                "planning.agent_launch.workflow_fallback",
-                session_name=session_name,
-                window_name=window_name,
-                worktree=worktree.name,
-                cli=launch_config.cli,
-                workflow_mode=workflow.mode,
-                codex_cycles=workflow.codex_cycles,
-                reason=queue_error_reason,
-                transport="omx",
-                **failure_context,
-            )
-            return None
-    return None
 
 
 def _maybe_submit_tmux_codex_goal(
@@ -629,103 +553,22 @@ def _run_tmux_worktree_bootstrap(
     workflow: _PlanAgentWorkflow,
     worktree: CreatedPlanWorktree,
 ) -> str | None:
-    send_errors = _launch_tmux_cli_bootstrap_commands(
-        runtime,
-        session_name=session_name,
-        window_name=window_name,
-        cwd=worktree.root,
-        cli_command=launch_config.cli_command,
-    )
-    for error in send_errors:
-        if error is not None:
-            return error
-    ready_result = _wait_for_tmux_cli_ready(
-        runtime,
-        session_name=session_name,
-        window_name=window_name,
-        cli=launch_config.cli,
-    )
-    if ready_result is not None and not ready_result.ready:
-        return _format_ai_cli_ready_failure(ready_result)
-    goal_error = _maybe_submit_tmux_codex_goal(
+    return tmux_workflow_submission_support.run_tmux_worktree_bootstrap(
         runtime,
         session_name=session_name,
         window_name=window_name,
         launch_config=launch_config,
         workflow=workflow,
         worktree=worktree,
-        transport="tmux",
+        launch_tmux_cli_bootstrap_commands_fn=_launch_tmux_cli_bootstrap_commands,
+        wait_for_tmux_cli_ready_fn=_wait_for_tmux_cli_ready,
+        format_ai_cli_ready_failure_fn=_format_ai_cli_ready_failure,
+        maybe_submit_tmux_codex_goal_fn=_maybe_submit_tmux_codex_goal,
+        workflow_step_prompt_text_fn=_workflow_step_prompt_text,
+        submit_tmux_prompt_workflow_step_fn=_submit_tmux_prompt_workflow_step,
+        queue_tmux_codex_workflow_steps_fn=_queue_tmux_codex_workflow_steps,
+        queue_failure_event_context_fn=_queue_failure_event_context,
     )
-    if goal_error is not None and goal_error != "codex_goal_ready_timeout":
-        return goal_error
-    if goal_error is None and launch_config.codex_goal_enable and launch_config.cli == "codex":
-        ready_result = _wait_for_tmux_cli_ready(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            cli=launch_config.cli,
-        )
-        if ready_result is not None and not ready_result.ready:
-            return _format_ai_cli_ready_failure(ready_result)
-    prompt_text, resolution_error = _workflow_step_prompt_text(
-        runtime,
-        launch_config=launch_config,
-        cli=launch_config.cli,
-        step=workflow.steps[0],
-        worktree=worktree,
-    )
-    if resolution_error is not None:
-        return resolution_error
-    submit_error = _submit_tmux_prompt_workflow_step(
-        runtime,
-        session_name=session_name,
-        window_name=window_name,
-        prompt_text=prompt_text,
-        cli=launch_config.cli,
-    )
-    if submit_error is not None:
-        return submit_error
-    queued_steps = workflow.steps[1:]
-    if queued_steps and launch_config.cli == "codex":
-        queue_error_reason = _queue_tmux_codex_workflow_steps(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            worktree=worktree,
-            workflow=workflow,
-            queued_steps=queued_steps,
-            launch_config=launch_config,
-            cli=launch_config.cli,
-            transport="tmux",
-        )
-        if queue_error_reason is not None:
-            failure_context = _queue_failure_event_context(queue_error_reason)
-            runtime._emit(
-                "planning.agent_launch.workflow_queue_failed",
-                session_name=session_name,
-                window_name=window_name,
-                worktree=worktree.name,
-                cli=launch_config.cli,
-                workflow_mode=workflow.mode,
-                codex_cycles=workflow.codex_cycles,
-                reason=queue_error_reason,
-                transport="tmux",
-                **failure_context,
-            )
-            runtime._emit(
-                "planning.agent_launch.workflow_fallback",
-                session_name=session_name,
-                window_name=window_name,
-                worktree=worktree.name,
-                cli=launch_config.cli,
-                workflow_mode=workflow.mode,
-                codex_cycles=workflow.codex_cycles,
-                reason=queue_error_reason,
-                transport="tmux",
-                **failure_context,
-            )
-            return None
-    return None
 
 
 def _queue_tmux_codex_workflow_steps(

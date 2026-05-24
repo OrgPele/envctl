@@ -235,6 +235,8 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "maybe_submit_tmux_codex_goal",
                 "queue_tmux_codex_message",
                 "queue_tmux_codex_workflow_steps",
+                "run_existing_tmux_session_workflow",
+                "run_tmux_worktree_bootstrap",
                 "submit_tmux_codex_goal",
                 "submit_tmux_prompt_workflow_step",
                 "wait_for_tmux_cli_ready",
