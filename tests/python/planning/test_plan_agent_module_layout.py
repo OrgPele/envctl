@@ -58,6 +58,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "tmux_attach_support.py",
             "tmux_window_support.py",
             "tmux_health_support.py",
+            "tmux_worktree_launch_support.py",
             "tmux_transport.py",
             "workflow.py",
         }
@@ -220,6 +221,9 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "tmux_health_support.py": {
                 "existing_tmux_session_health",
                 "existing_tmux_session_looks_healthy",
+            },
+            "tmux_worktree_launch_support.py": {
+                "launch_single_tmux_worktree",
             },
             "tmux_transport.py": {
                 "_run_tmux_worktree_bootstrap",

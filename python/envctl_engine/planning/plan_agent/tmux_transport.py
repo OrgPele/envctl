@@ -46,6 +46,7 @@ import envctl_engine.planning.plan_agent.tmux_surface_support as tmux_surface_su
 import envctl_engine.planning.plan_agent.tmux_attach_support as tmux_attach_support
 import envctl_engine.planning.plan_agent.tmux_window_support as tmux_window_support
 import envctl_engine.planning.plan_agent.tmux_health_support as tmux_health_support
+import envctl_engine.planning.plan_agent.tmux_worktree_launch_support as tmux_worktree_launch_support
 
 def _launch_plan_agent_tmux_terminals(
     runtime: Any,
@@ -209,79 +210,16 @@ def _launch_single_tmux_worktree(
     workflow: _PlanAgentWorkflow,
     worktree: CreatedPlanWorktree,
 ) -> PlanAgentLaunchOutcome:
-    create_error = _ensure_tmux_window(
-        runtime,
-        session_name=session_name,
-        window_name=window_name,
-        launch_config=launch_config,
-        worktree=worktree,
-    )
-    if create_error is not None:
-        runtime._emit(
-            "planning.agent_launch.failed",
-            reason="window_create_failed",
-            session_name=session_name,
-            window_name=window_name,
-            worktree=worktree.name,
-            error=create_error,
-            transport="tmux",
-        )
-        return PlanAgentLaunchOutcome(
-            worktree_name=worktree.name,
-            worktree_root=worktree.root,
-            surface_id=None,
-            status="failed",
-            reason=create_error,
-        )
-    runtime._emit(
-        "planning.agent_launch.surface_created",
-        session_name=session_name,
-        window_name=window_name,
-        worktree=worktree.name,
-        source="tmux_window",
-        transport="tmux",
-    )
-    error = _run_tmux_worktree_bootstrap(
+    return tmux_worktree_launch_support.launch_single_tmux_worktree(
         runtime,
         session_name=session_name,
         window_name=window_name,
         launch_config=launch_config,
         workflow=workflow,
         worktree=worktree,
-    )
-    if error is not None:
-        runtime._emit(
-            "planning.agent_launch.failed",
-            reason="bootstrap_failed",
-            session_name=session_name,
-            window_name=window_name,
-            worktree=worktree.name,
-            error=error,
-            transport="tmux",
-        )
-        return PlanAgentLaunchOutcome(
-            worktree_name=worktree.name,
-            worktree_root=worktree.root,
-            surface_id=None,
-            status="failed",
-            reason=error,
-        )
-    runtime._emit(
-        "planning.agent_launch.command_sent",
-        session_name=session_name,
-        window_name=window_name,
-        worktree=worktree.name,
-        preset=launch_config.preset,
-        workflow_mode=workflow.mode,
-        codex_cycles=workflow.codex_cycles,
-        transport="tmux",
-    )
-    _persist_runtime_events_snapshot(runtime)
-    return PlanAgentLaunchOutcome(
-        worktree_name=worktree.name,
-        worktree_root=worktree.root,
-        surface_id=None,
-        status="launched",
+        ensure_tmux_window_fn=_ensure_tmux_window,
+        run_tmux_worktree_bootstrap_fn=_run_tmux_worktree_bootstrap,
+        persist_runtime_events_snapshot_fn=_persist_runtime_events_snapshot,
     )
 
 
