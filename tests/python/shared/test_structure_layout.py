@@ -321,16 +321,20 @@ class StructureLayoutTests(unittest.TestCase):
     def test_runtime_planning_and_startup_facades_have_owned_mixins(self) -> None:
         planning_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_planning_facade.py"
         startup_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_startup_facade.py"
+        action_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_action_facade.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
 
         self.assertTrue(planning_owner.is_file())
         self.assertTrue(startup_owner.is_file())
+        self.assertTrue(action_owner.is_file())
         self.assertIn("RuntimePlanningFacadeMixin", planning_owner.read_text(encoding="utf-8"))
         self.assertIn("RuntimeStartupFacadeMixin", startup_owner.read_text(encoding="utf-8"))
+        self.assertIn("RuntimeActionFacadeMixin", action_owner.read_text(encoding="utf-8"))
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("RuntimePlanningFacadeMixin", facade_text)
         self.assertIn("RuntimeStartupFacadeMixin", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 800)
+        self.assertIn("RuntimeActionFacadeMixin", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 670)
 
     def test_dashboard_command_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_support.py"
@@ -603,31 +607,65 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_engine_runtime_action_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_action_support.py"
+        facade_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_action_facade.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(facade_owner.is_file())
         self.assertIn(
             "from envctl_engine.runtime.engine_runtime_action_support import",
+            facade_owner.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "from envctl_engine.runtime.engine_runtime_action_facade import",
             facade.read_text(encoding="utf-8"),
         )
 
     def test_engine_runtime_cli_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_cli_support.py"
+        facade_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_cli_facade.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(facade_owner.is_file())
         self.assertIn(
             "from envctl_engine.runtime.engine_runtime_cli_support import",
+            facade_owner.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "RuntimeCliFacadeMixin",
             facade.read_text(encoding="utf-8"),
         )
 
     def test_engine_runtime_doctor_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_doctor_support.py"
+        facade_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_doctor_facade.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(facade_owner.is_file())
         self.assertIn(
             "from envctl_engine.runtime.engine_runtime_doctor_support import",
+            facade_owner.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "RuntimeDoctorFacadeMixin",
+            facade.read_text(encoding="utf-8"),
+        )
+
+    def test_engine_runtime_debug_support_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_debug_support.py"
+        facade_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_debug_facade.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertTrue(facade_owner.is_file())
+        self.assertIn(
+            "from envctl_engine.runtime.engine_runtime_debug_support import",
+            facade_owner.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "RuntimeDebugFacadeMixin",
             facade.read_text(encoding="utf-8"),
         )
 

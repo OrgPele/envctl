@@ -12,15 +12,6 @@ from envctl_engine.runtime.engine_runtime_diagnostics import (
     parity_manifest_is_complete as runtime_parity_manifest_is_complete,
     pointer_status_summary as runtime_pointer_status_summary,
 )
-from envctl_engine.runtime.engine_runtime_debug_support import (
-    debug_pack as runtime_debug_pack,
-    debug_doctor_snapshot_text as runtime_debug_doctor_snapshot_text,
-    debug_last as runtime_debug_last,
-    debug_report as runtime_debug_report,
-    latest_debug_scope_session as runtime_latest_debug_scope_session,
-    latest_scope_session_id as runtime_latest_scope_session_id,
-    scope_latest_run_id as runtime_scope_latest_run_id,
-)
 from envctl_engine.runtime.engine_runtime_misc_support import (
     batch_mode_requested as runtime_batch_mode_requested,
     build_process_probe_backend as runtime_build_process_probe_backend,
@@ -89,36 +80,6 @@ from envctl_engine.runtime.engine_runtime_state_truth import (
     requirement_truth_issues as runtime_requirement_truth_issues,
     state_fingerprint as runtime_state_fingerprint,
 )
-from envctl_engine.runtime.engine_runtime_action_support import (
-    action_env as runtime_action_env,
-    action_extra_env as runtime_action_extra_env,
-    action_replacements as runtime_action_replacements,
-    project_name_from_service as runtime_project_name_from_service,
-    resolve_action_targets as runtime_resolve_action_targets,
-    run_action_command as runtime_run_action_command,
-    run_analyze_action as runtime_run_analyze_action,
-    run_commit_action as runtime_run_commit_action,
-    run_delete_worktree_action as runtime_run_delete_worktree_action,
-    run_migrate_action as runtime_run_migrate_action,
-    run_pr_action as runtime_run_pr_action,
-    run_project_action as runtime_run_project_action,
-    run_test_action as runtime_run_test_action,
-    selectors_from_passthrough as runtime_selectors_from_passthrough,
-)
-from envctl_engine.runtime.engine_runtime_cli_support import (
-    migrate_hooks as runtime_migrate_hooks,
-    print_help as runtime_print_help,
-    render_help_text as runtime_render_help_text,
-    run_config as runtime_run_config,
-    unsupported_command as runtime_unsupported_command,
-)
-from envctl_engine.runtime.engine_runtime_doctor_support import (
-    doctor as runtime_doctor,
-    doctor_readiness_gates as runtime_doctor_readiness_gates,
-    doctor_should_check_tests as runtime_doctor_should_check_tests,
-    enforce_runtime_readiness_contract as runtime_enforce_runtime_readiness_contract,
-    evaluate_runtime_shipability as runtime_evaluate_runtime_shipability,
-)
 from envctl_engine.runtime.engine_runtime_bookkeeping_support import (
     add_emit_listener as runtime_add_emit_listener,
     consume_project_startup_warnings as runtime_consume_project_startup_warnings,
@@ -128,6 +89,13 @@ from envctl_engine.runtime.engine_runtime_bookkeeping_support import (
 )
 from envctl_engine.runtime.engine_runtime_dispatch import dispatch as runtime_dispatch
 from envctl_engine.runtime.engine_runtime_construction import initialize_runtime_construction
+from envctl_engine.runtime.engine_runtime_action_facade import RuntimeActionFacadeMixin
+from envctl_engine.runtime.engine_runtime_cli_facade import (
+    RuntimeCliFacadeMixin,
+    render_help_text as runtime_render_help_text,
+)
+from envctl_engine.runtime.engine_runtime_doctor_facade import RuntimeDoctorFacadeMixin
+from envctl_engine.runtime.engine_runtime_debug_facade import RuntimeDebugFacadeMixin
 from envctl_engine.runtime.engine_runtime_planning_facade import RuntimePlanningFacadeMixin
 from envctl_engine.runtime.engine_runtime_service_facade import RuntimeServiceFacadeMixin
 from envctl_engine.runtime.engine_runtime_startup_facade import RuntimeStartupFacadeMixin
@@ -186,7 +154,15 @@ class ProjectContext:
 EXPLICIT_MODE_TOKENS = {token.lower() for token in MODE_TREE_TOKENS.union(MODE_MAIN_TOKENS).union(MODE_FALSE_TOKENS)}
 
 
-class PythonEngineRuntime(RuntimePlanningFacadeMixin, RuntimeStartupFacadeMixin, RuntimeServiceFacadeMixin):
+class PythonEngineRuntime(
+    RuntimePlanningFacadeMixin,
+    RuntimeStartupFacadeMixin,
+    RuntimeServiceFacadeMixin,
+    RuntimeActionFacadeMixin,
+    RuntimeCliFacadeMixin,
+    RuntimeDoctorFacadeMixin,
+    RuntimeDebugFacadeMixin,
+):
     PARTIAL_COMMANDS: tuple[str, ...] = ()
     _project_context_factory = ProjectContext
 
@@ -230,60 +206,6 @@ class PythonEngineRuntime(RuntimePlanningFacadeMixin, RuntimeStartupFacadeMixin,
 
     def _release_port_session(self) -> None:
         runtime_release_port_session(self)
-
-    def _print_help(self, route: Route | None = None) -> None:
-        runtime_print_help(route)
-
-    def _config(self, route: Route) -> int:
-        return runtime_run_config(self, route)
-
-    def _migrate_hooks(self, route: Route) -> int:
-        return runtime_migrate_hooks(self, route)
-
-    def _doctor(self) -> int:
-        return runtime_doctor(self)
-
-    def _debug_pack(self, route: Route) -> int:
-        return runtime_debug_pack(self, route)
-
-    def _latest_debug_scope_session(self) -> tuple[str, Path, str] | None:
-        return runtime_latest_debug_scope_session(self)
-
-    @staticmethod
-    def _latest_scope_session_id(scope_dir: Path) -> str | None:
-        return runtime_latest_scope_session_id(scope_dir)
-
-    @staticmethod
-    def _scope_latest_run_id(scope_dir: Path) -> str | None:
-        return runtime_scope_latest_run_id(scope_dir)
-
-    def _debug_doctor_snapshot_text(self) -> str:
-        return runtime_debug_doctor_snapshot_text(self)
-
-    def _debug_last(self, route: Route) -> int:
-        return runtime_debug_last(self, route)
-
-    def _debug_report(self, route: Route) -> int:
-        return runtime_debug_report(self, route)
-
-    def _doctor_readiness_gates(self) -> dict[str, bool]:
-        return runtime_doctor_readiness_gates(self)
-
-    def _evaluate_shipability(
-        self,
-        *,
-        enforce_runtime_readiness_contract: bool = True,
-    ) -> object:
-        return runtime_evaluate_runtime_shipability(
-            self,
-            enforce_runtime_readiness_contract=enforce_runtime_readiness_contract,
-        )
-
-    def _doctor_should_check_tests(self) -> bool:
-        return runtime_doctor_should_check_tests(self)
-
-    def _enforce_runtime_readiness_contract(self, *, scope: str, strict_required: bool | None = None) -> bool:
-        return runtime_enforce_runtime_readiness_contract(self, scope=scope, strict_required=strict_required)
 
     def _parity_manifest_is_complete(self) -> bool:
         return runtime_parity_manifest_is_complete(self)
@@ -478,94 +400,6 @@ class PythonEngineRuntime(RuntimePlanningFacadeMixin, RuntimeStartupFacadeMixin,
         services: Mapping[str, object],
     ) -> None:
         runtime_assert_project_services_post_start_truth(self, context=context, services=services)
-
-    def _run_action_command(self, route: Route) -> int:
-        return runtime_run_action_command(self, route)
-
-    def _resolve_action_targets(self, route: Route, *, trees_only: bool) -> tuple[list[ProjectContext], str | None]:
-        targets, error = runtime_resolve_action_targets(self, route, trees_only=trees_only)
-        return targets, error  # type: ignore[return-value]
-
-    @staticmethod
-    def _selectors_from_passthrough(passthrough_args: Iterable[str]) -> set[str]:
-        return runtime_selectors_from_passthrough(passthrough_args)
-
-    @staticmethod
-    def _project_name_from_service(service_name: str) -> str:
-        return runtime_project_name_from_service(service_name)
-
-    def _run_test_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return runtime_run_test_action(self, route, targets)
-
-    def _run_pr_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return runtime_run_pr_action(self, route, targets)
-
-    def _run_commit_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return runtime_run_commit_action(self, route, targets)
-
-    def _run_analyze_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return runtime_run_analyze_action(self, route, targets)
-
-    def _run_migrate_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return runtime_run_migrate_action(self, route, targets)
-
-    def _run_project_action(
-        self,
-        route: Route,
-        targets: list[ProjectContext],
-        *,
-        command_name: str,
-        env_key: str,
-        default_command: list[str] | None,
-        default_cwd: Path,
-        default_append_project_path: bool,
-        extra_env: Mapping[str, str],
-    ) -> int:
-        return runtime_run_project_action(
-            self,
-            route,
-            targets,
-            command_name=command_name,
-            env_key=env_key,
-            default_command=default_command,
-            default_cwd=default_cwd,
-            default_append_project_path=default_append_project_path,
-            extra_env=extra_env,
-        )
-
-    def _run_delete_worktree_action(self, route: Route) -> int:
-        return runtime_run_delete_worktree_action(self, route)
-
-    def _action_replacements(
-        self,
-        targets: list[ProjectContext],
-        *,
-        target: ProjectContext | None,
-    ) -> dict[str, str]:
-        return runtime_action_replacements(self, targets, target=target)
-
-    def _action_env(
-        self,
-        command_name: str,
-        targets: list[ProjectContext],
-        *,
-        target: ProjectContext | None,
-        extra: Mapping[str, str] | None = None,
-    ) -> dict[str, str]:
-        return runtime_action_env(
-            self,
-            command_name,
-            targets,
-            target=target,
-            extra=extra,
-        )
-
-    @staticmethod
-    def _action_extra_env(route: Route) -> dict[str, str]:
-        return runtime_action_extra_env(route)
-
-    def _unsupported_command(self, command: str) -> int:
-        return runtime_unsupported_command(command)
 
     def _clear_runtime_state(self, *, command: str, aggressive: bool = False, route: Route | None = None) -> None:
         self.lifecycle_cleanup_orchestrator.clear_runtime_state(
