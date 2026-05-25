@@ -1365,6 +1365,9 @@ class StructureLayoutTests(unittest.TestCase):
         support = selector / "support.py"
         io_probe = selector / "io_probe.py"
         backend_policy = selector / "backend_policy.py"
+        read_guard = selector / "read_guard.py"
+        textual_driver = selector / "textual_driver_instrumentation.py"
+        prompt_toolkit_io = selector / "prompt_toolkit_io_instrumentation.py"
         textual_app = selector / "textual_app.py"
         selection_state = selector / "selection_state.py"
         app_runtime = selector / "textual_app_runtime.py"
@@ -1373,6 +1376,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(support.is_file())
         self.assertTrue(io_probe.is_file())
         self.assertTrue(backend_policy.is_file())
+        self.assertTrue(read_guard.is_file())
+        self.assertTrue(textual_driver.is_file())
+        self.assertTrue(prompt_toolkit_io.is_file())
         self.assertTrue(textual_app.is_file())
         self.assertTrue(selection_state.is_file())
         self.assertTrue(app_runtime.is_file())
@@ -1380,6 +1386,9 @@ class StructureLayoutTests(unittest.TestCase):
         support_text = support.read_text(encoding="utf-8")
         io_probe_text = io_probe.read_text(encoding="utf-8")
         backend_text = backend_policy.read_text(encoding="utf-8")
+        read_guard_text = read_guard.read_text(encoding="utf-8")
+        textual_driver_text = textual_driver.read_text(encoding="utf-8")
+        prompt_toolkit_text = prompt_toolkit_io.read_text(encoding="utf-8")
         app_text = textual_app.read_text(encoding="utf-8")
         selection_text = selection_state.read_text(encoding="utf-8")
         runtime_text = app_runtime.read_text(encoding="utf-8")
@@ -1393,7 +1402,13 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def selector_driver_thread_snapshot", backend_text)
         self.assertIn("from .backend_policy import", support_text)
         self.assertIn("from .io_probe import SelectorIoProbe", support_text)
+        self.assertIn("from .read_guard import", support_text)
+        self.assertIn("from .textual_driver_instrumentation import", support_text)
+        self.assertIn("from .prompt_toolkit_io_instrumentation import", support_text)
         self.assertIn("def _selector_backend_decision", support_text)
+        self.assertIn("def guard_textual_nonblocking_read", read_guard_text)
+        self.assertIn("def instrument_textual_parser_keys", textual_driver_text)
+        self.assertIn("def instrument_prompt_toolkit_posix_io", prompt_toolkit_text)
         self.assertIn("def build_selector_rows", selection_text)
         self.assertIn("def apply_selector_filter", selection_text)
         self.assertIn("def selector_visibility_counts", selection_text)
@@ -1416,7 +1431,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_runtime import", app_text)
         self.assertIn("SelectorStatusController", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_key_policy import", app_text)
-        self.assertLessEqual(len(support_text.splitlines()), 720)
+        self.assertLessEqual(len(support_text.splitlines()), 180)
         self.assertLessEqual(len(app_text.splitlines()), 790)
 
     def test_ui_backend_has_selector_handoff_owner(self) -> None:
