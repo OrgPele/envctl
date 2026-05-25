@@ -1036,19 +1036,25 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_textual_config_wizard_has_field_owner(self) -> None:
         screen = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard.py"
+        app_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_app.py"
         component_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_components.py"
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_fields.py"
         hint_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_hints.py"
         value_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_values.py"
 
+        self.assertTrue(app_owner.is_file())
         self.assertTrue(component_owner.is_file())
         self.assertTrue(owner.is_file())
         self.assertTrue(hint_owner.is_file())
         self.assertTrue(value_owner.is_file())
+        app_text = app_owner.read_text(encoding="utf-8")
         component_text = component_owner.read_text(encoding="utf-8")
         owner_text = owner.read_text(encoding="utf-8")
         hint_text = hint_owner.read_text(encoding="utf-8")
         value_text = value_owner.read_text(encoding="utf-8")
+        self.assertIn("class ConfigWizardResult", app_text)
+        self.assertIn("def build_config_wizard_app", app_text)
+        self.assertIn("class ConfigWizardApp", app_text)
         self.assertIn("class ComponentRow", component_text)
         self.assertIn("def component_rows", component_text)
         self.assertIn("def toggle_service_startup_value", component_text)
@@ -1064,11 +1070,13 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def apply_text_field_values", value_text)
         self.assertIn("def apply_port_field_values", value_text)
         screen_text = screen.read_text(encoding="utf-8")
-        self.assertIn("from . import config_wizard_components as component_policy", screen_text)
-        self.assertIn("from . import config_wizard_values as value_policy", screen_text)
+        self.assertIn("from .config_wizard_app import ConfigWizardResult, _emit, build_config_wizard_app", screen_text)
+        self.assertIn("from . import config_wizard_components as component_policy", app_text)
+        self.assertIn("from . import config_wizard_values as value_policy", app_text)
         self.assertIn("from .config_wizard_fields import", screen_text)
-        self.assertIn("from .config_wizard_hints import", screen_text)
-        self.assertLessEqual(len(screen_text.splitlines()), 1325)
+        self.assertIn("from .config_wizard_fields import", app_text)
+        self.assertIn("from .config_wizard_hints import", app_text)
+        self.assertLessEqual(len(screen_text.splitlines()), 90)
 
     def test_removed_dead_leaf_modules_are_absent(self) -> None:
         stale_modules = [
