@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from envctl_engine.actions import project_action_domain as domain
+from envctl_engine.actions import project_action_workflow_factory
 
 
 class ProjectActionWorkflowFactoryTests(unittest.TestCase):
@@ -60,11 +61,9 @@ class ProjectActionWorkflowFactoryTests(unittest.TestCase):
         markdown.assert_called_once_with(original_plan, include_contents=True)
 
     def test_workflow_runner_construction_has_no_anonymous_lambda_wiring(self) -> None:
-        source = Path(domain.__file__).read_text(encoding="utf-8")
-        factory_source = source.split("class ProjectActionWorkflowFactory:", 1)[1].split(
-            "def _workflow_runner()", 1
-        )[0]
-        self.assertNotIn("lambda", factory_source)
+        source = Path(project_action_workflow_factory.__file__).read_text(encoding="utf-8")
+        self.assertIn("class ProjectActionWorkflowFactory", source)
+        self.assertNotIn("lambda", source)
 
 
 if __name__ == "__main__":

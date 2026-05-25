@@ -341,6 +341,9 @@ class StructureLayoutTests(unittest.TestCase):
         ship_contract_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_contract.py"
         ship_conflicts_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_conflicts.py"
         ship_checks_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_checks.py"
+        workflow_factory_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_workflow_factory.py"
+        )
         workflow_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_workflows.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_domain.py"
 
@@ -358,6 +361,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(ship_contract_owner.is_file())
         self.assertTrue(ship_conflicts_owner.is_file())
         self.assertTrue(ship_checks_owner.is_file())
+        self.assertTrue(workflow_factory_owner.is_file())
         self.assertTrue(workflow_owner.is_file())
         commit_text = commit_owner.read_text(encoding="utf-8")
         self.assertIn("def run_commit_workflow", commit_text)
@@ -400,6 +404,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def normalize_github_pr_checks", ship_checks_owner.read_text(encoding="utf-8"))
         self.assertLessEqual(len(ship_text.splitlines()), 320)
         workflow_text = workflow_owner.read_text(encoding="utf-8")
+        workflow_factory_text = workflow_factory_owner.read_text(encoding="utf-8")
+        self.assertIn("class ProjectActionWorkflowFactory", workflow_factory_text)
         self.assertIn("class ProjectActionWorkflowRunner", workflow_text)
         self.assertIn("def run_commit_action", workflow_text)
         self.assertIn("def run_pr_action", workflow_text)
@@ -414,9 +420,10 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("action_review_plan_support", facade_text)
         self.assertIn("action_git_state_support", facade_text)
         self.assertIn("action_ship_support", facade_text)
+        self.assertIn("project_action_workflow_factory", facade_text)
         self.assertIn("project_action_workflows", facade_text)
-        self.assertIn("class ProjectActionWorkflowFactory", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 520)
+        self.assertNotIn("class ProjectActionWorkflowFactory", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 480)
 
     def test_action_migrate_support_is_split_by_responsibility(self) -> None:
         context_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_migrate_context_support.py"

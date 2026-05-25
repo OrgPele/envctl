@@ -25,6 +25,7 @@ from envctl_engine.actions.action_review_output_support import (
     print_review_completion_rich as _print_review_completion_rich,
     review_colorizer as _review_colorizer,
 )
+from envctl_engine.actions.project_action_workflow_factory import ProjectActionWorkflowFactory
 from envctl_engine.actions.project_action_workflows import ProjectActionWorkflowRunner
 
 from envctl_engine.shared.parsing import parse_bool
@@ -94,75 +95,35 @@ ReviewBaseResolutionError = review_plan_support.ReviewBaseResolutionError
 OriginalPlanResolution = review_plan_support.OriginalPlanResolution
 
 
-@dataclass(frozen=True, slots=True)
-class ProjectActionWorkflowFactory:
-    """Builds project-action workflow runners from the domain compatibility surface."""
-
-    def build(self) -> ProjectActionWorkflowRunner:
-        return ProjectActionWorkflowRunner(
-            resolve_git_root_fn=resolve_git_root,
-            which_fn=shutil.which,
-            git_output_fn=_git_output,
-            run_git_fn=_run_git,
-            print_error_fn=_print_error,
-            partition_envctl_protected_paths_fn=_partition_envctl_protected_paths,
-            ordered_unique_paths_fn=_ordered_unique_paths,
-            resolve_base_branch_fn=_resolve_pr_base_branch,
-            existing_pr_url_fn=existing_pr_url,
-            probe_dirty_worktree_fn=self.probe_dirty_worktree,
-            run_commit_action_fn=run_commit_action,
-            pr_title_fn=_pr_title,
-            pr_body_fn=_pr_body,
-            write_pr_body_file_fn=_write_pr_body_file,
-            print_process_output_fn=_print_process_output,
-            run_process_fn=subprocess.run,
-            run_pr_action_fn=run_pr_action,
-            github_pr_checks_fn=_github_pr_checks,
-            resolve_analyze_mode_fn=_resolve_analyze_mode,
-            resolve_original_plan_fn=_resolve_original_plan,
-            resolve_review_base_fn=_resolve_review_base,
-            analysis_iterations_fn=self.analysis_iterations,
-            run_analyze_helper_fn=self.run_analyze_helper,
-            tree_diffs_output_path_fn=_tree_diffs_output_path_from_workflow,
-            original_plan_markdown_lines_fn=self.original_plan_markdown_lines,
-            sanitize_label_fn=sanitize_label,
-        )
-
-    @staticmethod
-    def probe_dirty_worktree(project_root: Path, repo_root: Path, project_name: str) -> DirtyWorktreeReport:
-        return probe_dirty_worktree(project_root, repo_root, project_name=project_name)
-
-    @staticmethod
-    def analysis_iterations(context: ActionProjectContext, mode: str) -> list[str]:
-        return _analysis_iterations(context, mode=mode)
-
-    @staticmethod
-    def run_analyze_helper(
-        context: ActionProjectContext,
-        helper: Path,
-        iterations: list[str],
-        mode: str,
-        scope: str,
-        review_base: ReviewBaseResolution | None,
-        original_plan: OriginalPlanResolution,
-    ) -> int:
-        return _run_analyze_helper(
-            context=context,
-            helper=helper,
-            iterations=iterations,
-            mode=mode,
-            scope=scope,
-            review_base=review_base,
-            original_plan=original_plan,
-        )
-
-    @staticmethod
-    def original_plan_markdown_lines(original_plan: OriginalPlanResolution) -> list[str]:
-        return _original_plan_markdown_lines(original_plan, include_contents=True)
-
-
 def _workflow_runner() -> ProjectActionWorkflowRunner:
-    return ProjectActionWorkflowFactory().build()
+    return ProjectActionWorkflowFactory(
+        resolve_git_root_fn=resolve_git_root,
+        which_fn=shutil.which,
+        git_output_fn=_git_output,
+        run_git_fn=_run_git,
+        print_error_fn=_print_error,
+        partition_envctl_protected_paths_fn=_partition_envctl_protected_paths,
+        ordered_unique_paths_fn=_ordered_unique_paths,
+        resolve_base_branch_fn=_resolve_pr_base_branch,
+        existing_pr_url_fn=existing_pr_url,
+        probe_dirty_worktree_source_fn=probe_dirty_worktree,
+        run_commit_action_fn=run_commit_action,
+        pr_title_fn=_pr_title,
+        pr_body_fn=_pr_body,
+        write_pr_body_file_fn=_write_pr_body_file,
+        print_process_output_fn=_print_process_output,
+        run_process_fn=subprocess.run,
+        run_pr_action_fn=run_pr_action,
+        github_pr_checks_fn=_github_pr_checks,
+        resolve_analyze_mode_fn=_resolve_analyze_mode,
+        resolve_original_plan_fn=_resolve_original_plan,
+        resolve_review_base_fn=_resolve_review_base,
+        analysis_iterations_source_fn=_analysis_iterations,
+        run_analyze_helper_source_fn=_run_analyze_helper,
+        tree_diffs_output_path_fn=_tree_diffs_output_path_from_workflow,
+        original_plan_markdown_lines_source_fn=_original_plan_markdown_lines,
+        sanitize_label_fn=sanitize_label,
+    ).build()
 
 
 def run_commit_action(context: ActionProjectContext) -> int:
