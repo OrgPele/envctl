@@ -7,7 +7,6 @@ from ....config import LocalConfigState, StartupProfile
 from ....config.persistence import (
     ConfigSaveResult,
     ManagedConfigValues,
-    config_review_text,
     managed_values_from_local_state,
     save_local_config_with_ignore_policy,
     validate_managed_values,
@@ -20,6 +19,7 @@ from envctl_engine.ui.textual.compat import (
 from envctl_engine.ui.textual.list_row_styles import focus_selectable_list
 from . import config_wizard_components as component_policy
 from . import config_wizard_values as value_policy
+from .config_wizard_body_actions import ConfigWizardBodyActions
 from .config_wizard_components import ComponentRow, ConfigWizardComponentInteraction
 from .config_wizard_component_actions import ConfigWizardComponentActions
 from .config_wizard_fields import (
@@ -251,98 +251,30 @@ def build_config_wizard_app(
             self._focus_current_step()
 
         def _refresh_body(self) -> None:
-            step = self._current_step()
-            welcome = self.query_one("#config-welcome", Static)
-            list_view = self.query_one("#config-list", ListView)
-            empty = self.query_one("#config-empty", Static)
-            directories = self.query_one("#config-directories", VerticalScroll)
-            ports = self.query_one("#config-ports", VerticalScroll)
-            additional_services = self.query_one("#config-additional-services", VerticalScroll)
-            review_scroll = self.query_one("#config-review-scroll", VerticalScroll)
-            review = self.query_one("#config-review", Static)
-            welcome.display = step == "welcome"
-            list_view.display = step not in {
-                "welcome",
-                "additional_services",
-                "directories",
-                "commands",
-                "ports",
-                "review",
-            }
-            directories.display = step in {"directories", "commands"}
-            ports.display = step == "ports"
-            additional_services.display = step == "additional_services"
-            review_scroll.display = step == "review"
-            empty.display = False
-            if step == "welcome":
-                welcome.update(
-                    "envctl is the CLI for configuring, planning, and operating "
-                    "this repository's local environments.\n\n"
-                    "This wizard will guide you through:\n"
-                    "- selecting the default mode (main or trees)\n"
-                    "- deciding which components envctl should manage\n"
-                    "- reviewing directories, ports, and the generated .envctl file\n\n"
-                    f"The configuration will be written to {local_state.config_file_path}.\n"
-                    f"Starting values are loaded from: {source_label}."
-                )
-                return
-            if step == "default_mode":
-                self._render_choice_step(
-                    list_view,
-                    selected=self.values.default_mode,
-                    options=(("main", "Main"), ("trees", "Trees")),
-                )
-                return
-            if step == "components":
-                self._render_components_step(list_view)
-                return
-            if step == "service_startup":
-                self._render_service_startup_step(list_view)
-                return
-            if step == "additional_services":
-                self._sync_additional_service_inputs()
-                return
-            if step == "directories":
-                visible_fields = _visible_directory_fields(self.values)
-                self._sync_directory_inputs(visible_fields)
-                if not visible_fields:
-                    empty.update(
-                        "No directories need configuration for the components currently configured in main or trees."
-                    )
-                    empty.display = True
-                return
-            if step == "commands":
-                visible_fields = _visible_command_fields(self.values)
-                self._sync_directory_inputs(visible_fields)
-                if not visible_fields:
-                    empty.update(
-                        "No entrypoints or test commands need configuration "
-                        "for the components currently configured in main or trees."
-                    )
-                    empty.display = True
-                return
-            if step == "ports":
-                visible_fields = _visible_port_fields(self.values)
-                self._sync_port_inputs(visible_fields)
-                if not visible_fields:
-                    empty.update(
-                        "No ports need configuration for the components currently configured in main or trees."
-                    )
-                    empty.display = True
-                return
-            if step == "review":
-                review.update(
-                    config_review_text(
-                        path=local_state.config_file_path,
-                        values=self.values,
-                        source_label=source_label,
-                        ignore_warning=(
-                            "envctl local artifacts are managed through Git global excludes instead of repo "
-                            ".gitignore. On save, envctl configures or updates core.excludesFile to keep "
-                            ".envctl, MAIN_TASK.md, OLD_TASK_*.md, trees/, and trees-* out of git status."
-                        ),
-                    )
-                )
+            self._body_actions().refresh_body()
+
+        def _body_actions(self) -> ConfigWizardBodyActions:
+            return ConfigWizardBodyActions(
+                values=self.values,
+                config_file_path=local_state.config_file_path,
+                source_label=source_label,
+                current_step=self._current_step,
+                set_display=lambda widget_id, display: setattr(self.query_one(f"#{widget_id}"), "display", display),
+                update_widget=lambda widget_id, text: self.query_one(f"#{widget_id}", Static).update(text),
+                render_choice_step=lambda *, selected, options: self._render_choice_step(
+                    self.query_one("#config-list", ListView),
+                    selected=selected,
+                    options=options,
+                ),
+                render_components_step=lambda: self._render_components_step(self.query_one("#config-list", ListView)),
+                render_service_startup_step=lambda: self._render_service_startup_step(
+                    self.query_one("#config-list", ListView)
+                ),
+                sync_additional_service_inputs=self._sync_additional_service_inputs,
+                sync_directory_inputs=self._sync_directory_inputs,
+                sync_port_inputs=self._sync_port_inputs,
+                update_review=lambda text: self.query_one("#config-review", Static).update(text),
+            )
 
         def _render_additional_services_step(self, list_view) -> None:
             render_additional_services_list(
