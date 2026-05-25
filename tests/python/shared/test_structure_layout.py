@@ -1167,21 +1167,38 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_runtime_command_router_has_owned_catalog(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_catalog.py"
+        alias_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_alias_catalog.py"
+        flag_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_flag_catalog.py"
+        registry_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_catalog_registry.py"
         models_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_models.py"
         flag_storage_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_flag_storage.py"
         special_flags_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_special_flags.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "command_router.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(alias_owner.is_file())
+        self.assertTrue(flag_owner.is_file())
+        self.assertTrue(registry_owner.is_file())
         self.assertTrue(models_owner.is_file())
         self.assertTrue(flag_storage_owner.is_file())
         self.assertTrue(special_flags_owner.is_file())
         owner_text = owner.read_text(encoding="utf-8")
+        alias_text = alias_owner.read_text(encoding="utf-8")
+        flag_text = flag_owner.read_text(encoding="utf-8")
+        registry_text = registry_owner.read_text(encoding="utf-8")
         models_text = models_owner.read_text(encoding="utf-8")
         flag_storage_text = flag_storage_owner.read_text(encoding="utf-8")
         special_flags_text = special_flags_owner.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.runtime.command_alias_catalog import", owner_text)
+        self.assertIn("from envctl_engine.runtime.command_flag_catalog import", owner_text)
+        self.assertIn("COMMAND_ALIASES", alias_text)
+        self.assertIn("SUPPORTED_COMMANDS", alias_text)
+        self.assertIn("BOOLEAN_FLAGS", flag_text)
+        self.assertIn("def list_supported_flag_tokens", flag_text)
+        self.assertIn("def unique_tokens", registry_text)
+        self.assertIn("def unique_mapping", registry_text)
         self.assertIn("COMMAND_ALIASES", owner_text)
-        self.assertIn("def list_supported_flag_tokens", owner_text)
+        self.assertIn("list_supported_flag_tokens as list_supported_flag_tokens", owner_text)
         self.assertIn("class Route", models_text)
         self.assertIn("class RouteError", models_text)
         self.assertIn("def boolean_flag_name", flag_storage_text)
@@ -1194,6 +1211,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.runtime.command_models import", facade_text)
         self.assertIn("from envctl_engine.runtime.command_flag_storage import", facade_text)
         self.assertIn("from envctl_engine.runtime.command_special_flags import", facade_text)
+        self.assertLessEqual(len(owner_text.splitlines()), 120)
         self.assertLessEqual(len(facade_text.splitlines()), 500)
 
     def test_runtime_inspection_has_startup_owner(self) -> None:
