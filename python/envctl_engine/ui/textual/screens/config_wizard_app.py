@@ -20,11 +20,10 @@ from envctl_engine.ui.textual.compat import (
 from envctl_engine.ui.textual.list_row_styles import apply_selectable_list_index, focus_selectable_list
 from . import config_wizard_components as component_policy
 from . import config_wizard_values as value_policy
-from .config_wizard_components import ComponentRow
+from .config_wizard_components import ComponentRow, ConfigWizardComponentInteraction
 from .config_wizard_fields import (
     _ADDITIONAL_SERVICE_FIELDS,
     _COMMAND_FIELDS,
-    _COMPONENT_FIELDS,
     _DIRECTORY_FIELDS,
     _PORT_FIELDS,
     _SERVICE_STARTUP_FIELDS,
@@ -109,7 +108,6 @@ def build_config_wizard_app(
 
         def __init__(self) -> None:
             super().__init__()
-            _ = default_wizard_type
             self.step_index = 0
             self.values = _hydrate_wizard_values(values, base_dir=local_state.base_dir)
             self._suggestions_by_field = self._build_suggestions_by_field()
@@ -127,9 +125,7 @@ def build_config_wizard_app(
             self.values.trees_profile.backend_enable = bool(self.values.trees_profile.backend_enable)
             self.values.trees_profile.frontend_enable = bool(self.values.trees_profile.frontend_enable)
             self._sync_startup_enable_flags()
-            self._split_component_fields = {
-                field_name for field_name, _label in _COMPONENT_FIELDS if self._component_values_differ(field_name)
-            }
+            self._component_interaction = ConfigWizardComponentInteraction.from_values(self.values)
             self._emit_detected_suggestions()
             self._sync_steps(current_step="welcome")
 
@@ -403,19 +399,16 @@ def build_config_wizard_app(
             )
 
         def _component_rows(self) -> list[ComponentRow]:
-            return component_policy.component_rows(self._split_component_fields)
+            return self._component_interaction.rows()
 
         def _render_components_step(self, list_view) -> None:
             rows = self._component_rows()
-            selected_flags: list[bool] = []
-            for row in rows:
-                enabled = self._component_row_enabled(row) if row.selectable else False
-                selected_flags.append(enabled)
+            selected_flags = self._component_interaction.selected_flags(rows)
             render_components_list(
                 list_view,
                 rows=rows,
                 selected_flags=selected_flags,
-                default_index=self._default_component_index(rows, selected_flags),
+                default_index=self._component_interaction.default_index(rows, selected_flags),
                 label_cls=Label,
                 list_item_cls=ListItem,
             )
@@ -601,23 +594,8 @@ def build_config_wizard_app(
                 include_service_startup=self._should_show_service_startup_step(),
             )
 
-        def _component_value(self, mode: str, field_name: str) -> bool:
-            return component_policy.component_value(self.values, mode, field_name)
-
-        def _set_component_value(self, mode: str, field_name: str, enabled: bool) -> None:
-            component_policy.set_component_value(self.values, mode, field_name, enabled)
-
-        def _component_values_differ(self, field_name: str) -> bool:
-            return component_policy.component_values_differ(self.values, field_name)
-
-        def _component_row_enabled(self, row: ComponentRow) -> bool:
-            return component_policy.component_row_enabled(self.values, row)
-
-        def _default_component_index(self, rows: list[ComponentRow], selected_flags: list[bool]) -> int:
-            return component_policy.default_component_index(rows, selected_flags)
-
         def _nearest_selectable_component_index(self, index: int, *, step: int) -> int:
-            return component_policy.nearest_selectable_component_index(self._component_rows(), index, step=step)
+            return self._component_interaction.nearest_selectable_index(index, step=step)
 
         def _directory_label(self, field_name: str) -> str:
             return self._field_hints.directory_label(field_name)
@@ -717,25 +695,16 @@ def build_config_wizard_app(
         def _toggle_components_row(self) -> None:
             list_view = self.query_one("#config-list", ListView)
             index = list_view.index or 0
-            rows = self._component_rows()
-            if not rows:
+            result = self._component_interaction.toggle_component_at(index)
+            if not result.changed:
                 return
-            row = rows[index]
-            if not row.selectable:
-                return
-            enabled = not self._component_row_enabled(row)
-            if row.shared:
-                self._set_component_value("main", row.component_id or "", enabled)
-                self._set_component_value("trees", row.component_id or "", enabled)
-            else:
-                self._set_component_value(row.mode or "main", row.component_id or "", enabled)
             self._sync_startup_enable_flags()
             self._sync_steps(current_step="components")
             self._refresh_body()
             self._refresh_status()
             self._refresh_actions()
             list_view = self.query_one("#config-list", ListView)
-            apply_selectable_list_index(list_view, min(index, max(len(list_view.children) - 1, 0)))
+            apply_selectable_list_index(list_view, min(result.target_index, max(len(list_view.children) - 1, 0)))
             focus_selectable_list(self, list_view, list_view.index)
 
         def _toggle_component_split(self) -> None:
@@ -743,46 +712,15 @@ def build_config_wizard_app(
                 return
             list_view = self.query_one("#config-list", ListView)
             index = list_view.index or 0
-            rows = self._component_rows()
-            if not rows:
+            result = self._component_interaction.toggle_split_at(index)
+            if not result.changed:
+                if result.error_message is not None:
+                    self._refresh_status(result.error_message)
                 return
-            row = rows[index]
-            if not row.selectable:
-                return
-            component_id = row.component_id or ""
-            if component_id in self._split_component_fields:
-                if self._component_values_differ(component_id):
-                    self._refresh_status(
-                        "Main and Trees differ for this component. Make them match before merging the split rows."
-                    )
-                    return
-                self._split_component_fields.remove(component_id)
-            else:
-                self._split_component_fields.add(component_id)
             self._refresh_body()
             self._refresh_status()
             list_view = self.query_one("#config-list", ListView)
-            updated_rows = self._component_rows()
-            if component_id in self._split_component_fields:
-                preferred_mode = row.mode or "main"
-                target_index = next(
-                    (
-                        candidate_index
-                        for candidate_index, candidate in enumerate(updated_rows)
-                        if candidate.component_id == component_id and candidate.mode == preferred_mode
-                    ),
-                    0,
-                )
-            else:
-                target_index = next(
-                    (
-                        candidate_index
-                        for candidate_index, candidate in enumerate(updated_rows)
-                        if candidate.component_id == component_id and candidate.shared
-                    ),
-                    0,
-                )
-            apply_selectable_list_index(list_view, target_index)
+            apply_selectable_list_index(list_view, result.target_index)
             focus_selectable_list(self, list_view, list_view.index)
 
         def _component_split_available(self) -> bool:

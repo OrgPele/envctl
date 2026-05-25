@@ -1189,6 +1189,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def build_config_wizard_app", app_text)
         self.assertIn("class ConfigWizardApp", app_text)
         self.assertIn("class ComponentRow", component_text)
+        self.assertIn("class ConfigWizardComponentInteraction", component_text)
+        self.assertIn("def toggle_component_at", component_text)
+        self.assertIn("def toggle_split_at", component_text)
         self.assertIn("def component_rows", component_text)
         self.assertIn("def toggle_service_startup_value", component_text)
         self.assertIn("def _hydrate_wizard_values", owner_text)
@@ -1223,7 +1226,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from .config_wizard_step_flow import", app_text)
         self.assertIn("from .config_wizard_suggestions import", app_text)
         self.assertLessEqual(len(screen_text.splitlines()), 90)
-        self.assertLessEqual(len(app_text.splitlines()), 1000)
+        self.assertLessEqual(len(app_text.splitlines()), 930)
 
     def test_textual_selector_has_backend_policy_owner(self) -> None:
         selector = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "selector"

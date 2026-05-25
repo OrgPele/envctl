@@ -24,6 +24,96 @@ class ComponentRow:
         return self.selectable and self.mode is None
 
 
+@dataclass(frozen=True, slots=True)
+class ComponentInteractionResult:
+    changed: bool
+    target_index: int = 0
+    error_message: str | None = None
+
+
+class ConfigWizardComponentInteraction:
+    def __init__(self, values: ManagedConfigValues, *, split_component_fields: set[str]) -> None:
+        self.values = values
+        self.split_component_fields = set(split_component_fields)
+
+    @classmethod
+    def from_values(cls, values: ManagedConfigValues) -> ConfigWizardComponentInteraction:
+        split_component_fields = {
+            field_name for field_name, _label in _COMPONENT_FIELDS if component_values_differ(values, field_name)
+        }
+        return cls(values, split_component_fields=split_component_fields)
+
+    def rows(self) -> list[ComponentRow]:
+        return component_rows(self.split_component_fields)
+
+    def selected_flags(self, rows: list[ComponentRow]) -> list[bool]:
+        return [self.row_enabled(row) if row.selectable else False for row in rows]
+
+    def row_enabled(self, row: ComponentRow) -> bool:
+        return component_row_enabled(self.values, row)
+
+    def default_index(self, rows: list[ComponentRow], selected_flags: list[bool]) -> int:
+        return default_component_index(rows, selected_flags)
+
+    def nearest_selectable_index(self, index: int, *, step: int) -> int:
+        return nearest_selectable_component_index(self.rows(), index, step=step)
+
+    def toggle_component_at(self, index: int) -> ComponentInteractionResult:
+        rows = self.rows()
+        row = self._row_at(rows, index)
+        if row is None or not row.selectable:
+            return ComponentInteractionResult(changed=False, target_index=max(index, 0))
+        enabled = not self.row_enabled(row)
+        if row.shared:
+            set_component_value(self.values, "main", row.component_id or "", enabled)
+            set_component_value(self.values, "trees", row.component_id or "", enabled)
+        else:
+            set_component_value(self.values, row.mode or "main", row.component_id or "", enabled)
+        return ComponentInteractionResult(changed=True, target_index=index)
+
+    def toggle_split_at(self, index: int) -> ComponentInteractionResult:
+        rows = self.rows()
+        row = self._row_at(rows, index)
+        if row is None or not row.selectable:
+            return ComponentInteractionResult(changed=False, target_index=max(index, 0))
+        component_id = row.component_id or ""
+        if component_id in self.split_component_fields:
+            if component_values_differ(self.values, component_id):
+                return ComponentInteractionResult(
+                    changed=False,
+                    target_index=index,
+                    error_message=(
+                        "Main and Trees differ for this component. Make them match before merging the split rows."
+                    ),
+                )
+            self.split_component_fields.remove(component_id)
+            return ComponentInteractionResult(
+                changed=True,
+                target_index=self._target_index(component_id=component_id, shared=True),
+            )
+        self.split_component_fields.add(component_id)
+        return ComponentInteractionResult(
+            changed=True,
+            target_index=self._target_index(component_id=component_id, mode=row.mode or "main"),
+        )
+
+    def _target_index(self, *, component_id: str, shared: bool = False, mode: str | None = None) -> int:
+        for index, row in enumerate(self.rows()):
+            if row.component_id != component_id:
+                continue
+            if shared and row.shared:
+                return index
+            if mode is not None and row.mode == mode:
+                return index
+        return 0
+
+    @staticmethod
+    def _row_at(rows: list[ComponentRow], index: int) -> ComponentRow | None:
+        if index < 0 or index >= len(rows):
+            return None
+        return rows[index]
+
+
 def profile_for_mode(values: ManagedConfigValues, mode: str) -> StartupProfile:
     return values.trees_profile if mode == "trees" else values.main_profile
 
