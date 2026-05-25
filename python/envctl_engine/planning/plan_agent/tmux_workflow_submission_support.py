@@ -20,7 +20,6 @@ from envctl_engine.planning.plan_agent.models import (
     PlanAgentLaunchConfig,
     _PlanAgentWorkflow,
     _PlanAgentWorkflowStep,
-    _QueueFailure,
 )
 from envctl_engine.planning.plan_agent.terminal_screen import (
     _codex_queue_message_needs_tab,
@@ -28,6 +27,9 @@ from envctl_engine.planning.plan_agent.terminal_screen import (
     _post_submit_screen_looks_accepted,
     _screen_excerpt,
     _screen_looks_ready,
+)
+from envctl_engine.planning.plan_agent.workflow_queue_support import (
+    run_codex_workflow_queue,
 )
 
 
@@ -496,69 +498,31 @@ def queue_tmux_codex_workflow_steps(
     send_tmux_prompt_fn: SendTmuxPromptFn,
     queue_tmux_codex_message_fn: QueueTmuxCodexMessageFn,
 ) -> str | None:
-    for step_index, step in enumerate(queued_steps):
-        if launch_config.codex_goal_enable and step.requires_goal:
-            goal_text = codex_goal_text_for_worktree_fn(
-                worktree=worktree,
-                preset=launch_config.preset,
-                workflow_mode=workflow.mode,
-                omx_workflow=launch_config.omx_workflow,
-            )
-            queued_goal_text = f"/goal {goal_text}"
-            goal_send_error = send_tmux_prompt_fn(
-                runtime,
-                session_name=session_name,
-                window_name=window_name,
-                text=queued_goal_text,
-            )
-            if goal_send_error is not None:
-                return _QueueFailure("queue_goal_send_failed", step_index=step_index, step_kind=step.kind)
-            if not queue_tmux_codex_message_fn(
-                runtime,
-                session_name=session_name,
-                window_name=window_name,
-                text=queued_goal_text,
-                require_text_match=False,
-            ):
-                return _QueueFailure("queue_goal_not_ready", step_index=step_index, step_kind=step.kind)
-        queued_text, resolution_error = workflow_step_prompt_text_fn(
-            runtime,
-            launch_config=launch_config,
-            cli=cli,
-            step=step,
-            worktree=worktree,
-        )
-        if resolution_error is not None:
-            return _QueueFailure("queue_prompt_resolution_failed", step_index=step_index, step_kind=step.kind)
-        send_error = send_tmux_prompt_fn(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            text=queued_text,
-        )
-        if send_error is not None:
-            return _QueueFailure("queue_send_failed", step_index=step_index, step_kind=step.kind)
-        if not queue_tmux_codex_message_fn(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            text=queued_text,
-            require_text_match=False,
-        ):
-            return _QueueFailure("queue_not_ready", step_index=step_index, step_kind=step.kind)
-    runtime._emit(
-        "planning.agent_launch.workflow_queued",
-        session_name=session_name,
-        window_name=window_name,
-        worktree=worktree.name,
+    return run_codex_workflow_queue(
+        runtime,
+        worktree=worktree,
+        workflow=workflow,
+        queued_steps=queued_steps,
+        launch_config=launch_config,
         cli=cli,
-        workflow_mode=workflow.mode,
-        codex_cycles=workflow.codex_cycles,
-        queued_steps=len(queued_steps),
-        queued_steps_confirmed=len(queued_steps),
         transport=transport,
+        event_context={"session_name": session_name, "window_name": window_name},
+        codex_goal_text_for_worktree_fn=codex_goal_text_for_worktree_fn,
+        workflow_step_prompt_text_fn=workflow_step_prompt_text_fn,
+        send_text_fn=lambda text: send_tmux_prompt_fn(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            text=text,
+        ),
+        queue_message_fn=lambda text, *, require_text_match=True: queue_tmux_codex_message_fn(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            text=text,
+            require_text_match=require_text_match,
+        ),
     )
-    return None
 
 
 def queue_tmux_codex_message(

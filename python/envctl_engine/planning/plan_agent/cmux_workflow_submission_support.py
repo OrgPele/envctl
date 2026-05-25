@@ -16,13 +16,15 @@ from envctl_engine.planning.plan_agent.models import (
     PlanAgentLaunchConfig,
     _PlanAgentWorkflow,
     _PlanAgentWorkflowStep,
-    _QueueFailure,
 )
 from envctl_engine.planning.plan_agent.terminal_screen import (
     _codex_queue_message_needs_tab,
     _codex_queue_screen_confirms_queued,
     _codex_queue_screen_looks_ready,
     _prompt_picker_screen_looks_ready,
+)
+from envctl_engine.planning.plan_agent.workflow_queue_support import (
+    run_codex_workflow_queue,
 )
 
 
@@ -189,71 +191,32 @@ def queue_codex_workflow_steps(
     paste_surface_text_fn: PasteSurfaceTextFn,
     queue_codex_message_fn: QueueCodexMessageFn,
 ) -> str | None:
-    for step_index, step in enumerate(queued_steps):
-        if launch_config.codex_goal_enable and step.requires_goal:
-            goal_text = codex_goal_text_for_worktree_fn(
-                worktree=worktree,
-                preset=launch_config.preset,
-                workflow_mode=workflow.mode,
-                omx_workflow=launch_config.omx_workflow,
-            )
-            queued_goal_text = f"/goal {goal_text}"
-            goal_send_error = paste_surface_text_fn(
-                runtime,
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                text=queued_goal_text,
-                emit_failure_event=False,
-            )
-            if goal_send_error is not None:
-                return _QueueFailure("queue_goal_send_failed", step_index=step_index, step_kind=step.kind)
-            if not queue_codex_message_fn(
-                runtime,
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                text=queued_goal_text,
-                require_text_match=False,
-            ):
-                return _QueueFailure("queue_goal_not_ready", step_index=step_index, step_kind=step.kind)
-        queued_text, resolution_error = workflow_step_prompt_text_fn(
-            runtime,
-            launch_config=launch_config,
-            cli=cli,
-            step=step,
-            worktree=worktree,
-        )
-        if resolution_error is not None:
-            return _QueueFailure("queue_prompt_resolution_failed", step_index=step_index, step_kind=step.kind)
-        send_error = paste_surface_text_fn(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            text=queued_text,
-            emit_failure_event=False,
-        )
-        if send_error is not None:
-            return _QueueFailure("queue_send_failed", step_index=step_index, step_kind=step.kind)
-        if not queue_codex_message_fn(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            text=queued_text,
-            require_text_match=False,
-        ):
-            return _QueueFailure("queue_not_ready", step_index=step_index, step_kind=step.kind)
-    runtime._emit(
-        "planning.agent_launch.workflow_queued",
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        worktree=worktree.name,
+    return run_codex_workflow_queue(
+        runtime,
+        worktree=worktree,
+        workflow=workflow,
+        queued_steps=queued_steps,
+        launch_config=launch_config,
         cli=cli,
-        workflow_mode=workflow.mode,
-        codex_cycles=workflow.codex_cycles,
-        queued_steps=len(queued_steps),
-        queued_steps_confirmed=len(queued_steps),
         transport="cmux",
+        event_context={"workspace_id": workspace_id, "surface_id": surface_id},
+        codex_goal_text_for_worktree_fn=codex_goal_text_for_worktree_fn,
+        workflow_step_prompt_text_fn=workflow_step_prompt_text_fn,
+        send_text_fn=lambda text: paste_surface_text_fn(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            text=text,
+            emit_failure_event=False,
+        ),
+        queue_message_fn=lambda text, *, require_text_match=True: queue_codex_message_fn(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            text=text,
+            require_text_match=require_text_match,
+        ),
     )
-    return None
 
 
 def wait_for_codex_queue_ready(

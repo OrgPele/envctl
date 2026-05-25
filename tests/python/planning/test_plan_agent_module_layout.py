@@ -67,6 +67,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "workflow.py",
             "workflow_build.py",
             "workflow_prompt_support.py",
+            "workflow_queue_support.py",
         }
         actual = {path.name for path in PLAN_AGENT_ROOT.glob("*.py")}
         self.assertTrue(expected.issubset(actual))
@@ -213,6 +214,9 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "_codex_goal_text_for_worktree",
                 "_emit_codex_goal_event",
                 "_wrap_omx_initial_prompt_for_workflow",
+            },
+            "workflow_queue_support.py": {
+                "run_codex_workflow_queue",
             },
             "terminal_screen.py": {
                 "_screen_looks_ready",
