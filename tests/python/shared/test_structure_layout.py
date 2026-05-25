@@ -1290,6 +1290,15 @@ class StructureLayoutTests(unittest.TestCase):
         suggestion_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_suggestions.py"
         )
+        suggestion_actions_owner = (
+            REPO_ROOT
+            / "python"
+            / "envctl_engine"
+            / "ui"
+            / "textual"
+            / "screens"
+            / "config_wizard_suggestion_actions.py"
+        )
 
         self.assertTrue(app_owner.is_file())
         self.assertTrue(component_owner.is_file())
@@ -1304,6 +1313,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(list_owner.is_file())
         self.assertTrue(step_owner.is_file())
         self.assertTrue(suggestion_owner.is_file())
+        self.assertTrue(suggestion_actions_owner.is_file())
         app_text = app_owner.read_text(encoding="utf-8")
         component_text = component_owner.read_text(encoding="utf-8")
         component_actions_text = component_actions_owner.read_text(encoding="utf-8")
@@ -1317,6 +1327,7 @@ class StructureLayoutTests(unittest.TestCase):
         list_text = list_owner.read_text(encoding="utf-8")
         step_text = step_owner.read_text(encoding="utf-8")
         suggestion_text = suggestion_owner.read_text(encoding="utf-8")
+        suggestion_actions_text = suggestion_actions_owner.read_text(encoding="utf-8")
         self.assertIn("class ConfigWizardResult", app_text)
         self.assertIn("def build_config_wizard_app", app_text)
         self.assertIn("class ConfigWizardApp", app_text)
@@ -1358,6 +1369,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def build_config_wizard_suggestions", suggestion_text)
         self.assertIn("def cycle_config_wizard_suggestion", suggestion_text)
         self.assertIn("def emit_detected_config_wizard_suggestions", suggestion_text)
+        self.assertIn("class ConfigWizardSuggestionActions", suggestion_actions_text)
+        self.assertIn("def focused_suggestion_field", suggestion_actions_text)
+        self.assertIn("def cycle_command_suggestion", suggestion_actions_text)
         screen_text = screen.read_text(encoding="utf-8")
         self.assertIn("from .config_wizard_app import ConfigWizardResult, _emit, build_config_wizard_app", screen_text)
         self.assertIn("from . import config_wizard_components as component_policy", app_text)
@@ -1372,6 +1386,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from .config_wizard_status import", app_text)
         self.assertIn("from .config_wizard_list_rendering import", app_text)
         self.assertIn("from .config_wizard_step_flow import", app_text)
+        self.assertIn("from .config_wizard_suggestion_actions import ConfigWizardSuggestionActions", app_text)
         self.assertIn("from .config_wizard_suggestions import", app_text)
         self.assertLessEqual(len(screen_text.splitlines()), 90)
         self.assertLessEqual(len(app_text.splitlines()), 825)

@@ -50,9 +50,9 @@ from .config_wizard_status import (
     resolve_config_wizard_status,
 )
 from .config_wizard_step_flow import should_show_service_startup_step, sync_wizard_steps
+from .config_wizard_suggestion_actions import ConfigWizardSuggestionActions
 from .config_wizard_suggestions import (
     build_config_wizard_suggestions,
-    cycle_config_wizard_suggestion,
     emit_detected_config_wizard_suggestions,
 )
 
@@ -196,13 +196,7 @@ def build_config_wizard_app(
             return isinstance(focused, Input)
 
         def _focused_suggestion_field(self) -> str | None:
-            focused = self.focused
-            if not isinstance(focused, Input):
-                return None
-            field_name = _directory_field_name_from_input_id(getattr(focused, "id", None))
-            if field_name in self._suggestions_by_field:
-                return field_name
-            return None
+            return self._suggestion_actions().focused_suggestion_field()
 
         def _button_has_focus(self) -> bool:
             focused = self.focused
@@ -387,6 +381,20 @@ def build_config_wizard_app(
                 refresh_actions=self._refresh_actions,
             )
 
+        def _suggestion_actions(self) -> ConfigWizardSuggestionActions:
+            return ConfigWizardSuggestionActions(
+                values=self.values,
+                suggestions_by_field=self._suggestions_by_field,
+                input_type=Input,
+                focused_widget=lambda: self.focused,
+                field_name_from_input_id=_directory_field_name_from_input_id,
+                directory_label=self._directory_label,
+                refresh_directory_validation=self._refresh_directory_validation,
+                refresh_field_hint=self._refresh_field_hint,
+                refresh_status=self._refresh_status,
+                emit=lambda event, **payload: _emit(emit, event, **payload),
+            )
+
         def _render_components_step(self, list_view) -> None:
             rows = self._component_rows()
             selected_flags = self._component_interaction.selected_flags(rows)
@@ -561,37 +569,7 @@ def build_config_wizard_app(
             self._refresh_status()
 
         def action_cycle_command_suggestion(self) -> None:
-            field_name = self._focused_suggestion_field()
-            if field_name is None:
-                return
-            suggestions = self._suggestions_by_field.get(field_name, ())
-            if not suggestions:
-                self._refresh_status("No suggestions are available for the focused field.")
-                return
-            focused = self.focused
-            if not isinstance(focused, Input):
-                return
-            result = cycle_config_wizard_suggestion(
-                self._suggestions_by_field,
-                field_name=field_name,
-                current_value=str(focused.value or ""),
-            )
-            if result is None:
-                return
-            suggestion = result.suggestion
-            next_value = result.value
-            focused.value = next_value
-            setattr(self.values, field_name, next_value)
-            self._refresh_directory_validation(field_name, raw=next_value)
-            self._refresh_field_hint(field_name, raw=next_value)
-            _emit(
-                emit,
-                "ui.config_wizard.suggestion.accepted",
-                field=field_name,
-                source=suggestion.source,
-                confidence=suggestion.confidence,
-            )
-            self._refresh_status(f"Accepted suggestion for {self._directory_label(field_name)}.")
+            self._suggestion_actions().cycle_command_suggestion()
 
         def action_cancel(self) -> None:
             self.exit(None)
@@ -600,8 +578,7 @@ def build_config_wizard_app(
             if action == "toggle_component_split":
                 return True if self._component_split_available() else False
             if action == "cycle_command_suggestion":
-                field_name = self._focused_suggestion_field()
-                return True if field_name is not None and bool(self._suggestions_by_field.get(field_name)) else False
+                return True if self._suggestion_actions().cycle_command_suggestion_available() else False
             return super().check_action(action, parameters)
 
         def action_go_back(self) -> None:
