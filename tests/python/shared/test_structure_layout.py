@@ -54,20 +54,10 @@ class StructureLayoutTests(unittest.TestCase):
             REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "native_db.py"
         )
         native_db_command_owner = (
-            REPO_ROOT
-            / "python"
-            / "envctl_engine"
-            / "requirements"
-            / "supabase_lifecycle"
-            / "native_db_commands.py"
+            REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "native_db_commands.py"
         )
         native_db_recovery_owner = (
-            REPO_ROOT
-            / "python"
-            / "envctl_engine"
-            / "requirements"
-            / "supabase_lifecycle"
-            / "native_db_recovery.py"
+            REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "native_db_recovery.py"
         )
         compose_handoff_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "compose_handoff.py"
@@ -95,9 +85,15 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def start_supabase_compose_graph", graph_owner.read_text(encoding="utf-8"))
         self.assertIn("class NativeSupabaseDatabaseStarter", native_db_owner.read_text(encoding="utf-8"))
         self.assertIn("class SupabaseNativeDbCommandBuilder", native_db_command_owner.read_text(encoding="utf-8"))
-        self.assertIn("from envctl_engine.requirements.supabase_lifecycle.native_db_commands import", native_db_owner.read_text(encoding="utf-8"))
+        self.assertIn(
+            "from envctl_engine.requirements.supabase_lifecycle.native_db_commands import",
+            native_db_owner.read_text(encoding="utf-8"),
+        )
         self.assertIn("def recover_native_db_start_timeout", native_db_recovery_owner.read_text(encoding="utf-8"))
-        self.assertIn("from envctl_engine.requirements.supabase_lifecycle.native_db_recovery import", native_db_owner.read_text(encoding="utf-8"))
+        self.assertIn(
+            "from envctl_engine.requirements.supabase_lifecycle.native_db_recovery import",
+            native_db_owner.read_text(encoding="utf-8"),
+        )
         self.assertLessEqual(len(native_db_owner.read_text(encoding="utf-8").splitlines()), 430)
         self.assertIn("compose_handoff", compose_owner.read_text(encoding="utf-8"))
         self.assertIn("def compose_up_handoff", compose_handoff_owner.read_text(encoding="utf-8"))
@@ -409,9 +405,7 @@ class StructureLayoutTests(unittest.TestCase):
         protected_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_protected_artifacts.py"
         pr_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_pr_message_support.py"
         review_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_output_support.py"
-        review_artifact_owner = (
-            REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_artifact_support.py"
-        )
+        review_artifact_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_artifact_support.py"
         review_plan_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_plan_support.py"
         review_original_plan_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_original_plan_support.py"
@@ -537,9 +531,7 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_project_action_support_has_report_owner(self) -> None:
         env_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_env_support.py"
-        execution_owner = (
-            REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_execution_support.py"
-        )
+        execution_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_execution_support.py"
         report_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_report_support.py"
         owner_facade = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_project_report_owner.py"
         support = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_support.py"
@@ -891,6 +883,22 @@ class StructureLayoutTests(unittest.TestCase):
         definition_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_definitions.py"
         definition_schema = REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_definition_schema.py"
         command_definitions = REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_command_definitions.py"
+        command_lifecycle_definitions = (
+            REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_lifecycle_command_definitions.py"
+        )
+        command_planning_definitions = (
+            REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_planning_command_definitions.py"
+        )
+        command_action_definitions = (
+            REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_action_command_definitions.py"
+        )
+        command_inspection_definitions = (
+            REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_inspection_command_definitions.py"
+        )
+        command_cli_definitions = REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_cli_command_definitions.py"
+        command_diagnostic_definitions = (
+            REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_diagnostic_command_definitions.py"
+        )
         extra_definitions = REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_extra_definitions.py"
         inventory = REPO_ROOT / "python" / "envctl_engine" / "runtime_feature_inventory.py"
 
@@ -898,6 +906,12 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(definition_owner.is_file())
         self.assertTrue(definition_schema.is_file())
         self.assertTrue(command_definitions.is_file())
+        self.assertTrue(command_lifecycle_definitions.is_file())
+        self.assertTrue(command_planning_definitions.is_file())
+        self.assertTrue(command_action_definitions.is_file())
+        self.assertTrue(command_inspection_definitions.is_file())
+        self.assertTrue(command_cli_definitions.is_file())
+        self.assertTrue(command_diagnostic_definitions.is_file())
         self.assertTrue(extra_definitions.is_file())
         owner_text = owner.read_text(encoding="utf-8")
         definition_owner_text = definition_owner.read_text(encoding="utf-8")
@@ -908,12 +922,33 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def validate_runtime_feature_matrix_payload", owner_text)
         self.assertIn("def render_python_runtime_gap_closure_plan", owner_text)
         self.assertIn("class FeatureDefinition", definition_schema_text)
+        self.assertIn("LIFECYCLE_COMMAND_DEFINITIONS", command_lifecycle_definitions.read_text(encoding="utf-8"))
+        self.assertIn("PLANNING_COMMAND_DEFINITIONS", command_planning_definitions.read_text(encoding="utf-8"))
+        self.assertIn("ACTION_COMMAND_DEFINITIONS", command_action_definitions.read_text(encoding="utf-8"))
+        self.assertIn("INSPECTION_COMMAND_DEFINITIONS", command_inspection_definitions.read_text(encoding="utf-8"))
+        self.assertIn("CLI_COMMAND_DEFINITIONS", command_cli_definitions.read_text(encoding="utf-8"))
+        self.assertIn("DIAGNOSTIC_COMMAND_DEFINITIONS", command_diagnostic_definitions.read_text(encoding="utf-8"))
+        self.assertIn(
+            "from envctl_engine.runtime_feature_lifecycle_command_definitions import", command_definitions_text
+        )
+        self.assertIn(
+            "from envctl_engine.runtime_feature_planning_command_definitions import", command_definitions_text
+        )
+        self.assertIn("from envctl_engine.runtime_feature_action_command_definitions import", command_definitions_text)
+        self.assertIn(
+            "from envctl_engine.runtime_feature_inspection_command_definitions import", command_definitions_text
+        )
+        self.assertIn("from envctl_engine.runtime_feature_cli_command_definitions import", command_definitions_text)
+        self.assertIn(
+            "from envctl_engine.runtime_feature_diagnostic_command_definitions import", command_definitions_text
+        )
         self.assertIn("COMMAND_DEFINITIONS", command_definitions_text)
         self.assertIn("EXTRA_FEATURES", extra_definitions_text)
         self.assertIn("runtime_feature_definition_schema", definition_owner_text)
         self.assertIn("runtime_feature_command_definitions", definition_owner_text)
         self.assertIn("runtime_feature_extra_definitions", definition_owner_text)
         self.assertLessEqual(len(definition_owner_text.splitlines()), 35)
+        self.assertLessEqual(len(command_definitions_text.splitlines()), 55)
         inventory_text = inventory.read_text(encoding="utf-8")
         self.assertIn("runtime_feature_contracts", inventory_text)
         self.assertIn("runtime_feature_definitions", inventory_text)
@@ -1199,18 +1234,12 @@ class StructureLayoutTests(unittest.TestCase):
     def test_dashboard_command_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_support.py"
         input_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_input_support.py"
-        command_mixin = (
-            REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator_command_mixin.py"
-        )
-        failure_mixin = (
-            REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator_failure_mixin.py"
-        )
+        command_mixin = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator_command_mixin.py"
+        failure_mixin = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator_failure_mixin.py"
         target_mixin = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator_target_mixin.py"
         stop_mixin = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator_stop_mixin.py"
         pr_mixin = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator_pr_mixin.py"
-        restart_mixin = (
-            REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator_restart_mixin.py"
-        )
+        restart_mixin = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator_restart_mixin.py"
         target_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "project_target_support.py"
         selection_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "target_selection_support.py"
         service_catalog_owner = (
@@ -1406,7 +1435,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class DashboardSnapshotPrinter", owner_text)
         self.assertIn("class DashboardSnapshotRenderHooks", owner_text)
         self.assertIn("def print_snapshot", owner_text)
-        self.assertIn("from envctl_engine.ui.dashboard.snapshot_support import build_dashboard_snapshot_model", owner_text)
+        self.assertIn(
+            "from envctl_engine.ui.dashboard.snapshot_support import build_dashboard_snapshot_model", owner_text
+        )
         rendering_text = rendering.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.ui.dashboard import snapshot_rendering", rendering_text)
         self.assertIn("DashboardSnapshotRenderHooks", rendering_text)
@@ -1440,13 +1471,7 @@ class StructureLayoutTests(unittest.TestCase):
     def test_textual_planning_selector_has_model_owner(self) -> None:
         selector = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "planning_selector.py"
         model_owner = (
-            REPO_ROOT
-            / "python"
-            / "envctl_engine"
-            / "ui"
-            / "textual"
-            / "screens"
-            / "planning_selector_model.py"
+            REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "planning_selector_model.py"
         )
 
         self.assertTrue(model_owner.is_file())
@@ -1463,24 +1488,14 @@ class StructureLayoutTests(unittest.TestCase):
     def test_textual_config_wizard_has_field_owner(self) -> None:
         screen = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard.py"
         app_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_app.py"
-        component_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_components.py"
+        component_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_components.py"
+        )
         component_actions_owner = (
-            REPO_ROOT
-            / "python"
-            / "envctl_engine"
-            / "ui"
-            / "textual"
-            / "screens"
-            / "config_wizard_component_actions.py"
+            REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_component_actions.py"
         )
         action_bundle_owner = (
-            REPO_ROOT
-            / "python"
-            / "envctl_engine"
-            / "ui"
-            / "textual"
-            / "screens"
-            / "config_wizard_action_bundle.py"
+            REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_action_bundle.py"
         )
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_fields.py"
         hint_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_hints.py"
@@ -1494,7 +1509,9 @@ class StructureLayoutTests(unittest.TestCase):
         list_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_list_rendering.py"
         )
-        step_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_step_flow.py"
+        step_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_step_flow.py"
+        )
         suggestion_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_suggestions.py"
         )
@@ -1508,31 +1525,13 @@ class StructureLayoutTests(unittest.TestCase):
             / "config_wizard_suggestion_actions.py"
         )
         flow_actions_owner = (
-            REPO_ROOT
-            / "python"
-            / "envctl_engine"
-            / "ui"
-            / "textual"
-            / "screens"
-            / "config_wizard_flow_actions.py"
+            REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_flow_actions.py"
         )
         focus_actions_owner = (
-            REPO_ROOT
-            / "python"
-            / "envctl_engine"
-            / "ui"
-            / "textual"
-            / "screens"
-            / "config_wizard_focus_actions.py"
+            REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_focus_actions.py"
         )
         body_actions_owner = (
-            REPO_ROOT
-            / "python"
-            / "envctl_engine"
-            / "ui"
-            / "textual"
-            / "screens"
-            / "config_wizard_body_actions.py"
+            REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_body_actions.py"
         )
 
         self.assertTrue(app_owner.is_file())
@@ -1643,9 +1642,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from .config_wizard_status import", app_text)
         self.assertIn("from .config_wizard_list_rendering import", app_text)
         self.assertIn("from .config_wizard_step_flow import", app_text)
-        self.assertIn(
-            "from .config_wizard_suggestion_actions import ConfigWizardSuggestionActions", action_bundle_text
-        )
+        self.assertIn("from .config_wizard_suggestion_actions import ConfigWizardSuggestionActions", action_bundle_text)
         self.assertIn("from .config_wizard_suggestions import", app_text)
         self.assertIn("from .config_wizard_flow_actions import ConfigWizardFlowActions", action_bundle_text)
         self.assertIn("from .config_wizard_focus_actions import ConfigWizardFocusActions", action_bundle_text)
@@ -1862,9 +1859,7 @@ class StructureLayoutTests(unittest.TestCase):
         selection_runtime_bridge = (
             REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_selection_runtime_bridge.py"
         )
-        sync_runtime_bridge = (
-            REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_runtime_bridge.py"
-        )
+        sync_runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_runtime_bridge.py"
         protocols = REPO_ROOT / "python" / "envctl_engine" / "planning" / "protocols.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
 
@@ -1915,7 +1910,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.planning.worktree_path_support import", facade_text)
         self.assertIn("from envctl_engine.planning.worktree_menu_terminal_support import", facade_text)
         self.assertIn("from envctl_engine.planning.worktree_spinner_support import", facade_text)
-        self.assertIn("from envctl_engine.planning.worktree_runtime_bridge import create_planning_runtime_bridge", facade_text)
+        self.assertIn(
+            "from envctl_engine.planning.worktree_runtime_bridge import create_planning_runtime_bridge", facade_text
+        )
         top_level_imports = "\n".join(line for line in facade_text.splitlines() if line.startswith("from "))
         self.assertNotIn("from envctl_engine.actions.actions_worktree import", top_level_imports)
         self.assertNotIn("from envctl_engine.runtime.runtime_context import", top_level_imports)
@@ -1923,7 +1920,10 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def select_planning_counts_textual", facade_text)
         self.assertIn("from envctl_engine.planning.protocols import ProjectContextLike", facade_text)
         self.assertNotIn("class ProjectContextLike(Protocol)", facade_text)
-        self.assertNotIn("return _coerce_setup_entries_impl(flags=route.flags, flag_name=flag_name, value_name=value_name)\n    return _coerce_setup_entries_impl", facade_text)
+        self.assertNotIn(
+            "return _coerce_setup_entries_impl(flags=route.flags, flag_name=flag_name, value_name=value_name)\n    return _coerce_setup_entries_impl",
+            facade_text,
+        )
         self.assertLessEqual(len(facade_text.splitlines()), 720)
 
     def test_startup_helpers_share_project_context_protocol(self) -> None:
@@ -2130,9 +2130,7 @@ class StructureLayoutTests(unittest.TestCase):
     def test_worktree_plan_project_selection_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_plan_project_selection.py"
         protocols = REPO_ROOT / "python" / "envctl_engine" / "planning" / "protocols.py"
-        selection_bridge = (
-            REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_selection_runtime_bridge.py"
-        )
+        selection_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_selection_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
         self.assertTrue(protocols.is_file())
@@ -2140,14 +2138,14 @@ class StructureLayoutTests(unittest.TestCase):
             "from envctl_engine.planning.worktree_plan_project_selection import",
             selection_bridge.read_text(encoding="utf-8"),
         )
-        self.assertIn("from envctl_engine.planning.protocols import ProjectContextLike", owner.read_text(encoding="utf-8"))
+        self.assertIn(
+            "from envctl_engine.planning.protocols import ProjectContextLike", owner.read_text(encoding="utf-8")
+        )
         self.assertNotIn("class ProjectContextLike(Protocol)", owner.read_text(encoding="utf-8"))
 
     def test_worktree_prompt_selection_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_prompt_selection.py"
-        selection_bridge = (
-            REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_selection_runtime_bridge.py"
-        )
+        selection_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_selection_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
         self.assertIn(
@@ -2157,9 +2155,7 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_worktree_planning_menu_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_planning_menu.py"
-        selection_bridge = (
-            REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_selection_runtime_bridge.py"
-        )
+        selection_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_selection_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
         self.assertIn(
@@ -2189,7 +2185,9 @@ class StructureLayoutTests(unittest.TestCase):
             "from envctl_engine.planning.worktree_setup_coordinator import",
             setup_bridge.read_text(encoding="utf-8"),
         )
-        self.assertIn("from envctl_engine.planning.protocols import ProjectContextLike", owner.read_text(encoding="utf-8"))
+        self.assertIn(
+            "from envctl_engine.planning.protocols import ProjectContextLike", owner.read_text(encoding="utf-8")
+        )
         self.assertNotIn("class ProjectContextLike(Protocol)", owner.read_text(encoding="utf-8"))
 
     def test_worktree_runtime_setup_bridge_has_owned_module(self) -> None:
@@ -2500,12 +2498,8 @@ class StructureLayoutTests(unittest.TestCase):
     def test_service_bootstrap_env_has_owned_module(self) -> None:
         env_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_env_support.py"
         runtime_state_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_runtime_state_support.py"
-        frontend_owner = (
-            REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_frontend_bootstrap_support.py"
-        )
-        migration_owner = (
-            REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_backend_migration_support.py"
-        )
+        frontend_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_frontend_bootstrap_support.py"
+        migration_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_backend_migration_support.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_bootstrap_domain.py"
 
         self.assertTrue(env_owner.is_file())
