@@ -53,6 +53,22 @@ class StructureLayoutTests(unittest.TestCase):
         native_db_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "native_db.py"
         )
+        native_db_command_owner = (
+            REPO_ROOT
+            / "python"
+            / "envctl_engine"
+            / "requirements"
+            / "supabase_lifecycle"
+            / "native_db_commands.py"
+        )
+        native_db_recovery_owner = (
+            REPO_ROOT
+            / "python"
+            / "envctl_engine"
+            / "requirements"
+            / "supabase_lifecycle"
+            / "native_db_recovery.py"
+        )
         compose_handoff_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "requirements" / "supabase_lifecycle" / "compose_handoff.py"
         )
@@ -69,6 +85,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(db_owner.is_file())
         self.assertTrue(graph_owner.is_file())
         self.assertTrue(native_db_owner.is_file())
+        self.assertTrue(native_db_command_owner.is_file())
+        self.assertTrue(native_db_recovery_owner.is_file())
         self.assertTrue(compose_handoff_owner.is_file())
         self.assertTrue(service_owner.is_file())
         self.assertTrue(preflight_owner.is_file())
@@ -76,6 +94,11 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def ensure_supabase_db_ready", db_owner.read_text(encoding="utf-8"))
         self.assertIn("def start_supabase_compose_graph", graph_owner.read_text(encoding="utf-8"))
         self.assertIn("class NativeSupabaseDatabaseStarter", native_db_owner.read_text(encoding="utf-8"))
+        self.assertIn("class SupabaseNativeDbCommandBuilder", native_db_command_owner.read_text(encoding="utf-8"))
+        self.assertIn("from envctl_engine.requirements.supabase_lifecycle.native_db_commands import", native_db_owner.read_text(encoding="utf-8"))
+        self.assertIn("def recover_native_db_start_timeout", native_db_recovery_owner.read_text(encoding="utf-8"))
+        self.assertIn("from envctl_engine.requirements.supabase_lifecycle.native_db_recovery import", native_db_owner.read_text(encoding="utf-8"))
+        self.assertLessEqual(len(native_db_owner.read_text(encoding="utf-8").splitlines()), 430)
         self.assertIn("compose_handoff", compose_owner.read_text(encoding="utf-8"))
         self.assertIn("def compose_up_handoff", compose_handoff_owner.read_text(encoding="utf-8"))
         self.assertLessEqual(len(compose_owner.read_text(encoding="utf-8").splitlines()), 340)
