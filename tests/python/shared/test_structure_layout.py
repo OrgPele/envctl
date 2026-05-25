@@ -205,16 +205,24 @@ class StructureLayoutTests(unittest.TestCase):
         suite_execution_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_suite_execution_support.py"
         )
+        suite_event_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_suite_event_support.py"
+        suite_outcome_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_suite_outcome_support.py"
+        )
         progress_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_runner_progress.py"
         failure_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_runner_failures.py"
         runner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_runner.py"
 
         self.assertTrue(execution_owner.is_file())
         self.assertTrue(suite_execution_owner.is_file())
+        self.assertTrue(suite_event_owner.is_file())
+        self.assertTrue(suite_outcome_owner.is_file())
         self.assertTrue(progress_owner.is_file())
         self.assertTrue(failure_owner.is_file())
         execution_text = execution_owner.read_text(encoding="utf-8")
         suite_execution_text = suite_execution_owner.read_text(encoding="utf-8")
+        suite_event_text = suite_event_owner.read_text(encoding="utf-8")
+        suite_outcome_text = suite_outcome_owner.read_text(encoding="utf-8")
         progress_text = progress_owner.read_text(encoding="utf-8")
         failure_text = failure_owner.read_text(encoding="utf-8")
         self.assertIn("class TestActionExecutionPlan", execution_text)
@@ -223,6 +231,10 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class TestSuiteExecutionResult", suite_execution_text)
         self.assertIn("def execute_test_suites", suite_execution_text)
         self.assertIn("class _TestSuiteExecutor", suite_execution_text)
+        self.assertIn("class TestSuiteEventEmitter", suite_event_text)
+        self.assertIn("def emit_summary", suite_event_text)
+        self.assertIn("class TestSuiteOutcomeRecorder", suite_outcome_text)
+        self.assertIn("def record", suite_outcome_text)
         self.assertIn("def format_live_progress_status", progress_text)
         self.assertIn("def format_live_progress_status_with_counts", progress_text)
         self.assertIn("def summarize_failure_output", failure_text)

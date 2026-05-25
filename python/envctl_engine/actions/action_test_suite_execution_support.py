@@ -10,14 +10,13 @@ from typing import Any
 
 from envctl_engine.actions.action_test_execution_support import TestActionExecutionPlan
 from envctl_engine.actions.action_test_interrupt_support import TestSuiteInterruptRegistry
-from envctl_engine.actions.action_test_runner_failures import (
-    format_failure_output_for_artifact as _format_failure_output_for_artifact,
-    summarize_failure_output as _summarize_failure_output,
-)
+from envctl_engine.actions.action_test_runner_failures import summarize_failure_output as _summarize_failure_output
 from envctl_engine.actions.action_test_runner_progress import (
     LiveTestProgressReporter,
     ParallelTestProgressTracker,
 )
+from envctl_engine.actions.action_test_suite_event_support import TestSuiteEventEmitter
+from envctl_engine.actions.action_test_suite_outcome_support import TestSuiteOutcomeRecorder
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.path_links import render_path_for_terminal
@@ -105,7 +104,8 @@ class _TestSuiteExecutor:
             multi_project=plan.multi_project,
             env=getattr(self.runtime, "env", {}),
         )
-        self.outcomes: list[dict[str, object]] = []
+        self.events = TestSuiteEventEmitter(runtime=self.runtime, total=len(self.execution_specs))
+        self.outcomes = TestSuiteOutcomeRecorder(failed_only=self.failed_only)
         self.interrupt_registry = TestSuiteInterruptRegistry(
             runtime=self.runtime,
             emit_status=orchestrator._emit_status,
@@ -155,7 +155,7 @@ class _TestSuiteExecutor:
             finally:
                 self._shutdown_executor(executor)
 
-        return TestSuiteExecutionResult(failures=failures, outcomes=self.outcomes)
+        return TestSuiteExecutionResult(failures=failures, outcomes=self.outcomes.outcomes)
 
     def run_spec(self, execution: Any) -> tuple[int, str]:
         index = execution.index
@@ -163,7 +163,6 @@ class _TestSuiteExecutor:
         args = execution.args
         resolved_source = execution.resolved_source
         project_name = execution.project_name
-        project_root = execution.project_root
         suite_label = self.orchestrator._suite_display_name(spec.source, failed_only=self.failed_only)
         self._announce_suite_start(execution, suite_label=suite_label, resolved_source=resolved_source)
 
@@ -174,16 +173,7 @@ class _TestSuiteExecutor:
 
         command = [*spec.command, *args]
         started_at = time.monotonic()
-        self.runtime._emit(  # type: ignore[attr-defined]
-            "test.suite.start",
-            suite=spec.source,
-            index=index,
-            total=len(self.execution_specs),
-            command=command,
-            cwd=str(spec.cwd),
-            project=project_name,
-            project_root=str(project_root),
-        )
+        self.events.emit_start(execution, command=command)
 
         selected_target = (
             execution.target_obj if execution.target_obj is not None else (self.targets[0] if self.targets else None)
@@ -232,19 +222,8 @@ class _TestSuiteExecutor:
             parsed=parsed,
             duration_ms=duration_ms,
         )
-        self._record_outcome(execution, command=command, completed=completed, parsed=parsed, duration_ms=duration_ms)
-        self.runtime._emit(  # type: ignore[attr-defined]
-            "test.suite.finish",
-            suite=spec.source,
-            index=index,
-            total=len(self.execution_specs),
-            command=command,
-            cwd=str(spec.cwd),
-            returncode=completed.returncode,
-            duration_ms=duration_ms,
-            project=project_name,
-            project_root=str(project_root),
-        )
+        self.outcomes.record(execution, command=command, completed=completed, parsed=parsed, duration_ms=duration_ms)
+        self.events.emit_finish(execution, command=command, completed=completed, duration_ms=duration_ms)
         self.interrupt_registry.clear_by_index(int(index))
         self._mark_finished(execution, completed=completed, parsed=parsed, duration_ms=duration_ms)
 
@@ -350,20 +329,7 @@ class _TestSuiteExecutor:
                 self.orchestrator._emit_status(
                     f"{execution.project_name} / {execution.spec.source} summary: no parsed test counts"
                 )
-        self.runtime._emit(  # type: ignore[attr-defined]
-            "test.suite.summary",
-            suite=execution.spec.source,
-            index=execution.index,
-            total=len(self.execution_specs),
-            project=execution.project_name,
-            project_root=str(execution.project_root),
-            counts_detected=counts_detected,
-            passed=(parsed.passed if counts_detected else None),
-            failed=(parsed.failed if counts_detected else None),
-            skipped=(parsed.skipped if counts_detected else None),
-            errors=(parsed.errors if counts_detected else None),
-            total_tests=(parsed.total if counts_detected else None),
-        )
+        self.events.emit_summary(execution, parsed=parsed)
 
     def _print_interactive_suite_finish(
         self,
@@ -400,44 +366,6 @@ class _TestSuiteExecutor:
         )
         if completed.returncode == 0 and parsed is not None and not counts_detected:
             print("      note: test command completed, but envctl could not extract test counts from the output.")
-
-    def _record_outcome(
-        self,
-        execution: Any,
-        *,
-        command: list[str],
-        completed: Any,
-        parsed: Any,
-        duration_ms: float,
-    ) -> None:
-        self.outcomes.append(
-            {
-                "suite": execution.spec.source,
-                "index": execution.index,
-                "project_name": execution.project_name,
-                "project_root": str(execution.project_root),
-                "command": command,
-                "cwd": str(execution.spec.cwd),
-                "returncode": completed.returncode,
-                "duration_ms": duration_ms,
-                "parsed": parsed,
-                "failed_only": self.failed_only,
-                "failure_summary": _summarize_failure_output(
-                    stdout=getattr(completed, "stdout", ""),
-                    stderr=getattr(completed, "stderr", ""),
-                    returncode=int(getattr(completed, "returncode", 1)),
-                )
-                if completed.returncode != 0
-                else "",
-                "failure_details": _format_failure_output_for_artifact(
-                    stdout=getattr(completed, "stdout", ""),
-                    stderr=getattr(completed, "stderr", ""),
-                    returncode=int(getattr(completed, "returncode", 1)),
-                )
-                if completed.returncode != 0
-                else "",
-            }
-        )
 
     def _mark_finished(self, execution: Any, *, completed: Any, parsed: Any, duration_ms: float) -> None:
         if self.use_suite_spinner_group:
