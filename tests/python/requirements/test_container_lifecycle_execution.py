@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -59,6 +60,8 @@ class ContainerLifecycleExecutionTests(unittest.TestCase):
         self.assertTrue(hasattr(ContainerLifecycleExecutor, "_reset_to_requested_port"))
         self.assertTrue(hasattr(ContainerLifecycleExecutor, "_recover_timeout_created_container"))
         self.assertTrue(hasattr(ContainerLifecycleExecutor, "_attempt_local_settle"))
+        self.assertTrue(hasattr(ContainerLifecycleExecutor, "_discover_existing_container"))
+        self.assertTrue(hasattr(ContainerLifecycleExecutor, "_start_or_create_container"))
 
         overview_names = set(ContainerLifecycleExecutor.run.__code__.co_varnames)
         self.assertNotIn("_emit", overview_names)
@@ -68,6 +71,10 @@ class ContainerLifecycleExecutionTests(unittest.TestCase):
         source = Path("python/envctl_engine/requirements/container_lifecycle_execution.py").read_text(encoding="utf-8")
         self.assertEqual(source.count("success=True"), 1)
         self.assertEqual(source.count("port_mismatch_action=state.mismatch_action"), 2)
+
+    def test_run_stays_as_phase_orchestrator(self) -> None:
+        run_lines, _ = inspect.getsourcelines(ContainerLifecycleExecutor.run)
+        self.assertLess(len(run_lines), 360)
 
 
 if __name__ == "__main__":

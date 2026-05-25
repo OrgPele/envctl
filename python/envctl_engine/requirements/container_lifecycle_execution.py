@@ -213,8 +213,7 @@ class ContainerLifecycleExecutor:
             return True, ""
         return False, settle_probe_error_text or probe_error_text
 
-    def run(self) -> ContainerLifecycleRun:
-        self._state = self._new_state()
+    def _discover_existing_container(self) -> tuple[bool, ContainerLifecycleRun | None]:
         template = self.template
         discover_started = time.monotonic()
         self._emit("discover")
@@ -226,14 +225,13 @@ class ContainerLifecycleExecutor:
         )
         if exists_error:
             self._add_stage_duration("discover", discover_started)
-            return self._failure(
+            return False, self._failure(
                 exists_error,
                 reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
                 stage="discover.failed",
             )
-    
+
         if exists:
-            state_error_text: str | None = None
             mapped_port, port_error = container_host_port(
                 template.process_runner,
                 container_name=template.container_name,
@@ -244,7 +242,7 @@ class ContainerLifecycleExecutor:
             if port_error:
                 if not is_missing_port_mapping_error(port_error):
                     self._add_stage_duration("discover", discover_started)
-                    return self._failure(
+                    return False, self._failure(
                         port_error,
                         reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
                         stage="discover.failed",
@@ -261,7 +259,7 @@ class ContainerLifecycleExecutor:
                 )
                 if cleanup_error:
                     self._add_stage_duration("discover", discover_started)
-                    return self._failure(
+                    return False, self._failure(
                         cleanup_error,
                         reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
                         stage="discover.recreate.failed",
@@ -296,7 +294,7 @@ class ContainerLifecycleExecutor:
                     )
                     if cleanup_error:
                         self._add_stage_duration("discover", discover_started)
-                        return self._failure(
+                        return False, self._failure(
                             cleanup_error,
                             reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
                             stage="discover.recreate.failed",
@@ -311,7 +309,7 @@ class ContainerLifecycleExecutor:
             )
             if status_error:
                 self._add_stage_duration("discover", discover_started)
-                return self._failure(
+                return False, self._failure(
                     status_error,
                     reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
                     stage="discover.status.failed",
@@ -325,7 +323,7 @@ class ContainerLifecycleExecutor:
                 )
                 if state_error_read_error:
                     self._add_stage_duration("discover", discover_started)
-                    return self._failure(
+                    return False, self._failure(
                         state_error_read_error,
                         reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
                         stage="discover.state_error.failed",
@@ -344,7 +342,7 @@ class ContainerLifecycleExecutor:
                     )
                     if cleanup_error:
                         self._add_stage_duration("discover", discover_started)
-                        return self._failure(
+                        return False, self._failure(
                             cleanup_error,
                             reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
                             stage="discover.created_bind_conflict.cleanup_failed",
@@ -352,7 +350,10 @@ class ContainerLifecycleExecutor:
                     exists = False
                     self._reset_to_requested_port()
         self._add_stage_duration("discover", discover_started)
-    
+        return exists, None
+
+    def _start_or_create_container(self, *, exists: bool) -> ContainerLifecycleRun | None:
+        template = self.template
         start_or_create_started = time.monotonic()
         if exists:
             self._state.container_reused = True
@@ -441,61 +442,74 @@ class ContainerLifecycleExecutor:
                         stage="start.failed",
                     )
             self._add_stage_duration("start", start_or_create_started)
-        else:
-            self._reset_to_requested_port()
-            create_error = template.create_container()
-            if create_error and is_bind_conflict(create_error):
-                self._emit(
-                    "start.bind_conflict",
-                    reason=reason_code_to_string(PortFailureReason.PORT_IN_USE),
-                    detail=create_error,
-                )
-                if template.bind_cleanup is not None:
-                    cleaned, cleanup_error = template.bind_cleanup(template.port)
-                    if cleanup_error:
-                        self._add_stage_duration("create", start_or_create_started)
-                        return self._failure(
-                            f"{create_error}; safe cleanup failed: {cleanup_error}",
-                            reason_code=reason_code_to_string(
-                                RequirementLifecycleReason.ENVCTL_OWNED_STALE_RESOURCE_CLEANUP_FAILED
-                            ),
-                            stage="start.bind_conflict.cleanup_failed",
-                        )
-                    if cleaned:
-                        self._emit(
-                            "start.bind_conflict.cleaned",
-                            reason=reason_code_to_string(RequirementLifecycleReason.ENVCTL_OWNED_STALE_RESOURCE_CLEANED),
-                        )
-                        create_error = template.create_container()
-            if create_error:
-                if timeout_error(create_error) and self._recover_timeout_created_container():
+            return None
+
+        self._reset_to_requested_port()
+        create_error = template.create_container()
+        if create_error and is_bind_conflict(create_error):
+            self._emit(
+                "start.bind_conflict",
+                reason=reason_code_to_string(PortFailureReason.PORT_IN_USE),
+                detail=create_error,
+            )
+            if template.bind_cleanup is not None:
+                cleaned, cleanup_error = template.bind_cleanup(template.port)
+                if cleanup_error:
                     self._add_stage_duration("create", start_or_create_started)
-                else:
-                    self._add_stage_duration("create", start_or_create_started)
-                    if is_bind_conflict(create_error):
-                        return self._failure(
-                            format_bind_conflict_guidance(template.service_name, template.port, create_error),
-                            reason_code=reason_code_to_string(RequirementLifecycleReason.BIND_CONFLICT_UNRESOLVED),
-                            failure_class=reason_code_to_string(RequirementLifecycleReason.BIND_CONFLICT_RETRYABLE),
-                            stage="start.bind_conflict.unresolved",
-                        )
-                    if template.retryable_probe_error(create_error):
-                        return self._failure(
-                            create_error,
-                            reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
-                            failure_class=reason_code_to_string(
-                                RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE
-                            ),
-                            stage="start.create.probe_timeout",
-                        )
                     return self._failure(
-                        create_error,
-                        reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
-                        stage="start.create.failed",
+                        f"{create_error}; safe cleanup failed: {cleanup_error}",
+                        reason_code=reason_code_to_string(
+                            RequirementLifecycleReason.ENVCTL_OWNED_STALE_RESOURCE_CLEANUP_FAILED
+                        ),
+                        stage="start.bind_conflict.cleanup_failed",
                     )
+                if cleaned:
+                    self._emit(
+                        "start.bind_conflict.cleaned",
+                        reason=reason_code_to_string(RequirementLifecycleReason.ENVCTL_OWNED_STALE_RESOURCE_CLEANED),
+                    )
+                    create_error = template.create_container()
+        if create_error:
+            if timeout_error(create_error) and self._recover_timeout_created_container():
+                self._add_stage_duration("create", start_or_create_started)
             else:
                 self._add_stage_duration("create", start_or_create_started)
-    
+                if is_bind_conflict(create_error):
+                    return self._failure(
+                        format_bind_conflict_guidance(template.service_name, template.port, create_error),
+                        reason_code=reason_code_to_string(RequirementLifecycleReason.BIND_CONFLICT_UNRESOLVED),
+                        failure_class=reason_code_to_string(RequirementLifecycleReason.BIND_CONFLICT_RETRYABLE),
+                        stage="start.bind_conflict.unresolved",
+                    )
+                if template.retryable_probe_error(create_error):
+                    return self._failure(
+                        create_error,
+                        reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
+                        failure_class=reason_code_to_string(
+                            RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE
+                        ),
+                        stage="start.create.probe_timeout",
+                    )
+                return self._failure(
+                    create_error,
+                    reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
+                    stage="start.create.failed",
+                )
+        else:
+            self._add_stage_duration("create", start_or_create_started)
+        return None
+
+    def run(self) -> ContainerLifecycleRun:
+        self._state = self._new_state()
+        template = self.template
+        exists, failure = self._discover_existing_container()
+        if failure is not None:
+            return failure
+
+        failure = self._start_or_create_container(exists=exists)
+        if failure is not None:
+            return failure
+
         listener_started = time.monotonic()
         listener_ready = wait_for_port_ready(
             template.process_runner,
