@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import concurrent.futures
 import unittest
 
+from envctl_engine.actions.action_test_suite_execution_support import TestSuiteRunLoop
 from envctl_engine.actions.action_test_suite_event_support import TestSuiteEventEmitter
 from envctl_engine.actions.action_test_suite_outcome_support import TestSuiteOutcomeRecorder
 from envctl_engine.actions.actions_test import TestCommandSpec as CommandSpec
@@ -18,6 +20,50 @@ class _Runtime:
 
 
 class ActionTestSuiteSupportTests(unittest.TestCase):
+    def test_suite_run_loop_stops_sequential_execution_after_first_failure(self) -> None:
+        first = SimpleNamespace(index=1, project_name="Main", spec=SimpleNamespace(source="backend_pytest"))
+        second = SimpleNamespace(index=2, project_name="Main", spec=SimpleNamespace(source="frontend_package_test"))
+        calls: list[int] = []
+
+        def run_spec(execution: object) -> tuple[int, str]:
+            calls.append(int(getattr(execution, "index")))
+            return 1, "backend failed"
+
+        failures = TestSuiteRunLoop(
+            execution_specs=[first, second],
+            parallel=False,
+            parallel_workers=1,
+            futures_module=concurrent.futures,
+            run_spec=run_spec,
+            failure_label=lambda execution: f"{execution.project_name}:{execution.spec.source}",
+            cancel_interrupted=lambda _executor, _future_map: None,
+            shutdown_executor=lambda _executor: None,
+        ).run()
+
+        self.assertEqual(calls, [1])
+        self.assertEqual(failures, ["Main:backend_pytest: backend failed"])
+
+    def test_suite_run_loop_collects_parallel_failures_without_stopping_other_suites(self) -> None:
+        first = SimpleNamespace(index=1, project_name="Main", spec=SimpleNamespace(source="backend_pytest"))
+        second = SimpleNamespace(index=2, project_name="Main", spec=SimpleNamespace(source="frontend_package_test"))
+
+        def run_spec(execution: object) -> tuple[int, str]:
+            index = int(getattr(execution, "index"))
+            return (1, "backend failed") if index == 1 else (0, "")
+
+        failures = TestSuiteRunLoop(
+            execution_specs=[first, second],
+            parallel=True,
+            parallel_workers=2,
+            futures_module=concurrent.futures,
+            run_spec=run_spec,
+            failure_label=lambda execution: f"{execution.project_name}:{execution.spec.source}",
+            cancel_interrupted=lambda _executor, _future_map: None,
+            shutdown_executor=lambda executor: executor.shutdown(wait=True) if executor is not None else None,
+        ).run()
+
+        self.assertEqual(failures, ["Main:backend_pytest: backend failed"])
+
     def test_event_emitter_preserves_suite_event_payloads(self) -> None:
         runtime = _Runtime()
         emitter = TestSuiteEventEmitter(runtime=runtime, total=2)

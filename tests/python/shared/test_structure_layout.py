@@ -293,6 +293,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def build_test_action_execution_plan", execution_text)
         self.assertIn("def resolve_suite_spinner_decision", execution_text)
         self.assertIn("class TestSuiteExecutionResult", suite_execution_text)
+        self.assertIn("class TestSuiteRunLoop", suite_execution_text)
         self.assertIn("def execute_test_suites", suite_execution_text)
         self.assertIn("class _TestSuiteExecutor", suite_execution_text)
         self.assertIn("class TestSuiteEventEmitter", suite_event_text)

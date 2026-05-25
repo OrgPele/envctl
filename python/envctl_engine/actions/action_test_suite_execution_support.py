@@ -6,7 +6,7 @@ import inspect
 from pathlib import Path
 import sys
 import time
-from typing import Any
+from typing import Any, Callable, ClassVar, Sequence
 
 from envctl_engine.actions.action_test_execution_support import TestActionExecutionPlan
 from envctl_engine.actions.action_test_interrupt_support import TestSuiteInterruptRegistry
@@ -26,6 +26,57 @@ from envctl_engine.ui.path_links import render_path_for_terminal
 class TestSuiteExecutionResult:
     failures: list[str]
     outcomes: list[dict[str, object]]
+
+
+@dataclass(frozen=True, slots=True)
+class TestSuiteRunLoop:
+    __test__: ClassVar[bool] = False
+
+    execution_specs: Sequence[Any]
+    parallel: bool
+    parallel_workers: int
+    futures_module: Any
+    run_spec: Callable[[Any], tuple[int, str]]
+    failure_label: Callable[[Any], str]
+    cancel_interrupted: Callable[[Any | None, dict[Any, Any]], None]
+    shutdown_executor: Callable[[Any | None], None]
+
+    def run(self) -> list[str]:
+        executor: Any | None = None
+        future_map: dict[Any, Any] = {}
+        try:
+            if self.parallel:
+                pool = self.futures_module.ThreadPoolExecutor(max_workers=self.parallel_workers)
+                executor = pool
+                future_map = {pool.submit(self.run_spec, spec): spec for spec in self.execution_specs}
+                return self._parallel_failures(future_map)
+            return self._sequential_failures()
+        except KeyboardInterrupt:
+            self.cancel_interrupted(executor, future_map)
+            raise
+        finally:
+            self.shutdown_executor(executor)
+
+    def _parallel_failures(self, future_map: dict[Any, Any]) -> list[str]:
+        failures: list[str] = []
+        for future in self.futures_module.as_completed(future_map):
+            execution = future_map[future]
+            code, error = future.result()
+            if code != 0:
+                failures.append(self._failure_message(execution, error))
+        return failures
+
+    def _sequential_failures(self) -> list[str]:
+        failures: list[str] = []
+        for execution in self.execution_specs:
+            code, error = self.run_spec(execution)
+            if code != 0:
+                failures.append(self._failure_message(execution, error))
+                break
+        return failures
+
+    def _failure_message(self, execution: Any, error: str) -> str:
+        return f"{self.failure_label(execution)}: {error or 'unknown test failure'}"
 
 
 def execute_test_suites(
@@ -125,35 +176,16 @@ class _TestSuiteExecutor:
             self.suite_spinner_group if self.use_suite_spinner_group else nullcontext(self.suite_spinner_group)
         )
         with suite_spinner_context:
-            executor: Any | None = None
-            future_map: dict[Any, Any] = {}
-            try:
-                if self.plan.parallel:
-                    pool = self.futures_module.ThreadPoolExecutor(max_workers=self.plan.parallel_workers)
-                    executor = pool
-                    future_map = {pool.submit(self.run_spec, spec): spec for spec in self.execution_specs}
-                    for future in self.futures_module.as_completed(future_map):
-                        execution = future_map[future]
-                        code, error = future.result()
-                        if code != 0:
-                            label = (
-                                f"{execution.project_name}:{execution.spec.source} "
-                                f"[{execution.index}/{len(self.execution_specs)}]"
-                            )
-                            failures.append(f"{label}: {error or 'unknown test failure'}")
-                else:
-                    for spec in self.execution_specs:
-                        code, error = self.run_spec(spec)
-                        if code != 0:
-                            label = f"{spec.project_name}:{spec.spec.source} [{spec.index}/{len(self.execution_specs)}]"
-                            failures.append(f"{label}: {error or 'unknown test failure'}")
-                            break
-            except KeyboardInterrupt:
-                queued_cancelled = self._cancel_queued_parallel_suites(executor=executor, future_map=future_map)
-                self.interrupt_registry.cleanup_interrupted_suites(queued_cancelled=queued_cancelled)
-                raise
-            finally:
-                self._shutdown_executor(executor)
+            failures = TestSuiteRunLoop(
+                execution_specs=self.execution_specs,
+                parallel=self.plan.parallel,
+                parallel_workers=self.plan.parallel_workers,
+                futures_module=self.futures_module,
+                run_spec=self.run_spec,
+                failure_label=self._failure_label,
+                cancel_interrupted=self._cleanup_interrupted_parallel_suites,
+                shutdown_executor=self._shutdown_executor,
+            ).run()
 
         return TestSuiteExecutionResult(failures=failures, outcomes=self.outcomes.outcomes)
 
@@ -235,6 +267,9 @@ class _TestSuiteExecutor:
             )
             return 1, error
         return 0, ""
+
+    def _failure_label(self, execution: Any) -> str:
+        return f"{execution.project_name}:{execution.spec.source} [{execution.index}/{len(self.execution_specs)}]"
 
     def _announce_suite_start(self, execution: Any, *, suite_label: str, resolved_source: str) -> None:
         index = execution.index
@@ -400,6 +435,10 @@ class _TestSuiteExecutor:
                 if cancelled:
                     queued_cancelled += 1
         return queued_cancelled
+
+    def _cleanup_interrupted_parallel_suites(self, executor: Any | None, future_map: dict[Any, Any]) -> None:
+        queued_cancelled = self._cancel_queued_parallel_suites(executor=executor, future_map=future_map)
+        self.interrupt_registry.cleanup_interrupted_suites(queued_cancelled=queued_cancelled)
 
     def _shutdown_executor(self, executor: Any | None) -> None:
         executor_shutdown = getattr(executor, "shutdown", None) if executor is not None else None
