@@ -136,6 +136,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class ContainerLifecycleTemplate", model_text)
         self.assertIn("class ContainerLifecycleExecutor", lifecycle_text)
         self.assertIn("def run_container_lifecycle", lifecycle_text)
+        self.assertIn("def _run_readiness_probe_phase", lifecycle_text)
         self.assertIn("def _restart_after_probe_failure", lifecycle_text)
         self.assertIn("def _recreate_after_restart_failure", lifecycle_text)
         self.assertIn("from .adapter_policy import", facade_text)

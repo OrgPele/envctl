@@ -64,6 +64,7 @@ class ContainerLifecycleExecutionTests(unittest.TestCase):
         self.assertTrue(hasattr(ContainerLifecycleExecutor, "_start_or_create_container"))
         self.assertTrue(hasattr(ContainerLifecycleExecutor, "_restart_after_probe_failure"))
         self.assertTrue(hasattr(ContainerLifecycleExecutor, "_recreate_after_restart_failure"))
+        self.assertTrue(hasattr(ContainerLifecycleExecutor, "_run_readiness_probe_phase"))
 
         overview_names = set(ContainerLifecycleExecutor.run.__code__.co_varnames)
         self.assertNotIn("_emit", overview_names)
@@ -76,7 +77,7 @@ class ContainerLifecycleExecutionTests(unittest.TestCase):
 
     def test_run_stays_as_phase_orchestrator(self) -> None:
         run_lines, _ = inspect.getsourcelines(ContainerLifecycleExecutor.run)
-        self.assertLess(len(run_lines), 120)
+        self.assertLess(len(run_lines), 35)
 
 
 if __name__ == "__main__":

@@ -177,7 +177,7 @@ class ContainerLifecycleExecutor:
         self,
         *,
         listener_ready: bool,
-        probe_error_text: str,
+        probe_error_text: str | None,
         stage: str,
         success_stage: str,
         timeout_suffix: str,
@@ -211,7 +211,7 @@ class ContainerLifecycleExecutor:
         if ready:
             self._emit(success_stage)
             return True, ""
-        return False, settle_probe_error_text or probe_error_text
+        return False, settle_probe_error_text or probe_error_text or template.probe_failure_fallback
 
     def _discover_existing_container(self) -> tuple[bool, ContainerLifecycleRun | None]:
         template = self.template
@@ -499,7 +499,9 @@ class ContainerLifecycleExecutor:
             self._add_stage_duration("create", start_or_create_started)
         return None
 
-    def _restart_after_probe_failure(self, *, probe_error_text: str) -> tuple[str, ContainerLifecycleRun | None]:
+    def _restart_after_probe_failure(
+        self, *, probe_error_text: str | None
+    ) -> tuple[str | None, ContainerLifecycleRun | None]:
         template = self.template
         if not (template.restart_on_probe_failure and template.retryable_probe_error(probe_error_text)):
             return probe_error_text, None
@@ -568,7 +570,9 @@ class ContainerLifecycleExecutor:
 
         return self._recreate_after_restart_failure(probe_error_text=probe_error_text)
 
-    def _recreate_after_restart_failure(self, *, probe_error_text: str) -> tuple[str, ContainerLifecycleRun | None]:
+    def _recreate_after_restart_failure(
+        self, *, probe_error_text: str | None
+    ) -> tuple[str | None, ContainerLifecycleRun | None]:
         template = self.template
         if not (template.recreate_on_probe_failure and template.retryable_probe_error(probe_error_text)):
             return probe_error_text, None
@@ -642,17 +646,8 @@ class ContainerLifecycleExecutor:
             return probe_error_text, self._success()
         return probe_error_text, None
 
-    def run(self) -> ContainerLifecycleRun:
-        self._state = self._new_state()
+    def _run_readiness_probe_phase(self) -> ContainerLifecycleRun:
         template = self.template
-        exists, failure = self._discover_existing_container()
-        if failure is not None:
-            return failure
-
-        failure = self._start_or_create_container(exists=exists)
-        if failure is not None:
-            return failure
-
         listener_started = time.monotonic()
         listener_ready = wait_for_port_ready(
             template.process_runner,
@@ -739,6 +734,18 @@ class ContainerLifecycleExecutor:
             failure_class=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
             stage="probe.failed",
         )
+
+    def run(self) -> ContainerLifecycleRun:
+        self._state = self._new_state()
+        exists, failure = self._discover_existing_container()
+        if failure is not None:
+            return failure
+
+        failure = self._start_or_create_container(exists=exists)
+        if failure is not None:
+            return failure
+
+        return self._run_readiness_probe_phase()
 
 
 def run_container_lifecycle(template: ContainerLifecycleTemplate) -> ContainerLifecycleRun:
