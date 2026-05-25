@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from envctl_engine.requirements.adapter_lifecycle_models import ContainerLifecycleTemplate
+from envctl_engine.requirements.container_lifecycle_execution import ContainerLifecycleExecutor
+
+
+class ContainerLifecycleExecutionTests(unittest.TestCase):
+    def test_executor_owns_successful_create_probe_lifecycle(self) -> None:
+        traced: list[dict[str, object]] = []
+        template = ContainerLifecycleTemplate(
+            service_name="postgres",
+            container_name="envctl-postgres",
+            process_runner=SimpleNamespace(),
+            project_root=Path("/tmp/project"),
+            env={},
+            port=5432,
+            container_port=5432,
+            listener_wait_timeout=0.1,
+            probe_attempts=2,
+            restart_probe_attempts=3,
+            recreate_probe_attempts=4,
+            restart_on_probe_failure=True,
+            recreate_on_probe_failure=True,
+            retryable_probe_error=lambda _error: False,
+            create_container=lambda: None,
+            probe_readiness=lambda attempts: (attempts == 2, None),
+            probe_failure_fallback="postgres did not become ready",
+            trace_stage=traced.append,
+        )
+
+        with (
+            patch("envctl_engine.requirements.container_lifecycle_execution.container_exists", return_value=(False, None)),
+            patch("envctl_engine.requirements.container_lifecycle_execution.wait_for_port_ready", return_value=True),
+        ):
+            lifecycle = ContainerLifecycleExecutor(template).run()
+
+        self.assertTrue(lifecycle.result.success)
+        self.assertEqual(lifecycle.result.effective_port, 5432)
+        self.assertFalse(lifecycle.container_reused)
+        self.assertFalse(lifecycle.container_recreated)
+        self.assertIn("discover", lifecycle.stage_durations_ms)
+        self.assertIn("create", lifecycle.stage_durations_ms)
+        self.assertIn("listener_wait", lifecycle.stage_durations_ms)
+        self.assertIn("probe", lifecycle.stage_durations_ms)
+        self.assertEqual([event.stage for event in lifecycle.events], ["discover", "probe.healthy"])
+        self.assertEqual([event["stage"] for event in traced], ["discover", "probe.healthy"])
+
+
+if __name__ == "__main__":
+    unittest.main()
