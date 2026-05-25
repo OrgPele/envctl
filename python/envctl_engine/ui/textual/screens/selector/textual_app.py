@@ -19,7 +19,7 @@ from envctl_engine.ui.textual.screens.selector.textual_app_lifecycle import (
 )
 from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
     SelectorKeyTelemetry,
-    SelectorStatusPresenter,
+    SelectorStatusController,
 )
 from envctl_engine.ui.textual.screens.selector.textual_key_policy import (
     SelectorFilterKeyDecision,
@@ -92,8 +92,11 @@ def create_selector_app(
             self._key_telemetry = SelectorKeyTelemetry(enabled=key_trace_enabled)
             self._allow_filter_focus = False
             self._key_snapshot_timer: object | None = None
-            self._status_presenter = SelectorStatusPresenter()
-            self._status_error_timer: object | None = None
+            self._status_controller = SelectorStatusController(
+                timeout_seconds=status_error_timeout_seconds,
+                set_timer=self.set_timer,
+                sync_status=self._sync_status,
+            )
             self._suppress_list_selected_once = False
 
         def compose(self) -> ComposeResult:
@@ -212,7 +215,7 @@ def create_selector_app(
         def _sync_status(self) -> None:
             visible, selected = selection_state.selector_visibility_counts(self._rows)
             if selected:
-                self._clear_status_error()
+                self._status_controller.clear_error()
             focused_view_index: int | None = None
             focused_label: str | None = None
             focused_view_index = self._list().index
@@ -227,7 +230,7 @@ def create_selector_app(
                 focused_label = focused_row.item.label
             else:
                 focused_view_index = None
-            status = self._status_presenter.status_text(
+            status = self._status_controller.status_text(
                 visible_count=visible,
                 selected_count=selected,
                 total_count=len(self._rows),
@@ -240,42 +243,11 @@ def create_selector_app(
                 edge_hint=self._key_telemetry.edge_hint,
             )
             status_widget = self._status()
-            status_widget.set_class(self._status_presenter.has_error, "selector-status-error")
+            status_widget.set_class(self._status_controller.has_error, "selector-status-error")
             status_widget.update(status)
 
-        def _clear_status_error(self) -> None:
-            if not self._status_presenter.clear_error():
-                return
-            timer = self._status_error_timer
-            if timer is not None:
-                try:
-                    timer.stop()  # type: ignore[union-attr]
-                except Exception:
-                    pass
-                self._status_error_timer = None
-            try:
-                self._sync_status()
-            except Exception:
-                pass
-
-        def _schedule_status_error_clear(self) -> None:
-            timer = self._status_error_timer
-            if timer is not None:
-                try:
-                    timer.stop()  # type: ignore[union-attr]
-                except Exception:
-                    pass
-            self._status_error_timer = self.set_timer(status_error_timeout_seconds, self._clear_status_error)
-
-        def _touch_status_error_timeout(self) -> None:
-            if not self._status_presenter.has_error:
-                return
-            self._schedule_status_error_clear()
-
         def _show_status_error(self, message: str) -> None:
-            self._status_presenter.show_error(message)
-            self._schedule_status_error_clear()
-            self._sync_status()
+            self._status_controller.show_error(message)
 
         def _sync_confirm_state(self) -> None:
             run_button = self.query_one("#btn-run", Button)
@@ -731,7 +703,7 @@ def create_selector_app(
 
         async def on_event(self, event: object) -> None:
             if isinstance(event, Key) or event.__class__.__name__.startswith("Mouse"):
-                self._touch_status_error_timeout()
+                self._status_controller.touch_timeout()
             if not mouse_enabled and event.__class__.__name__.startswith("Mouse"):
                 stop = getattr(event, "stop", None)
                 if callable(stop):
@@ -775,7 +747,7 @@ def create_selector_app(
             self._emit_focus(reason="focus_event")
 
         def on_unmount(self) -> None:
-            self._clear_status_error()
+            self._status_controller.dispose()
             timer = self._key_snapshot_timer
             if timer is not None:
                 try:

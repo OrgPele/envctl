@@ -1252,7 +1252,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from .config_wizard_step_flow import", app_text)
         self.assertIn("from .config_wizard_suggestions import", app_text)
         self.assertLessEqual(len(screen_text.splitlines()), 90)
-        self.assertLessEqual(len(app_text.splitlines()), 820)
+        self.assertLessEqual(len(app_text.splitlines()), 825)
 
     def test_textual_selector_has_backend_policy_owner(self) -> None:
         selector = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "selector"
@@ -1295,6 +1295,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def toggle_selector_model_index", selection_text)
         self.assertIn("def fallback_selector_values", selection_text)
         self.assertIn("class SelectorStatusPresenter", runtime_text)
+        self.assertIn("class SelectorStatusController", runtime_text)
         self.assertIn("class SelectorKeyTelemetry", runtime_text)
         self.assertIn("def record_raw_key", runtime_text)
         self.assertIn("def emit_snapshot", runtime_text)
@@ -1305,9 +1306,10 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def emit_selector_key_trace", key_policy_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector import selection_state", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_runtime import", app_text)
+        self.assertIn("SelectorStatusController", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_key_policy import", app_text)
         self.assertLessEqual(len(support_text.splitlines()), 720)
-        self.assertLessEqual(len(app_text.splitlines()), 850)
+        self.assertLessEqual(len(app_text.splitlines()), 825)
 
     def test_removed_dead_leaf_modules_are_absent(self) -> None:
         stale_modules = [

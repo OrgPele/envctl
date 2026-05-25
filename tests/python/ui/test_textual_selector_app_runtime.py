@@ -5,6 +5,7 @@ import unittest
 
 from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
     SelectorKeyTelemetry,
+    SelectorStatusController,
     SelectorStatusPresenter,
 )
 
@@ -54,6 +55,63 @@ class SelectorStatusPresenterTests(unittest.TestCase):
         self.assertTrue(presenter.clear_error())
         self.assertFalse(presenter.has_error)
         self.assertFalse(presenter.clear_error())
+
+
+class SelectorStatusControllerTests(unittest.TestCase):
+    def test_status_controller_owns_error_timer_lifecycle(self) -> None:
+        callbacks: list[object] = []
+        stopped: list[object] = []
+        sync_calls = 0
+
+        class _Timer:
+            def stop(self) -> None:
+                stopped.append(self)
+
+        def set_timer(seconds: float, callback: object) -> object:
+            self.assertEqual(seconds, 3.0)
+            callbacks.append(callback)
+            return _Timer()
+
+        def sync_status() -> None:
+            nonlocal sync_calls
+            sync_calls += 1
+
+        controller = SelectorStatusController(timeout_seconds=3.0, set_timer=set_timer, sync_status=sync_status)
+
+        controller.show_error("No items were selected.")
+        self.assertTrue(controller.has_error)
+        self.assertEqual(len(callbacks), 1)
+        self.assertEqual(sync_calls, 1)
+
+        controller.touch_timeout()
+        self.assertEqual(len(callbacks), 2)
+        self.assertEqual(len(stopped), 1)
+
+        controller.clear_error()
+        self.assertFalse(controller.has_error)
+        self.assertEqual(len(stopped), 2)
+        self.assertEqual(sync_calls, 2)
+
+        controller.clear_error()
+        self.assertEqual(sync_calls, 2)
+
+    def test_status_controller_delegates_status_text_to_presenter(self) -> None:
+        controller = SelectorStatusController(timeout_seconds=1.0, set_timer=lambda _seconds, _callback: object())
+        self.assertEqual(
+            controller.status_text(
+                visible_count=1,
+                selected_count=0,
+                total_count=2,
+                focused_view_index=None,
+                focused_label=None,
+                focusable_count=0,
+                deep_debug=False,
+                nav_event_counter=0,
+                last_nav_key="",
+                edge_hint="",
+            ),
+            "0 selected • 1 visible • 2 total • focus: -",
+        )
 
 
 class SelectorKeyTelemetryTests(unittest.TestCase):

@@ -5,6 +5,10 @@ from collections.abc import Callable
 
 from envctl_engine.ui.textual.screens.selector.support import _emit_selector_debug
 
+TimerHandle = object
+TimerFactory = Callable[[float, Callable[[], None]], TimerHandle]
+SyncStatus = Callable[[], None]
+
 
 class SelectorStatusPresenter:
     def __init__(self) -> None:
@@ -48,6 +52,96 @@ class SelectorStatusPresenter:
             if edge_hint:
                 status += f" • {edge_hint}"
         return status
+
+
+class SelectorStatusController:
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float,
+        set_timer: TimerFactory,
+        sync_status: SyncStatus | None = None,
+        presenter: SelectorStatusPresenter | None = None,
+    ) -> None:
+        self._timeout_seconds = timeout_seconds
+        self._set_timer = set_timer
+        self._sync_status = sync_status
+        self._presenter = presenter or SelectorStatusPresenter()
+        self._timer: TimerHandle | None = None
+
+    @property
+    def has_error(self) -> bool:
+        return self._presenter.has_error
+
+    def status_text(
+        self,
+        *,
+        visible_count: int,
+        selected_count: int,
+        total_count: int,
+        focused_view_index: int | None,
+        focused_label: str | None,
+        focusable_count: int,
+        deep_debug: bool,
+        nav_event_counter: int,
+        last_nav_key: str,
+        edge_hint: str,
+    ) -> str:
+        return self._presenter.status_text(
+            visible_count=visible_count,
+            selected_count=selected_count,
+            total_count=total_count,
+            focused_view_index=focused_view_index,
+            focused_label=focused_label,
+            focusable_count=focusable_count,
+            deep_debug=deep_debug,
+            nav_event_counter=nav_event_counter,
+            last_nav_key=last_nav_key,
+            edge_hint=edge_hint,
+        )
+
+    def show_error(self, message: str) -> None:
+        self._presenter.show_error(message)
+        self._schedule_clear()
+        self._sync()
+
+    def touch_timeout(self) -> None:
+        if self._presenter.has_error:
+            self._schedule_clear()
+
+    def clear_error(self) -> None:
+        if not self._presenter.clear_error():
+            return
+        self._stop_timer()
+        self._sync()
+
+    def dispose(self) -> None:
+        self.clear_error()
+        self._stop_timer()
+
+    def _schedule_clear(self) -> None:
+        self._stop_timer()
+        self._timer = self._set_timer(self._timeout_seconds, self.clear_error)
+
+    def _stop_timer(self) -> None:
+        timer = self._timer
+        if timer is None:
+            return
+        try:
+            stop = getattr(timer, "stop")
+            if callable(stop):
+                stop()
+        except Exception:
+            pass
+        self._timer = None
+
+    def _sync(self) -> None:
+        if self._sync_status is None:
+            return
+        try:
+            self._sync_status()
+        except Exception:
+            pass
 
 
 class SelectorKeyTelemetry:
