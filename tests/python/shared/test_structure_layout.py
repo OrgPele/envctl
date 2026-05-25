@@ -871,6 +871,10 @@ class StructureLayoutTests(unittest.TestCase):
         planning_tests = REPO_ROOT / "tests" / "python" / "planning"
         policy_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "plan_agent" / "launch_policy.py"
         config_facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "plan_agent" / "config.py"
+        startup_spinner_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "plan_agent_launch_spinner.py"
+        dependency_bootstrap_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "startup" / "plan_agent_dependency_bootstrap.py"
+        )
         expected = [
             "plan_agent_launch_support_test_support.py",
             "test_plan_agent_launch_cmux.py",
@@ -902,6 +906,10 @@ class StructureLayoutTests(unittest.TestCase):
 
         self.assertTrue(policy_owner.is_file())
         self.assertIn("class PlanAgentLaunchPolicy", policy_owner.read_text(encoding="utf-8"))
+        self.assertTrue(startup_spinner_owner.is_file())
+        self.assertIn("class PlanAgentLaunchSpinner", startup_spinner_owner.read_text(encoding="utf-8"))
+        self.assertTrue(dependency_bootstrap_owner.is_file())
+        self.assertIn("class PlanAgentDependencyBootstrapper", dependency_bootstrap_owner.read_text(encoding="utf-8"))
         config_text = config_facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.planning.plan_agent.launch_policy import", config_text)
         self.assertLessEqual(len(config_text.splitlines()), 140)
