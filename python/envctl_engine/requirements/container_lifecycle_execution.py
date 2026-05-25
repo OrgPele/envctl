@@ -499,6 +499,149 @@ class ContainerLifecycleExecutor:
             self._add_stage_duration("create", start_or_create_started)
         return None
 
+    def _restart_after_probe_failure(self, *, probe_error_text: str) -> tuple[str, ContainerLifecycleRun | None]:
+        template = self.template
+        if not (template.restart_on_probe_failure and template.retryable_probe_error(probe_error_text)):
+            return probe_error_text, None
+
+        self._emit(
+            "probe.retry.restart",
+            reason=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
+        )
+        restart_started = time.monotonic()
+        with docker_port_publish_lock(template.env):
+            restart_result, restart_error = run_docker(
+                template.process_runner,
+                ["restart", template.container_name],
+                cwd=template.project_root,
+                env=template.env,
+                timeout=120.0,
+            )
+        if restart_result is None:
+            self._add_stage_duration("restart", restart_started)
+            detail = (restart_error or "").strip()
+            message = f"failed restarting {template.service_name} container"
+            if detail:
+                message = f"{message}: {detail}"
+            return probe_error_text, self._failure(
+                message,
+                reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
+                stage="probe.retry.restart.failed",
+            )
+        if getattr(restart_result, "returncode", 1) != 0:
+            self._add_stage_duration("restart", restart_started)
+            detail = run_result_error(restart_result, f"failed restarting {template.service_name} container")
+            message = detail
+            fallback = f"failed restarting {template.service_name} container"
+            if detail != fallback:
+                message = f"{fallback}: {detail}"
+            return probe_error_text, self._failure(
+                message,
+                reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
+                stage="probe.retry.restart.failed",
+            )
+        self._add_stage_duration("restart", restart_started)
+
+        restart_listener_started = time.monotonic()
+        restart_listener_ready = wait_for_port_ready(
+            template.process_runner,
+            self._state.effective_port,
+            timeout=template.listener_wait_timeout,
+        )
+        self._state.listener_wait_ms += self._add_stage_duration("listener_wait", restart_listener_started)
+        if not restart_listener_ready:
+            probe_error_text = f"probe timeout waiting for readiness on port {self._state.effective_port} after restart"
+            if not template.recreate_on_restart_listener_timeout:
+                return probe_error_text, self._failure(
+                    probe_error_text,
+                    reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
+                    failure_class=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
+                    stage="probe.retry.restart.listener_timeout",
+                )
+        else:
+            restart_probe_started = time.monotonic()
+            ready, probe_error_text = template.probe_readiness(template.restart_probe_attempts)
+            self._add_stage_duration("probe", restart_probe_started)
+            if ready:
+                self._emit("probe.healthy.after_restart")
+                return probe_error_text, self._success()
+
+        return self._recreate_after_restart_failure(probe_error_text=probe_error_text)
+
+    def _recreate_after_restart_failure(self, *, probe_error_text: str) -> tuple[str, ContainerLifecycleRun | None]:
+        template = self.template
+        if not (template.recreate_on_probe_failure and template.retryable_probe_error(probe_error_text)):
+            return probe_error_text, None
+
+        self._emit(
+            "probe.retry.recreate",
+            reason=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
+        )
+        self._state.container_recreated = True
+        recreate_started = time.monotonic()
+        cleanup_error = stop_and_remove_container(
+            template.process_runner,
+            container_name=template.container_name,
+            cwd=template.project_root,
+            env=template.env,
+        )
+        if cleanup_error:
+            self._add_stage_duration("recreate", recreate_started)
+            return probe_error_text, self._failure(
+                f"failed recreating {template.service_name} container: {cleanup_error}",
+                reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
+                stage="probe.retry.recreate.cleanup_failed",
+            )
+        recreate_error = template.create_container()
+        if recreate_error:
+            if not (timeout_error(recreate_error) and self._recover_timeout_created_container(recreate=True)):
+                self._add_stage_duration("recreate", recreate_started)
+                if template.retryable_probe_error(recreate_error):
+                    return probe_error_text, self._failure(
+                        f"failed recreating {template.service_name} container: {recreate_error}",
+                        reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
+                        failure_class=reason_code_to_string(
+                            RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE
+                        ),
+                        stage="probe.retry.recreate.probe_timeout",
+                    )
+                return probe_error_text, self._failure(
+                    f"failed recreating {template.service_name} container: {recreate_error}",
+                    reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
+                    stage="probe.retry.recreate.failed",
+                )
+        else:
+            self._reset_to_requested_port()
+            if self._state.mismatch_action == "adopt_existing":
+                self._state.mismatch_action = "recreate_after_adopted_existing_unreachable"
+
+        recreate_listener_started = time.monotonic()
+        recreate_listener_ready = wait_for_port_ready(
+            template.process_runner,
+            self._state.effective_port,
+            timeout=template.listener_wait_timeout,
+        )
+        self._state.listener_wait_ms += self._add_stage_duration("listener_wait", recreate_listener_started)
+        if not recreate_listener_ready:
+            self._add_stage_duration("recreate", recreate_started)
+            probe_error_text = (
+                f"probe timeout waiting for readiness on port {self._state.effective_port} after recreate"
+            )
+            return probe_error_text, self._failure(
+                probe_error_text,
+                reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
+                failure_class=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
+                stage="probe.retry.recreate.listener_timeout",
+            )
+        recreate_probe_started = time.monotonic()
+        ready, probe_error_text = template.probe_readiness(template.recreate_probe_attempts)
+        self._add_stage_duration("probe", recreate_probe_started)
+        self._add_stage_duration("recreate", recreate_started)
+        if ready:
+            self._emit("probe.healthy.after_recreate")
+            return probe_error_text, self._success()
+        return probe_error_text, None
+
     def run(self) -> ContainerLifecycleRun:
         self._state = self._new_state()
         template = self.template
@@ -586,137 +729,9 @@ class ContainerLifecycleExecutor:
                 failure_class=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
                 stage="probe.timeout_recovered_create.failed",
             )
-        if template.restart_on_probe_failure and retryable:
-            self._emit(
-                "probe.retry.restart",
-                reason=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
-            )
-            restart_started = time.monotonic()
-            with docker_port_publish_lock(template.env):
-                restart_result, restart_error = run_docker(
-                    template.process_runner,
-                    ["restart", template.container_name],
-                    cwd=template.project_root,
-                    env=template.env,
-                    timeout=120.0,
-                )
-            if restart_result is None:
-                self._add_stage_duration("restart", restart_started)
-                detail = (restart_error or "").strip()
-                message = f"failed restarting {template.service_name} container"
-                if detail:
-                    message = f"{message}: {detail}"
-                return self._failure(
-                    message,
-                    reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
-                    stage="probe.retry.restart.failed",
-                )
-            if getattr(restart_result, "returncode", 1) != 0:
-                self._add_stage_duration("restart", restart_started)
-                detail = run_result_error(restart_result, f"failed restarting {template.service_name} container")
-                message = detail
-                fallback = f"failed restarting {template.service_name} container"
-                if detail != fallback:
-                    message = f"{fallback}: {detail}"
-                return self._failure(
-                    message,
-                    reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
-                    stage="probe.retry.restart.failed",
-                )
-            self._add_stage_duration("restart", restart_started)
-            restart_listener_started = time.monotonic()
-            restart_listener_ready = wait_for_port_ready(
-                template.process_runner,
-                self._state.effective_port,
-                timeout=template.listener_wait_timeout,
-            )
-            self._state.listener_wait_ms += self._add_stage_duration("listener_wait", restart_listener_started)
-            if not restart_listener_ready:
-                restart_timeout_error = (
-                    f"probe timeout waiting for readiness on port {self._state.effective_port} after restart"
-                )
-                if not template.recreate_on_restart_listener_timeout:
-                    return self._failure(
-                        restart_timeout_error,
-                        reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
-                        failure_class=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
-                        stage="probe.retry.restart.listener_timeout",
-                    )
-                probe_error_text = restart_timeout_error
-                retryable = template.retryable_probe_error(probe_error_text)
-            else:
-                restart_probe_started = time.monotonic()
-                ready, probe_error_text = template.probe_readiness(template.restart_probe_attempts)
-                self._add_stage_duration("probe", restart_probe_started)
-                if ready:
-                    self._emit("probe.healthy.after_restart")
-                    return self._success()
-                retryable = template.retryable_probe_error(probe_error_text)
-    
-            if template.recreate_on_probe_failure and retryable:
-                self._emit(
-                    "probe.retry.recreate",
-                    reason=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
-                )
-                self._state.container_recreated = True
-                recreate_started = time.monotonic()
-                cleanup_error = stop_and_remove_container(
-                    template.process_runner,
-                    container_name=template.container_name,
-                    cwd=template.project_root,
-                    env=template.env,
-                )
-                if cleanup_error:
-                    self._add_stage_duration("recreate", recreate_started)
-                    return self._failure(
-                        f"failed recreating {template.service_name} container: {cleanup_error}",
-                        reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
-                        stage="probe.retry.recreate.cleanup_failed",
-                    )
-                recreate_error = template.create_container()
-                if recreate_error:
-                    if not (timeout_error(recreate_error) and self._recover_timeout_created_container(recreate=True)):
-                        self._add_stage_duration("recreate", recreate_started)
-                        if template.retryable_probe_error(recreate_error):
-                            return self._failure(
-                                f"failed recreating {template.service_name} container: {recreate_error}",
-                                reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
-                                failure_class=reason_code_to_string(
-                                    RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE
-                                ),
-                                stage="probe.retry.recreate.probe_timeout",
-                            )
-                        return self._failure(
-                            f"failed recreating {template.service_name} container: {recreate_error}",
-                            reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
-                            stage="probe.retry.recreate.failed",
-                        )
-                else:
-                    self._reset_to_requested_port()
-                    if self._state.mismatch_action == "adopt_existing":
-                        self._state.mismatch_action = "recreate_after_adopted_existing_unreachable"
-                recreate_listener_started = time.monotonic()
-                recreate_listener_ready = wait_for_port_ready(
-                    template.process_runner,
-                    self._state.effective_port,
-                    timeout=template.listener_wait_timeout,
-                )
-                self._state.listener_wait_ms += self._add_stage_duration("listener_wait", recreate_listener_started)
-                if not recreate_listener_ready:
-                    self._add_stage_duration("recreate", recreate_started)
-                    return self._failure(
-                        f"probe timeout waiting for readiness on port {self._state.effective_port} after recreate",
-                        reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
-                        failure_class=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
-                        stage="probe.retry.recreate.listener_timeout",
-                    )
-                recreate_probe_started = time.monotonic()
-                ready, probe_error_text = template.probe_readiness(template.recreate_probe_attempts)
-                self._add_stage_duration("probe", recreate_probe_started)
-                self._add_stage_duration("recreate", recreate_started)
-                if ready:
-                    self._emit("probe.healthy.after_recreate")
-                    return self._success()
+        probe_error_text, recovery = self._restart_after_probe_failure(probe_error_text=probe_error_text)
+        if recovery is not None:
+            return recovery
     
         return self._failure(
             probe_error_text or template.probe_failure_fallback,
