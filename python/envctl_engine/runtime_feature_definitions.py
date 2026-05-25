@@ -165,6 +165,9 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         shell_source_of_truth=(),
         python_source_of_truth=(
             "python/envctl_engine/runtime/lifecycle_worktree_cleanup.py",
+            "python/envctl_engine/runtime/lifecycle_worktree_metadata.py",
+            "python/envctl_engine/runtime/lifecycle_worktree_processes.py",
+            "python/envctl_engine/runtime/lifecycle_worktree_containers.py",
             "python/envctl_engine/runtime/engine_runtime_lifecycle_support.py",
             "python/envctl_engine/actions/action_worktree_runner.py",
         ),

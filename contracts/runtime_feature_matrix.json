@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-25T09:48:12+00:00",
+  "generated_at": "2026-05-25T09:54:25+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -431,6 +431,9 @@
       "shell_source_of_truth": [],
       "python_source_of_truth": [
         "python/envctl_engine/runtime/lifecycle_worktree_cleanup.py",
+        "python/envctl_engine/runtime/lifecycle_worktree_metadata.py",
+        "python/envctl_engine/runtime/lifecycle_worktree_processes.py",
+        "python/envctl_engine/runtime/lifecycle_worktree_containers.py",
         "python/envctl_engine/runtime/engine_runtime_lifecycle_support.py",
         "python/envctl_engine/actions/action_worktree_runner.py"
       ],

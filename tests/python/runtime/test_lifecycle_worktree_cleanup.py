@@ -4,7 +4,10 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from envctl_engine.runtime.lifecycle_worktree_containers import legacy_container_name, remove_tree_containers
 from envctl_engine.runtime.lifecycle_worktree_cleanup import WorktreeCleanupDependencies, blast_worktree_before_delete
+from envctl_engine.runtime.lifecycle_worktree_metadata import cleanup_artifact_paths, prune_project_metadata
+from envctl_engine.runtime.lifecycle_worktree_processes import blast_tree_listener_ports
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 
 
@@ -82,6 +85,117 @@ class LifecycleWorktreeCleanupTests(unittest.TestCase):
 
         self.assertEqual(warnings, [])
         self.assertEqual(calls, ["ports", "cwd", "artifacts", "containers"])
+
+    def test_prune_project_metadata_returns_test_artifacts_and_removes_empty_keys(self) -> None:
+        state = RunState(
+            run_id="run-1",
+            mode="trees",
+            metadata={
+                "project_pr_links": {"Feature": "https://example.test/pr"},
+                "project_roots": {"Feature": "/tmp/feature"},
+                "project_test_summaries": {
+                    "Feature": {
+                        "summary_path": "/tmp/results/summary.json",
+                        "short_summary_path": "/tmp/results/short.txt",
+                    }
+                },
+                "project_test_results_root": "/tmp/results",
+                "project_test_results_updated_at": "now",
+            },
+        )
+
+        removed = prune_project_metadata(state, project_name="Feature")
+
+        self.assertEqual(removed, [Path("/tmp/results/summary.json"), Path("/tmp/results/short.txt")])
+        self.assertNotIn("project_pr_links", state.metadata)
+        self.assertNotIn("project_roots", state.metadata)
+        self.assertNotIn("project_test_summaries", state.metadata)
+        self.assertNotIn("project_test_results_root", state.metadata)
+        self.assertNotIn("project_test_results_updated_at", state.metadata)
+
+    def test_cleanup_artifact_paths_removes_files_and_empty_parents(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        root = Path(self.id()).name
+        with self.subTest(root=root):
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                artifact = Path(tmpdir) / "nested" / "summary.json"
+                artifact.parent.mkdir()
+                artifact.write_text("{}", encoding="utf-8")
+                warnings: list[str] = []
+                runtime = SimpleNamespace(_emit=lambda event, **payload: events.append((event, payload)))
+
+                cleanup_artifact_paths(runtime, project_name="Feature", paths={artifact}, warnings=warnings)
+
+                self.assertEqual(warnings, [])
+                self.assertFalse(artifact.exists())
+                self.assertFalse(artifact.parent.exists())
+                self.assertEqual(events[0][0], "cleanup.worktree.artifact.removed")
+
+    def test_blast_tree_listener_ports_skips_docker_processes_and_kills_owned_listeners(self) -> None:
+        killed: list[int] = []
+        events: list[tuple[str, dict[str, object]]] = []
+        orchestrator = SimpleNamespace(
+            run_best_effort_command=lambda *args, **kwargs: (0, "111\n222\n", ""),
+            looks_like_docker_process=lambda command: "docker" in command,
+        )
+        runtime = SimpleNamespace(
+            lifecycle_cleanup_orchestrator=orchestrator,
+            _blast_all_process_command=lambda pid: "docker proxy" if pid == 111 else "python app.py",
+            _blast_all_kill_pid_tree=lambda pid: killed.append(pid),
+            _emit=lambda event, **payload: events.append((event, payload)),
+        )
+
+        warnings: list[str] = []
+        blast_tree_listener_ports(runtime, project_name="Feature", ports={8000}, warnings=warnings)
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(killed, [222])
+        self.assertEqual([event for event, _payload in events], ["cleanup.worktree.port.skip", "cleanup.worktree.port.kill"])
+
+    def test_remove_tree_containers_matches_hashed_and_legacy_names_and_removes_volumes(self) -> None:
+        calls: list[list[str]] = []
+        events: list[tuple[str, dict[str, object]]] = []
+
+        class Runner:
+            def run(self, command: list[str], **kwargs: object) -> SimpleNamespace:
+                calls.append(command)
+                if command[1:4] == ["ps", "-a", "--format"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=(
+                            f"abc|{legacy_container_name(prefix='envctl-redis', project_name='Feature')}\n"
+                            "ignored|unrelated\n"
+                        ),
+                        stderr="",
+                    )
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        runtime = SimpleNamespace(
+            process_runner=Runner(),
+            env={},
+            _collect_container_volume_candidates=lambda cid, volumes: volumes.append("envctl-volume"),
+            _emit=lambda event, **payload: events.append((event, payload)),
+        )
+        warnings: list[str] = []
+
+        remove_tree_containers(
+            runtime,
+            project_name="Feature",
+            project_root=Path("."),
+            include_supabase=False,
+            remove_named_volumes=True,
+            warnings=warnings,
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertIn(["docker", "rm", "-f", "-v", "abc"], calls)
+        self.assertIn(["docker", "volume", "rm", "envctl-volume"], calls)
+        self.assertEqual(
+            [event for event, _payload in events],
+            ["cleanup.worktree.container.removed", "cleanup.worktree.volume.removed"],
+        )
 
 
 if __name__ == "__main__":
