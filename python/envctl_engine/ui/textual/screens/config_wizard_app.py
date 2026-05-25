@@ -51,6 +51,7 @@ from .config_wizard_list_rendering import (
     render_components_list,
     render_service_startup_list,
 )
+from .config_wizard_navigation import move_config_wizard_list_index, resolve_config_wizard_key
 from .config_wizard_status import (
     command_step_status,
     directory_step_status,
@@ -173,53 +174,21 @@ def build_config_wizard_app(
         def on_key(self, event: Key) -> None:
             if self._text_input_has_focus() and handle_text_edit_key_alias(widget=self.focused, event=event):
                 return
-            if event.key == "enter":
-                if self._button_has_focus():
-                    return
+            decision = resolve_config_wizard_key(
+                event.key,
+                text_input_focused=self._text_input_has_focus(),
+                button_focused=self._button_has_focus(),
+                suggestion_field_focused=self._focused_suggestion_field() is not None,
+            )
+            if decision.stop_event:
                 event.stop()
+            if decision.prevent_default:
                 event.prevent_default()
-                self.action_submit_or_next()
+            if decision.action is not None:
+                getattr(self, f"action_{decision.action}")()
                 return
-            if event.key == "right":
-                if self._text_input_has_focus():
-                    return
-                event.stop()
-                event.prevent_default()
-                self.action_submit_or_next()
-                return
-            if event.key == "left":
-                if self._text_input_has_focus():
-                    return
-                event.stop()
-                event.prevent_default()
-                self.action_go_back()
-                return
-            if event.key == "up":
-                event.stop()
-                event.prevent_default()
-                self.action_cursor_up()
-                return
-            if event.key == "down":
-                if self._text_input_has_focus() and self._focused_suggestion_field() is not None:
-                    event.stop()
-                    event.prevent_default()
-                    self.action_cycle_command_suggestion()
-                    return
-                event.stop()
-                event.prevent_default()
-                self.action_cursor_down()
-                return
-            if event.key == "space":
-                event.stop()
-                event.prevent_default()
-                self.action_toggle_item()
-                return
-            if event.key == "d":
-                event.stop()
-                event.prevent_default()
-                self.action_toggle_component_split()
-                return
-            _emit(emit, "ui.key", screen="config_wizard", key=event.key, character=event.character)
+            if decision.emit_key:
+                _emit(emit, "ui.key", screen="config_wizard", key=event.key, character=event.character)
 
         def _text_input_has_focus(self) -> bool:
             focused = self.focused
@@ -637,10 +606,7 @@ def build_config_wizard_app(
             if self._current_step() not in {"default_mode", "components", "service_startup"}:
                 return
             list_view = self.query_one("#config-list", ListView)
-            if list_view.index is None:
-                list_view.index = 0
-            else:
-                list_view.index = max(list_view.index - 1, 0)
+            list_view.index = move_config_wizard_list_index(list_view.index, count=len(list_view.children), step=-1)
             if self._current_step() == "components":
                 list_view.index = self._nearest_selectable_component_index(list_view.index or 0, step=-1)
             self._sync_focus_driven_selection()
@@ -651,12 +617,10 @@ def build_config_wizard_app(
                 return
             list_view = self.query_one("#config-list", ListView)
             count = len(list_view.children)
-            if count <= 0:
+            next_index = move_config_wizard_list_index(list_view.index, count=count, step=1)
+            if next_index is None:
                 return
-            if list_view.index is None:
-                list_view.index = 0
-            else:
-                list_view.index = min(list_view.index + 1, count - 1)
+            list_view.index = next_index
             if self._current_step() == "components":
                 list_view.index = self._nearest_selectable_component_index(list_view.index or 0, step=1)
             self._sync_focus_driven_selection()
