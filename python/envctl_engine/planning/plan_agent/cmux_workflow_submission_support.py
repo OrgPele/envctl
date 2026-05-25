@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shlex
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -15,6 +14,7 @@ from envctl_engine.planning.plan_agent.workflow_queue_interaction import (
     CodexQueueMessageInteractor,
     wait_until_codex_queue_ready,
 )
+from envctl_engine.planning.plan_agent.workflow_bootstrap_commands import CliBootstrapCommandTyper
 from envctl_engine.planning.plan_agent.workflow_queue_support import (
     run_codex_workflow_queue,
 )
@@ -41,37 +41,22 @@ def launch_cli_bootstrap_commands(
     send_surface_key_fn: SendSurfaceKeyFn,
     failure_event: str = "planning.agent_launch.failed",
 ) -> list[str | None]:
-    typed_root = shlex.quote(str(cwd))
-    return [
-        send_surface_text_fn(
+    return CliBootstrapCommandTyper(
+        send_text=lambda text: send_surface_text_fn(
             runtime,
             workspace_id=workspace_id,
             surface_id=surface_id,
-            text=f"cd {typed_root}",
+            text=text,
             failure_event=failure_event,
         ),
-        send_surface_key_fn(
+        send_key=lambda key: send_surface_key_fn(
             runtime,
             workspace_id=workspace_id,
             surface_id=surface_id,
-            key="enter",
+            key=key,
             failure_event=failure_event,
         ),
-        send_surface_text_fn(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            text=cli_command,
-            failure_event=failure_event,
-        ),
-        send_surface_key_fn(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            key="enter",
-            failure_event=failure_event,
-        ),
-    ]
+    ).type_bootstrap_commands(cwd=cwd, cli_command=cli_command)
 
 
 def submit_prompt_workflow_step(

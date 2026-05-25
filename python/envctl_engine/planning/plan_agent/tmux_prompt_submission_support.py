@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shlex
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -12,6 +11,7 @@ from envctl_engine.planning.plan_agent.models import (
     PlanAgentLaunchConfig,
     _PlanAgentWorkflow,
 )
+from envctl_engine.planning.plan_agent.workflow_bootstrap_commands import CliBootstrapCommandTyper
 
 
 SendTmuxTextFn = Callable[..., str | None]
@@ -37,42 +37,25 @@ def launch_tmux_cli_bootstrap_commands(
     send_tmux_text_fn: SendTmuxTextFn,
     send_tmux_key_fn: SendTmuxKeyFn,
 ) -> list[str | None]:
-    typed_root = shlex.quote(str(cwd))
     emit_failure_event = failure_event == "planning.agent_launch.failed"
-    return [
-        send_tmux_text_fn(
+    return CliBootstrapCommandTyper(
+        send_text=lambda text: send_tmux_text_fn(
             runtime,
             session_name=session_name,
             window_name=window_name,
-            text=f"cd {typed_root}",
+            text=text,
             emit_failure_event=emit_failure_event,
             failure_event=failure_event,
         ),
-        send_tmux_key_fn(
+        send_key=lambda key: send_tmux_key_fn(
             runtime,
             session_name=session_name,
             window_name=window_name,
-            key="enter",
+            key=key,
             emit_failure_event=emit_failure_event,
             failure_event=failure_event,
         ),
-        send_tmux_text_fn(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            text=cli_command,
-            emit_failure_event=emit_failure_event,
-            failure_event=failure_event,
-        ),
-        send_tmux_key_fn(
-            runtime,
-            session_name=session_name,
-            window_name=window_name,
-            key="enter",
-            emit_failure_event=emit_failure_event,
-            failure_event=failure_event,
-        ),
-    ]
+    ).type_bootstrap_commands(cwd=cwd, cli_command=cli_command)
 
 
 def maybe_submit_tmux_codex_goal(

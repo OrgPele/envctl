@@ -973,6 +973,9 @@ class StructureLayoutTests(unittest.TestCase):
         queue_interaction_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "planning" / "plan_agent" / "workflow_queue_interaction.py"
         )
+        bootstrap_command_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "planning" / "plan_agent" / "workflow_bootstrap_commands.py"
+        )
         cmux_queue_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "planning" / "plan_agent" / "cmux_workflow_submission_support.py"
         )
@@ -1020,6 +1023,7 @@ class StructureLayoutTests(unittest.TestCase):
             (tmux_readiness_owner, "def wait_for_tmux_cli_ready"),
             (tmux_queue_owner, "def queue_tmux_codex_workflow_steps"),
             (queue_interaction_owner, "class CodexQueueMessageInteractor"),
+            (bootstrap_command_owner, "class CliBootstrapCommandTyper"),
         ):
             with self.subTest(owner=owner.name):
                 owner_text = owner.read_text(encoding="utf-8")
@@ -1037,6 +1041,14 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def wait_until_codex_queue_ready", queue_owner_text)
         self.assertIn("from envctl_engine.planning.plan_agent.workflow_queue_interaction import", tmux_queue_text)
         self.assertIn("from envctl_engine.planning.plan_agent.workflow_queue_interaction import", cmux_queue_text)
+        self.assertIn(
+            "from envctl_engine.planning.plan_agent.workflow_bootstrap_commands import",
+            tmux_submission_owner.read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "from envctl_engine.planning.plan_agent.workflow_bootstrap_commands import",
+            cmux_queue_text,
+        )
         config_text = config_facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.planning.plan_agent.launch_policy import", config_text)
         self.assertLessEqual(len(config_text.splitlines()), 140)
