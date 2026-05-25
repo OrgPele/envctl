@@ -169,8 +169,8 @@ def test_github_pr_checks_polls_until_pending_checks_finish(tmp_path: Path, monk
     assert len(calls) == 2
 
 
-def test_github_pr_checks_default_timeout_is_fast_handoff_window() -> None:
-    assert action_ship_checks.DEFAULT_CHECK_TIMEOUT_SECONDS == 10.0
+def test_github_pr_checks_default_timeout_is_two_minute_wait_window() -> None:
+    assert action_ship_checks.DEFAULT_CHECK_TIMEOUT_SECONDS == 120.0
 
 
 def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(
