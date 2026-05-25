@@ -1839,6 +1839,19 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.startup.requirements_native_adapter import", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 510)
 
+    def test_requirements_native_adapter_has_telemetry_owner(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_native_telemetry.py"
+        adapter = REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_native_adapter.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        adapter_text = adapter.read_text(encoding="utf-8")
+        self.assertIn("class CommandTimingRunnerProxy", owner_text)
+        self.assertIn("class NativeAdapterTelemetryEmitter", owner_text)
+        self.assertIn("def extract_probe_attempts", owner_text)
+        self.assertIn("from envctl_engine.startup.requirements_native_telemetry import", adapter_text)
+        self.assertLessEqual(len(adapter_text.splitlines()), 390)
+
     def test_requirements_startup_has_component_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_component_startup.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_startup_domain.py"
