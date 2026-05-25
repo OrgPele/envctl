@@ -69,6 +69,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "tmux_transport.py",
             "workflow.py",
             "workflow_build.py",
+            "workflow_e2e_prompt_context.py",
             "workflow_prompt_support.py",
             "workflow_runtime_addresses.py",
             "workflow_queue_support.py",
@@ -217,6 +218,11 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "_workflow_step_prompt_text",
                 "_resolve_preset_submission_text",
                 "_shape_prompt_text",
+            },
+            "workflow_e2e_prompt_context.py": {
+                "_original_plan_file_path",
+                "_original_task_source_prompt_section",
+                "_shape_queue_message_text",
             },
             "workflow_runtime_addresses.py": {
                 "RuntimeAddressPromptBuilder",
