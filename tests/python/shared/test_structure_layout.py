@@ -2719,6 +2719,28 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.startup.service_launch_diagnostics import", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 420)
 
+    def test_browser_diagnostics_has_cohesive_owner_modules(self) -> None:
+        env_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "browser_env_preview.py"
+        cors_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "browser_cors_diagnostics.py"
+        runtime_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "browser_runtime_diagnostics.py"
+        startup_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "browser_startup_projection.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "browser_diagnostics.py"
+
+        self.assertTrue(env_owner.is_file())
+        self.assertTrue(cors_owner.is_file())
+        self.assertTrue(runtime_owner.is_file())
+        self.assertTrue(startup_owner.is_file())
+        self.assertIn("def safe_env_preview", env_owner.read_text(encoding="utf-8"))
+        self.assertIn("def cors_payload", cors_owner.read_text(encoding="utf-8"))
+        self.assertIn("def build_runtime_diagnostics", runtime_owner.read_text(encoding="utf-8"))
+        self.assertIn("def build_startup_env_projection", startup_owner.read_text(encoding="utf-8"))
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.runtime.browser_env_preview import", facade_text)
+        self.assertIn("from envctl_engine.runtime.browser_cors_diagnostics import", facade_text)
+        self.assertIn("from envctl_engine.runtime.browser_runtime_diagnostics import", facade_text)
+        self.assertIn("from envctl_engine.runtime.browser_startup_projection import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 90)
+
     def test_finalization_run_state_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "finalization_run_state.py"
         failure_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "finalization_failure.py"
