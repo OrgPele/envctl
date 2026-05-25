@@ -147,6 +147,7 @@ OWNERSHIP_RULES = {
     },
     "start_requirements_for_project": {
         ENGINE_ROOT / "startup" / "requirements_execution.py",
+        ENGINE_ROOT / "startup" / "requirements_project_startup.py",
         ENGINE_ROOT / "startup" / "startup_orchestrator.py",
         ENGINE_ROOT / "startup" / "protocols.py",
     },

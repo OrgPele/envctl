@@ -13,7 +13,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.startup.resume_restore_support import restore_missing  # noqa: E402
-import envctl_engine.startup.requirements_execution as requirements_execution_module  # noqa: E402
+import envctl_engine.startup.requirements_project_startup as requirements_project_startup_module  # noqa: E402
 from envctl_engine.startup.protocols import StartupOrchestratorLike  # noqa: E402
 from envctl_engine.startup.requirements_execution import (  # noqa: E402
     requirements_parallel_enabled,
@@ -204,7 +204,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
         orchestrator = SimpleNamespace(runtime=runtime)
 
-        with mock.patch.object(requirements_execution_module.sys, "platform", "darwin"):
+        with mock.patch.object(requirements_project_startup_module.sys, "platform", "darwin"):
             self.assertFalse(
                 requirements_parallel_enabled(orchestrator, route=parse_route(["start"], env={}), enabled_count=3)
             )
@@ -216,7 +216,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 )
             )
 
-        with mock.patch.object(requirements_execution_module.sys, "platform", "linux"):
+        with mock.patch.object(requirements_project_startup_module.sys, "platform", "linux"):
             self.assertTrue(
                 requirements_parallel_enabled(orchestrator, route=parse_route(["start"], env={}), enabled_count=3)
             )
@@ -229,7 +229,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             )
 
         runtime.env["ENVCTL_REQUIREMENTS_PARALLEL"] = "true"
-        with mock.patch.object(requirements_execution_module.sys, "platform", "darwin"):
+        with mock.patch.object(requirements_project_startup_module.sys, "platform", "darwin"):
             self.assertTrue(
                 requirements_parallel_enabled(orchestrator, route=parse_route(["start"], env={}), enabled_count=3)
             )

@@ -1851,6 +1851,18 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.startup.requirements_component_startup import", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 180)
 
+    def test_requirements_execution_has_project_startup_owner(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_project_startup.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_execution.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("class RequirementProjectStarter", owner_text)
+        self.assertIn("def start_requirements_for_project", owner_text)
+        self.assertIn("from envctl_engine.startup.requirements_project_startup import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 280)
+
     def test_worktree_provenance_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_provenance.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
