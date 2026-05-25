@@ -158,6 +158,35 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from .container_lifecycle_execution import", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 80)
 
+    def test_external_dependency_facade_has_component_owners(self) -> None:
+        mode_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "external_mode.py"
+        env_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "external_env.py"
+        probe_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "external_probe.py"
+        outcome_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "external_outcome.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "external.py"
+
+        self.assertTrue(mode_owner.is_file())
+        self.assertTrue(env_owner.is_file())
+        self.assertTrue(probe_owner.is_file())
+        self.assertTrue(outcome_owner.is_file())
+
+        mode_text = mode_owner.read_text(encoding="utf-8")
+        env_text = env_owner.read_text(encoding="utf-8")
+        probe_text = probe_owner.read_text(encoding="utf-8")
+        outcome_text = outcome_owner.read_text(encoding="utf-8")
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("class ExternalDependencyModePolicy", mode_text)
+        self.assertIn("class ExternalDependencyEnvResolver", env_text)
+        self.assertIn("class ExternalDependencyProbe", probe_text)
+        self.assertIn("def external_dependency_outcome", outcome_text)
+        self.assertIn("from .external_mode import", facade_text)
+        self.assertIn("from .external_env import", facade_text)
+        self.assertIn("from .external_probe import", facade_text)
+        self.assertIn("from .external_outcome import", facade_text)
+        self.assertNotIn("socket.create_connection", facade_text)
+        self.assertNotIn("urlopen(", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 80)
+
     def test_action_cli_tests_are_split_by_owner(self) -> None:
         actions_tests = REPO_ROOT / "tests" / "python" / "actions"
         expected = [
