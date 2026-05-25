@@ -99,6 +99,7 @@ class ActionShipSupportTests(unittest.TestCase):
                     github_pr_checks=lambda _git_root, *, branch, pr_url: {
                         "state": "checks_failed",
                         "failing_checks": [{"name": "pytest", "state": "FAILURE"}],
+                        "passed_checks": [{"name": "ruff", "state": "SUCCESS"}],
                         "pending_checks": [],
                         "duration_seconds": 0.1,
                     },
@@ -108,6 +109,18 @@ class ActionShipSupportTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "checks_failed")
         self.assertEqual(payload["step_statuses"], ["clean_no_changes", "pr_exists", "checks_failed"])
+        self.assertEqual(
+            payload["operation_statuses"],
+            {
+                "checks": "checks_failed",
+                "commit": "no_changes",
+                "merge_conflicts": "none",
+                "pr": "existing",
+                "push": "not_needed",
+            },
+        )
+        self.assertEqual(payload["passed_checks"], [{"name": "ruff", "state": "SUCCESS"}])
+        self.assertEqual(payload["failing_checks"], [{"name": "pytest", "state": "FAILURE"}])
         self.assertEqual(payload["pr_url"], "https://github.com/acme/repo/pull/7")
 
     def test_run_ship_workflow_creates_pr_and_reports_check_success(self) -> None:
@@ -167,6 +180,7 @@ class ActionShipSupportTests(unittest.TestCase):
                     ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
                     github_pr_checks=lambda _git_root, *, branch, pr_url: {
                         "state": "checks_passed",
+                        "passed_checks": [{"name": "pytest", "state": "SUCCESS"}],
                         "failing_checks": [],
                         "pending_checks": [],
                         "duration_seconds": 0.1,
@@ -179,7 +193,121 @@ class ActionShipSupportTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "checks_passed")
         self.assertEqual(payload["step_statuses"], ["committed_pushed", "pr_created", "checks_passed"])
+        self.assertEqual(
+            payload["operation_statuses"],
+            {
+                "checks": "checks_passed",
+                "commit": "success",
+                "merge_conflicts": "none",
+                "pr": "created",
+                "push": "success",
+            },
+        )
+        self.assertEqual(payload["passed_checks"], [{"name": "pytest", "state": "SUCCESS"}])
         self.assertEqual(payload["pr_url"], "https://github.com/acme/repo/pull/8")
+
+    def test_run_ship_workflow_returns_failure_when_checks_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            context = SimpleNamespace(
+                repo_root=repo_root,
+                project_root=repo_root,
+                project_name="Main",
+                env={"ENVCTL_ACTION_JSON": "true"},
+            )
+
+            def git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/demo\n"
+                if args == ["rev-parse", "HEAD"]:
+                    return "abc123\n"
+                return ""
+
+            with redirect_stdout(StringIO()) as stdout:
+                code = run_ship_workflow(
+                    context,
+                    resolve_git_root=lambda project_root, repo_root: project_root,
+                    git_available=True,
+                    git_output=git_output,
+                    run_git=lambda _git_root, args: subprocess.CompletedProcess(args=args, returncode=0),
+                    resolve_base_branch=lambda _context, _git_root: "main",
+                    resolve_base_ref=lambda _git_root, _base_branch: "origin/main",
+                    run_commit_action=lambda _context: 0,
+                    run_pr_action=lambda _context: 0,
+                    probe_dirty_worktree=lambda *_args, **_kwargs: SimpleNamespace(dirty=False),
+                    existing_pr_url=lambda _git_root, _branch: "https://github.com/acme/repo/pull/7",
+                    partition_envctl_protected_paths=lambda _status: SimpleNamespace(
+                        protected_staged_paths=[],
+                        protected_skipped_paths=[],
+                    ),
+                    ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
+                    github_pr_checks=lambda _git_root, *, branch, pr_url: {
+                        "state": "checks_pending_timeout",
+                        "failing_checks": [],
+                        "passed_checks": [{"name": "ruff", "state": "SUCCESS"}],
+                        "pending_checks": [{"name": "pytest", "state": "QUEUED"}],
+                        "duration_seconds": 30.0,
+                        "timeout_seconds": 30.0,
+                    },
+                )
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "checks_pending_timeout")
+        self.assertEqual(payload["operation_statuses"]["checks"], "checks_pending_timeout")
+        self.assertEqual(payload["checks_timeout_seconds"], 30.0)
+        self.assertEqual(payload["pending_checks"], [{"name": "pytest", "state": "QUEUED"}])
+
+    def test_run_ship_workflow_treats_no_checks_as_successful_ship_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            context = SimpleNamespace(
+                repo_root=repo_root,
+                project_root=repo_root,
+                project_name="Main",
+                env={"ENVCTL_ACTION_JSON": "true"},
+            )
+
+            def git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/demo\n"
+                if args == ["rev-parse", "HEAD"]:
+                    return "abc123\n"
+                return ""
+
+            with redirect_stdout(StringIO()) as stdout:
+                code = run_ship_workflow(
+                    context,
+                    resolve_git_root=lambda project_root, repo_root: project_root,
+                    git_available=True,
+                    git_output=git_output,
+                    run_git=lambda _git_root, args: subprocess.CompletedProcess(args=args, returncode=0),
+                    resolve_base_branch=lambda _context, _git_root: "main",
+                    resolve_base_ref=lambda _git_root, _base_branch: "origin/main",
+                    run_commit_action=lambda _context: 0,
+                    run_pr_action=lambda _context: 0,
+                    probe_dirty_worktree=lambda *_args, **_kwargs: SimpleNamespace(dirty=False),
+                    existing_pr_url=lambda _git_root, _branch: "https://github.com/acme/repo/pull/7",
+                    partition_envctl_protected_paths=lambda _status: SimpleNamespace(
+                        protected_staged_paths=[],
+                        protected_skipped_paths=[],
+                    ),
+                    ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
+                    github_pr_checks=lambda _git_root, *, branch, pr_url: {
+                        "state": "no_checks_reported",
+                        "failing_checks": [],
+                        "passed_checks": [],
+                        "pending_checks": [],
+                        "duration_seconds": 0.1,
+                    },
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "no_checks_reported")
+        self.assertEqual(payload["operation_statuses"]["checks"], "no_checks_reported")
 
 
 if __name__ == "__main__":

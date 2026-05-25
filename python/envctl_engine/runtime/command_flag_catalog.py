@@ -116,6 +116,7 @@ VALUE_FLAGS = {
     "--set",
     "--pr-base",
     "--review-base",
+    "-m",
     "--commit-message",
     "--commit-message-file",
     "--analyze-mode",

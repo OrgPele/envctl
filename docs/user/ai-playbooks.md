@@ -30,7 +30,7 @@ Notes:
 - `--dry-run` shows what would be written without mutating anything
 - `envctl install-prompts --help` prints command-specific usage, examples, and Codex guidance
 - this command is intentionally unavailable inside dashboard interactive mode
-- the installed implementation-oriented presets tell agents to append structured work summaries to `.envctl-commit-message.md` and preserve a single `### Envctl pointer ###` marker for default `envctl commit` messages
+- the installed implementation-oriented presets tell agents to prefer inline `envctl ship -m "<message>"` / `envctl commit -m "<message>"` messages and use `.envctl-commit-message.md` only as the fallback default-message ledger with a single `### Envctl pointer ###` marker
 - broad staging during implementation is tolerated by `envctl commit`; envctl-local task/control artifacts stay local and are unstaged before the normal commit is created
 - Codex installs explicit-only skills under `~/.codex/skills/envctl-*` by default; `--with-codex-skills` remains accepted as a compatibility no-op for older scripts
 - envctl-managed `--plan` launches submit the rendered workflow automatically; the `$envctl-*` skill names are for direct manual Codex/OMX use

@@ -252,20 +252,24 @@ including exact commands, confidence, reasons, changed files, and full-gate
 guidance. For final handoff from inside the generated worktree, use:
 
 ```bash
-envctl ship --json
+envctl ship -m "Ship focused implementation" --json
 ```
 
-`ship` reuses `envctl commit` and `envctl pr`, so `.envctl-commit-message.md`
-continues to drive the default commit message and envctl-local artifacts such as
-`.envctl-state/`, `MAIN_TASK.md`, `OLD_TASK_*.md`, `trees/`, and `trees-*` stay
-local. The command commits, pushes, opens or reuses the PR, predicts merge
-conflicts, and returns the PR URL plus GitHub check status with `failing_checks`
-and `pending_checks` in a structured payload. It returns the current state
-immediately and does not block on pending CI; agents can run it in a
-background/subagent lane, propagate commit/push/PR, merge-conflict,
-failed-check, or review-comment problems immediately, and keep the main
-implementation lane working until the shipping subagent reports an issue or
-final check completion.
+Run bare `envctl ship` from inside the current generated worktree/project
+directory; add `--project <name>` only when operating from another checkout.
+`ship` reuses `envctl commit` and `envctl pr`, so inline `-m` is the preferred
+commit-message path and `.envctl-commit-message.md` remains the fallback default
+message ledger. Envctl-local artifacts such as `.envctl-state/`, `MAIN_TASK.md`,
+`OLD_TASK_*.md`, `trees/`, and `trees-*` stay local. The command commits,
+pushes, opens or reuses the PR, predicts merge conflicts, waits for GitHub
+checks until they pass, fail, time out, or report no check contexts, and returns the PR URL plus
+`operation_statuses`, `checks_state`, `passed_checks`, `failing_checks`,
+`pending_checks`, and `checks_error` in a structured payload. Because `ship` owns the wait/poll loop, agents should not
+run separate `git`, `gh`, PR, or check-monitoring commands unless `ship` is
+unavailable or reports a recoverable issue. To avoid idling the main
+implementation lane, agents can run `ship` in a background/subagent lane and
+propagate commit/push/PR, merge-conflict, failed-check, pending-timeout, no-checks-reported, or
+review-comment problems when the shipping subagent returns.
 
 Use `--plan` when:
 

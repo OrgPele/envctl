@@ -67,39 +67,49 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
     "commit": CommandHelpTopic(
         command="commit",
         summary="commit normal repo changes while preserving envctl-local control artifacts",
-        usage=("envctl commit [--project <name>|--main] [--commit-message <text>|--commit-message-file <path>]",),
+        usage=("envctl commit [--project <name>|--main] [-m <text>|--commit-message-file <path>]",),
         what_it_does=(
             "stages normal changed paths and intentionally skips protected envctl-local artifacts",
-            "uses .envctl-commit-message.md after the Envctl pointer marker as the default message",
-            "advances the commit-message pointer after a successful commit",
+            "uses the inline -m/--commit-message text when provided",
+            "falls back to .envctl-commit-message.md after the Envctl pointer marker when no message is provided",
+            "advances the commit-message pointer after a successful fallback-ledger commit",
         ),
         flags=(
-            "--commit-message <text>       use explicit commit message text",
+            "-m, --commit-message <text>   use explicit commit message text",
             "--commit-message-file <path>  read commit message from a file",
             "--project <name>              commit inside selected worktree/project",
             "--main                        target the main checkout",
         ),
-        examples=("envctl commit --main", "envctl commit --project feature-a-1 --commit-message-file /tmp/msg.md"),
+        examples=(
+            "envctl commit --main -m 'Ship focused fix'",
+            "envctl commit --project feature-a-1 -m 'Ship feature'",
+        ),
         aliases=("c", "--commit"),
         related=("pr", "review"),
     ),
     "ship": CommandHelpTopic(
         command="ship",
         summary="commit, push, open/update PR, and report GitHub checks for the current or selected target",
-        usage=("envctl ship [--project <name>] [--json]",),
+        usage=("envctl ship [--project <name>] [-m <text>] [--json]",),
         what_it_does=(
             "when run inside a generated worktree, infers that worktree without requiring --project",
-            "reuses envctl commit behavior, including .envctl-commit-message.md and protected local artifacts",
+            "reuses envctl commit behavior, including -m/--commit-message, fallback ledger messages, "
+            "and protected local artifacts",
             "opens a PR when needed and reuses an existing PR when one already exists",
             "predicts merge conflicts and returns conflicting files, messages, and resolution steps",
-            "queries GitHub PR checks and returns passed, failed, pending-timeout, or gh-unavailable status "
+            "waits for GitHub PR checks and returns passed, failed, pending-timeout, no-checks-reported, "
+            "or gh-unavailable status "
             "with failing_checks and pending_checks",
         ),
         flags=(
             "--project <name>        ship one worktree/project",
+            "-m <text>              use explicit commit message text for the commit phase",
             "--json                  print the envctl.ship.v1 payload",
         ),
-        examples=("envctl ship --json", "envctl ship --project feature-a-1 --json"),
+        examples=(
+            "envctl ship -m 'Ship focused fix' --json",
+            "envctl ship --project feature-a-1 -m 'Ship feature' --json",
+        ),
         aliases=("--ship",),
         related=("test-focused", "commit", "pr"),
     ),

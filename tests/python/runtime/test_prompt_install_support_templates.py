@@ -113,16 +113,22 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("### Envctl pointer ###", codex)
         self.assertIn("boundary after the last successful commit", codex)
         self.assertIn("one complete next commit message", codex)
+        self.assertIn("Do not run manual staging commands such as `git add .`", codex)
+        self.assertIn("Inspect the baseline with `git status --short`; do not stage files manually", codex)
         self.assertIn("use `envctl test-focused` from inside the current generated worktree", codex)
         self.assertIn("use `envctl test-focused --project <current-worktree-name>`", codex)
         self.assertNotIn("envctl test-focused --project <current-worktree-name> --dry-run --json", codex)
-        self.assertIn("prefer `envctl ship --json` from inside the current generated worktree", codex)
-        self.assertIn("fall back to `envctl commit`, `envctl pr`, and `gh pr checks`", codex)
+        self.assertIn('prefer `envctl ship -m "<message>" --json` from inside the current generated worktree', codex)
+        self.assertIn("Run bare `envctl ship` from inside the current worktree/project directory", codex)
+        self.assertIn("GitHub CLI checks only if `ship` is unavailable", codex)
         self.assertIn("opens or reuses the PR", codex)
-        self.assertIn("returns the PR URL, current GitHub check state, `failing_checks`, `pending_checks`", codex)
-        self.assertIn("does not wait for pending checks by itself", codex)
-        self.assertIn("When subagents are available, delegate `envctl ship --json`", codex)
-        self.assertIn("Only return to the shipping lane when the subagent reports a bad result", codex)
+        self.assertIn("waits for GitHub checks until they pass, fail, time out, or report no check contexts", codex)
+        self.assertIn(
+            "returns the PR URL, `operation_statuses`, `checks_state`, `passed_checks`, `failing_checks`",
+            codex,
+        )
+        self.assertIn('When subagents are available, delegate `envctl ship -m "<message>" --json`', codex)
+        self.assertIn("Only return to the shipping lane when the subagent reports a final result requiring attention", codex)
         self.assertIn("keep the main implementation thread moving on non-overlapping work", codex)
         self.assertIn("Inspect unresolved PR review comments", codex)
         self.assertIn("address all actionable comments", codex)
@@ -173,21 +179,32 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("envctl playwright --project <current-worktree-name> -- <command>", finalize_prompt.body)
         self.assertIn("$browser", finalize_prompt.body)
         self.assertNotIn("$browser-use", finalize_prompt.body)
-        self.assertIn("Run `envctl ship --json` from inside the current generated worktree", finalize_prompt.body)
-        self.assertIn("use `envctl ship --project <current-worktree-name> --json`", finalize_prompt.body)
-        self.assertIn("Fall back to `envctl commit`, `envctl pr`, and GitHub CLI checks", finalize_prompt.body)
+        self.assertIn('Run `envctl ship -m "<message>" --json` from inside the current generated worktree', finalize_prompt.body)
+        self.assertIn("Run bare `envctl ship` from inside the current worktree/project directory", finalize_prompt.body)
+        self.assertIn('`envctl ship --project <current-worktree-name> -m "<message>" --json`', finalize_prompt.body)
+        self.assertIn("GitHub CLI checks only if `ship` is unavailable", finalize_prompt.body)
         self.assertIn("opens or reuses the PR", finalize_prompt.body)
-        self.assertIn("returns current status, `failing_checks`, `pending_checks`, and merge-conflict details", finalize_prompt.body)
-        self.assertIn("When subagents are available, delegate this `ship` run to a background subagent", finalize_prompt.body)
-        self.assertIn("Only return to the shipping lane when the subagent surfaces merge conflicts", finalize_prompt.body)
+        self.assertIn(
+            "returns current status, `operation_statuses`, `checks_state`, `passed_checks`, `failing_checks`",
+            finalize_prompt.body,
+        )
+        self.assertIn(
+            "When subagents are available, delegate this `ship` run to a background subagent", finalize_prompt.body
+        )
+        self.assertIn(
+            "Only return to the shipping lane when the subagent surfaces merge conflicts", finalize_prompt.body
+        )
         self.assertIn("Inspect unresolved PR review comments", finalize_prompt.body)
         self.assertIn("address all actionable comments", finalize_prompt.body)
 
         intermediate_prompt = _load_template("_plan_agent_intermediate_cycle_completion").body
-        self.assertIn("then prefer `envctl ship --json`", intermediate_prompt)
+        self.assertIn('then prefer `envctl ship -m "<message>" --json`', intermediate_prompt)
         self.assertIn("instead of a separate commit/push flow", intermediate_prompt)
         self.assertIn("opens or reuses the PR", intermediate_prompt)
-        self.assertIn("`failing_checks` and `pending_checks`", intermediate_prompt)
+        self.assertIn(
+            "`operation_statuses`, `checks_state`, `passed_checks`, `failing_checks`, `pending_checks`",
+            intermediate_prompt,
+        )
         self.assertIn("only return to the shipping lane if the subagent reports an issue", intermediate_prompt)
 
         review_worktree_prompt = _load_template("review_worktree_imp")
@@ -355,5 +372,5 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         for prompt in (implement_prompt, continue_prompt, merge_prompt):
             with self.subTest(prompt=prompt.name):
                 self.assertNotIn("docs/changelog/{tree_name}_changelog.md", prompt.body)
-                self.assertIn("keep `.envctl-commit-message.md` focused on one complete next commit message", prompt.body)
+                self.assertIn("prefer passing it inline with `envctl ship -m", prompt.body)
                 self.assertIn("full cumulative set of changes between commits", prompt.body)
