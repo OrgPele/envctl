@@ -273,8 +273,6 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "tmux_target",
             },
             "cmux_transport.py": {
-                "_prepare_surface",
-                "_ensure_workspace_id",
                 "launch_review_agent_terminal",
             },
             "cmux_surface_support.py": {
