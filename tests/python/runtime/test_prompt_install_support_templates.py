@@ -92,6 +92,15 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("Prefer the smallest number", body)
         self.assertIn("Rollout / verification", body)
 
+    def test_create_plan_template_requires_browser_e2e_decision(self) -> None:
+        body = _load_template("create_plan").body
+
+        self.assertIn("Browser E2E decision", body)
+        self.assertIn("browser_e2e_required", body)
+        self.assertIn("ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false", body)
+        self.assertIn("Record both the browser E2E decision and rationale", body)
+        self.assertIn("Rollout / verification", body)
+
     def test_create_plan_templates_do_not_embed_fixed_auto_codex_cycle_command(self) -> None:
         fixed_command = "ENVCTL_PLAN_AGENT_CODEX_CYCLES=4 envctl --plan <category>/<slug>"
 
@@ -127,13 +136,15 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
             "returns JSON by default with the PR URL, `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`",
             codex,
         )
-        self.assertIn('When subagents are available, delegate `envctl ship -m "<message>"`', codex)
+        self.assertIn("If a real subagent or background-task tool is available", codex)
+        self.assertIn('delegate `envctl ship -m "<message>"` there', codex)
+        self.assertIn("If no real background tool is available, run `envctl ship -m \"<message>\"` normally", codex)
+        self.assertIn("Do not run raw `git`, `gh`, or separate commit/PR/status commands", codex)
         self.assertIn("do not block the main agent waiting for a successful ship result", codex)
         self.assertIn("send a message back only for commit/push/PR failures", codex)
         self.assertIn("keep the main implementation thread moving on non-overlapping work", codex)
-        self.assertIn("Inspect unresolved PR review comments", codex)
-        self.assertIn("address all actionable comments", codex)
-        self.assertIn("wait for final PR confirmation", codex)
+        self.assertIn("Only inspect PR review comments when `ship` reports actionable review-comment status", codex)
+        self.assertNotIn("Inspect unresolved PR review comments after the PR exists", codex)
         self.assertIn("PR status and URL", codex)
         self.assertIn("full cumulative set of changes between commits", codex)
         self.assertIn("envctl --backend --headless", codex)
@@ -189,13 +200,14 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
             "returns JSON by default with current status, `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`",
             finalize_prompt.body,
         )
-        self.assertIn(
-            "When subagents are available, delegate this `ship` run to a background subagent", finalize_prompt.body
-        )
+        self.assertIn("If a real subagent or background-task tool is available", finalize_prompt.body)
+        self.assertIn("delegate this `ship` run there", finalize_prompt.body)
+        self.assertIn('If no real background tool is available, run `envctl ship -m "<message>"` normally', finalize_prompt.body)
+        self.assertIn("Do not run raw `git`, `gh`, or separate commit/PR/status commands", finalize_prompt.body)
         self.assertIn("do not block the main agent waiting for a successful ship result", finalize_prompt.body)
         self.assertIn("should send a message back only for merge conflicts", finalize_prompt.body)
-        self.assertIn("Inspect unresolved PR review comments", finalize_prompt.body)
-        self.assertIn("address all actionable comments", finalize_prompt.body)
+        self.assertIn("Only inspect PR review comments when `ship` reports actionable review-comment status", finalize_prompt.body)
+        self.assertNotIn("Inspect unresolved PR review comments", finalize_prompt.body)
 
         intermediate_prompt = _load_template("_plan_agent_intermediate_cycle_completion").body
         self.assertIn('then use `envctl ship -m "<message>"`', intermediate_prompt)
@@ -206,7 +218,12 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
             intermediate_prompt,
         )
         self.assertIn("do not wait for a successful ship result", intermediate_prompt)
+        self.assertIn("If no real background tool is available, run `envctl ship -m \"<message>\"` normally", intermediate_prompt)
         self.assertIn("only return to the shipping lane if the subagent reports an issue", intermediate_prompt)
+
+        review_comments_prompt = _load_template("_plan_agent_pr_review_comments_followup").body
+        self.assertIn("Inspect unresolved PR review comments", review_comments_prompt)
+        self.assertIn("address all actionable comments", review_comments_prompt)
 
         review_worktree_prompt = _load_template("review_worktree_imp")
         self.assertEqual(review_worktree_prompt.name, "review_worktree_imp")

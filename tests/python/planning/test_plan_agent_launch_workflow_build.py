@@ -53,8 +53,8 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
 
             self.assertIsNone(error)
             self.assertEqual(send_text_mock.call_count, 0)
-            self.assertEqual(send_prompt_mock.call_count, 12)
-            self.assertEqual(queue_mock.call_count, 12)
+            self.assertEqual(send_prompt_mock.call_count, 10)
+            self.assertEqual(queue_mock.call_count, 10)
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queued"),
                 [
@@ -66,8 +66,8 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
                         "cli": "codex",
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 2,
-                        "queued_steps": 6,
-                        "queued_steps_confirmed": 6,
+                        "queued_steps": 5,
+                        "queued_steps_confirmed": 5,
                         "transport": "tmux",
                     }
                 ],
@@ -85,7 +85,6 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
             [
                 ("submit_direct_prompt", "implement_task"),
                 ("queue_message", _browser_e2e_instruction_text()),
-                ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
 
@@ -142,6 +141,24 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
             [
                 ("submit_direct_prompt", "implement_task"),
                 ("queue_message", _browser_e2e_instruction_text()),
+            ],
+        )
+
+    def test_build_plan_agent_workflow_queues_pr_review_comments_when_enabled(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        workflow = _build_plan_agent_workflow(
+            cli="codex",
+            preset="implement_task",
+            codex_cycles=0,
+            pr_review_comments_followup_enable=True,
+        )
+
+        self.assertEqual(workflow.mode, "single_prompt")
+        self.assertEqual(
+            [(step.kind, step.text) for step in workflow.steps],
+            [
+                ("submit_direct_prompt", "implement_task"),
+                ("queue_message", _browser_e2e_instruction_text()),
                 ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
@@ -159,7 +176,6 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
                 ("submit_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
                 ("queue_message", _browser_e2e_instruction_text()),
-                ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
 
@@ -180,7 +196,6 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
                 ("queue_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
                 ("queue_message", _browser_e2e_instruction_text()),
-                ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
 
@@ -204,7 +219,6 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
                 ("queue_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
                 ("queue_message", _browser_e2e_instruction_text()),
-                ("queue_message", _pr_review_comments_instruction_text()),
             ],
         )
 
@@ -239,4 +253,4 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
 
         self.assertEqual(workflow.mode, "codex_cycles")
         self.assertEqual(workflow.codex_cycles, 3)
-        self.assertEqual(len(workflow.steps), 3 + (1 + 3 * (workflow.codex_cycles - 1)))
+        self.assertEqual(len(workflow.steps), 2 + (1 + 3 * (workflow.codex_cycles - 1)))

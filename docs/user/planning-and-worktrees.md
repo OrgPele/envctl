@@ -56,7 +56,7 @@ ENVCTL_PLAN_AGENT_CLI=codex
 ENVCTL_PLAN_AGENT_PRESET=implement_task
 ENVCTL_PLAN_AGENT_CODEX_CYCLES=2
 ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true
-ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true
+ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false
 ENVCTL_PLAN_AGENT_SHELL=zsh
 ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true
 ```
@@ -90,7 +90,7 @@ Behavior:
 - `CMUX_WORKSPACE=...` is shorthand for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
 - `CYCLES=...` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=...`
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` disables the `$browser` E2E follow-up when browser validation is not applicable
-- `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false` disables the final PR review-comments follow-up when comment handling is manual
+- `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` opts in to the final PR review-comments follow-up when comment handling should run as a dedicated pass
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and shorthand values are set
 
 ### Dependency prep before AI launch
@@ -117,11 +117,11 @@ Each launched surface stays interactive. Envctl creates the tab, renames it to a
 
 `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is an additional opt-in for Codex only:
 
-- default/unset is `2`, so Codex launches first queue an `envctl ship` handoff follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- default/unset is `2`, so Codex launches first queue an `envctl ship` handoff follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E, and any explicitly enabled PR review-comments follow-up
 - `CYCLES=<n>` resolves to the same effective value as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
-- `0` submits the single implementation prompt and queues enabled browser-E2E and PR review-comments follow-ups for Codex/OMX surfaces
-- `2` queues a plain follow-up asking Codex to run focused validation, prefer `envctl ship`, and wait for GitHub status checks before final handoff, then queues `continue_task`, `implement_task`, `finalize_task`, `$browser` E2E, and the PR review-comments follow-up
-- `3` or more keep that first `ship` handoff follow-up, then use `ship`-first intermediate follow-ups, and reserve `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the final round
+- `0` submits the single implementation prompt and queues enabled browser-E2E plus any explicitly enabled PR review-comments follow-up for Codex/OMX surfaces
+- `2` queues a plain follow-up asking Codex to run focused validation, prefer `envctl ship`, and wait for GitHub status checks before final handoff, then queues `continue_task`, `implement_task`, `finalize_task`, `$browser` E2E, and any explicitly enabled PR review-comments follow-up
+- `3` or more keep that first `ship` handoff follow-up, then use `ship`-first intermediate follow-ups, and reserve `finalize_task` plus enabled browser-E2E and any explicitly enabled PR review-comments follow-up for the final round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the existing one-shot preset flow
 - `CYCLES` does not enable the plan-agent launcher on its own; you still need enablement such as `--cmux`, `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
 - envctl only appends Codex messages in this mode; it does not type `git`, `gh`, `envctl ship`, `envctl commit`, or `envctl pr` shell commands itself

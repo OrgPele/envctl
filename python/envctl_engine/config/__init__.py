@@ -347,7 +347,7 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         ),
         plan_agent_pr_review_comments_enable=parse_bool(
             resolved.get("ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE"),
-            True,
+            False,
         ),
         plan_agent_shell=str(resolved.get("ENVCTL_PLAN_AGENT_SHELL", "zsh") or "zsh").strip() or "zsh",
         plan_agent_require_cmux_context=parse_bool(resolved.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT"), True),

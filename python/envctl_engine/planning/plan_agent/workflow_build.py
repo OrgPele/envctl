@@ -28,7 +28,7 @@ class PlanAgentWorkflowBuilder:
     codex_cycles: int
     direct_prompt_enabled: bool = False
     browser_e2e_followup_enable: bool = True
-    pr_review_comments_followup_enable: bool = True
+    pr_review_comments_followup_enable: bool = False
 
     def build(self) -> _PlanAgentWorkflow:
         normalized_cli = str(self.cli).strip().lower()
@@ -116,7 +116,7 @@ def _build_plan_agent_workflow(
     codex_cycles: int,
     direct_prompt_enabled: bool = False,
     browser_e2e_followup_enable: bool = True,
-    pr_review_comments_followup_enable: bool = True,
+    pr_review_comments_followup_enable: bool = False,
 ) -> _PlanAgentWorkflow:
     return PlanAgentWorkflowBuilder(
         cli=cli,

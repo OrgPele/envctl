@@ -140,7 +140,7 @@ class PlanAgentLaunchTransportOptionsTests(PlanAgentLaunchSupportTestCase):
             self.assertEqual(codex_config.cli, "codex")
             self.assertEqual(codex_config.preset, "implement_task")
             self.assertEqual(codex_config.codex_cycles, 3)
-            self.assertTrue(codex_config.pr_review_comments_followup_enable)
+            self.assertFalse(codex_config.pr_review_comments_followup_enable)
             self.assertEqual(codex_workflow.mode, "codex_cycles")
             self.assertEqual(codex_workflow.codex_cycles, 3)
 
@@ -155,7 +155,7 @@ class PlanAgentLaunchTransportOptionsTests(PlanAgentLaunchSupportTestCase):
             self.assertEqual(omx_config.omx_workflow, "ultragoal")
             self.assertEqual(omx_config.codex_cycles, 3)
             self.assertIsNone(omx_config.codex_cycles_warning)
-            self.assertTrue(omx_config.pr_review_comments_followup_enable)
+            self.assertFalse(omx_config.pr_review_comments_followup_enable)
             self.assertEqual(omx_workflow.mode, "codex_cycles")
 
     def test_cmux_flag_enables_default_plan_agent_launch(self) -> None:
