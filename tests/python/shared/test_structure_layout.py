@@ -392,6 +392,39 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("action_migrate_result_support", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 120)
 
+    def test_project_action_support_has_report_owner(self) -> None:
+        env_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_env_support.py"
+        execution_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_execution_support.py"
+        )
+        report_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_report_support.py"
+        owner_facade = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_project_report_owner.py"
+        support = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_support.py"
+
+        self.assertTrue(env_owner.is_file())
+        self.assertTrue(execution_owner.is_file())
+        self.assertTrue(report_owner.is_file())
+        env_text = env_owner.read_text(encoding="utf-8")
+        self.assertIn("def action_env", env_text)
+        self.assertIn("def test_action_extra_env", env_text)
+        self.assertIn("def migrate_action_env", env_text)
+        execution_text = execution_owner.read_text(encoding="utf-8")
+        self.assertIn("class ProjectActionRunner", execution_text)
+        self.assertIn("def run_project_action", execution_text)
+        self.assertIn("def resolve_command", execution_text)
+        self.assertIn("def process_run", execution_text)
+        report_text = report_owner.read_text(encoding="utf-8")
+        self.assertIn("def build_project_action_success_handler", report_text)
+        self.assertIn("def persist_project_action_result", report_text)
+        self.assertIn("def review_success_artifact_paths", report_text)
+        self.assertIn("def write_project_action_failure_report", report_text)
+        self.assertIn("project_action_report_support", owner_facade.read_text(encoding="utf-8"))
+        support_text = support.read_text(encoding="utf-8")
+        self.assertIn("project_action_env_support", support_text)
+        self.assertIn("project_action_execution_support", support_text)
+        self.assertIn("project_action_report_support", support_text)
+        self.assertLessEqual(len(support_text.splitlines()), 60)
+
     def test_runtime_lifecycle_parity_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
         expected = [
