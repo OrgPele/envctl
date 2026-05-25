@@ -175,6 +175,7 @@ class StructureLayoutTests(unittest.TestCase):
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("ActionCommandTestFacadeMixin", facade_text)
         self.assertIn("ActionCommandProjectFacadeMixin", facade_text)
+        self.assertNotIn("lambda worktree_root", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 180)
 
     def test_action_test_support_has_spinner_owner(self) -> None:

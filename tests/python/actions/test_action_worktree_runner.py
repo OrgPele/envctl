@@ -11,6 +11,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.actions import action_worktree_runner  # noqa: E402
 from envctl_engine.actions.action_worktree_runner import (  # noqa: E402
+    ActionWorktreeDeleteRunner,
+    CurrentWorktreeTargetResolver,
     repo_root_from_worktree_layout,
     resolve_current_worktree_target,
     run_delete_worktree_action,
@@ -67,6 +69,15 @@ class _SpinnerContext:
 
 
 class ActionWorktreeRunnerTests(unittest.TestCase):
+    def test_worktree_runner_uses_named_owners_for_target_resolution_and_delete_execution(self) -> None:
+        source = Path(action_worktree_runner.__file__).read_text(encoding="utf-8")
+
+        self.assertIn("class CurrentWorktreeTargetResolver", source)
+        self.assertIn("class ActionWorktreeDeleteRunner", source)
+        self.assertIn("return ActionWorktreeDeleteRunner(", source)
+        self.assertTrue(callable(ActionWorktreeDeleteRunner.execute))
+        self.assertTrue(callable(CurrentWorktreeTargetResolver.resolve))
+
     def test_repo_root_from_worktree_layout_detects_nested_and_flat_tree_layouts(self) -> None:
         repo = Path("/tmp/repo").resolve()
 
