@@ -65,6 +65,7 @@ class ProjectActionReportSupportTests(unittest.TestCase):
         self.assertEqual(project_action_success_status(command_name="ship", completed=completed), "checks_pending_timeout")
 
         message = ship_action_status_message("feature-a", completed)
+        self.assertTrue(message.startswith("ship handoff status for feature-a:"))
         self.assertIn("checks_pending_timeout", message)
         self.assertIn("commit=success", message)
         self.assertIn("push=success", message)

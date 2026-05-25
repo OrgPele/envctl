@@ -150,7 +150,7 @@ def ship_action_status_message(project_name: str, completed: Any) -> str:
     operations = f" ({', '.join(operation_parts)})" if operation_parts else ""
     pr_url = str(payload.get("pr_url") or "").strip()
     pr_suffix = f" {pr_url}" if pr_url else ""
-    return f"ship action status for {project_name}: {status}{operations}{pr_suffix}"
+    return f"ship handoff status for {project_name}: {status}{operations}{pr_suffix}"
 
 
 def project_action_success_status(*, command_name: str, completed: Any) -> str:

@@ -327,16 +327,16 @@ class ActionTargetSupportTests(unittest.TestCase):
                 printer=printed.append,
                 emit_success_output=False,
                 success_print_formatter=lambda context, _completed: (
-                    f"ship action status for {context.name}: checks_pending_timeout"
+                    f"ship handoff status for {context.name}: checks_pending_timeout"
                 ),
                 success_status_formatter=lambda context, _completed: (
-                    f"ship status for {context.name}: checks_pending_timeout"
+                    f"ship handoff status for {context.name}: checks_pending_timeout"
                 ),
             )
 
             self.assertEqual(code, 0)
-            self.assertEqual(printed, ["ship action status for Main: checks_pending_timeout"])
-            self.assertIn("ship status for Main: checks_pending_timeout", emitted)
+            self.assertEqual(printed, ["ship handoff status for Main: checks_pending_timeout"])
+            self.assertIn("ship handoff status for Main: checks_pending_timeout", emitted)
             self.assertNotIn("ship action succeeded for Main.", printed)
             self.assertNotIn("ship succeeded for Main", emitted)
 
