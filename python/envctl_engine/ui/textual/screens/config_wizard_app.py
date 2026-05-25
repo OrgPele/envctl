@@ -3,12 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from ....actions.actions_test import (
-    TestCommandSuggestion,
-    TestPathSuggestion,
-    frontend_test_path_suggestions,
-    test_command_suggestions,
-)
 from ....config import LocalConfigState, StartupProfile
 from ....config.persistence import (
     ConfigSaveResult,
@@ -67,6 +61,11 @@ from .config_wizard_status import (
     status_for_valid_config_step,
 )
 from .config_wizard_step_flow import should_show_service_startup_step, sync_wizard_steps
+from .config_wizard_suggestions import (
+    build_config_wizard_suggestions,
+    cycle_config_wizard_suggestion,
+    emit_detected_config_wizard_suggestions,
+)
 
 
 def _emit(emit: Callable[..., None] | None, event: str, **payload: object) -> None:
@@ -244,35 +243,14 @@ def build_config_wizard_app(
             self._emit_detected_suggestions()
             self._sync_steps(current_step="welcome")
 
-        def _build_suggestions_by_field(self) -> dict[str, tuple[TestCommandSuggestion | TestPathSuggestion, ...]]:
-            return {
-                "backend_test_cmd": tuple(
-                    test_command_suggestions(
-                        local_state.base_dir,
-                        include_backend=True,
-                        include_frontend=False,
-                    )
-                ),
-                "frontend_test_cmd": tuple(
-                    test_command_suggestions(
-                        local_state.base_dir,
-                        include_backend=False,
-                        include_frontend=True,
-                    )
-                ),
-                "frontend_test_path": tuple(frontend_test_path_suggestions(local_state.base_dir)),
-            }
+        def _build_suggestions_by_field(self):
+            return build_config_wizard_suggestions(local_state.base_dir)
 
         def _emit_detected_suggestions(self) -> None:
-            for field_name, suggestions in self._suggestions_by_field.items():
-                for suggestion in suggestions:
-                    _emit(
-                        emit,
-                        "ui.config_wizard.suggestion.detected",
-                        field=field_name,
-                        source=suggestion.source,
-                        confidence=suggestion.confidence,
-                    )
+            emit_detected_config_wizard_suggestions(
+                self._suggestions_by_field,
+                emit=lambda event, **payload: _emit(emit, event, **payload),
+            )
 
         def compose(self) -> ComposeResult:
             with Vertical(id="config-shell"):
@@ -789,34 +767,12 @@ def build_config_wizard_app(
         def _directory_label(self, field_name: str) -> str:
             return self._field_hints.directory_label(field_name)
 
-        def _config_key_for_field(self, field_name: str) -> str | None:
-            return self._field_hints.config_key_for_field(field_name)
-
-        def _field_has_existing_config_value(self, field_name: str) -> bool:
-            return self._field_hints.field_has_existing_config_value(field_name)
-
-        def _suggestion_value(self, suggestion: TestCommandSuggestion | TestPathSuggestion) -> str:
-            return self._field_hints.suggestion_value(suggestion)
-
-        def _matching_suggestion(
-            self,
-            field_name: str,
-            value: str,
-        ) -> TestCommandSuggestion | TestPathSuggestion | None:
-            return self._field_hints.matching_suggestion(field_name, value)
-
         def _refresh_field_hint(self, field_name: str, *, raw: str | None = None) -> None:
             hint = self.query_one(f"#{_directory_hint_id(field_name)}", Static)
             hint.update(self._field_hint_text(field_name, raw=raw))
 
         def _field_hint_text(self, field_name: str, *, raw: str | None = None) -> str:
             return self._field_hints.field_hint_text(field_name, raw=raw)
-
-        def _test_command_hint(self, field_name: str, *, value: str) -> str:
-            return self._field_hints.test_command_hint(field_name, value=value)
-
-        def _frontend_test_path_hint(self, *, value: str) -> str:
-            return self._field_hints.frontend_test_path_hint(value=value)
 
         def _directory_validation_error(self, field_name: str, *, raw: str | None = None) -> str | None:
             return self._field_hints.directory_validation_error(field_name, raw=raw)
@@ -1023,14 +979,15 @@ def build_config_wizard_app(
             focused = self.focused
             if not isinstance(focused, Input):
                 return
-            current_value = str(focused.value or "").strip()
-            values = [self._suggestion_value(suggestion) for suggestion in suggestions]
-            try:
-                current_index = values.index(current_value)
-            except ValueError:
-                current_index = -1
-            suggestion = suggestions[(current_index + 1) % len(suggestions)]
-            next_value = self._suggestion_value(suggestion)
+            result = cycle_config_wizard_suggestion(
+                self._suggestions_by_field,
+                field_name=field_name,
+                current_value=str(focused.value or ""),
+            )
+            if result is None:
+                return
+            suggestion = result.suggestion
+            next_value = result.value
             focused.value = next_value
             setattr(self.values, field_name, next_value)
             self._refresh_directory_validation(field_name, raw=next_value)
