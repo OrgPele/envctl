@@ -448,7 +448,8 @@ worktree creation. This policy applies to `--plan`, `--setup-worktree`, `--setup
 
 Commit defaults:
 
-- prefer inline commit messages with `envctl commit -m "<message>"` or `envctl ship -m "<message>"`; `--commit-message <text>` remains the long form
+- prefer `envctl ship -m "<message>"` for normal handoff because it owns commit, push, PR creation/update, merge-conflict prediction, and check reporting
+- use `envctl commit -m "<message>"` only for commit-only maintenance flows or when `ship` is unavailable; `--commit-message <text>` remains the long form
 - `envctl commit` reads its fallback default commit message from the repo-local `.envctl-commit-message.md` file when you do not pass `-m`, `--commit-message`, or `--commit-message-file`
 - treat `### Envctl pointer ###` as the boundary after the last successful default commit; everything after it is the next default commit message
 - write one complete next commit message in `.envctl-commit-message.md` rather than multiple fragmented summaries only when using the fallback ledger
@@ -457,9 +458,9 @@ Commit defaults:
 `envctl ship` is the preferred AI handoff command. From inside the current
 generated worktree or project, run it without `--project`; use `--project
 <name>` only when shipping from another checkout. `ship` commits, pushes,
-creates or updates the PR, predicts merge conflicts, waits for GitHub PR checks
+creates a PR when none exists, reuses or updates the existing PR otherwise, predicts merge conflicts, waits for GitHub PR checks
 until they pass, fail, time out, or report no check contexts, and returns the structured result including
-the PR URL, `operation_statuses`, `checks_state`, `passed_checks`,
+the PR URL, `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`,
 `failing_checks`, `pending_checks`, and `checks_error`. The check wait defaults can be tuned with
 `ENVCTL_SHIP_CHECK_TIMEOUT_SECONDS` and
 `ENVCTL_SHIP_CHECK_POLL_INTERVAL_SECONDS`.

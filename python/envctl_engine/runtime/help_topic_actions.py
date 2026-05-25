@@ -66,9 +66,10 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
     ),
     "commit": CommandHelpTopic(
         command="commit",
-        summary="commit normal repo changes while preserving envctl-local control artifacts",
+        summary="commit-only fallback that preserves envctl-local control artifacts",
         usage=("envctl commit [--project <name>|--main] [-m <text>|--commit-message-file <path>]",),
         what_it_does=(
+            "use envctl ship for normal AI handoff; reserve commit for commit-only maintenance or fallback flows",
             "stages normal changed paths and intentionally skips protected envctl-local artifacts",
             "uses the inline -m/--commit-message text when provided",
             "falls back to .envctl-commit-message.md after the Envctl pointer marker when no message is provided",
@@ -89,13 +90,14 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
     ),
     "ship": CommandHelpTopic(
         command="ship",
-        summary="commit, push, open/update PR, and report GitHub checks for the current or selected target",
+        summary="commit, push, create/update PR, and report GitHub checks for the current or selected target",
         usage=("envctl ship [--project <name>] [-m <text>] [--json]",),
         what_it_does=(
             "when run inside a generated worktree, infers that worktree without requiring --project",
+            "owns the normal AI handoff flow instead of requiring separate commit, push, or PR commands",
             "reuses envctl commit behavior, including -m/--commit-message, fallback ledger messages, "
             "and protected local artifacts",
-            "opens a PR when needed and reuses an existing PR when one already exists",
+            "creates a PR when needed and reuses or updates an existing PR when one already exists",
             "predicts merge conflicts and returns conflicting files, messages, and resolution steps",
             "waits for GitHub PR checks and returns passed, failed, pending-timeout, no-checks-reported, "
             "or gh-unavailable status "

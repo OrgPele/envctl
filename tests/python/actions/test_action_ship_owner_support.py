@@ -268,6 +268,29 @@ def test_ship_payload_and_result_output_keep_json_contract(tmp_path: Path, capsy
     assert parse_ship_json_output(_Context("Main", tmp_path, tmp_path, {"ENVCTL_ACTION_JSON": "true"})) is True
 
 
+def test_ship_result_human_output_includes_pr_creation_state(tmp_path: Path, capsys: Any) -> None:
+    context = _Context(project_name="Main", project_root=tmp_path / "project", repo_root=tmp_path, env={})
+    context.project_root.mkdir()
+    payload = ship_payload(
+        context=context,
+        git_root=tmp_path,
+        branch="feature",
+        status="checks_passed",
+        started=0.0,
+        commit_sha="abc123",
+        committed=True,
+        pushed=True,
+        pr_url="https://example.test/pr/1",
+        pr_created=True,
+        checks={"state": "checks_passed", "duration_seconds": 0.1},
+    )
+
+    code = print_ship_result(payload, json_output=False, ok=True)
+
+    assert code == 0
+    assert capsys.readouterr().out == "ship: checks_passed pr=created https://example.test/pr/1\n"
+
+
 def test_ship_support_reexports_cohesive_owner_modules() -> None:
     assert ship_payload is ship_payload_from_owner
     assert parse_merge_tree_conflicts is parse_conflicts_from_owner

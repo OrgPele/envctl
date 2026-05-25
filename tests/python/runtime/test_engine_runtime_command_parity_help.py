@@ -198,7 +198,7 @@ class EngineRuntimeCommandParityHelpTests(EngineRuntimeCommandParityTestCase):
 
         output = buffer.getvalue()
         self.assertEqual(code, 0)
-        self.assertIn("opens a PR when needed and reuses an existing PR", output)
+        self.assertIn("creates a PR when needed and reuses or updates an existing PR", output)
         self.assertIn("predicts merge conflicts", output)
         self.assertIn("conflicting files, messages, and resolution steps", output)
         self.assertIn("failing_checks and pending_checks", output)

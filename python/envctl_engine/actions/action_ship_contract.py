@@ -144,7 +144,9 @@ def print_ship_result(payload: Mapping[str, object], *, json_output: bool, ok: b
     else:
         status = str(payload.get("status") or "ship_complete")
         pr_url = str(payload.get("pr_url") or "").strip()
-        print(f"ship: {status}" + (f" {pr_url}" if pr_url else ""))
+        pr_state = str(dict(payload.get("operation_statuses") or {}).get("pr") or "")
+        pr_suffix = f" pr={pr_state}" if pr_state else ""
+        print(f"ship: {status}{pr_suffix}" + (f" {pr_url}" if pr_url else ""))
     return 0 if ok else 1
 
 
