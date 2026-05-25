@@ -8,7 +8,6 @@ from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.textual.list_controller import TextualListController
 from envctl_engine.ui.textual.list_row_styles import apply_selectable_list_index
 from envctl_engine.ui.textual.list_row_styles import focus_selectable_list
-from envctl_engine.ui.textual.compat import handle_text_edit_key_alias
 from envctl_engine.ui.textual.screens.selector import selection_state
 from envctl_engine.ui.textual.screens.selector.textual_app_chrome import (
     SELECTOR_BINDINGS,
@@ -26,6 +25,7 @@ from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
     SelectorStatusController,
 )
 from envctl_engine.ui.textual.screens.selector.textual_app_key_trace import emit_app_key_trace
+from envctl_engine.ui.textual.screens.selector.textual_app_key_actions import SelectorKeyActions
 from envctl_engine.ui.textual.screens.selector.textual_app_navigation_actions import (
     SelectorNavigationActions,
 )
@@ -34,12 +34,6 @@ from envctl_engine.ui.textual.screens.selector.textual_app_selection_actions imp
     selector_row_model_index_from_widget,
 )
 from envctl_engine.ui.textual.screens.selector.textual_key_telemetry import SelectorKeyTelemetry
-from envctl_engine.ui.textual.screens.selector.textual_key_policy import (
-    SelectorFilterKeyDecision,
-    SelectorKeyDecision,
-    resolve_selector_filter_key,
-    resolve_selector_key,
-)
 from envctl_engine.ui.textual.screens.selector.support import (
     _RowRef,
     _emit,
@@ -353,6 +347,24 @@ def create_selector_app(
                 emit_key_debug=self._emit_key_debug,
             )
 
+        def _key_actions(self) -> SelectorKeyActions:
+            return SelectorKeyActions(
+                key_telemetry=self._key_telemetry,
+                key_trace_verbose=key_trace_verbose,
+                trace_key=trace_key,
+                focused_widget_id=self._focused_widget_id,
+                list_index=lambda: self._list().index,
+                filter_input=lambda: self.query_one("#selector-filter", Input),
+                cycle_focus=self.action_cycle_focus,
+                submit=self.action_submit,
+                focus_filter=self.action_focus_filter,
+                focus_list=self.action_focus_list,
+                nav_up=self.action_nav_up,
+                nav_down=self.action_nav_down,
+                toggle=self.action_toggle,
+                suppress_list_selected_once=lambda value: setattr(self, "_suppress_list_selected_once", value),
+            )
+
         def action_focus_filter(self, *, reason: str = "focus_filter") -> None:
             filter_input = self.query_one("#selector-filter", Input)
             self._allow_filter_focus = True
@@ -424,77 +436,10 @@ def create_selector_app(
             await self.action_submit(cause="mouse_click")
 
         async def on_key(self, event: Key) -> None:
-            if self._key_telemetry.record_raw_key(event.key) and key_trace_verbose:
-                trace_key(
-                    event="ui.selector.key.raw",
-                    key=event.key,
-                    focused_widget_id=self._focused_widget_id(),
-                    list_index_before=self._list().index,
-                    list_index_after=self._list().index,
-                    handled=False,
-                )
-            focused_id = self._focused_widget_id()
-            filter_focused = focused_id == "selector-filter"
-            decision = resolve_selector_key(event.key, filter_focused=filter_focused)
-            if decision is SelectorKeyDecision.CYCLE_FOCUS:
-                event.stop()
-                event.prevent_default()
-                self.action_cycle_focus()
-                trace_key(
-                    key=event.key,
-                    focused_widget_id=focused_id,
-                    list_index_before=self._list().index,
-                    list_index_after=self._list().index,
-                    handled=True,
-                )
-                return
-            if filter_focused and handle_text_edit_key_alias(
-                widget=self.query_one("#selector-filter", Input), event=event
-            ):
-                return
-            if decision is SelectorKeyDecision.SUBMIT:
-                event.stop()
-                event.prevent_default()
-                self._suppress_list_selected_once = True
-                await self.action_submit(cause="enter_key")
-                trace_key(
-                    key=event.key,
-                    focused_widget_id=focused_id,
-                    list_index_before=self._list().index,
-                    list_index_after=self._list().index,
-                    handled=True,
-                )
-                return
-            if decision is SelectorKeyDecision.FOCUS_FILTER:
-                event.stop()
-                event.prevent_default()
-                filter_input = self.query_one("#selector-filter", Input)
-                filter_input.value = ""
-                self.action_focus_filter(reason="slash_focus_filter")
-                trace_key(
-                    key=event.key,
-                    focused_widget_id=focused_id,
-                    list_index_before=self._list().index,
-                    list_index_after=self._list().index,
-                    handled=True,
-                )
+            await self._key_actions().handle_key(event)
 
         async def _maybe_handle_filter_focus_key(self, event: Key) -> bool:
-            if self._focused_widget_id() != "selector-filter":
-                return False
-            decision = resolve_selector_filter_key(event.key)
-            if decision is SelectorFilterKeyDecision.NOOP:
-                return False
-            event.stop()
-            event.prevent_default()
-            self.action_focus_list(reason="filter_key_recover")
-            if decision is SelectorFilterKeyDecision.NAV_UP:
-                await self.action_nav_up()
-            elif decision is SelectorFilterKeyDecision.NAV_DOWN:
-                await self.action_nav_down()
-            else:
-                await self.action_toggle()
-            return True
+            return await self._key_actions().handle_filter_focus_key(event)
 
         async def on_event(self, event: object) -> None:
             if isinstance(event, Key) or event.__class__.__name__.startswith("Mouse"):
@@ -507,17 +452,7 @@ def create_selector_app(
             if isinstance(event, Key) and await self._maybe_handle_filter_focus_key(event):
                 return
             if key_trace_enabled and isinstance(event, Key):
-                key = str(event.key)
-                self._key_telemetry.record_event_key(key)
-                if key_trace_verbose:
-                    trace_key(
-                        event="ui.selector.key.event",
-                        key=key,
-                        focused_widget_id=self._focused_widget_id(),
-                        list_index_before=self._list().index,
-                        list_index_after=self._list().index,
-                        handled=False,
-                    )
+                self._key_actions().record_event_key(event)
             await super().on_event(event)  # type: ignore[misc]
 
         async def on_input_changed(self, event: Input.Changed) -> None:
