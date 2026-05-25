@@ -1309,6 +1309,7 @@ class StructureLayoutTests(unittest.TestCase):
             REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_bootstrap_domain.py",
             REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_frontend_bootstrap_support.py",
             REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_startup_domain.py",
+            REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_component_startup.py",
             REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_native_adapter.py",
             REPO_ROOT / "python" / "envctl_engine" / "startup" / "service_execution_records.py",
         ]
@@ -1331,6 +1332,18 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def start_requirement_with_native_adapter", owner_text)
         self.assertIn("from envctl_engine.startup.requirements_native_adapter import", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 510)
+
+    def test_requirements_startup_has_component_owner(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_component_startup.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_startup_domain.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("class RequirementComponentStarter", owner_text)
+        self.assertIn("def start_requirement_component", owner_text)
+        self.assertIn("from envctl_engine.startup.requirements_component_startup import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 180)
 
     def test_worktree_provenance_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_provenance.py"
