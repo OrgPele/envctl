@@ -13,19 +13,11 @@ from envctl_engine.state.models import RunState
 from envctl_engine.startup.startup_selection_support import (
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
 )
-import envctl_engine.ui.dashboard.command_support as command_support
 from envctl_engine.ui.dashboard import project_target_support
 from envctl_engine.ui.dashboard import pr_and_target_support
 from envctl_engine.ui.dashboard import target_selection_support
-from envctl_engine.ui.dashboard.failure_detail_support import (
-    ensure_short_test_summary_path,
-    print_interactive_failure_details,
-    print_project_action_failure_details,
-    print_test_failure_details,
-    print_migrate_result_details,
-    failure_details_available,
-    summary_display_path,
-)
+from envctl_engine.ui.dashboard.orchestrator_command_mixin import DashboardCommandMixin
+from envctl_engine.ui.dashboard.orchestrator_failure_mixin import DashboardFailureDetailMixin
 from envctl_engine.ui.dashboard.stop_scope_support import (
     apply_stop_scope_selection,
     apply_stop_resource_tokens,
@@ -67,7 +59,7 @@ _DASHBOARD_PR_COMPAT_SYMBOLS = (
 )
 
 
-class DashboardOrchestrator:
+class DashboardOrchestrator(DashboardCommandMixin, DashboardFailureDetailMixin):
     def __init__(self, runtime: Any) -> None:
         self.runtime = runtime
 
@@ -113,55 +105,6 @@ class DashboardOrchestrator:
             runtime=runtime_any,
             fallback_handler=self._run_interactive_command,
             sanitize=self._sanitize_interactive_input,
-        )
-
-    def _run_interactive_command(self, raw: str, state: RunState, rt: object) -> tuple[bool, RunState]:
-        return command_support.run_interactive_command(self, raw, state, rt)
-
-    def _print_interactive_failure_details(self, route: Route, state: RunState, *, code: int) -> None:
-        print_interactive_failure_details(
-            route=route,
-            state=state,
-            code=code,
-            runtime=self.runtime,
-            test_failure_details_available_fn=self._failure_details_available,
-            print_test_failure_details_fn=self._print_test_failure_details,
-            print_project_action_failure_details_fn=self._print_project_action_failure_details,
-        )
-
-    def _failure_details_available(self, route: Route, state: RunState) -> bool:
-        return failure_details_available(
-            route,
-            state,
-            project_names_from_state_fn=lambda s: self._project_names_from_state(s, cast(Any, self.runtime)),
-        )
-
-    def _print_test_failure_details(self, route: Route, state: RunState) -> bool:
-        return print_test_failure_details(
-            route, state, runtime=self.runtime,
-            project_names_from_state_fn=lambda s: self._project_names_from_state(s, cast(Any, self.runtime))
-        )
-
-    @staticmethod
-    def _summary_display_path(*, project_name: str, entry: dict[str, object]) -> str:
-        return summary_display_path(project_name=project_name, entry=entry)
-
-    @staticmethod
-    def _ensure_short_test_summary_path(*, project_name: str, summary_path: str) -> str:
-        return ensure_short_test_summary_path(project_name=project_name, summary_path=summary_path)
-
-    def _print_project_action_failure_details(self, route: Route, state: RunState) -> bool:
-        return print_project_action_failure_details(
-            route, state, runtime=self.runtime,
-            project_names_from_state_fn=lambda s: self._project_names_from_state(s, cast(Any, self.runtime)),
-            project_name_list_fn=self._project_name_list,
-        )
-
-    def _print_migrate_result_details(self, route: Route, state: RunState) -> bool:
-        return print_migrate_result_details(
-            route, state, runtime=self.runtime,
-            project_names_from_state_fn=lambda s: self._project_names_from_state(s, cast(Any, self.runtime)),
-            project_name_list_fn=self._project_name_list,
         )
 
     def _apply_interactive_target_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
@@ -221,10 +164,6 @@ class DashboardOrchestrator:
     @staticmethod
     def _dashboard_owned_project_selection_commands() -> set[str]:
         return project_target_support.dashboard_owned_project_selection_commands()
-
-    @staticmethod
-    def _dashboard_hidden_commands(state: RunState) -> set[str]:
-        return command_support.dashboard_hidden_commands(state)
 
     def _apply_project_target_selection(self, route: Route, state: RunState, rt: object) -> Route | None:
         return project_target_support.apply_project_target_selection(self, route, state, rt)
@@ -533,59 +472,3 @@ class DashboardOrchestrator:
     @staticmethod
     def _service_prompt(command: str) -> str:
         return target_selection_support.service_prompt(command)
-
-    @staticmethod
-    def _read_interactive_line(runtime: Any, prompt: str) -> str:
-        return command_support.read_interactive_line(runtime, prompt)
-
-    @staticmethod
-    def _queue_return_to_dashboard_prompt(runtime: Any, prompt: str) -> None:
-        command_support.queue_return_to_dashboard_prompt(runtime, prompt)
-
-    @staticmethod
-    def _prompt_text_dialog(
-        runtime: Any,
-        *,
-        title: str,
-        help_text: str,
-        placeholder: str,
-        default_button_label: str,
-    ) -> str | None:
-        return command_support.prompt_text_dialog(
-            runtime,
-            title=title,
-            help_text=help_text,
-            placeholder=placeholder,
-            default_button_label=default_button_label,
-        )
-
-    @staticmethod
-    def _prompt_commit_message(runtime: Any) -> str | None:
-        return command_support.prompt_commit_message(runtime)
-
-    @staticmethod
-    def _prompt_pr_message(runtime: Any) -> str | None:
-        return command_support.prompt_pr_message(runtime)
-
-    @staticmethod
-    def _sanitize_interactive_input(raw: str) -> str:
-        return command_support.sanitize_interactive_input(raw)
-
-    @staticmethod
-    def _repo_root_for_project(project_root: Path) -> Path | None:
-        return command_support.repo_root_for_project(project_root)
-
-    def _dispatch_kill_session(self, runtime_any: Any) -> None:
-        command_support.dispatch_kill_session(runtime_any, selector_fn=_run_selector_with_impl)
-
-    @staticmethod
-    def _recover_single_letter_command_from_escape_fragment(raw: str) -> str:
-        return command_support.recover_single_letter_command_from_escape_fragment(raw)
-
-    @staticmethod
-    def _parse_interactive_command(raw: str) -> list[str] | None:
-        return command_support.parse_interactive_command(raw)
-
-    @staticmethod
-    def _tokens_set_mode(tokens: list[str]) -> bool:
-        return command_support.tokens_set_mode(tokens)

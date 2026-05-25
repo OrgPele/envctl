@@ -872,6 +872,12 @@ class StructureLayoutTests(unittest.TestCase):
     def test_dashboard_command_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_support.py"
         input_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_input_support.py"
+        command_mixin = (
+            REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator_command_mixin.py"
+        )
+        failure_mixin = (
+            REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "orchestrator_failure_mixin.py"
+        )
         target_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "project_target_support.py"
         selection_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "target_selection_support.py"
         review_tab_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "review_tab_support.py"
@@ -884,6 +890,8 @@ class StructureLayoutTests(unittest.TestCase):
 
         self.assertTrue(owner.is_file())
         self.assertTrue(input_owner.is_file())
+        self.assertTrue(command_mixin.is_file())
+        self.assertTrue(failure_mixin.is_file())
         self.assertTrue(target_owner.is_file())
         self.assertTrue(selection_owner.is_file())
         self.assertTrue(review_tab_owner.is_file())
@@ -895,12 +903,20 @@ class StructureLayoutTests(unittest.TestCase):
         facade_text = facade.read_text(encoding="utf-8")
         owner_text = owner.read_text(encoding="utf-8")
         input_owner_text = input_owner.read_text(encoding="utf-8")
+        command_mixin_text = command_mixin.read_text(encoding="utf-8")
+        failure_mixin_text = failure_mixin.read_text(encoding="utf-8")
         self.assertIn("def run_interactive_command", owner_text)
         self.assertIn("def dashboard_hidden_commands", owner_text)
         self.assertIn("command_input_support", owner_text)
         self.assertIn("def prompt_text_dialog", input_owner_text)
         self.assertIn("def dispatch_kill_session", input_owner_text)
         self.assertIn("def repo_root_for_project", input_owner_text)
+        self.assertIn("class DashboardCommandMixin", command_mixin_text)
+        self.assertIn("def _run_interactive_command", command_mixin_text)
+        self.assertIn("def _sanitize_interactive_input", command_mixin_text)
+        self.assertIn("class DashboardFailureDetailMixin", failure_mixin_text)
+        self.assertIn("def _print_interactive_failure_details", failure_mixin_text)
+        self.assertIn("def _print_migrate_result_details", failure_mixin_text)
         self.assertIn("def apply_interactive_target_selection", selection_owner.read_text(encoding="utf-8"))
         self.assertIn("def apply_pr_selection", pr_selection_owner.read_text(encoding="utf-8"))
         self.assertIn("def maybe_prepare_pr_commit", pr_commit_owner.read_text(encoding="utf-8"))
@@ -911,9 +927,10 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("pr_scope_support", pr_facade_text)
         self.assertLessEqual(len(pr_facade_text.splitlines()), 210)
         self.assertLessEqual(len(owner_text.splitlines()), 220)
-        self.assertIn("import envctl_engine.ui.dashboard.command_support as command_support", facade_text)
+        self.assertIn("DashboardCommandMixin", facade_text)
+        self.assertIn("DashboardFailureDetailMixin", facade_text)
         self.assertIn("from envctl_engine.ui.dashboard import project_target_support", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 700)
+        self.assertLessEqual(len(facade_text.splitlines()), 520)
 
     def test_dashboard_orchestrator_tests_are_split_by_owner(self) -> None:
         ui_tests = REPO_ROOT / "tests" / "python" / "ui"
