@@ -23,12 +23,7 @@ from envctl_engine.ui.textual.compat import (
     handle_text_edit_key_alias,
     textual_run_policy,
 )
-from envctl_engine.ui.textual.list_row_styles import (
-    apply_selectable_list_index,
-    focus_selectable_list,
-    selectable_list_default_index,
-    selectable_list_row_classes,
-)
+from envctl_engine.ui.textual.list_row_styles import apply_selectable_list_index, focus_selectable_list
 from . import config_wizard_components as component_policy
 from . import config_wizard_values as value_policy
 from .config_wizard_components import ComponentRow
@@ -56,9 +51,22 @@ from .config_wizard_fields import (
     _visible_command_fields,
     _visible_directory_fields,
     _visible_port_fields,
-    _wizard_steps,
 )
 from .config_wizard_hints import ConfigWizardHintResolver
+from .config_wizard_list_rendering import (
+    render_additional_services_list,
+    render_choice_list,
+    render_components_list,
+    render_service_startup_list,
+)
+from .config_wizard_status import (
+    command_step_status,
+    directory_step_status,
+    fallback_step_status,
+    port_step_status,
+    status_for_valid_config_step,
+)
+from .config_wizard_step_flow import should_show_service_startup_step, sync_wizard_steps
 
 
 def _emit(emit: Callable[..., None] | None, event: str, **payload: object) -> None:
@@ -417,34 +425,18 @@ def build_config_wizard_app(
             return component_policy.profile_for_mode(self.values, mode)
 
         def _should_show_service_startup_step(self) -> bool:
-            profiles = (self.values.main_profile, self.values.trees_profile)
-            backend_enabled = any(profile.backend_enable for profile in profiles)
-            frontend_enabled = any(profile.frontend_enable for profile in profiles)
-            return backend_enabled and not frontend_enabled
+            return should_show_service_startup_step(self.values)
 
         def _sync_steps(self, *, current_step: str | None = None) -> None:
-            target_step = current_step
-            if target_step is None and self._steps:
-                target_step = self._steps[min(self.step_index, len(self._steps) - 1)]
-            self._steps = _wizard_steps(
+            state = sync_wizard_steps(
                 self.values,
-                include_service_startup=self._should_show_service_startup_step(),
+                current_steps=self._steps,
+                step_index=self.step_index,
+                current_step=current_step,
                 include_additional_services=str(default_wizard_type).strip().lower() == "advanced",
             )
-            if not self._steps:
-                self.step_index = 0
-                return
-            if target_step is None:
-                self.step_index = min(self.step_index, len(self._steps) - 1)
-                return
-            if target_step in self._steps:
-                self.step_index = self._steps.index(target_step)
-                return
-            if target_step == "service_startup":
-                fallback = "directories"
-                self.step_index = self._steps.index(fallback if fallback in self._steps else self._steps[-1])
-                return
-            self.step_index = min(self.step_index, len(self._steps) - 1)
+            self._steps = state.steps
+            self.step_index = state.step_index
 
         def _refresh_all(self) -> None:
             self._sync_steps()
@@ -561,94 +553,51 @@ def build_config_wizard_app(
                 )
 
         def _render_additional_services_step(self, list_view) -> None:
-            list_view.clear()
-            items: list[ListItem] = []
-            selected_flags: list[bool] = []
-            for service in self.values.additional_services:
-                modes = []
-                if service.enabled_main:
-                    modes.append("main")
-                if service.enabled_trees:
-                    modes.append("trees")
-                mode_text = "+".join(modes) if modes else "disabled"
-                port_text = str(service.port_base) if service.port_base is not None else "non-listener"
-                critical_text = "critical" if service.critical else "non-critical"
-                deps = ",".join(service.depends_on) if service.depends_on else "none"
-                label = (
-                    f"{service.name} | dir={service.dir_name} | mode={mode_text} | "
-                    f"port={port_text} | deps={deps} | {critical_text}"
-                )
-                items.append(ListItem(Label(label, markup=False), classes=selectable_list_row_classes("config-row")))
-                selected_flags.append(False)
-            if not items:
-                items.append(ListItem(Label("No additional app services configured.", markup=False)))
-                selected_flags.append(False)
-            list_view.extend(items)
-            apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
+            render_additional_services_list(
+                list_view,
+                services=self.values.additional_services,
+                label_cls=Label,
+                list_item_cls=ListItem,
+            )
 
         def _render_choice_step(self, list_view, *, selected: str, options: tuple[tuple[str, str], ...]) -> None:
-            list_view.clear()
-            items: list[ListItem] = []
-            selected_flags: list[bool] = []
-            for value, label in options:
-                is_selected = selected == value
-                selected_flags.append(is_selected)
-                marker = "●" if is_selected else "○"
-                items.append(
-                    ListItem(
-                        Label(f"{marker} {label}", markup=False),
-                        classes=selectable_list_row_classes("config-row", selected=is_selected),
-                    )
-                )
-            list_view.extend(items)
-            apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
+            render_choice_list(
+                list_view,
+                selected=selected,
+                options=options,
+                label_cls=Label,
+                list_item_cls=ListItem,
+            )
 
         def _component_rows(self) -> list[ComponentRow]:
             return component_policy.component_rows(self._split_component_fields)
 
         def _render_components_step(self, list_view) -> None:
-            list_view.clear()
-            items: list[ListItem] = []
             rows = self._component_rows()
             selected_flags: list[bool] = []
             for row in rows:
                 enabled = self._component_row_enabled(row) if row.selectable else False
                 selected_flags.append(enabled)
-                marker = "●" if enabled else "○"
-                if not row.selectable:
-                    items.append(
-                        ListItem(
-                            Label(row.label, markup=False),
-                            classes="config-section-header",
-                        )
-                    )
-                    continue
-                suffix = " (Main + Trees)" if row.shared else ""
-                items.append(
-                    ListItem(
-                        Label(f"{marker} {row.label}{suffix}", markup=False),
-                        classes=selectable_list_row_classes("config-row", selected=enabled),
-                    )
-                )
-            list_view.extend(items)
-            apply_selectable_list_index(list_view, self._default_component_index(rows, selected_flags))
+            render_components_list(
+                list_view,
+                rows=rows,
+                selected_flags=selected_flags,
+                default_index=self._default_component_index(rows, selected_flags),
+                label_cls=Label,
+                list_item_cls=ListItem,
+            )
 
         def _render_service_startup_step(self, list_view) -> None:
-            list_view.clear()
-            items: list[ListItem] = []
-            selected_flags: list[bool] = []
-            for field_name, mode, label in _SERVICE_STARTUP_FIELDS:
-                enabled = self._service_startup_value(field_name, mode)
-                selected_flags.append(enabled)
-                marker = "●" if enabled else "○"
-                items.append(
-                    ListItem(
-                        Label(f"{marker} {label}", markup=False),
-                        classes=selectable_list_row_classes("config-row", selected=enabled),
-                    )
-                )
-            list_view.extend(items)
-            apply_selectable_list_index(list_view, selectable_list_default_index(selected_flags))
+            render_service_startup_list(
+                list_view,
+                rows=_SERVICE_STARTUP_FIELDS,
+                enabled_flags=[
+                    self._service_startup_value(field_name, mode)
+                    for field_name, mode, _label in _SERVICE_STARTUP_FIELDS
+                ],
+                label_cls=Label,
+                list_item_cls=ListItem,
+            )
 
         def _service_startup_value(self, field_name: str, mode: str) -> bool:
             return component_policy.service_startup_value(self.values, field_name, mode)
@@ -738,72 +687,46 @@ def build_config_wizard_app(
                     require_entrypoints=step == "review",
                 )
                 if validation.valid:
-                    if step == "components":
-                        if self._component_split_available():
-                            status.update(
-                                "Configure components for Main + Trees together, "
-                                "or split a row when they should differ. "
-                                "Use Space to toggle rows, D to split/merge, and Enter only moves forward."
-                            )
-                        else:
-                            status.update(
-                                "Configure components for Main + Trees together. "
-                                "Use Space to toggle rows and Enter only moves forward."
-                            )
-                    elif step == "service_startup":
-                        status.update(
-                            "Decide whether envctl should auto-start this backend-only service "
-                            "and whether it should wait for a listener before continuing. "
-                            "Disable listener waiting for long-running scripts or workers "
-                            "that do not open a port. Use Space to toggle rows; Enter only moves forward."
+                    status.update(
+                        status_for_valid_config_step(
+                            step,
+                            component_split_available=self._component_split_available(),
                         )
-                    elif step == "additional_services":
-                        status.update(
-                            "Edit the first additional app service. "
-                            "Leave the slug blank to keep no services configured."
-                        )
-                    else:
-                        status.update("Configuration is valid.")
+                    )
                 else:
                     status.update(validation.errors[0])
                 self.refresh_bindings()
                 return
             if step == "directories":
                 visible_fields = _visible_directory_fields(self.values)
-                if visible_fields:
-                    directory_error = self._first_directory_error(visible_fields=visible_fields)
-                    if directory_error is not None:
-                        status.update(directory_error)
-                    else:
-                        status.update("Only directories for components configured in main or trees are shown.")
-                else:
-                    status.update("No directories are needed for the components currently configured in main or trees.")
+                status.update(
+                    directory_step_status(
+                        visible_fields=visible_fields,
+                        first_error=(
+                            self._first_directory_error(visible_fields=visible_fields) if visible_fields else None
+                        ),
+                    )
+                )
                 self.refresh_bindings()
                 return
             if step == "commands":
                 visible_fields = _visible_command_fields(self.values)
-                if visible_fields:
-                    directory_error = self._first_directory_error(visible_fields=visible_fields)
-                    if directory_error is not None:
-                        status.update(directory_error)
-                    else:
-                        status.update(
-                            "Test commands are optional; detected suggestions are shown under each field. "
-                            "Use Ctrl+S or Down on a focused suggestion field to cycle alternatives."
-                        )
-                else:
-                    status.update("No entrypoints or test commands are needed for the configured components.")
+                status.update(
+                    command_step_status(
+                        visible_fields=visible_fields,
+                        first_error=(
+                            self._first_directory_error(visible_fields=visible_fields) if visible_fields else None
+                        ),
+                    )
+                )
                 self.refresh_bindings()
                 return
             if step == "ports":
                 visible_fields = _visible_port_fields(self.values)
-                if visible_fields:
-                    status.update("Only canonical ports for configured components are shown.")
-                else:
-                    status.update("No ports are needed for the components currently configured in main or trees.")
+                status.update(port_step_status(visible_fields=visible_fields))
                 self.refresh_bindings()
                 return
-            status.update("Use Enter for Next/Save, Space to toggle, Escape to cancel.")
+            status.update(fallback_step_status())
             self.refresh_bindings()
 
         def _focus_current_step(self) -> None:

@@ -1114,17 +1114,28 @@ class StructureLayoutTests(unittest.TestCase):
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_fields.py"
         hint_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_hints.py"
         value_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_values.py"
+        status_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_status.py"
+        list_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_list_rendering.py"
+        )
+        step_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_step_flow.py"
 
         self.assertTrue(app_owner.is_file())
         self.assertTrue(component_owner.is_file())
         self.assertTrue(owner.is_file())
         self.assertTrue(hint_owner.is_file())
         self.assertTrue(value_owner.is_file())
+        self.assertTrue(status_owner.is_file())
+        self.assertTrue(list_owner.is_file())
+        self.assertTrue(step_owner.is_file())
         app_text = app_owner.read_text(encoding="utf-8")
         component_text = component_owner.read_text(encoding="utf-8")
         owner_text = owner.read_text(encoding="utf-8")
         hint_text = hint_owner.read_text(encoding="utf-8")
         value_text = value_owner.read_text(encoding="utf-8")
+        status_text = status_owner.read_text(encoding="utf-8")
+        list_text = list_owner.read_text(encoding="utf-8")
+        step_text = step_owner.read_text(encoding="utf-8")
         self.assertIn("class ConfigWizardResult", app_text)
         self.assertIn("def build_config_wizard_app", app_text)
         self.assertIn("class ConfigWizardApp", app_text)
@@ -1142,6 +1153,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def wizard_field_value", value_text)
         self.assertIn("def apply_text_field_values", value_text)
         self.assertIn("def apply_port_field_values", value_text)
+        self.assertIn("def status_for_valid_config_step", status_text)
+        self.assertIn("def render_components_list", list_text)
+        self.assertIn("def sync_wizard_steps", step_text)
         screen_text = screen.read_text(encoding="utf-8")
         self.assertIn("from .config_wizard_app import ConfigWizardResult, _emit, build_config_wizard_app", screen_text)
         self.assertIn("from . import config_wizard_components as component_policy", app_text)
@@ -1149,7 +1163,11 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from .config_wizard_fields import", screen_text)
         self.assertIn("from .config_wizard_fields import", app_text)
         self.assertIn("from .config_wizard_hints import", app_text)
+        self.assertIn("from .config_wizard_status import", app_text)
+        self.assertIn("from .config_wizard_list_rendering import", app_text)
+        self.assertIn("from .config_wizard_step_flow import", app_text)
         self.assertLessEqual(len(screen_text.splitlines()), 90)
+        self.assertLessEqual(len(app_text.splitlines()), 1220)
 
     def test_removed_dead_leaf_modules_are_absent(self) -> None:
         stale_modules = [
