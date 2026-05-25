@@ -3,9 +3,11 @@ from __future__ import annotations
 import unittest
 
 from envctl_engine.runtime.lifecycle_blast_support import LifecycleBlastCleanupSupport
-from envctl_engine.runtime.lifecycle_blast_containers import matches_blast_container
+from envctl_engine.runtime.lifecycle_blast_docker import BlastDockerCleanupSupport, matches_blast_container
+from envctl_engine.runtime.lifecycle_blast_ports import BlastPortSweepSupport
 from envctl_engine.runtime.lifecycle_blast_processes import (
     BLAST_ALL_PROCESS_PATTERNS,
+    BlastProcessCleanupSupport,
     is_orchestrator_process,
     looks_like_docker_process,
     process_tree_kill_order_from_ps,
@@ -62,6 +64,11 @@ class LifecycleBlastSupportTests(unittest.TestCase):
         self.assertFalse(is_orchestrator_process("python app.py"))
         self.assertTrue(looks_like_docker_process("Docker Desktop networking"))
         self.assertFalse(looks_like_docker_process("python app.py"))
+
+    def test_lifecycle_blast_support_is_composed_from_focused_owners(self) -> None:
+        self.assertTrue(issubclass(LifecycleBlastCleanupSupport, BlastPortSweepSupport))
+        self.assertTrue(issubclass(LifecycleBlastCleanupSupport, BlastProcessCleanupSupport))
+        self.assertTrue(issubclass(LifecycleBlastCleanupSupport, BlastDockerCleanupSupport))
 
 
 if __name__ == "__main__":

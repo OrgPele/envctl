@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-25T09:59:30+00:00",
+  "generated_at": "2026-05-25T10:04:05+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -407,8 +407,9 @@
         "python/envctl_engine/runtime/engine_runtime.py",
         "python/envctl_engine/runtime/engine_runtime_lifecycle_support.py",
         "python/envctl_engine/runtime/lifecycle_blast_support.py",
+        "python/envctl_engine/runtime/lifecycle_blast_ports.py",
         "python/envctl_engine/runtime/lifecycle_blast_processes.py",
-        "python/envctl_engine/runtime/lifecycle_blast_containers.py"
+        "python/envctl_engine/runtime/lifecycle_blast_docker.py"
       ],
       "evidence_tests": [
         "tests/python/runtime/test_lifecycle_blast_support.py",

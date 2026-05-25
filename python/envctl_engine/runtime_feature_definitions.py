@@ -131,8 +131,9 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/runtime/engine_runtime.py",
             "python/envctl_engine/runtime/engine_runtime_lifecycle_support.py",
             "python/envctl_engine/runtime/lifecycle_blast_support.py",
+            "python/envctl_engine/runtime/lifecycle_blast_ports.py",
             "python/envctl_engine/runtime/lifecycle_blast_processes.py",
-            "python/envctl_engine/runtime/lifecycle_blast_containers.py",
+            "python/envctl_engine/runtime/lifecycle_blast_docker.py",
         ),
         evidence_tests=(
             "tests/python/runtime/test_lifecycle_blast_support.py",

@@ -1725,22 +1725,22 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_worktree_sync_deletion_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_deletion.py"
-        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
+        sync_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_sync_deletion import",
-            runtime_bridge.read_text(encoding="utf-8"),
+            sync_bridge.read_text(encoding="utf-8"),
         )
 
     def test_worktree_sync_orchestration_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_orchestration.py"
-        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
+        sync_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_sync_orchestration import",
-            runtime_bridge.read_text(encoding="utf-8"),
+            sync_bridge.read_text(encoding="utf-8"),
         )
 
     def test_worktree_identity_has_owned_module(self) -> None:
