@@ -1265,6 +1265,15 @@ class StructureLayoutTests(unittest.TestCase):
         screen = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard.py"
         app_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_app.py"
         component_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_components.py"
+        component_actions_owner = (
+            REPO_ROOT
+            / "python"
+            / "envctl_engine"
+            / "ui"
+            / "textual"
+            / "screens"
+            / "config_wizard_component_actions.py"
+        )
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_fields.py"
         hint_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_hints.py"
         form_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_form.py"
@@ -1284,6 +1293,7 @@ class StructureLayoutTests(unittest.TestCase):
 
         self.assertTrue(app_owner.is_file())
         self.assertTrue(component_owner.is_file())
+        self.assertTrue(component_actions_owner.is_file())
         self.assertTrue(owner.is_file())
         self.assertTrue(hint_owner.is_file())
         self.assertTrue(form_owner.is_file())
@@ -1296,6 +1306,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(suggestion_owner.is_file())
         app_text = app_owner.read_text(encoding="utf-8")
         component_text = component_owner.read_text(encoding="utf-8")
+        component_actions_text = component_actions_owner.read_text(encoding="utf-8")
         owner_text = owner.read_text(encoding="utf-8")
         hint_text = hint_owner.read_text(encoding="utf-8")
         form_text = form_owner.read_text(encoding="utf-8")
@@ -1315,6 +1326,10 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def toggle_split_at", component_text)
         self.assertIn("def component_rows", component_text)
         self.assertIn("def toggle_service_startup_value", component_text)
+        self.assertIn("class ConfigWizardComponentActions", component_actions_text)
+        self.assertIn("def toggle_components_row", component_actions_text)
+        self.assertIn("def toggle_service_startup_row", component_actions_text)
+        self.assertIn("def component_split_available", component_actions_text)
         self.assertIn("def _hydrate_wizard_values", owner_text)
         self.assertIn("def _visible_directory_fields", owner_text)
         self.assertIn("def _additional_service_field_value", owner_text)
@@ -1346,6 +1361,7 @@ class StructureLayoutTests(unittest.TestCase):
         screen_text = screen.read_text(encoding="utf-8")
         self.assertIn("from .config_wizard_app import ConfigWizardResult, _emit, build_config_wizard_app", screen_text)
         self.assertIn("from . import config_wizard_components as component_policy", app_text)
+        self.assertIn("from .config_wizard_component_actions import ConfigWizardComponentActions", app_text)
         self.assertIn("from . import config_wizard_values as value_policy", app_text)
         self.assertIn("from .config_wizard_fields import", screen_text)
         self.assertIn("from .config_wizard_fields import", app_text)

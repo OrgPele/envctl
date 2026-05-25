@@ -17,10 +17,11 @@ from envctl_engine.ui.textual.compat import (
     handle_text_edit_key_alias,
     textual_run_policy,
 )
-from envctl_engine.ui.textual.list_row_styles import apply_selectable_list_index, focus_selectable_list
+from envctl_engine.ui.textual.list_row_styles import focus_selectable_list
 from . import config_wizard_components as component_policy
 from . import config_wizard_values as value_policy
 from .config_wizard_components import ComponentRow, ConfigWizardComponentInteraction
+from .config_wizard_component_actions import ConfigWizardComponentActions
 from .config_wizard_fields import (
     _SERVICE_STARTUP_FIELDS,
     _STEP_HELP_TEXT,
@@ -43,7 +44,7 @@ from .config_wizard_list_rendering import (
     render_components_list,
     render_service_startup_list,
 )
-from .config_wizard_navigation import move_config_wizard_list_index, resolve_config_wizard_key
+from .config_wizard_navigation import resolve_config_wizard_key
 from .config_wizard_status import (
     resolve_config_wizard_action_state,
     resolve_config_wizard_status,
@@ -370,6 +371,22 @@ def build_config_wizard_app(
         def _component_rows(self) -> list[ComponentRow]:
             return self._component_interaction.rows()
 
+        def _component_actions(self) -> ConfigWizardComponentActions:
+            return ConfigWizardComponentActions(
+                app=self,
+                values=self.values,
+                component_interaction=self._component_interaction,
+                service_startup_fields=_SERVICE_STARTUP_FIELDS,
+                current_step=self._current_step,
+                list_view=lambda: self.query_one("#config-list", ListView),
+                focused_widget=lambda: self.focused,
+                sync_steps=self._sync_steps,
+                sync_startup_enable_flags=self._sync_startup_enable_flags,
+                refresh_body=self._refresh_body,
+                refresh_status=self._refresh_status,
+                refresh_actions=self._refresh_actions,
+            )
+
         def _render_components_step(self, list_view) -> None:
             rows = self._component_rows()
             selected_flags = self._component_interaction.selected_flags(rows)
@@ -482,7 +499,7 @@ def build_config_wizard_app(
             )
 
         def _nearest_selectable_component_index(self, index: int, *, step: int) -> int:
-            return self._component_interaction.nearest_selectable_index(index, step=step)
+            return self._component_actions().nearest_selectable_component_index(index, step=step)
 
         def _directory_label(self, field_name: str) -> str:
             return self._form_controller.directory_label(field_name)
@@ -503,103 +520,28 @@ def build_config_wizard_app(
             return self._form_controller.first_directory_error(visible_fields=visible_fields)
 
         def action_cursor_up(self) -> None:
-            if self._current_step() not in {"default_mode", "components", "service_startup"}:
-                return
-            list_view = self.query_one("#config-list", ListView)
-            list_view.index = move_config_wizard_list_index(list_view.index, count=len(list_view.children), step=-1)
-            if self._current_step() == "components":
-                list_view.index = self._nearest_selectable_component_index(list_view.index or 0, step=-1)
-            self._sync_focus_driven_selection()
-            self._refresh_status()
+            self._component_actions().cursor_up()
 
         def action_cursor_down(self) -> None:
-            if self._current_step() not in {"default_mode", "components", "service_startup"}:
-                return
-            list_view = self.query_one("#config-list", ListView)
-            count = len(list_view.children)
-            next_index = move_config_wizard_list_index(list_view.index, count=count, step=1)
-            if next_index is None:
-                return
-            list_view.index = next_index
-            if self._current_step() == "components":
-                list_view.index = self._nearest_selectable_component_index(list_view.index or 0, step=1)
-            self._sync_focus_driven_selection()
-            self._refresh_status()
+            self._component_actions().cursor_down()
 
         def _sync_focus_driven_selection(self) -> None:
-            if self._current_step() != "default_mode":
-                return
-            list_view = self.query_one("#config-list", ListView)
-            index = list_view.index or 0
-            self.values.default_mode = "trees" if index == 1 else "main"
-            self._refresh_body()
-            self._refresh_status()
+            self._component_actions().sync_focus_driven_selection()
 
         def action_toggle_item(self) -> None:
-            step = self._current_step()
-            if step == "components":
-                self._toggle_components_row()
-                return
-            if step == "service_startup":
-                self._toggle_service_startup_row()
+            self._component_actions().toggle_item()
 
         def _toggle_service_startup_row(self) -> None:
-            list_view = self.query_one("#config-list", ListView)
-            index = list_view.index or 0
-            field_name, mode, _label = _SERVICE_STARTUP_FIELDS[index]
-            self._toggle_service_startup_value(field_name, mode)
-            self._sync_steps(current_step="service_startup")
-            self._refresh_body()
-            self._refresh_status()
-            self._refresh_actions()
-            list_view = self.query_one("#config-list", ListView)
-            apply_selectable_list_index(list_view, min(index, max(len(list_view.children) - 1, 0)))
-            focus_selectable_list(self, list_view, list_view.index)
+            self._component_actions().toggle_service_startup_row()
 
         def _toggle_components_row(self) -> None:
-            list_view = self.query_one("#config-list", ListView)
-            index = list_view.index or 0
-            result = self._component_interaction.toggle_component_at(index)
-            if not result.changed:
-                return
-            self._sync_startup_enable_flags()
-            self._sync_steps(current_step="components")
-            self._refresh_body()
-            self._refresh_status()
-            self._refresh_actions()
-            list_view = self.query_one("#config-list", ListView)
-            apply_selectable_list_index(list_view, min(result.target_index, max(len(list_view.children) - 1, 0)))
-            focus_selectable_list(self, list_view, list_view.index)
+            self._component_actions().toggle_components_row()
 
         def _toggle_component_split(self) -> None:
-            if not self._component_split_available():
-                return
-            list_view = self.query_one("#config-list", ListView)
-            index = list_view.index or 0
-            result = self._component_interaction.toggle_split_at(index)
-            if not result.changed:
-                if result.error_message is not None:
-                    self._refresh_status(result.error_message)
-                return
-            self._refresh_body()
-            self._refresh_status()
-            list_view = self.query_one("#config-list", ListView)
-            apply_selectable_list_index(list_view, result.target_index)
-            focus_selectable_list(self, list_view, list_view.index)
+            self._component_actions().toggle_component_split()
 
         def _component_split_available(self) -> bool:
-            if self._current_step() != "components":
-                return False
-            list_view = self.query_one("#config-list", ListView)
-            if self.focused is not list_view:
-                return False
-            rows = self._component_rows()
-            if not rows:
-                return False
-            index = list_view.index or 0
-            if index < 0 or index >= len(rows):
-                return False
-            return rows[index].selectable
+            return self._component_actions().component_split_available()
 
         def on_list_view_selected(self, event: ListView.Selected) -> None:
             if self._suppress_list_selected_once:
@@ -608,14 +550,7 @@ def build_config_wizard_app(
             step = self._current_step()
             if step not in {"default_mode", "components", "service_startup"}:
                 return
-            list_view = self.query_one("#config-list", ListView)
-            list_view.index = event.index
-            if step == "default_mode":
-                self._sync_focus_driven_selection()
-            elif step == "components":
-                self._toggle_components_row()
-            else:
-                self._toggle_service_startup_row()
+            self._component_actions().list_view_selected(index=event.index)
 
         def action_focus_next(self) -> None:
             self.screen.focus_next()
