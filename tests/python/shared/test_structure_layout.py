@@ -2254,6 +2254,9 @@ class StructureLayoutTests(unittest.TestCase):
     def test_run_reuse_identity_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "run_reuse_identity.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "run_reuse_support.py"
+        decision_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "run_reuse_decision.py"
+        dashboard_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "run_reuse_dashboard_restore.py"
+        fresh_start_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "run_reuse_fresh_start.py"
 
         self.assertTrue(owner.is_file())
         owner_text = owner.read_text(encoding="utf-8")
@@ -2261,9 +2264,18 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def build_startup_identity_metadata", owner_text)
         self.assertIn("def _startup_identity_payload", owner_text)
         self.assertIn("def project_identities_from_state", owner_text)
+        self.assertTrue(decision_owner.is_file())
+        self.assertIn("class RunReuseEvaluator", decision_owner.read_text(encoding="utf-8"))
+        self.assertTrue(dashboard_owner.is_file())
+        self.assertIn("class DashboardStoppedServiceRestorer", dashboard_owner.read_text(encoding="utf-8"))
+        self.assertTrue(fresh_start_owner.is_file())
+        self.assertIn("class FreshStartServiceReplacer", fresh_start_owner.read_text(encoding="utf-8"))
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.startup.run_reuse_identity import", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 580)
+        self.assertIn("from envctl_engine.startup.run_reuse_decision import", facade_text)
+        self.assertIn("from envctl_engine.startup.run_reuse_dashboard_restore import", facade_text)
+        self.assertIn("from envctl_engine.startup.run_reuse_fresh_start import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 180)
 
     def test_disabled_startup_resolution_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "disabled_startup_resolution.py"
