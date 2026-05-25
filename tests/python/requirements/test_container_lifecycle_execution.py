@@ -50,6 +50,18 @@ class ContainerLifecycleExecutionTests(unittest.TestCase):
         self.assertEqual([event.stage for event in lifecycle.events], ["discover", "probe.healthy"])
         self.assertEqual([event["stage"] for event in traced], ["discover", "probe.healthy"])
 
+    def test_executor_exposes_lifecycle_helpers_as_methods_not_nested_functions(self) -> None:
+        self.assertTrue(hasattr(ContainerLifecycleExecutor, "_emit"))
+        self.assertTrue(hasattr(ContainerLifecycleExecutor, "_add_stage_duration"))
+        self.assertTrue(hasattr(ContainerLifecycleExecutor, "_run_result"))
+        self.assertTrue(hasattr(ContainerLifecycleExecutor, "_failure"))
+        self.assertTrue(hasattr(ContainerLifecycleExecutor, "_recover_timeout_created_container"))
+        self.assertTrue(hasattr(ContainerLifecycleExecutor, "_attempt_local_settle"))
+
+        overview_names = set(ContainerLifecycleExecutor.run.__code__.co_varnames)
+        self.assertNotIn("_emit", overview_names)
+        self.assertNotIn("_failure", overview_names)
+
 
 if __name__ == "__main__":
     unittest.main()
