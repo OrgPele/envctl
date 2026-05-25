@@ -375,6 +375,8 @@ class StructureLayoutTests(unittest.TestCase):
         plan_text = plan_owner.read_text(encoding="utf-8")
         service_text = service_owner.read_text(encoding="utf-8")
         self.assertIn("class TestExecutionPlanner", plan_text)
+        self.assertIn("class TestStatusRenderer", plan_text)
+        self.assertIn("class TestExecutionPolicy", plan_text)
         self.assertIn("def build(self) -> list[TestExecutionSpec]", plan_text)
         self.assertIn("class AdditionalServiceTestPlanner", service_text)
         self.assertIn("def build(self) -> list[TestExecutionSpec]", service_text)

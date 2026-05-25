@@ -286,69 +286,136 @@ def is_legacy_tree_test_script(command: list[str]) -> bool:
     return len(command) >= 2 and command[0] == "bash" and command[1].endswith("test-all-trees.sh")
 
 
+@dataclass(frozen=True, slots=True)
+class TestStatusRenderer:
+    __test__: ClassVar[bool] = False
+
+    def command_start_status(self, command_name: str, targets: list[object]) -> str:
+        target_names = action_target_names(targets)
+        if not target_names:
+            return f"Running {command_name}..."
+        if len(target_names) == 1:
+            return f"Running {command_name} for {target_names[0]}..."
+        return f"Running {command_name} for {len(target_names)} targets..."
+
+    def scope_status(self, project_names: list[str], *, run_all: bool, untested: bool, failed: bool) -> str:
+        if run_all:
+            return "Running tests for all discovered projects..."
+        if failed:
+            if len(project_names) == 1:
+                return f"Rerunning failed tests for {project_names[0]}..."
+            if project_names:
+                return f"Rerunning failed tests for {len(project_names)} selected projects..."
+            return "Rerunning failed tests..."
+        if untested and not project_names:
+            return "Running tests for untested projects..."
+        if len(project_names) == 1:
+            return f"Running tests for {project_names[0]}..."
+        if project_names:
+            return f"Running tests for {len(project_names)} selected projects..."
+        return "Running tests..."
+
+    def execution_status(self, command: list[str], *, args: list[str], source: str, cwd: Path) -> str:
+        if source == "configured":
+            snippet = " ".join(command[:3]).strip()
+            if snippet:
+                return f"Executing configured test command: {snippet}..."
+            return "Executing configured test command..."
+
+        if len(command) >= 3 and command[1] == "-m" and command[2] == "pytest":
+            if len(command) > 3 and all("test" in str(part) or "::" in str(part) for part in command[3:]):
+                return f"Rerunning failed pytest cases ({len(command) - 3})..."
+            target = command[3] if len(command) > 3 else "tests"
+            return f"Running pytest suite at {target}..."
+        if len(command) >= 4 and command[1] == "-m" and command[2] == "unittest" and command[3] == "discover":
+            return "Running unittest discovery (test_*.py)..."
+        if len(command) >= 4 and command[1] == "-m" and command[2] == "unittest":
+            return f"Rerunning failed unittest cases ({len(command) - 3})..."
+        if len(command) >= 3 and command[1] == "run" and command[2] == "test":
+            manager = command[0]
+            if "--" in command:
+                try:
+                    file_count = max(0, len(command) - command.index("--") - 1)
+                except ValueError:
+                    file_count = 0
+                if file_count > 0:
+                    return f"Rerunning failed {manager} test files ({file_count}) in {cwd}..."
+            return f"Running {manager} test script in {cwd}..."
+        if is_legacy_tree_test_script(command):
+            projects_arg = next((value for value in args if value.startswith("projects=")), "")
+            if projects_arg:
+                selected = projects_arg.split("=", 1)[1]
+                count = len([name for name in selected.split(",") if name])
+                return f"Running tree test matrix for {count} selected project(s)..."
+            if "untested=true" in args:
+                return "Running tree test matrix for untested projects..."
+            return "Running tree test matrix for all projects..."
+        return "Executing detected test command..."
+
+
+@dataclass(frozen=True, slots=True)
+class TestExecutionPolicy:
+    __test__: ClassVar[bool] = False
+
+    route: Route
+    specs: list[TestExecutionSpec]
+    env: Mapping[str, str]
+    config_raw: Mapping[str, object]
+
+    def parallel_enabled(self) -> bool:
+        if len(self.specs) <= 1:
+            return False
+        if any(is_legacy_tree_test_script(spec.spec.command) for spec in self.specs):
+            return False
+        forced = self.route.flags.get("test_parallel")
+        if isinstance(forced, bool):
+            return forced
+        configured = self.env.get("ENVCTL_ACTION_TEST_PARALLEL") or self.config_raw.get(
+            "ENVCTL_ACTION_TEST_PARALLEL"
+        )
+        return parse_bool(configured, True)
+
+    def parallel_worker_count(self) -> int:
+        total = max(len(self.specs), 1)
+        configured_values: list[object] = [
+            self.route.flags.get("test_parallel_max"),
+            self.env.get("ENVCTL_ACTION_TEST_PARALLEL_MAX"),
+            self.config_raw.get("ENVCTL_ACTION_TEST_PARALLEL_MAX"),
+        ]
+        limit = 4
+        for raw in configured_values:
+            parsed = parse_int(raw, 0)
+            if parsed > 0:
+                limit = parsed
+                break
+        return max(1, min(total, limit))
+
+    def suite_spinner_policy_enabled(self, policy: object) -> tuple[bool, str]:
+        mode = str(self.env.get("ENVCTL_UI_SPINNER_MODE", "")).strip().lower()
+        if mode == "off":
+            return False, "spinner_mode_off"
+        if not parse_bool(self.env.get("ENVCTL_UI_SPINNER"), True):
+            return False, "spinner_env_off"
+        if not parse_bool(self.env.get("ENVCTL_UI_RICH"), True):
+            return False, "rich_env_off"
+        reason = str(getattr(policy, "reason", "")).strip().lower()
+        if reason == "spinner_backend_missing":
+            return False, "spinner_backend_missing"
+        if reason == "ci_mode":
+            return False, "ci_mode"
+        return True, "enabled"
+
+
 def command_start_status(command_name: str, targets: list[object]) -> str:
-    target_names = action_target_names(targets)
-    if not target_names:
-        return f"Running {command_name}..."
-    if len(target_names) == 1:
-        return f"Running {command_name} for {target_names[0]}..."
-    return f"Running {command_name} for {len(target_names)} targets..."
+    return TestStatusRenderer().command_start_status(command_name, targets)
 
 
 def render_test_scope_status(project_names: list[str], *, run_all: bool, untested: bool, failed: bool) -> str:
-    if run_all:
-        return "Running tests for all discovered projects..."
-    if failed:
-        if len(project_names) == 1:
-            return f"Rerunning failed tests for {project_names[0]}..."
-        if project_names:
-            return f"Rerunning failed tests for {len(project_names)} selected projects..."
-        return "Rerunning failed tests..."
-    if untested and not project_names:
-        return "Running tests for untested projects..."
-    if len(project_names) == 1:
-        return f"Running tests for {project_names[0]}..."
-    if project_names:
-        return f"Running tests for {len(project_names)} selected projects..."
-    return "Running tests..."
+    return TestStatusRenderer().scope_status(project_names, run_all=run_all, untested=untested, failed=failed)
 
 
 def render_test_execution_status(command: list[str], *, args: list[str], source: str, cwd: Path) -> str:
-    if source == "configured":
-        snippet = " ".join(command[:3]).strip()
-        if snippet:
-            return f"Executing configured test command: {snippet}..."
-        return "Executing configured test command..."
-
-    if len(command) >= 3 and command[1] == "-m" and command[2] == "pytest":
-        if len(command) > 3 and all("test" in str(part) or "::" in str(part) for part in command[3:]):
-            return f"Rerunning failed pytest cases ({len(command) - 3})..."
-        target = command[3] if len(command) > 3 else "tests"
-        return f"Running pytest suite at {target}..."
-    if len(command) >= 4 and command[1] == "-m" and command[2] == "unittest" and command[3] == "discover":
-        return "Running unittest discovery (test_*.py)..."
-    if len(command) >= 4 and command[1] == "-m" and command[2] == "unittest":
-        return f"Rerunning failed unittest cases ({len(command) - 3})..."
-    if len(command) >= 3 and command[1] == "run" and command[2] == "test":
-        manager = command[0]
-        if "--" in command:
-            try:
-                file_count = max(0, len(command) - command.index("--") - 1)
-            except ValueError:
-                file_count = 0
-            if file_count > 0:
-                return f"Rerunning failed {manager} test files ({file_count}) in {cwd}..."
-        return f"Running {manager} test script in {cwd}..."
-    if is_legacy_tree_test_script(command):
-        projects_arg = next((value for value in args if value.startswith("projects=")), "")
-        if projects_arg:
-            selected = projects_arg.split("=", 1)[1]
-            count = len([name for name in selected.split(",") if name])
-            return f"Running tree test matrix for {count} selected project(s)..."
-        if "untested=true" in args:
-            return "Running tree test matrix for untested projects..."
-        return "Running tree test matrix for all projects..."
-    return "Executing detected test command..."
+    return TestStatusRenderer().execution_status(command, args=args, source=source, cwd=cwd)
 
 
 def parallel_tests_enabled(
@@ -358,15 +425,7 @@ def parallel_tests_enabled(
     env: Mapping[str, str],
     config_raw: Mapping[str, object],
 ) -> bool:
-    if len(specs) <= 1:
-        return False
-    if any(is_legacy_tree_test_script(spec.spec.command) for spec in specs):
-        return False
-    forced = route.flags.get("test_parallel")
-    if isinstance(forced, bool):
-        return forced
-    configured = env.get("ENVCTL_ACTION_TEST_PARALLEL") or config_raw.get("ENVCTL_ACTION_TEST_PARALLEL")
-    return parse_bool(configured, True)
+    return TestExecutionPolicy(route=route, specs=specs, env=env, config_raw=config_raw).parallel_enabled()
 
 
 def parallel_test_worker_count(
@@ -376,32 +435,9 @@ def parallel_test_worker_count(
     env: Mapping[str, str],
     config_raw: Mapping[str, object],
 ) -> int:
-    total = max(len(specs), 1)
-    configured_values: list[object] = [
-        route.flags.get("test_parallel_max"),
-        env.get("ENVCTL_ACTION_TEST_PARALLEL_MAX"),
-        config_raw.get("ENVCTL_ACTION_TEST_PARALLEL_MAX"),
-    ]
-    limit = 4
-    for raw in configured_values:
-        parsed = parse_int(raw, 0)
-        if parsed > 0:
-            limit = parsed
-            break
-    return max(1, min(total, limit))
+    return TestExecutionPolicy(route=route, specs=specs, env=env, config_raw=config_raw).parallel_worker_count()
 
 
 def suite_spinner_policy_enabled(policy: object, *, env: Mapping[str, str]) -> tuple[bool, str]:
-    mode = str(env.get("ENVCTL_UI_SPINNER_MODE", "")).strip().lower()
-    if mode == "off":
-        return False, "spinner_mode_off"
-    if not parse_bool(env.get("ENVCTL_UI_SPINNER"), True):
-        return False, "spinner_env_off"
-    if not parse_bool(env.get("ENVCTL_UI_RICH"), True):
-        return False, "rich_env_off"
-    reason = str(getattr(policy, "reason", "")).strip().lower()
-    if reason == "spinner_backend_missing":
-        return False, "spinner_backend_missing"
-    if reason == "ci_mode":
-        return False, "ci_mode"
-    return True, "enabled"
+    execution_policy = TestExecutionPolicy(route=Route(command="", mode="main"), specs=[], env=env, config_raw={})
+    return execution_policy.suite_spinner_policy_enabled(policy)
