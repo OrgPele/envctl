@@ -2400,14 +2400,19 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_finalization_run_state_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "finalization_run_state.py"
+        failure_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "finalization_failure.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "finalization.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(failure_owner.is_file())
         owner_text = owner.read_text(encoding="utf-8")
+        failure_owner_text = failure_owner.read_text(encoding="utf-8")
         self.assertIn("def build_planning_dashboard_state", owner_text)
         self.assertIn("def _build_run_state", owner_text)
+        self.assertIn("class StartupFailureFinalizer", failure_owner_text)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.startup.finalization_run_state import", facade_text)
+        self.assertIn("from envctl_engine.startup.finalization_failure import", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 500)
 
     def test_resume_restore_policy_has_owned_module(self) -> None:
