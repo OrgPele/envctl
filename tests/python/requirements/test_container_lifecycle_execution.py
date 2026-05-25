@@ -13,6 +13,7 @@ from envctl_engine.requirements.adapter_lifecycle_models import project_containe
 from envctl_engine.requirements.common import ContainerStartResult
 from envctl_engine.requirements.container_lifecycle_execution import ContainerLifecycleDockerClient
 from envctl_engine.requirements.container_lifecycle_execution import ContainerLifecycleExecutor
+from envctl_engine.requirements.container_lifecycle_execution import ContainerLifecycleRecorder
 
 
 class ContainerLifecycleExecutionTests(unittest.TestCase):
@@ -130,8 +131,28 @@ class ContainerLifecycleExecutionTests(unittest.TestCase):
 
     def test_success_projection_is_centralized(self) -> None:
         source = Path("python/envctl_engine/requirements/container_lifecycle_execution.py").read_text(encoding="utf-8")
-        self.assertEqual(source.count("success=True"), 1)
-        self.assertEqual(source.count("port_mismatch_action=state.mismatch_action"), 2)
+        recorder_source = Path("python/envctl_engine/requirements/container_lifecycle_state.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("class ContainerLifecycleRecorder", recorder_source)
+        self.assertIn("self._recorder = ContainerLifecycleRecorder(template)", source)
+        self.assertEqual(source.count("success=True"), 0)
+        self.assertEqual(recorder_source.count("success=True"), 1)
+        self.assertEqual(source.count("port_mismatch_action=state.mismatch_action"), 0)
+        self.assertEqual(recorder_source.count("port_mismatch_action=state.mismatch_action"), 2)
+
+    def test_lifecycle_bookkeeping_is_owned_by_recorder(self) -> None:
+        self.assertTrue(hasattr(ContainerLifecycleRecorder, "emit"))
+        self.assertTrue(hasattr(ContainerLifecycleRecorder, "add_stage_duration"))
+        self.assertTrue(hasattr(ContainerLifecycleRecorder, "run_result"))
+        self.assertTrue(hasattr(ContainerLifecycleRecorder, "success"))
+        self.assertTrue(hasattr(ContainerLifecycleRecorder, "failure"))
+        self.assertTrue(hasattr(ContainerLifecycleRecorder, "reset_to_requested_port"))
+
+        source = Path("python/envctl_engine/requirements/container_lifecycle_execution.py").read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.requirements.container_lifecycle_state import", source)
+        self.assertLessEqual(source.count("AdapterLifecycleEvent("), 0)
+        self.assertLessEqual(source.count("ContainerStartResult("), 0)
 
     def test_run_stays_as_phase_orchestrator(self) -> None:
         run_lines, _ = inspect.getsourcelines(ContainerLifecycleExecutor.run)
