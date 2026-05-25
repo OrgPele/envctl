@@ -78,6 +78,22 @@ class ActionShipSupportTests(unittest.TestCase):
                     return "abc123\n"
                 return ""
 
+            checks_expected_sha = ""
+
+            def github_pr_checks(_git_root: Path, *, branch: str, pr_url: str, expected_head_sha: str) -> dict[str, object]:
+                nonlocal checks_expected_sha
+                self.assertEqual(branch, "feature/demo")
+                self.assertEqual(pr_url, "https://github.com/acme/repo/pull/7")
+                checks_expected_sha = expected_head_sha
+                return {
+                    "state": "checks_failed",
+                    "failing_checks": [{"name": "pytest", "state": "FAILURE"}],
+                    "passed_checks": [{"name": "ruff", "state": "SUCCESS"}],
+                    "pending_checks": [],
+                    "duration_seconds": 0.1,
+                    "expected_head_sha": expected_head_sha,
+                }
+
             with redirect_stdout(StringIO()) as stdout:
                 code = run_ship_workflow(
                     context,
@@ -96,13 +112,7 @@ class ActionShipSupportTests(unittest.TestCase):
                         protected_skipped_paths=[],
                     ),
                     ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
-                    github_pr_checks=lambda _git_root, *, branch, pr_url: {
-                        "state": "checks_failed",
-                        "failing_checks": [{"name": "pytest", "state": "FAILURE"}],
-                        "passed_checks": [{"name": "ruff", "state": "SUCCESS"}],
-                        "pending_checks": [],
-                        "duration_seconds": 0.1,
-                    },
+                    github_pr_checks=github_pr_checks,
                 )
 
         self.assertEqual(code, 1)
@@ -122,6 +132,8 @@ class ActionShipSupportTests(unittest.TestCase):
         self.assertEqual(payload["passed_checks"], [{"name": "ruff", "state": "SUCCESS"}])
         self.assertEqual(payload["failing_checks"], [{"name": "pytest", "state": "FAILURE"}])
         self.assertEqual(payload["pr_url"], "https://github.com/acme/repo/pull/7")
+        self.assertEqual(checks_expected_sha, "abc123")
+        self.assertEqual(payload["checks_expected_head_sha"], "abc123")
 
     def test_run_ship_workflow_creates_pr_and_reports_check_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -160,6 +172,21 @@ class ActionShipSupportTests(unittest.TestCase):
                 pr_called = True
                 return 0
 
+            checks_expected_sha = ""
+
+            def github_pr_checks(_git_root: Path, *, branch: str, pr_url: str, expected_head_sha: str) -> dict[str, object]:
+                nonlocal checks_expected_sha
+                self.assertEqual(branch, "feature/demo")
+                self.assertEqual(pr_url, "https://github.com/acme/repo/pull/8")
+                checks_expected_sha = expected_head_sha
+                return {
+                    "state": "checks_passed",
+                    "passed_checks": [{"name": "pytest", "state": "SUCCESS"}],
+                    "failing_checks": [],
+                    "pending_checks": [],
+                    "duration_seconds": 0.1,
+                }
+
             with redirect_stdout(StringIO()) as stdout:
                 code = run_ship_workflow(
                     context,
@@ -178,18 +205,13 @@ class ActionShipSupportTests(unittest.TestCase):
                         protected_skipped_paths=[],
                     ),
                     ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
-                    github_pr_checks=lambda _git_root, *, branch, pr_url: {
-                        "state": "checks_passed",
-                        "passed_checks": [{"name": "pytest", "state": "SUCCESS"}],
-                        "failing_checks": [],
-                        "pending_checks": [],
-                        "duration_seconds": 0.1,
-                    },
+                    github_pr_checks=github_pr_checks,
                 )
 
         self.assertEqual(code, 0)
         self.assertTrue(commit_called)
         self.assertTrue(pr_called)
+        self.assertEqual(checks_expected_sha, "after")
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "checks_passed")
         self.assertEqual(payload["step_statuses"], ["committed_pushed", "pr_created", "checks_passed"])
@@ -242,7 +264,7 @@ class ActionShipSupportTests(unittest.TestCase):
                         protected_skipped_paths=[],
                     ),
                     ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
-                    github_pr_checks=lambda _git_root, *, branch, pr_url: {
+                    github_pr_checks=lambda _git_root, *, branch, pr_url, expected_head_sha: {
                         "state": "checks_pending_timeout",
                         "failing_checks": [],
                         "passed_checks": [{"name": "ruff", "state": "SUCCESS"}],
@@ -295,7 +317,7 @@ class ActionShipSupportTests(unittest.TestCase):
                         protected_skipped_paths=[],
                     ),
                     ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
-                    github_pr_checks=lambda _git_root, *, branch, pr_url: {
+                    github_pr_checks=lambda _git_root, *, branch, pr_url, expected_head_sha: {
                         "state": "no_checks_reported",
                         "failing_checks": [],
                         "passed_checks": [],

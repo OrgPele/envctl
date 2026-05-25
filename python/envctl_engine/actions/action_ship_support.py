@@ -184,7 +184,12 @@ class ShipWorkflowRunner:
 
     def _run_checks_phase(self, state: ShipWorkflowState) -> int:
         checks_fn = self.dependencies.github_pr_checks or globals()["github_pr_checks"]
-        checks = checks_fn(state.git_root, branch=state.branch, pr_url=state.pr_url)
+        checks = checks_fn(
+            state.git_root,
+            branch=state.branch,
+            pr_url=state.pr_url,
+            expected_head_sha=state.after_sha,
+        )
         status = str(checks.get("state") or ("pr_created" if state.pr_created else "pr_exists"))
         if status:
             state.step_statuses.append(status)

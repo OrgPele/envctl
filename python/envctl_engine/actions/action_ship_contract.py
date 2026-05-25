@@ -67,6 +67,8 @@ def ship_payload(
         "failing_checks": checks_payload.get("failing_checks", []),
         "pending_checks": checks_payload.get("pending_checks", []),
         "checks_error": checks_payload.get("error", ""),
+        "checks_expected_head_sha": checks_payload.get("expected_head_sha", ""),
+        "checks_actual_head_sha": checks_payload.get("actual_head_sha", ""),
         "checks_timeout_seconds": checks_payload.get("timeout_seconds", 0.0),
         "merge_conflicts": dict(merge_conflicts or {}),
         "monitor_duration_seconds": checks_payload.get("duration_seconds", 0.0),

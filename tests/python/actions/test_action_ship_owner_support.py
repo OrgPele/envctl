@@ -169,6 +169,85 @@ def test_github_pr_checks_polls_until_pending_checks_finish(tmp_path: Path, monk
     assert len(calls) == 2
 
 
+def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    calls: list[list[str]] = []
+    outputs = [
+        {
+            "headRefOid": "oldsha",
+            "statusCheckRollup": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "pytest",
+                    "workflowName": "Tests",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                    "detailsUrl": "https://github.com/acme/repo/actions/runs/1/job/1",
+                }
+            ],
+        },
+        {
+            "headRefOid": "newsha",
+            "statusCheckRollup": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "pytest",
+                    "workflowName": "Tests",
+                    "status": "IN_PROGRESS",
+                    "conclusion": "",
+                    "detailsUrl": "https://github.com/acme/repo/actions/runs/2/job/2",
+                }
+            ],
+        },
+        {
+            "headRefOid": "newsha",
+            "statusCheckRollup": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "pytest",
+                    "workflowName": "Tests",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                    "detailsUrl": "https://github.com/acme/repo/actions/runs/2/job/2",
+                }
+            ],
+        },
+    ]
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
+
+    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
+    monkeypatch.setattr(action_ship_checks.time, "sleep", lambda _seconds: None)
+
+    checks = action_ship_checks.github_pr_checks(
+        tmp_path,
+        branch="feature/demo",
+        pr_url="https://github.com/acme/repo/pull/7",
+        expected_head_sha="newsha",
+        timeout_seconds=5.0,
+        poll_interval_seconds=0.01,
+    )
+
+    assert checks["state"] == "checks_passed"
+    assert checks["passed_checks"] == [
+        {
+            "name": "pytest",
+            "workflow": "Tests",
+            "state": "SUCCESS",
+            "link": "https://github.com/acme/repo/actions/runs/2/job/2",
+        }
+    ]
+    assert [call[:4] for call in calls] == [
+        ["/usr/bin/gh", "pr", "view", "feature/demo"],
+        ["/usr/bin/gh", "pr", "view", "feature/demo"],
+        ["/usr/bin/gh", "pr", "view", "feature/demo"],
+    ]
+
+
 def test_github_pr_checks_returns_failed_check_without_waiting_for_timeout(tmp_path: Path, monkeypatch: Any) -> None:
     calls = 0
 

@@ -14,6 +14,7 @@ PASSING_CHECK_STATES = {"SUCCESS", "PASSED", "COMPLETED", "NEUTRAL", "SKIPPED"}
 TERMINAL_SHIP_CHECK_STATES = {"checks_passed", "checks_failed", "gh_unavailable", "no_checks_reported"}
 DEFAULT_CHECK_TIMEOUT_SECONDS = 900.0
 DEFAULT_CHECK_POLL_INTERVAL_SECONDS = 10.0
+DEFAULT_NO_CHECKS_GRACE_SECONDS = 30.0
 DEFAULT_FAILURE_EXCERPT_LINES = 80
 DEFAULT_FAILURE_EXCERPT_CHARS = 12_000
 _ACTION_JOB_URL_RE = re.compile(r"/actions/runs/(?P<run_id>\d+)/job/(?P<job_id>\d+)")
@@ -26,10 +27,11 @@ def github_pr_checks(
     *,
     branch: str,
     pr_url: str,
+    expected_head_sha: str | None = None,
     timeout_seconds: float | None = None,
     poll_interval_seconds: float | None = None,
+    no_checks_grace_seconds: float | None = None,
 ) -> dict[str, object]:
-    del pr_url
     gh_path = shutil.which("gh")
     if gh_path is None:
         return {
@@ -48,9 +50,27 @@ def github_pr_checks(
     )
     timeout = DEFAULT_CHECK_TIMEOUT_SECONDS if timeout is None else max(timeout, 0.0)
     poll_interval = DEFAULT_CHECK_POLL_INTERVAL_SECONDS if poll_interval is None else max(poll_interval, 0.1)
+    no_checks_grace = (
+        no_checks_grace_seconds
+        if no_checks_grace_seconds is not None
+        else _float_env("ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS")
+    )
+    no_checks_grace = DEFAULT_NO_CHECKS_GRACE_SECONDS if no_checks_grace is None else max(no_checks_grace, 0.0)
 
     while True:
-        result = _query_github_pr_checks(git_root, gh_path=gh_path, branch=branch, started=started)
+        result = (
+            _query_expected_head_pr_checks(
+                git_root,
+                gh_path=gh_path,
+                branch=branch,
+                pr_url=pr_url,
+                expected_head_sha=expected_head_sha,
+                started=started,
+                no_checks_grace_seconds=no_checks_grace,
+            )
+            if expected_head_sha
+            else _query_github_pr_checks(git_root, gh_path=gh_path, branch=branch, started=started)
+        )
         if result["state"] in TERMINAL_SHIP_CHECK_STATES:
             return result
         elapsed = time.monotonic() - started
@@ -62,6 +82,139 @@ def github_pr_checks(
                 "timeout_seconds": timeout,
             }
         time.sleep(min(poll_interval, max(timeout - elapsed, 0.1)))
+
+
+def _query_expected_head_pr_checks(
+    git_root: Path,
+    *,
+    gh_path: str,
+    branch: str,
+    pr_url: str,
+    expected_head_sha: str,
+    started: float,
+    no_checks_grace_seconds: float,
+) -> dict[str, object]:
+    completed = subprocess.run(
+        [gh_path, "pr", "view", branch, "--json", "headRefOid,statusCheckRollup,url"],
+        cwd=str(git_root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    duration = round(time.monotonic() - started, 3)
+    if completed.returncode != 0:
+        error = (completed.stderr or completed.stdout).strip()
+        return _pending_expected_head_result(
+            duration_seconds=duration,
+            expected_head_sha=expected_head_sha,
+            actual_head_sha="",
+            error=error or "GitHub PR status is not available yet.",
+            pr_url=pr_url,
+        )
+
+    try:
+        loaded = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        loaded = {}
+    data = loaded if isinstance(loaded, Mapping) else {}
+    actual_head_sha = str(data.get("headRefOid") or "").strip()
+    if actual_head_sha != expected_head_sha:
+        return _pending_expected_head_result(
+            duration_seconds=duration,
+            expected_head_sha=expected_head_sha,
+            actual_head_sha=actual_head_sha,
+            error="GitHub has not attached PR checks to the pushed head commit yet.",
+            pr_url=str(data.get("url") or pr_url),
+        )
+
+    rollup = data.get("statusCheckRollup")
+    checks = (
+        [_normalize_status_rollup_check(item) for item in rollup if isinstance(item, Mapping)]
+        if isinstance(rollup, list)
+        else []
+    )
+    if not checks:
+        if duration < no_checks_grace_seconds:
+            return {
+                "state": "checks_pending_timeout",
+                "failing_checks": [],
+                "passed_checks": [],
+                "pending_checks": [
+                    {
+                        "name": "github_checks",
+                        "state": "WAITING",
+                        "expected_head_sha": expected_head_sha,
+                    }
+                ],
+                "duration_seconds": duration,
+                "expected_head_sha": expected_head_sha,
+                "pr_url": str(data.get("url") or pr_url),
+                "error": "GitHub has not reported check contexts for the pushed head commit yet.",
+            }
+        return {
+            "state": "no_checks_reported",
+            "failing_checks": [],
+            "passed_checks": [],
+            "pending_checks": [],
+            "duration_seconds": duration,
+            "expected_head_sha": expected_head_sha,
+            "pr_url": str(data.get("url") or pr_url),
+        }
+
+    normalized = normalize_github_pr_checks(checks, duration_seconds=duration)
+    normalized["expected_head_sha"] = expected_head_sha
+    normalized["actual_head_sha"] = actual_head_sha
+    normalized["pr_url"] = str(data.get("url") or pr_url)
+    if normalized["state"] == "checks_failed":
+        normalized["failing_checks"] = failed_checks_with_log_excerpts(
+            git_root,
+            gh_path=gh_path,
+            failing_checks=normalized["failing_checks"],  # type: ignore[arg-type]
+        )
+    return normalized
+
+
+def _pending_expected_head_result(
+    *,
+    duration_seconds: float,
+    expected_head_sha: str,
+    actual_head_sha: str,
+    error: str,
+    pr_url: str,
+) -> dict[str, object]:
+    return {
+        "state": "checks_pending_timeout",
+        "failing_checks": [],
+        "passed_checks": [],
+        "pending_checks": [
+            {
+                "name": "github_head_ref",
+                "state": "WAITING",
+                "expected_head_sha": expected_head_sha,
+                "actual_head_sha": actual_head_sha,
+            }
+        ],
+        "duration_seconds": duration_seconds,
+        "expected_head_sha": expected_head_sha,
+        "actual_head_sha": actual_head_sha,
+        "pr_url": pr_url,
+        "error": error,
+    }
+
+
+def _normalize_status_rollup_check(check: Mapping[str, object]) -> dict[str, object]:
+    name = str(check.get("name") or check.get("context") or "check").strip()
+    status = str(check.get("status") or check.get("state") or "").strip().upper()
+    conclusion = str(check.get("conclusion") or "").strip().upper()
+    state = conclusion if status == "COMPLETED" and conclusion else status
+    link = str(check.get("detailsUrl") or check.get("targetUrl") or check.get("link") or "").strip()
+    workflow = str(check.get("workflowName") or check.get("workflow") or "").strip()
+    normalized: dict[str, object] = {"name": name, "state": state}
+    if workflow:
+        normalized["workflow"] = workflow
+    if link:
+        normalized["link"] = link
+    return normalized
 
 
 def _query_github_pr_checks(
@@ -235,6 +388,7 @@ __all__ = [
     "DEFAULT_CHECK_TIMEOUT_SECONDS",
     "DEFAULT_FAILURE_EXCERPT_CHARS",
     "DEFAULT_FAILURE_EXCERPT_LINES",
+    "DEFAULT_NO_CHECKS_GRACE_SECONDS",
     "FAILING_CHECK_STATES",
     "PASSING_CHECK_STATES",
     "TERMINAL_SHIP_CHECK_STATES",
