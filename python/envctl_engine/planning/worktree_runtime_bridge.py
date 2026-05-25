@@ -6,17 +6,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from envctl_engine.planning.plan_agent.models import PlanSelectionResult, PlanWorktreeSyncResult
+from envctl_engine.planning.plan_agent.models import PlanWorktreeSyncResult
 from envctl_engine.planning.protocols import ProjectContextLike
 from envctl_engine.planning.worktree_code_intelligence import prepare_worktree_code_intelligence
 from envctl_engine.planning.worktree_creation_runtime_bridge import WorktreeCreationRuntimeBridge
 from envctl_engine.planning.worktree_main_task import move_plan_to_done
-from envctl_engine.planning.worktree_plan_project_selection import select_plan_projects
 from envctl_engine.planning.worktree_path_support import render_planning_path
-from envctl_engine.planning.worktree_prompt_selection import prompt_planning_selection
 from envctl_engine.planning.worktree_provenance import (
     write_worktree_provenance,
 )
+from envctl_engine.planning.worktree_selection_runtime_bridge import WorktreeSelectionRuntimeBridge
 from envctl_engine.planning.worktree_shared_artifacts import link_repo_local_shared_artifacts
 from envctl_engine.planning.worktree_setup_runtime_bridge import WorktreeSetupRuntimeBridge
 from envctl_engine.planning.worktree_spinner_support import worktree_spinner_update
@@ -63,6 +62,12 @@ class PlanningRuntimeBridge:
             update_spinner=self.update_spinner,
             output=self.output,
             create_feature_worktrees_result=self.create_feature_worktrees_result,
+        )
+
+    def selection_bridge(self) -> WorktreeSelectionRuntimeBridge:
+        return WorktreeSelectionRuntimeBridge(
+            runtime=self.runtime,
+            select_planning_counts=self.select_planning_counts,
         )
 
     def render_planning_path(
@@ -190,22 +195,7 @@ class PlanningRuntimeBridge:
         route: Route,
         project_contexts: list[ProjectContextLike],
     ) -> list[ProjectContextLike]:
-        runtime = self.runtime
-        setattr(runtime, "_last_plan_selection_result", PlanSelectionResult(raw_projects=[], selected_contexts=[]))
-        selection_result = select_plan_projects(
-            route=route,
-            project_contexts=project_contexts,
-            config=runtime.config,
-            env=getattr(runtime, "env", {}),
-            emit=runtime._emit,
-            contexts_from_raw_projects=runtime._contexts_from_raw_projects,
-            duplicate_project_context_error=runtime._duplicate_project_context_error,
-            planning_keep_plan_enabled=runtime._planning_keep_plan_enabled,
-            prompt_planning_selection=runtime._prompt_planning_selection,
-            sync_plan_worktrees_from_plan_counts=runtime._sync_plan_worktrees_from_plan_counts,
-        )
-        setattr(runtime, "_last_plan_selection_result", selection_result)
-        return selection_result.selected_contexts
+        return self.selection_bridge().select_plan_projects(route, project_contexts)
 
     def prompt_planning_selection(
         self,
@@ -214,13 +204,9 @@ class PlanningRuntimeBridge:
         *,
         persist_memory: bool = True,
     ) -> dict[str, int] | None:
-        runtime = self.runtime
-        return prompt_planning_selection(
+        return self.selection_bridge().prompt_planning_selection(
             planning_files=planning_files,
             raw_projects=raw_projects,
-            initial_plan_selected_counts=runtime._initial_plan_selected_counts,
-            run_planning_selection_menu=runtime._run_planning_selection_menu,
-            save_plan_selection_memory=runtime._save_plan_selection_memory,
             persist_memory=persist_memory,
         )
 
@@ -231,16 +217,10 @@ class PlanningRuntimeBridge:
         selected_counts: dict[str, int],
         existing_counts: dict[str, int],
     ) -> dict[str, int] | None:
-        runtime = self.runtime
-        from envctl_engine.planning.worktree_planning_menu import run_planning_selection_menu
-
-        return run_planning_selection_menu(
+        return self.selection_bridge().run_planning_selection_menu(
             planning_files=planning_files,
             selected_counts=selected_counts,
             existing_counts=existing_counts,
-            flush_pending_interactive_input=runtime._flush_pending_interactive_input,
-            emit=getattr(runtime, "_emit", None),
-            select_planning_counts=self.select_planning_counts,
         )
 
     def sync_plan_worktrees_from_plan_counts(

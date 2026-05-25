@@ -1443,6 +1443,9 @@ class StructureLayoutTests(unittest.TestCase):
         menu_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_menu_terminal_support.py"
         spinner_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_spinner_support.py"
         runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
+        selection_runtime_bridge = (
+            REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_selection_runtime_bridge.py"
+        )
         sync_runtime_bridge = (
             REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_runtime_bridge.py"
         )
@@ -1453,12 +1456,14 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(menu_owner.is_file())
         self.assertTrue(spinner_owner.is_file())
         self.assertTrue(runtime_bridge.is_file())
+        self.assertTrue(selection_runtime_bridge.is_file())
         self.assertTrue(sync_runtime_bridge.is_file())
         self.assertTrue(protocols.is_file())
         owner_text = owner.read_text(encoding="utf-8")
         menu_owner_text = menu_owner.read_text(encoding="utf-8")
         spinner_owner_text = spinner_owner.read_text(encoding="utf-8")
         runtime_bridge_text = runtime_bridge.read_text(encoding="utf-8")
+        selection_runtime_bridge_text = selection_runtime_bridge.read_text(encoding="utf-8")
         sync_runtime_bridge_text = sync_runtime_bridge.read_text(encoding="utf-8")
         setup_coordinator_text = (
             REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_setup_coordinator.py"
@@ -1477,10 +1482,15 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def worktree_spinner_update", spinner_owner_text)
         self.assertIn("def worktree_spinner_stop", spinner_owner_text)
         self.assertIn("class PlanningRuntimeBridge", runtime_bridge_text)
+        self.assertIn("class WorktreeSelectionRuntimeBridge", selection_runtime_bridge_text)
         self.assertIn("class WorktreeSyncRuntimeBridge", sync_runtime_bridge_text)
         self.assertIn("def create_planning_runtime_bridge", runtime_bridge_text)
         self.assertIn("def create_single_worktree", runtime_bridge_text)
+        self.assertIn("def selection_bridge", runtime_bridge_text)
         self.assertIn("def sync_bridge", runtime_bridge_text)
+        self.assertIn("def select_plan_projects", selection_runtime_bridge_text)
+        self.assertIn("def prompt_planning_selection", selection_runtime_bridge_text)
+        self.assertIn("def run_planning_selection_menu", selection_runtime_bridge_text)
         self.assertIn("def sync_plan_worktrees_from_plan_counts", sync_runtime_bridge_text)
         self.assertIn("def delete_feature_worktrees", sync_runtime_bridge_text)
         self.assertNotIn("def _worktree_spinner_update", setup_coordinator_text)
@@ -1645,35 +1655,41 @@ class StructureLayoutTests(unittest.TestCase):
     def test_worktree_plan_project_selection_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_plan_project_selection.py"
         protocols = REPO_ROOT / "python" / "envctl_engine" / "planning" / "protocols.py"
-        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
+        selection_bridge = (
+            REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_selection_runtime_bridge.py"
+        )
 
         self.assertTrue(owner.is_file())
         self.assertTrue(protocols.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_plan_project_selection import",
-            runtime_bridge.read_text(encoding="utf-8"),
+            selection_bridge.read_text(encoding="utf-8"),
         )
         self.assertIn("from envctl_engine.planning.protocols import ProjectContextLike", owner.read_text(encoding="utf-8"))
         self.assertNotIn("class ProjectContextLike(Protocol)", owner.read_text(encoding="utf-8"))
 
     def test_worktree_prompt_selection_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_prompt_selection.py"
-        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
+        selection_bridge = (
+            REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_selection_runtime_bridge.py"
+        )
 
         self.assertTrue(owner.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_prompt_selection import",
-            runtime_bridge.read_text(encoding="utf-8"),
+            selection_bridge.read_text(encoding="utf-8"),
         )
 
     def test_worktree_planning_menu_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_planning_menu.py"
-        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
+        selection_bridge = (
+            REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_selection_runtime_bridge.py"
+        )
 
         self.assertTrue(owner.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_planning_menu import",
-            runtime_bridge.read_text(encoding="utf-8"),
+            selection_bridge.read_text(encoding="utf-8"),
         )
 
     def test_worktree_setup_entries_has_owned_module(self) -> None:
@@ -1721,7 +1737,8 @@ class StructureLayoutTests(unittest.TestCase):
         runtime_bridge_text = runtime_bridge.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.planning.worktree_setup_runtime_bridge import", runtime_bridge_text)
         self.assertIn("from envctl_engine.planning.worktree_creation_runtime_bridge import", runtime_bridge_text)
-        self.assertLessEqual(len(runtime_bridge_text.splitlines()), 430)
+        self.assertIn("from envctl_engine.planning.worktree_selection_runtime_bridge import", runtime_bridge_text)
+        self.assertLessEqual(len(runtime_bridge_text.splitlines()), 380)
 
     def test_worktree_sync_deletion_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_deletion.py"
