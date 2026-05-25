@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import cast
 
 from ..adapter_base import env_float, timeout_error
-from ..common import run_result_error
+from ..docker_runtime import run_result_error
 from .formatting import _supabase_compose_failure_detail
 from .inspect import _inspect_auth_gateway_service, _inspect_auth_gateway_services
 from .probe import _compose_service_state_failed

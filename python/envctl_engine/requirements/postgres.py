@@ -17,14 +17,16 @@ from .adapter_base import (
     sleep_between_probes,
 )
 from .adapter_lifecycle_models import project_container_lifecycle_result
-from .common import (
+from .common_contracts import (
     ContainerStartResult,
     RetryResult,
     build_container_name,
-    ensure_docker_image_present,
+    run_with_retry,
+)
+from .docker_image_support import ensure_docker_image_present
+from .docker_runtime import (
     run_docker,
     run_result_error,
-    run_with_retry,
 )
 
 

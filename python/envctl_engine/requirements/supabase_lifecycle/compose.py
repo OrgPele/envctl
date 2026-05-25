@@ -6,9 +6,8 @@ from pathlib import Path
 
 from envctl_engine.debug.debug_utils import file_lock
 
-from ..common import docker_port_publish_lock, run_docker
 from ..adapter_base import env_bool, env_float
-from ..common import run_result_error
+from ..docker_runtime import docker_port_publish_lock, run_docker, run_result_error
 from .config import _supabase_startup_budget_seconds
 from .compose_handoff import (
     compose_db_port as _compose_db_port,

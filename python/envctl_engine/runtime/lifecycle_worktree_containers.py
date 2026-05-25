@@ -4,11 +4,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from envctl_engine.requirements.common import (
-    build_container_name,
-    run_docker,
-    run_result_error,
-)
+from envctl_engine.requirements.common_contracts import build_container_name
+from envctl_engine.requirements.docker_runtime import run_docker, run_result_error
 from envctl_engine.requirements.supabase import build_supabase_project_name
 
 

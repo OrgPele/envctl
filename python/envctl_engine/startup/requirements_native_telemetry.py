@@ -6,7 +6,7 @@ from pathlib import Path
 import time
 from typing import Any
 
-from envctl_engine.requirements.common import ContainerStartResult
+from envctl_engine.requirements.common_contracts import ContainerStartResult
 from envctl_engine.shared.protocols import CommandResult, ProcessRuntime
 from envctl_engine.startup.protocols import ProjectContextLike
 

@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass, field
 
 from .adapter_lifecycle_models import AdapterLifecycleEvent, ContainerLifecycleRun, ContainerLifecycleTemplate
-from .common import ContainerStartResult
+from .common_contracts import ContainerStartResult
 from ..shared.reason_codes import reason_code_to_string
 from ..shared.reason_codes import RequirementLifecycleReason
 from .adapter_policy import port_mismatch_policy

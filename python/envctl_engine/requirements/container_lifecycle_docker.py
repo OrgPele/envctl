@@ -5,15 +5,14 @@ from dataclasses import dataclass
 from envctl_engine.shared.protocols import CommandResult
 
 from .adapter_lifecycle_models import ContainerLifecycleTemplate
-from .common import (
+from .container_state_support import (
     container_exists,
     container_host_port,
     container_state_error,
     container_status,
-    docker_port_publish_lock,
-    run_docker,
     stop_and_remove_container,
 )
+from .docker_runtime import docker_port_publish_lock, run_docker
 
 
 @dataclass(frozen=True, slots=True)

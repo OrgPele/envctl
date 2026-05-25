@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from envctl_engine.requirements.component_ports import component_primary_port
-from envctl_engine.requirements.common import build_container_name, container_exists, container_host_port
+from envctl_engine.requirements.common_contracts import build_container_name
+from envctl_engine.requirements.container_state_support import container_exists, container_host_port
 from envctl_engine.requirements.supabase import build_supabase_project_name
 from envctl_engine.state.models import RequirementsResult, RunState
 from envctl_engine.state import state_to_dict

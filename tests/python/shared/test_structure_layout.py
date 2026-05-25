@@ -1897,6 +1897,18 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def container_host_port", container_owner.read_text(encoding="utf-8"))
         self.assertLessEqual(len(common_text.splitlines()), 140)
 
+    def test_production_requirement_callers_use_owner_modules_not_common_facade(self) -> None:
+        requirements_root = REPO_ROOT / "python" / "envctl_engine" / "requirements"
+        allowed = {requirements_root / "common.py"}
+        violations: list[str] = []
+        for path in (REPO_ROOT / "python" / "envctl_engine").rglob("*.py"):
+            if path in allowed:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if "requirements.common import" in text or "from .common import" in text or "from ..common import" in text:
+                violations.append(str(path.relative_to(REPO_ROOT)))
+        self.assertEqual([], violations)
+
     def test_requirements_startup_has_component_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_component_startup.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_startup_domain.py"

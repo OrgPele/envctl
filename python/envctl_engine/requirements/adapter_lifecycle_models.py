@@ -6,7 +6,7 @@ from pathlib import Path
 
 from envctl_engine.shared.protocols import ProcessRuntime
 
-from .common import ContainerStartResult
+from .common_contracts import ContainerStartResult
 
 
 @dataclass(slots=True)

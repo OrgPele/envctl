@@ -8,7 +8,7 @@ from envctl_engine.requirements.container_lifecycle_docker import ContainerLifec
 from envctl_engine.requirements.container_lifecycle_state import ContainerLifecycleState
 
 from .adapter_policy import timeout_error
-from .common import run_result_error
+from .docker_runtime import run_result_error
 from ..shared.reason_codes import (
     RequirementFailureReason,
     RequirementLifecycleReason,

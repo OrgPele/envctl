@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from envctl_engine.requirements.common import ContainerStartResult
+from envctl_engine.requirements.common_contracts import ContainerStartResult
 from envctl_engine.requirements.core import dependency_definition
 from envctl_engine.requirements.n8n import start_n8n_container
 from envctl_engine.requirements.postgres import start_postgres_container

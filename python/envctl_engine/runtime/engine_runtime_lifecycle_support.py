@@ -24,7 +24,7 @@ from envctl_engine.runtime.lifecycle_worktree_cleanup import (
     _remove_tree_containers as _remove_tree_containers_impl,
     blast_worktree_before_delete as _blast_worktree_before_delete_impl,
 )
-from envctl_engine.requirements.common import (
+from envctl_engine.requirements.container_state_support import (
     container_exists as _container_exists,
 )
 

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from envctl_engine.state.models import ServiceRecord
-from envctl_engine.requirements.common import is_bind_conflict
+from envctl_engine.requirements.common_contracts import is_bind_conflict
 
 
 class ServiceStartError(RuntimeError):
