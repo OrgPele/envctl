@@ -174,8 +174,8 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
             REPO_ROOT / "python/envctl_engine/planning/worktree_code_intelligence_cgc.py",
             REPO_ROOT / "python/envctl_engine/planning/plan_agent/cmux_surface_support.py",
             REPO_ROOT / "python/envctl_engine/planning/plan_agent/cmux_workspace_support.py",
+            REPO_ROOT / "python/envctl_engine/planning/plan_agent/superset_cli_support.py",
             REPO_ROOT / "python/envctl_engine/planning/plan_agent/superset_desktop_support.py",
-            REPO_ROOT / "python/envctl_engine/planning/plan_agent/superset_transport.py",
             REPO_ROOT / "python/envctl_engine/planning/plan_agent/superset_worktree_launch_support.py",
         ]
         for support_path in support_paths:

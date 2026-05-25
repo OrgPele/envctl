@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +17,9 @@ SupersetInitialPromptFn = Callable[..., tuple[str, str | None]]
 SupersetAgentAndPromptFn = Callable[..., tuple[str, str]]
 GitBranchNameFn = Callable[..., tuple[str, str | None]]
 SupersetWorkspaceNameFn = Callable[[CreatedPlanWorktree], str]
-ParseSupersetJsonOutputFn = Callable[[str], Mapping[str, object] | None]
-WorkspaceIdFromSupersetPayloadFn = Callable[[Mapping[str, object]], str | None]
+SupersetJsonPayload = dict[str, Any] | list[Any]
+ParseSupersetJsonOutputFn = Callable[[str], SupersetJsonPayload | None]
+WorkspaceIdFromSupersetPayloadFn = Callable[[SupersetJsonPayload], str | None]
 BridgeSupersetDesktopWorkspaceFn = Callable[..., bool]
 OpenSupersetWorkspaceFn = Callable[..., str | None]
 VerifySupersetDesktopWorkspaceFn = Callable[..., str | None]

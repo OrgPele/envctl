@@ -54,6 +54,8 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "omx_validation_support.py",
             "recovery.py",
             "superset_desktop_support.py",
+            "superset_cli_support.py",
+            "superset_goal_agent_support.py",
             "superset_transport.py",
             "terminal_screen.py",
             "tmux_surface_support.py",
@@ -370,6 +372,16 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             },
             "superset_worktree_launch_support.py": {
                 "launch_single_superset_worktree",
+            },
+            "superset_cli_support.py": {
+                "git_branch_name",
+                "open_superset_workspace",
+                "superset_workspace_name",
+            },
+            "superset_goal_agent_support.py": {
+                "ensure_superset_codex_goal_agent",
+                "superset_host_agent_db",
+                "write_superset_codex_goal_launcher",
             },
             "superset_desktop_support.py": {
                 "bridge_superset_desktop_workspace",
