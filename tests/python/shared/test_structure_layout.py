@@ -420,6 +420,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(workflow_factory_owner.is_file())
         self.assertTrue(workflow_owner.is_file())
         commit_text = commit_owner.read_text(encoding="utf-8")
+        self.assertIn("class CommitWorkflowRunner", commit_text)
+        self.assertIn("class CommitWorkflowDependencies", commit_text)
         self.assertIn("def run_commit_workflow", commit_text)
         self.assertIn("def resolve_commit_message", commit_text)
         self.assertIn("def advance_commit_ledger_pointer", commit_text)
