@@ -3,6 +3,13 @@ from __future__ import annotations
 import unittest
 
 from envctl_engine.runtime.lifecycle_blast_support import LifecycleBlastCleanupSupport
+from envctl_engine.runtime.lifecycle_blast_containers import matches_blast_container
+from envctl_engine.runtime.lifecycle_blast_processes import (
+    BLAST_ALL_PROCESS_PATTERNS,
+    is_orchestrator_process,
+    looks_like_docker_process,
+    process_tree_kill_order_from_ps,
+)
 
 
 class _BlastHarness(LifecycleBlastCleanupSupport):
@@ -29,6 +36,8 @@ class LifecycleBlastSupportTests(unittest.TestCase):
         self.assertTrue(LifecycleBlastCleanupSupport.blast_all_matches_container(image="app", name="feature-redis"))
         self.assertTrue(LifecycleBlastCleanupSupport.blast_all_matches_container(image="supabase/postgres", name="api"))
         self.assertFalse(LifecycleBlastCleanupSupport.blast_all_matches_container(image="node:22", name="frontend"))
+        self.assertTrue(matches_blast_container(image="postgres:16", name="db"))
+        self.assertFalse(matches_blast_container(image="node:22", name="frontend"))
 
     def test_process_tree_kill_order_returns_children_before_parent(self) -> None:
         harness = _BlastHarness(
@@ -40,11 +49,19 @@ class LifecycleBlastSupportTests(unittest.TestCase):
 
         self.assertEqual(harness.blast_all_process_tree_kill_order(100), [201, 102, 101, 100])
         self.assertEqual(harness.calls, [("ps", "-axo", "pid=,ppid=")])
+        self.assertEqual(process_tree_kill_order_from_ps(harness.ps_tree_stdout, root_pid=100), [201, 102, 101, 100])
 
     def test_process_tree_kill_order_falls_back_to_root_when_ps_fails(self) -> None:
         harness = _BlastHarness("")
 
         self.assertEqual(harness.blast_all_process_tree_kill_order(100), [100])
+
+    def test_blast_process_predicates_live_in_process_owner(self) -> None:
+        self.assertIn("vite", BLAST_ALL_PROCESS_PATTERNS)
+        self.assertTrue(is_orchestrator_process("/usr/bin/envctl --plan feature"))
+        self.assertFalse(is_orchestrator_process("python app.py"))
+        self.assertTrue(looks_like_docker_process("Docker Desktop networking"))
+        self.assertFalse(looks_like_docker_process("python app.py"))
 
 
 if __name__ == "__main__":
