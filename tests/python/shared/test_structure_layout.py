@@ -1851,6 +1851,32 @@ class StructureLayoutTests(unittest.TestCase):
             facade.read_text(encoding="utf-8"),
         )
 
+    def test_planning_package_exports_are_backed_by_owner_modules(self) -> None:
+        package = REPO_ROOT / "python" / "envctl_engine" / "planning" / "__init__.py"
+        identity_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_identity.py"
+        files_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "planning_files.py"
+        discovery_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "planning_tree_discovery.py"
+        prediction_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "planning_project_prediction.py"
+
+        self.assertTrue(identity_owner.is_file())
+        self.assertTrue(files_owner.is_file())
+        self.assertTrue(discovery_owner.is_file())
+        self.assertTrue(prediction_owner.is_file())
+        package_text = package.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.planning.worktree_identity import", package_text)
+        self.assertIn("from envctl_engine.planning.planning_files import", package_text)
+        self.assertIn("from envctl_engine.planning.planning_tree_discovery import", package_text)
+        self.assertIn("from envctl_engine.planning.planning_project_prediction import", package_text)
+        self.assertIn("class GeneratedWorktreeIdentity", identity_owner.read_text(encoding="utf-8"))
+        self.assertIn("def generated_worktree_identity", identity_owner.read_text(encoding="utf-8"))
+        self.assertIn("def list_planning_files", files_owner.read_text(encoding="utf-8"))
+        self.assertIn("def resolve_planning_files", files_owner.read_text(encoding="utf-8"))
+        self.assertIn("def discover_tree_projects", discovery_owner.read_text(encoding="utf-8"))
+        self.assertIn("def filter_projects_for_plan", discovery_owner.read_text(encoding="utf-8"))
+        self.assertIn("class PlanProjectPrediction", prediction_owner.read_text(encoding="utf-8"))
+        self.assertIn("def predict_plan_projects", prediction_owner.read_text(encoding="utf-8"))
+        self.assertLessEqual(len(package_text.splitlines()), 90)
+
     def test_worktree_path_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_path_support.py"
         menu_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_menu_terminal_support.py"
