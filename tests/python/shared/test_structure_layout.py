@@ -1129,6 +1129,7 @@ class StructureLayoutTests(unittest.TestCase):
     def test_terminal_session_has_tty_mode_owner(self) -> None:
         facade = REPO_ROOT / "python" / "envctl_engine" / "ui" / "terminal_session.py"
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "terminal_tty_modes.py"
+        stream_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "terminal_input_stream.py"
 
         self.assertTrue(owner.is_file())
         owner_text = owner.read_text(encoding="utf-8")
@@ -1137,9 +1138,15 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def normalize_standard_tty_state", owner_text)
         self.assertIn("def temporary_standard_output_pendin", owner_text)
         self.assertIn("def _standard_output_tty_fds", owner_text)
+        self.assertTrue(stream_owner.is_file())
+        stream_text = stream_owner.read_text(encoding="utf-8")
+        self.assertIn("class TerminalInputBuffer", stream_text)
+        self.assertIn("def read_line_from_fd", stream_text)
+        self.assertIn("def discard_stale_control_sequences", stream_text)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("from .terminal_tty_modes import", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 820)
+        self.assertIn("from . import terminal_input_stream", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 620)
 
     def test_textual_config_wizard_has_field_owner(self) -> None:
         screen = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard.py"

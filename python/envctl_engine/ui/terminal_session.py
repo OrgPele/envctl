@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-import codecs
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 import importlib
 import os
-import re
 import select
 import sys
 import termios
-import time
 from typing import cast
 
 from envctl_engine.runtime.runtime_dependency_contract import python_dependency_available
+from . import terminal_input_stream
 from .capabilities import prompt_toolkit_disabled
 from .debug_flight_recorder import DebugFlightRecorder
 from .terminal_tty_modes import (
@@ -29,7 +27,7 @@ from .terminal_tty_modes import (
     temporary_tty_character_mode as temporary_tty_character_mode,
 )
 
-_PUSHBACK_BYTES: dict[int, bytearray] = {}
+_PUSHBACK_BYTES = terminal_input_stream.DEFAULT_INPUT_BUFFER.pushback_bytes
 
 
 def can_interactive_tty() -> bool:
@@ -50,19 +48,7 @@ def _read_line_from_fd(
     *,
     on_bytes: Callable[[bytes], None] | None = None,
 ) -> str:
-    chunks: list[bytes] = []
-    while True:
-        data = _read_byte(fd=fd)
-        if callable(on_bytes):
-            on_bytes(data)
-        if data == b"":
-            raise EOFError
-        if data in {b"\n", b"\r"}:
-            _consume_paired_line_ending(fd=fd, first=data, on_bytes=on_bytes)
-            _preserve_immediate_followup_input(fd=fd, on_bytes=on_bytes)
-            break
-        chunks.append(data)
-    return b"".join(chunks).decode("utf-8", errors="ignore")
+    return terminal_input_stream.read_line_from_fd(fd, on_bytes=on_bytes, read_fn=os.read, select_fn=select.select)
 
 
 def _read_line_from_fd_graceful(
@@ -71,80 +57,17 @@ def _read_line_from_fd_graceful(
     on_bytes: Callable[[bytes], None] | None = None,
     emit: Callable[..., None] | None = None,
 ) -> tuple[str, int]:
-    try:
-        original_state = termios.tcgetattr(fd)
-    except Exception:
-        return _read_line_from_fd(fd, on_bytes=on_bytes), 0
-
-    if not _set_tty_character_mode(fd=fd, original_state=original_state):
-        return _read_line_from_fd(fd, on_bytes=on_bytes), 0
-
-    out = getattr(sys, "__stdout__", None) or sys.stdout
-    write = getattr(out, "write", None)
-    flush = getattr(out, "flush", None)
-    decoder = codecs.getincrementaldecoder("utf-8")()
-    text_chars: list[str] = []
-    dropped_escape_sequences = 0
-    try:
-        while True:
-            data = _read_byte(fd=fd)
-            if callable(on_bytes):
-                on_bytes(data)
-            if data == b"":
-                raise EOFError
-            if data in {b"\n", b"\r"}:
-                _consume_paired_line_ending(fd=fd, first=data, on_bytes=on_bytes)
-                _preserve_immediate_followup_input(fd=fd, on_bytes=on_bytes)
-                if callable(write):
-                    write("\n")
-                if callable(flush):
-                    flush()
-                return "".join(text_chars), dropped_escape_sequences
-            if data == b"\x03":
-                raise KeyboardInterrupt
-            if data == b"\x04":
-                if not text_chars:
-                    raise EOFError
-                continue
-            if data in {b"\x7f", b"\x08"}:
-                decoder.reset()
-                if text_chars:
-                    text_chars.pop()
-                    if callable(write):
-                        write("\b \b")
-                    if callable(flush):
-                        flush()
-                continue
-            if data == b"\x1b":
-                sequence = _read_escape_sequence_nonblocking(fd=fd, on_bytes=on_bytes, timeout=0.025, max_bytes=64)
-                printable = _decode_escape_printable(sequence)
-                if printable is not None:
-                    text_chars.append(printable)
-                    if callable(write):
-                        write(printable)
-                    if callable(flush):
-                        flush()
-                else:
-                    dropped_escape_sequences += 1
-                decoder.reset()
-                continue
-            byte = int(data[0])
-            if byte < 32 or byte == 127:
-                decoder.reset()
-                continue
-            rendered = decoder.decode(data, final=False)
-            if not rendered:
-                continue
-            for ch in rendered:
-                if not ch.isprintable():
-                    continue
-                text_chars.append(ch)
-                if callable(write):
-                    write(ch)
-            if callable(flush):
-                flush()
-    finally:
-        restore_terminal_after_input(fd=fd, original_state=original_state, emit=emit)
+    return terminal_input_stream.read_line_from_fd_graceful(
+        fd,
+        on_bytes=on_bytes,
+        emit=emit,
+        read_fn=os.read,
+        select_fn=select.select,
+        stdout=(getattr(sys, "__stdout__", None) or sys.stdout),
+        tcgetattr=termios.tcgetattr,
+        set_character_mode=_set_tty_character_mode,
+        restore_input=restore_terminal_after_input,
+    )
 
 
 def _consume_paired_line_ending(
@@ -153,25 +76,13 @@ def _consume_paired_line_ending(
     first: bytes,
     on_bytes: Callable[[bytes], None] | None = None,
 ) -> None:
-    """Drain a queued CR/LF counterpart so it doesn't become the next empty command."""
-    counterpart = b"\n" if first == b"\r" else b"\r" if first == b"\n" else b""
-    if not counterpart:
-        return
-    try:
-        ready, _, _ = select.select([fd], [], [], 0)
-    except Exception:
-        return
-    if not ready:
-        return
-    try:
-        data = _read_byte(fd=fd)
-    except Exception:
-        return
-    if data != counterpart:
-        _pushback_byte(fd=fd, data=data)
-        return
-    if callable(on_bytes):
-        on_bytes(data)
+    terminal_input_stream.DEFAULT_INPUT_BUFFER.consume_paired_line_ending(
+        fd=fd,
+        first=first,
+        on_bytes=on_bytes,
+        read_fn=os.read,
+        select_fn=select.select,
+    )
 
 
 def _preserve_immediate_followup_input(
@@ -181,78 +92,30 @@ def _preserve_immediate_followup_input(
     timeout: float = 0.35,
     max_bytes: int = 64,
 ) -> None:
-    """Capture rapid post-Enter input so the next UI consumer can read it reliably.
-
-    The dashboard -> selector handoff can take a short scheduling hop after the
-    command line reader exits, especially under PTY-driven tests and during
-    service-launch overlap. Keep a modest buffer window so immediate arrow bursts
-    still reach the selector instead of getting stranded between consumers.
-    """
-    collected = bytearray()
-    deadline = time.monotonic() + max(0.0, timeout)
-    while len(collected) < max(1, max_bytes):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        try:
-            ready, _, _ = select.select([fd], [], [], remaining)
-        except Exception:
-            break
-        if not ready:
-            break
-        try:
-            data = os.read(fd, 1)
-        except Exception:
-            break
-        if not data:
-            break
-        collected.extend(data)
-        if callable(on_bytes):
-            on_bytes(data)
-    if collected:
-        _append_pushback_byte(fd=fd, data=bytes(collected))
+    terminal_input_stream.DEFAULT_INPUT_BUFFER.preserve_immediate_followup_input(
+        fd=fd,
+        on_bytes=on_bytes,
+        timeout=timeout,
+        max_bytes=max_bytes,
+        read_fn=os.read,
+        select_fn=select.select,
+    )
 
 
 def _read_byte(*, fd: int) -> bytes:
-    queued = _PUSHBACK_BYTES.get(fd)
-    if queued:
-        value = bytes([queued.pop(0)])
-        if not queued:
-            _PUSHBACK_BYTES.pop(fd, None)
-        return value
-    return os.read(fd, 1)
+    return terminal_input_stream.DEFAULT_INPUT_BUFFER.read_byte(fd=fd, read_fn=os.read)
 
 
 def _pushback_byte(*, fd: int, data: bytes) -> None:
-    if not data:
-        return
-    queued = _PUSHBACK_BYTES.get(fd)
-    if queued is None:
-        queued = bytearray()
-        _PUSHBACK_BYTES[fd] = queued
-    queued[:0] = data
+    terminal_input_stream.DEFAULT_INPUT_BUFFER.pushback_byte(fd=fd, data=data)
 
 
 def _append_pushback_byte(*, fd: int, data: bytes) -> None:
-    if not data:
-        return
-    queued = _PUSHBACK_BYTES.get(fd)
-    if queued is None:
-        queued = bytearray()
-        _PUSHBACK_BYTES[fd] = queued
-    queued.extend(data)
+    terminal_input_stream.DEFAULT_INPUT_BUFFER.append_pushback_byte(fd=fd, data=data)
 
 
 def consume_preserved_input() -> bytes:
-    if not _PUSHBACK_BYTES:
-        return b""
-    collected = bytearray()
-    for fd in sorted(_PUSHBACK_BYTES):
-        queued = _PUSHBACK_BYTES.get(fd)
-        if queued:
-            collected.extend(queued)
-    _PUSHBACK_BYTES.clear()
-    return bytes(collected)
+    return terminal_input_stream.DEFAULT_INPUT_BUFFER.consume_preserved_input()
 
 
 def _read_escape_sequence_nonblocking(
@@ -262,30 +125,14 @@ def _read_escape_sequence_nonblocking(
     timeout: float,
     max_bytes: int,
 ) -> bytes:
-    collected = bytearray()
-    deadline = time.monotonic() + max(0.0, timeout)
-    while len(collected) < max(1, max_bytes):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        try:
-            ready, _, _ = select.select([fd], [], [], remaining)
-        except Exception:
-            break
-        if not ready:
-            break
-        try:
-            chunk = _read_byte(fd=fd)
-        except Exception:
-            break
-        if callable(on_bytes):
-            on_bytes(chunk)
-        if not chunk:
-            break
-        collected.extend(chunk)
-        if _escape_sequence_complete(bytes(collected)):
-            break
-    return bytes(collected)
+    return terminal_input_stream.DEFAULT_INPUT_BUFFER.read_escape_sequence_nonblocking(
+        fd=fd,
+        on_bytes=on_bytes,
+        timeout=timeout,
+        max_bytes=max_bytes,
+        read_fn=os.read,
+        select_fn=select.select,
+    )
 
 
 def _discard_stale_control_sequences(
@@ -294,73 +141,21 @@ def _discard_stale_control_sequences(
     on_bytes: Callable[[bytes], None] | None = None,
     max_bytes: int = 64,
 ) -> int:
-    """Discard queued control / escape residue without dropping printable user input."""
-    if max_bytes <= 0:
-        return 0
-    discarded = 0
-    while discarded < max_bytes:
-        try:
-            ready, _, _ = select.select([fd], [], [], 0)
-        except Exception:
-            break
-        if not ready:
-            break
-        try:
-            data = _read_byte(fd=fd)
-        except Exception:
-            break
-        if not data:
-            break
-        if callable(on_bytes):
-            on_bytes(data)
-        byte = int(data[0])
-        if data in {b"\n", b"\r"} or byte < 32 or byte == 127:
-            discarded += 1
-            if data == b"\x1b":
-                sequence = _read_escape_sequence_nonblocking(
-                    fd=fd,
-                    on_bytes=on_bytes,
-                    timeout=0.001,
-                    max_bytes=max(1, max_bytes - discarded),
-                )
-                discarded += len(sequence)
-            continue
-        _pushback_byte(fd=fd, data=data)
-        break
-    return discarded
+    return terminal_input_stream.discard_stale_control_sequences(
+        fd=fd,
+        on_bytes=on_bytes,
+        max_bytes=max_bytes,
+        read_fn=os.read,
+        select_fn=select.select,
+    )
 
 
 def _escape_sequence_complete(sequence: bytes) -> bool:
-    if not sequence:
-        return False
-    first = sequence[0]
-    if first not in {ord("["), ord("O")}:
-        return True
-    if len(sequence) == 1:
-        return False
-    last = int(sequence[-1])
-    return 0x40 <= last <= 0x7E
+    return terminal_input_stream.escape_sequence_complete(sequence)
 
 
 def _decode_escape_printable(sequence: bytes) -> str | None:
-    if not sequence:
-        return None
-    text = sequence.decode("latin-1", errors="ignore")
-    if not text:
-        return None
-    # Meta/alt key style: ESC + printable.
-    if len(text) == 1 and " " <= text <= "~":
-        return text
-    # Kitty keyboard / CSI-u style: ESC [113u (q), ESC [65u (A), optionally with modifiers.
-    if text.startswith("[") and text.endswith("u"):
-        body = text[1:-1]
-        match = re.fullmatch(r"([0-9]{1,6})(?:;[0-9]{1,6})*", body)
-        if not match:
-            return None
-        codepoint = int(match.group(1))
-        if 32 <= codepoint <= 126:
-            return chr(codepoint)
-    return None
+    return terminal_input_stream.decode_escape_printable(sequence)
 
 
 def _prompt_toolkit_prompt(prompt: str) -> str:
