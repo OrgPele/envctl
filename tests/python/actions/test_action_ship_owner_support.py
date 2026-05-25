@@ -198,6 +198,73 @@ def test_github_pr_checks_returns_failed_check_without_waiting_for_timeout(tmp_p
     assert calls == 1
 
 
+def test_github_pr_checks_adds_failed_check_log_excerpt(tmp_path: Path, monkeypatch: Any) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:3] == ["/usr/bin/gh", "pr", "checks"]:
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "name": "pytest",
+                            "state": "FAILURE",
+                            "workflow": "Tests",
+                            "link": "https://github.com/acme/repo/actions/runs/12345/job/67890",
+                        }
+                    ]
+                ),
+                stderr="",
+            )
+        if args[:6] == ["/usr/bin/gh", "run", "view", "12345", "--job", "67890"]:
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=(
+                    "pytest\tRun pytest\t2026-05-25T20:00:00Z ================= FAILURES =================\n"
+                    "pytest\tRun pytest\t2026-05-25T20:00:01Z FAILED tests/test_demo.py::test_demo - AssertionError\n"
+                    "pytest\tRun pytest\t2026-05-25T20:00:02Z Error: Process completed with exit code 1.\n"
+                ),
+                stderr="",
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
+
+    checks = action_ship_checks.github_pr_checks(
+        tmp_path,
+        branch="feature/demo",
+        pr_url="https://github.com/acme/repo/pull/7",
+        timeout_seconds=30.0,
+        poll_interval_seconds=0.01,
+    )
+
+    assert checks["state"] == "checks_failed"
+    failing = checks["failing_checks"]
+    assert failing == [
+        {
+            "name": "pytest",
+            "state": "FAILURE",
+            "workflow": "Tests",
+            "link": "https://github.com/acme/repo/actions/runs/12345/job/67890",
+            "failure_excerpt": (
+                "================= FAILURES =================\n"
+                "FAILED tests/test_demo.py::test_demo - AssertionError\n"
+                "Error: Process completed with exit code 1."
+            ),
+            "failure_excerpt_truncated": False,
+        }
+    ]
+    assert calls == [
+        ["/usr/bin/gh", "pr", "checks", "feature/demo", "--json", "name,state,workflow,link"],
+        ["/usr/bin/gh", "run", "view", "12345", "--job", "67890", "--log"],
+    ]
+
+
 def test_github_pr_checks_returns_no_checks_reported_without_polling(tmp_path: Path, monkeypatch: Any) -> None:
     calls = 0
 
