@@ -51,6 +51,25 @@ class PlanAgentWorkflowQueueInteractionTests(unittest.TestCase):
         self.assertTrue(interactor.queue_message(queued_text))
         self.assertEqual(sent_keys, ["tab"])
 
+    def test_queue_message_does_not_send_keys_when_message_text_is_not_visible(self) -> None:
+        sent_keys: list[str] = []
+        queued_text = "Queued prompt body"
+        ready_screen = "OpenAI Codex\n  tab to queue message\n"
+
+        interactor = CodexQueueMessageInteractor(
+            read_screen=lambda: ready_screen,
+            send_key=lambda key: sent_keys.append(key) or None,
+            prompt_picker_enabled=True,
+            monotonic=iter([0.0, 0.1, 0.2, 0.3]).__next__,
+            sleep=lambda _seconds: None,
+            timeout_seconds=0.2,
+            poll_interval_seconds=0.05,
+            max_tab_attempts=3,
+        )
+
+        self.assertFalse(interactor.queue_message(queued_text, require_text_match=False))
+        self.assertEqual(sent_keys, [])
+
     def test_queue_message_can_submit_picker_before_tab_confirmation(self) -> None:
         sent_keys: list[str] = []
         state = {"stage": "picker"}
