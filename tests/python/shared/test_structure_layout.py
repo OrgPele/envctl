@@ -970,6 +970,12 @@ class StructureLayoutTests(unittest.TestCase):
         tmux_queue_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "planning" / "plan_agent" / "tmux_workflow_queue_support.py"
         )
+        queue_interaction_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "planning" / "plan_agent" / "workflow_queue_interaction.py"
+        )
+        cmux_queue_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "planning" / "plan_agent" / "cmux_workflow_submission_support.py"
+        )
         startup_spinner_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "plan_agent_launch_spinner.py"
         dependency_bootstrap_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "startup" / "plan_agent_dependency_bootstrap.py"
@@ -1013,6 +1019,7 @@ class StructureLayoutTests(unittest.TestCase):
             (tmux_submission_owner, "def submit_tmux_prompt_workflow_step"),
             (tmux_readiness_owner, "def wait_for_tmux_cli_ready"),
             (tmux_queue_owner, "def queue_tmux_codex_workflow_steps"),
+            (queue_interaction_owner, "class CodexQueueMessageInteractor"),
         ):
             with self.subTest(owner=owner.name):
                 owner_text = owner.read_text(encoding="utf-8")
@@ -1024,6 +1031,12 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.planning.plan_agent.tmux_prompt_readiness_support import", tmux_workflow_text)
         self.assertIn("from envctl_engine.planning.plan_agent.tmux_workflow_queue_support import", tmux_workflow_text)
         self.assertLessEqual(len(tmux_workflow_text.splitlines()), 420)
+        queue_owner_text = queue_interaction_owner.read_text(encoding="utf-8")
+        tmux_queue_text = tmux_queue_owner.read_text(encoding="utf-8")
+        cmux_queue_text = cmux_queue_owner.read_text(encoding="utf-8")
+        self.assertIn("def wait_until_codex_queue_ready", queue_owner_text)
+        self.assertIn("from envctl_engine.planning.plan_agent.workflow_queue_interaction import", tmux_queue_text)
+        self.assertIn("from envctl_engine.planning.plan_agent.workflow_queue_interaction import", cmux_queue_text)
         config_text = config_facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.planning.plan_agent.launch_policy import", config_text)
         self.assertLessEqual(len(config_text.splitlines()), 140)

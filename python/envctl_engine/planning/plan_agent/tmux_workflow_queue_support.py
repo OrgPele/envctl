@@ -1,24 +1,15 @@
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from typing import Any
 
-from envctl_engine.planning.plan_agent.constants import (
-    _CODEX_QUEUE_MAX_TAB_ATTEMPTS,
-    _CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS,
-    _CODEX_QUEUE_READY_TIMEOUT_SECONDS,
-)
 from envctl_engine.planning.plan_agent.models import (
     CreatedPlanWorktree,
     PlanAgentLaunchConfig,
     _PlanAgentWorkflow,
     _PlanAgentWorkflowStep,
 )
-from envctl_engine.planning.plan_agent.terminal_screen import (
-    _codex_queue_message_needs_tab,
-    _codex_queue_screen_confirms_queued,
-)
+from envctl_engine.planning.plan_agent.workflow_queue_interaction import CodexQueueMessageInteractor
 from envctl_engine.planning.plan_agent.workflow_queue_support import run_codex_workflow_queue
 
 
@@ -83,30 +74,13 @@ def queue_tmux_codex_message(
     read_tmux_screen_fn: ReadTmuxScreenFn,
     send_tmux_key_fn: SendTmuxKeyFn,
 ) -> bool:
-    deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
-    tab_attempts = 0
-    while time.monotonic() < deadline:
-        screen = read_tmux_screen_fn(runtime, session_name=session_name, window_name=window_name)
-        if tab_attempts > 0 and _codex_queue_screen_confirms_queued(
-            screen,
-            text,
-            require_text_match=require_text_match,
-        ):
-            return True
-        if _codex_queue_message_needs_tab(screen, text, require_text_match=require_text_match):
-            if tab_attempts >= _CODEX_QUEUE_MAX_TAB_ATTEMPTS:
-                return False
-            tab_error = send_tmux_key_fn(
-                runtime,
-                session_name=session_name,
-                window_name=window_name,
-                key="tab",
-                emit_failure_event=False,
-            )
-            if tab_error is not None:
-                return False
-            tab_attempts += 1
-            time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
-            continue
-        time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
-    return False
+    return CodexQueueMessageInteractor(
+        read_screen=lambda: read_tmux_screen_fn(runtime, session_name=session_name, window_name=window_name),
+        send_key=lambda key: send_tmux_key_fn(
+            runtime,
+            session_name=session_name,
+            window_name=window_name,
+            key=key,
+            emit_failure_event=False,
+        ),
+    ).queue_message(text, require_text_match=require_text_match)

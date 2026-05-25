@@ -1,27 +1,19 @@
 from __future__ import annotations
 
 import shlex
-import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from envctl_engine.planning.plan_agent.constants import (
-    _CODEX_QUEUE_MAX_TAB_ATTEMPTS,
-    _CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS,
-    _CODEX_QUEUE_READY_TIMEOUT_SECONDS,
-)
 from envctl_engine.planning.plan_agent.models import (
     CreatedPlanWorktree,
     PlanAgentLaunchConfig,
     _PlanAgentWorkflow,
     _PlanAgentWorkflowStep,
 )
-from envctl_engine.planning.plan_agent.terminal_screen import (
-    _codex_queue_message_needs_tab,
-    _codex_queue_screen_confirms_queued,
-    _codex_queue_screen_looks_ready,
-    _prompt_picker_screen_looks_ready,
+from envctl_engine.planning.plan_agent.workflow_queue_interaction import (
+    CodexQueueMessageInteractor,
+    wait_until_codex_queue_ready,
 )
 from envctl_engine.planning.plan_agent.workflow_queue_support import (
     run_codex_workflow_queue,
@@ -226,13 +218,9 @@ def wait_for_codex_queue_ready(
     surface_id: str,
     read_surface_screen_fn: ReadSurfaceScreenFn,
 ) -> bool:
-    deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        screen = read_surface_screen_fn(runtime, workspace_id=workspace_id, surface_id=surface_id)
-        if _codex_queue_screen_looks_ready(screen):
-            return True
-        time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
-    return False
+    return wait_until_codex_queue_ready(
+        read_screen=lambda: read_surface_screen_fn(runtime, workspace_id=workspace_id, surface_id=surface_id),
+    )
 
 
 def queue_codex_message(
@@ -245,49 +233,14 @@ def queue_codex_message(
     read_surface_screen_fn: ReadSurfaceScreenFn,
     send_surface_key_fn: SendSurfaceKeyFn,
 ) -> bool:
-    deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
-    normalized_text = str(text).strip()
-    picker_submitted = False
-    tab_attempts = 0
-    while time.monotonic() < deadline:
-        screen = read_surface_screen_fn(runtime, workspace_id=workspace_id, surface_id=surface_id)
-        if (
-            normalized_text.startswith("/")
-            and not picker_submitted
-            and _prompt_picker_screen_looks_ready("codex", screen, normalized_text)
-        ):
-            submit_error = send_surface_key_fn(
-                runtime,
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                key="enter",
-                emit_failure_event=False,
-            )
-            if submit_error is not None:
-                return False
-            picker_submitted = True
-            time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
-            continue
-        if tab_attempts > 0 and _codex_queue_screen_confirms_queued(
-            screen,
-            text,
-            require_text_match=require_text_match,
-        ):
-            return True
-        if _codex_queue_message_needs_tab(screen, text, require_text_match=require_text_match):
-            if tab_attempts >= _CODEX_QUEUE_MAX_TAB_ATTEMPTS:
-                return False
-            tab_error = send_surface_key_fn(
-                runtime,
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                key="tab",
-                emit_failure_event=False,
-            )
-            if tab_error is not None:
-                return False
-            tab_attempts += 1
-            time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
-            continue
-        time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
-    return False
+    return CodexQueueMessageInteractor(
+        read_screen=lambda: read_surface_screen_fn(runtime, workspace_id=workspace_id, surface_id=surface_id),
+        send_key=lambda key: send_surface_key_fn(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            key=key,
+            emit_failure_event=False,
+        ),
+        prompt_picker_enabled=True,
+    ).queue_message(text, require_text_match=require_text_match)
