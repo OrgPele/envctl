@@ -11,15 +11,21 @@ import unittest
 from envctl_engine.actions.action_test_summary_support import (
     collect_failed_test_manifest_entries,
     collect_failed_tests,
+    FailedTestSummaryWriter,
     format_summary_error_lines,
     persist_test_summary_artifacts,
     print_test_suite_overview,
     suite_display_name,
+    TestSummaryArtifactPersistor,
     write_failed_tests_summary,
 )
 
 
 class ActionTestSummarySupportTests(unittest.TestCase):
+    def test_summary_artifact_support_has_named_owner_objects(self) -> None:
+        self.assertTrue(callable(TestSummaryArtifactPersistor.persist))
+        self.assertTrue(callable(FailedTestSummaryWriter.write))
+
     def test_collect_failed_tests_deduplicates_and_resolves_file_level_errors(self) -> None:
         outcomes = [
             {

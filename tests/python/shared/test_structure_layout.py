@@ -757,6 +757,9 @@ class StructureLayoutTests(unittest.TestCase):
             with self.subTest(path=filename):
                 self.assertTrue((actions / filename).is_file())
 
+        artifacts_text = (actions / "action_test_summary_artifacts.py").read_text(encoding="utf-8")
+        self.assertIn("class TestSummaryArtifactPersistor", artifacts_text)
+        self.assertIn("class FailedTestSummaryWriter", artifacts_text)
         facade = actions / "action_test_summary_support.py"
         self.assertLessEqual(len(facade.read_text(encoding="utf-8").splitlines()), 140)
 
