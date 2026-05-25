@@ -18,6 +18,7 @@ from envctl_engine.ui.textual.screens.selector.textual_app_lifecycle import (
     apply_selector_mount,
 )
 from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
+    SelectorFocusController,
     SelectorKeyTelemetry,
     SelectorStatusController,
 )
@@ -87,7 +88,12 @@ def create_selector_app(
                 initial_model_index=self._initial_model_index,
             )
             self._render_lock = asyncio.Lock()
-            self._last_focus_widget_id = "selector-list"
+            self._focus_controller = SelectorFocusController(
+                emit=emit,
+                deep_debug=deep_debug,
+                selector_id=selector_id,
+                initial_widget_id="selector-list",
+            )
             self._explicit_cancel = False
             self._key_telemetry = SelectorKeyTelemetry(enabled=key_trace_enabled)
             self._allow_filter_focus = False
@@ -149,36 +155,22 @@ def create_selector_app(
             try:
                 focused = getattr(self, "focused", None)
             except Exception:
-                return "unknown"
-            focused_id = str(getattr(focused, "id", "") or "").strip()
-            if focused_id:
-                return focused_id
-            if self._list().has_focus:
-                return "selector-list"
-            if self.query_one("#selector-filter", Input).has_focus:
-                return "selector-filter"
-            return "unknown"
+                focused = None
+            return self._focus_controller.widget_id(
+                focused=focused,
+                list_has_focus=self._list().has_focus,
+                filter_has_focus=self.query_one("#selector-filter", Input).has_focus,
+            )
 
         def _focus_order(self) -> tuple[str, ...]:
-            focus_order = ["selector-filter", "selector-list", "btn-cancel"]
-            if not self.query_one("#btn-run", Button).disabled:
-                focus_order.append("btn-run")
-            return tuple(focus_order)
+            return self._focus_controller.focus_order(
+                run_enabled=not self.query_one("#btn-run", Button).disabled,
+            )
 
         def _emit_focus(self, *, reason: str) -> None:
-            current = self._focused_widget_id()
-            previous = self._last_focus_widget_id
-            if current == previous:
-                return
-            self._last_focus_widget_id = current
-            _emit_selector_debug(
-                emit,
-                enabled=deep_debug,
-                event="ui.selector.focus",
-                selector_id=selector_id,
+            self._focus_controller.emit_focus(
                 reason=reason,
-                from_widget_id=previous,
-                to_widget_id=current,
+                current_widget_id=self._focused_widget_id(),
             )
 
         async def _render_rows(self) -> None:

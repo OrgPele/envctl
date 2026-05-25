@@ -8,6 +8,7 @@ from envctl_engine.ui.textual.screens.selector.support import _emit_selector_deb
 TimerHandle = object
 TimerFactory = Callable[[float, Callable[[], None]], TimerHandle]
 SyncStatus = Callable[[], None]
+EmitEvent = Callable[..., None]
 
 
 class SelectorStatusPresenter:
@@ -142,6 +143,54 @@ class SelectorStatusController:
             self._sync_status()
         except Exception:
             pass
+
+
+class SelectorFocusController:
+    def __init__(
+        self,
+        *,
+        emit: EmitEvent | None,
+        deep_debug: bool,
+        selector_id: str,
+        initial_widget_id: str = "unknown",
+    ) -> None:
+        self._emit = emit
+        self._deep_debug = deep_debug
+        self._selector_id = selector_id
+        self._last_widget_id = initial_widget_id
+
+    @staticmethod
+    def widget_id(*, focused: object, list_has_focus: bool, filter_has_focus: bool) -> str:
+        focused_id = str(getattr(focused, "id", "") or "").strip()
+        if focused_id:
+            return focused_id
+        if list_has_focus:
+            return "selector-list"
+        if filter_has_focus:
+            return "selector-filter"
+        return "unknown"
+
+    @staticmethod
+    def focus_order(*, run_enabled: bool) -> tuple[str, ...]:
+        focus_order = ["selector-filter", "selector-list", "btn-cancel"]
+        if run_enabled:
+            focus_order.append("btn-run")
+        return tuple(focus_order)
+
+    def emit_focus(self, *, reason: str, current_widget_id: str) -> None:
+        previous = self._last_widget_id
+        if current_widget_id == previous:
+            return
+        self._last_widget_id = current_widget_id
+        _emit_selector_debug(
+            self._emit,
+            enabled=self._deep_debug,
+            event="ui.selector.focus",
+            selector_id=self._selector_id,
+            reason=reason,
+            from_widget_id=previous,
+            to_widget_id=current_widget_id,
+        )
 
 
 class SelectorKeyTelemetry:

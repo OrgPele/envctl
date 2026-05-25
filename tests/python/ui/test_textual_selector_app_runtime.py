@@ -4,6 +4,7 @@ import time
 import unittest
 
 from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
+    SelectorFocusController,
     SelectorKeyTelemetry,
     SelectorStatusController,
     SelectorStatusPresenter,
@@ -112,6 +113,51 @@ class SelectorStatusControllerTests(unittest.TestCase):
             ),
             "0 selected • 1 visible • 2 total • focus: -",
         )
+
+
+class SelectorFocusControllerTests(unittest.TestCase):
+    def test_widget_id_prefers_focused_id_then_known_focus_targets(self) -> None:
+        controller = SelectorFocusController(emit=None, deep_debug=False, selector_id="restart")
+
+        focused = type("Focused", (), {"id": "btn-run"})()
+
+        self.assertEqual(controller.widget_id(focused=focused, list_has_focus=False, filter_has_focus=False), "btn-run")
+        self.assertEqual(controller.widget_id(focused=None, list_has_focus=True, filter_has_focus=False), "selector-list")
+        self.assertEqual(
+            controller.widget_id(focused=None, list_has_focus=False, filter_has_focus=True),
+            "selector-filter",
+        )
+        self.assertEqual(controller.widget_id(focused=None, list_has_focus=False, filter_has_focus=False), "unknown")
+
+    def test_focus_order_includes_run_button_only_when_enabled(self) -> None:
+        controller = SelectorFocusController(emit=None, deep_debug=False, selector_id="restart")
+
+        self.assertEqual(
+            controller.focus_order(run_enabled=False),
+            ("selector-filter", "selector-list", "btn-cancel"),
+        )
+        self.assertEqual(
+            controller.focus_order(run_enabled=True),
+            ("selector-filter", "selector-list", "btn-cancel", "btn-run"),
+        )
+
+    def test_focus_events_emit_only_on_change(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        controller = SelectorFocusController(
+            emit=lambda event, **payload: events.append((event, payload)),
+            deep_debug=True,
+            selector_id="restart",
+        )
+
+        controller.emit_focus(reason="mount", current_widget_id="selector-list")
+        controller.emit_focus(reason="mount_repeat", current_widget_id="selector-list")
+        controller.emit_focus(reason="tab", current_widget_id="btn-run")
+
+        self.assertEqual([event for event, _payload in events], ["ui.selector.focus", "ui.selector.focus"])
+        self.assertEqual(events[0][1]["from_widget_id"], "unknown")
+        self.assertEqual(events[0][1]["to_widget_id"], "selector-list")
+        self.assertEqual(events[1][1]["from_widget_id"], "selector-list")
+        self.assertEqual(events[1][1]["to_widget_id"], "btn-run")
 
 
 class SelectorKeyTelemetryTests(unittest.TestCase):

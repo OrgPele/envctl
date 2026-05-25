@@ -1296,6 +1296,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def fallback_selector_values", selection_text)
         self.assertIn("class SelectorStatusPresenter", runtime_text)
         self.assertIn("class SelectorStatusController", runtime_text)
+        self.assertIn("class SelectorFocusController", runtime_text)
         self.assertIn("class SelectorKeyTelemetry", runtime_text)
         self.assertIn("def record_raw_key", runtime_text)
         self.assertIn("def emit_snapshot", runtime_text)
@@ -1309,7 +1310,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("SelectorStatusController", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_key_policy import", app_text)
         self.assertLessEqual(len(support_text.splitlines()), 720)
-        self.assertLessEqual(len(app_text.splitlines()), 825)
+        self.assertLessEqual(len(app_text.splitlines()), 815)
 
     def test_removed_dead_leaf_modules_are_absent(self) -> None:
         stale_modules = [
