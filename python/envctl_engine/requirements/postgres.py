@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from envctl_engine.shared.protocols import ProcessRuntime
@@ -16,6 +16,7 @@ from .adapter_base import (
     run_container_lifecycle,
     sleep_between_probes,
 )
+from .adapter_lifecycle_models import project_container_lifecycle_result
 from .common import (
     ContainerStartResult,
     RetryResult,
@@ -75,17 +76,19 @@ def start_postgres_container(
         minimum=1,
     )
 
-    bind_cleanup = None
+    bind_cleanup: Callable[[int], tuple[bool, str | None]] | None = None
     if bind_safe_cleanup_enabled(env, service_name="postgres"):
 
-        def bind_cleanup(bound_port: int) -> None:
-            cleanup_envctl_owned_port_containers(
+        def _bind_cleanup(bound_port: int) -> tuple[bool, str | None]:
+            return cleanup_envctl_owned_port_containers(
                 process_runner=process_runner,
                 project_root=project_root,
                 env=env,
                 port=bound_port,
                 allowed_prefixes=("envctl-postgres-",),
             )
+
+        bind_cleanup = _bind_cleanup
 
     lifecycle = ContainerLifecycleTemplate(
         service_name="postgres",
@@ -136,13 +139,7 @@ def start_postgres_container(
         bind_cleanup=bind_cleanup,
     )
     lifecycle_run = run_container_lifecycle(lifecycle)
-    result = lifecycle_run.result
-    result.stage_events = [event.to_payload() for event in lifecycle_run.events]
-    result.stage_durations_ms = dict(lifecycle_run.stage_durations_ms)
-    result.listener_wait_ms = float(lifecycle_run.listener_wait_ms)
-    result.container_reused = bool(lifecycle_run.container_reused)
-    result.container_recreated = bool(lifecycle_run.container_recreated)
-    return result
+    return project_container_lifecycle_result(lifecycle_run)
 
 
 def _create_postgres_container(

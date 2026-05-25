@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass, field
 
 from .adapter_lifecycle_models import AdapterLifecycleEvent, ContainerLifecycleRun, ContainerLifecycleTemplate
+from ..shared.protocols import CommandResult
 from ..shared.reason_codes import (
     PortFailureReason,
     RequirementFailureReason,
@@ -27,6 +28,74 @@ from .common import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class ContainerLifecycleDockerClient:
+    template: ContainerLifecycleTemplate
+
+    def exists(self) -> tuple[bool, str | None]:
+        template = self.template
+        return container_exists(
+            template.process_runner,
+            container_name=template.container_name,
+            cwd=template.project_root,
+            env=template.env,
+        )
+
+    def host_port(self) -> tuple[int | None, str | None]:
+        template = self.template
+        return container_host_port(
+            template.process_runner,
+            container_name=template.container_name,
+            container_port=template.container_port,
+            cwd=template.project_root,
+            env=template.env,
+        )
+
+    def status(self) -> tuple[str | None, str | None]:
+        template = self.template
+        return container_status(
+            template.process_runner,
+            container_name=template.container_name,
+            cwd=template.project_root,
+            env=template.env,
+        )
+
+    def state_error(self) -> tuple[str | None, str | None]:
+        template = self.template
+        return container_state_error(
+            template.process_runner,
+            container_name=template.container_name,
+            cwd=template.project_root,
+            env=template.env,
+        )
+
+    def stop_and_remove(self) -> str | None:
+        template = self.template
+        return stop_and_remove_container(
+            template.process_runner,
+            container_name=template.container_name,
+            cwd=template.project_root,
+            env=template.env,
+        )
+
+    def start(self) -> tuple[CommandResult | None, str | None]:
+        return self._run_locked(["start", self.template.container_name], timeout=120.0)
+
+    def restart(self) -> tuple[CommandResult | None, str | None]:
+        return self._run_locked(["restart", self.template.container_name], timeout=120.0)
+
+    def _run_locked(self, args: list[str], *, timeout: float) -> tuple[CommandResult | None, str | None]:
+        template = self.template
+        with docker_port_publish_lock(template.env):
+            return run_docker(
+                template.process_runner,
+                args,
+                cwd=template.project_root,
+                env=template.env,
+                timeout=timeout,
+            )
+
+
 @dataclass(slots=True)
 class _ContainerLifecycleState:
     events: list[AdapterLifecycleEvent] = field(default_factory=list)
@@ -47,6 +116,7 @@ class _ContainerLifecycleState:
 class ContainerLifecycleExecutor:
     def __init__(self, template: ContainerLifecycleTemplate) -> None:
         self.template = template
+        self._docker = ContainerLifecycleDockerClient(template)
         self._state = self._new_state()
 
     def _new_state(self) -> _ContainerLifecycleState:
@@ -136,22 +206,11 @@ class ContainerLifecycleExecutor:
         template = self.template
         state = self._state
         for _ in range(3):
-            recovered_exists, recovered_error = container_exists(
-                template.process_runner,
-                container_name=template.container_name,
-                cwd=template.project_root,
-                env=template.env,
-            )
+            recovered_exists, recovered_error = self._docker.exists()
             if recovered_error:
                 return False
             if recovered_exists:
-                mapped_port, port_error = container_host_port(
-                    template.process_runner,
-                    container_name=template.container_name,
-                    container_port=template.container_port,
-                    cwd=template.project_root,
-                    env=template.env,
-                )
+                mapped_port, port_error = self._docker.host_port()
                 if port_error and not is_missing_port_mapping_error(port_error):
                     return False
                 if mapped_port is not None and mapped_port != template.port:
@@ -217,12 +276,7 @@ class ContainerLifecycleExecutor:
         template = self.template
         discover_started = time.monotonic()
         self._emit("discover")
-        exists, exists_error = container_exists(
-            template.process_runner,
-            container_name=template.container_name,
-            cwd=template.project_root,
-            env=template.env,
-        )
+        exists, exists_error = self._docker.exists()
         if exists_error:
             self._add_stage_duration("discover", discover_started)
             return False, self._failure(
@@ -232,13 +286,7 @@ class ContainerLifecycleExecutor:
             )
 
         if exists:
-            mapped_port, port_error = container_host_port(
-                template.process_runner,
-                container_name=template.container_name,
-                container_port=template.container_port,
-                cwd=template.project_root,
-                env=template.env,
-            )
+            mapped_port, port_error = self._docker.host_port()
             if port_error:
                 if not is_missing_port_mapping_error(port_error):
                     self._add_stage_duration("discover", discover_started)
@@ -251,12 +299,7 @@ class ContainerLifecycleExecutor:
             if mapped_port is None:
                 self._emit("discover.recreate", reason=reason_code_to_string(PortFailureReason.PORT_IN_USE))
                 self._state.container_recreated = True
-                cleanup_error = stop_and_remove_container(
-                    template.process_runner,
-                    container_name=template.container_name,
-                    cwd=template.project_root,
-                    env=template.env,
-                )
+                cleanup_error = self._docker.stop_and_remove()
                 if cleanup_error:
                     self._add_stage_duration("discover", discover_started)
                     return False, self._failure(
@@ -286,12 +329,7 @@ class ContainerLifecycleExecutor:
                         detail=f"requested_port={template.port} existing_port={mapped_port}",
                     )
                     self._state.container_recreated = True
-                    cleanup_error = stop_and_remove_container(
-                        template.process_runner,
-                        container_name=template.container_name,
-                        cwd=template.project_root,
-                        env=template.env,
-                    )
+                    cleanup_error = self._docker.stop_and_remove()
                     if cleanup_error:
                         self._add_stage_duration("discover", discover_started)
                         return False, self._failure(
@@ -301,12 +339,7 @@ class ContainerLifecycleExecutor:
                         )
                     exists = False
                     self._reset_to_requested_port()
-            status, status_error = container_status(
-                template.process_runner,
-                container_name=template.container_name,
-                cwd=template.project_root,
-                env=template.env,
-            )
+            status, status_error = self._docker.status()
             if status_error:
                 self._add_stage_duration("discover", discover_started)
                 return False, self._failure(
@@ -315,12 +348,7 @@ class ContainerLifecycleExecutor:
                     stage="discover.status.failed",
                 )
             if status == "created":
-                state_error_text, state_error_read_error = container_state_error(
-                    template.process_runner,
-                    container_name=template.container_name,
-                    cwd=template.project_root,
-                    env=template.env,
-                )
+                state_error_text, state_error_read_error = self._docker.state_error()
                 if state_error_read_error:
                     self._add_stage_duration("discover", discover_started)
                     return False, self._failure(
@@ -334,12 +362,7 @@ class ContainerLifecycleExecutor:
                         reason=reason_code_to_string(PortFailureReason.PORT_IN_USE),
                         detail=state_error_text,
                     )
-                    cleanup_error = stop_and_remove_container(
-                        template.process_runner,
-                        container_name=template.container_name,
-                        cwd=template.project_root,
-                        env=template.env,
-                    )
+                    cleanup_error = self._docker.stop_and_remove()
                     if cleanup_error:
                         self._add_stage_duration("discover", discover_started)
                         return False, self._failure(
@@ -357,12 +380,7 @@ class ContainerLifecycleExecutor:
         start_or_create_started = time.monotonic()
         if exists:
             self._state.container_reused = True
-            status, status_error = container_status(
-                template.process_runner,
-                container_name=template.container_name,
-                cwd=template.project_root,
-                env=template.env,
-            )
+            status, status_error = self._docker.status()
             if status_error:
                 self._add_stage_duration("start", start_or_create_started)
                 return self._failure(
@@ -371,76 +389,9 @@ class ContainerLifecycleExecutor:
                     stage="start.inspect.failed",
                 )
             if status != "running":
-                with docker_port_publish_lock(template.env):
-                    start_result, start_error = run_docker(
-                        template.process_runner,
-                        ["start", template.container_name],
-                        cwd=template.project_root,
-                        env=template.env,
-                        timeout=120.0,
-                    )
-                if start_result is None:
-                    state_error_text, _ = container_state_error(
-                        template.process_runner,
-                        container_name=template.container_name,
-                        cwd=template.project_root,
-                        env=template.env,
-                    )
-                    self._add_stage_duration("start", start_or_create_started)
-                    error_text = start_error or f"failed starting {template.service_name} container"
-                    if is_bind_conflict(state_error_text) or is_bind_conflict(error_text):
-                        cleanup_error = stop_and_remove_container(
-                            template.process_runner,
-                            container_name=template.container_name,
-                            cwd=template.project_root,
-                            env=template.env,
-                        )
-                        if cleanup_error:
-                            error_text = f"{error_text}; cleanup failed: {cleanup_error}"
-                        return self._failure(
-                            format_bind_conflict_guidance(
-                                template.service_name, template.port, state_error_text or error_text
-                            ),
-                            reason_code=reason_code_to_string(PortFailureReason.PORT_IN_USE),
-                            failure_class=reason_code_to_string(RequirementLifecycleReason.BIND_CONFLICT_RETRYABLE),
-                            stage="start.bind_conflict.unresolved",
-                        )
-                    return self._failure(
-                        error_text,
-                        reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
-                        stage="start.failed",
-                    )
-                if getattr(start_result, "returncode", 1) != 0:
-                    error_text = run_result_error(start_result, f"failed starting {template.service_name} container")
-                    state_error_text, _ = container_state_error(
-                        template.process_runner,
-                        container_name=template.container_name,
-                        cwd=template.project_root,
-                        env=template.env,
-                    )
-                    self._add_stage_duration("start", start_or_create_started)
-                    if is_bind_conflict(state_error_text) or is_bind_conflict(error_text):
-                        cleanup_error = stop_and_remove_container(
-                            template.process_runner,
-                            container_name=template.container_name,
-                            cwd=template.project_root,
-                            env=template.env,
-                        )
-                        if cleanup_error:
-                            error_text = f"{error_text}; cleanup failed: {cleanup_error}"
-                        return self._failure(
-                            format_bind_conflict_guidance(
-                                template.service_name, template.port, state_error_text or error_text
-                            ),
-                            reason_code=reason_code_to_string(PortFailureReason.PORT_IN_USE),
-                            failure_class=reason_code_to_string(RequirementLifecycleReason.BIND_CONFLICT_RETRYABLE),
-                            stage="start.bind_conflict.unresolved",
-                        )
-                    return self._failure(
-                        error_text,
-                        reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
-                        stage="start.failed",
-                    )
+                failure = self._start_existing_container(started_at=start_or_create_started)
+                if failure is not None:
+                    return failure
             self._add_stage_duration("start", start_or_create_started)
             return None
 
@@ -499,6 +450,38 @@ class ContainerLifecycleExecutor:
             self._add_stage_duration("create", start_or_create_started)
         return None
 
+    def _start_existing_container(self, *, started_at: float) -> ContainerLifecycleRun | None:
+        template = self.template
+        start_result, start_error = self._docker.start()
+        fallback = f"failed starting {template.service_name} container"
+        if start_result is None:
+            error_text = start_error or fallback
+            return self._start_existing_failure(error_text, started_at=started_at)
+        if getattr(start_result, "returncode", 1) != 0:
+            error_text = run_result_error(start_result, fallback)
+            return self._start_existing_failure(error_text, started_at=started_at)
+        return None
+
+    def _start_existing_failure(self, error_text: str, *, started_at: float) -> ContainerLifecycleRun:
+        template = self.template
+        state_error_text, _ = self._docker.state_error()
+        self._add_stage_duration("start", started_at)
+        if is_bind_conflict(state_error_text) or is_bind_conflict(error_text):
+            cleanup_error = self._docker.stop_and_remove()
+            if cleanup_error:
+                error_text = f"{error_text}; cleanup failed: {cleanup_error}"
+            return self._failure(
+                format_bind_conflict_guidance(template.service_name, template.port, state_error_text or error_text),
+                reason_code=reason_code_to_string(PortFailureReason.PORT_IN_USE),
+                failure_class=reason_code_to_string(RequirementLifecycleReason.BIND_CONFLICT_RETRYABLE),
+                stage="start.bind_conflict.unresolved",
+            )
+        return self._failure(
+            error_text,
+            reason_code=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
+            stage="start.failed",
+        )
+
     def _restart_after_probe_failure(
         self, *, probe_error_text: str | None
     ) -> tuple[str | None, ContainerLifecycleRun | None]:
@@ -511,14 +494,7 @@ class ContainerLifecycleExecutor:
             reason=reason_code_to_string(RequirementLifecycleReason.TRANSIENT_PROBE_TIMEOUT_RETRYABLE),
         )
         restart_started = time.monotonic()
-        with docker_port_publish_lock(template.env):
-            restart_result, restart_error = run_docker(
-                template.process_runner,
-                ["restart", template.container_name],
-                cwd=template.project_root,
-                env=template.env,
-                timeout=120.0,
-            )
+        restart_result, restart_error = self._docker.restart()
         if restart_result is None:
             self._add_stage_duration("restart", restart_started)
             detail = (restart_error or "").strip()
@@ -583,12 +559,7 @@ class ContainerLifecycleExecutor:
         )
         self._state.container_recreated = True
         recreate_started = time.monotonic()
-        cleanup_error = stop_and_remove_container(
-            template.process_runner,
-            container_name=template.container_name,
-            cwd=template.project_root,
-            env=template.env,
-        )
+        cleanup_error = self._docker.stop_and_remove()
         if cleanup_error:
             self._add_stage_duration("recreate", recreate_started)
             return probe_error_text, self._failure(

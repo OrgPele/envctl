@@ -4,6 +4,7 @@ from .adapter_lifecycle_models import (  # noqa: F401 - compatibility re-export 
     AdapterLifecycleEvent,
     ContainerLifecycleRun,
     ContainerLifecycleTemplate,
+    project_container_lifecycle_result,
 )
 from .adapter_policy import (  # noqa: F401 - compatibility re-export surface
     env_bool,

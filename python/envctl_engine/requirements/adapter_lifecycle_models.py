@@ -59,5 +59,17 @@ class ContainerLifecycleRun:
     container_reused: bool
     container_recreated: bool
 
+    def to_result(self) -> ContainerStartResult:
+        self.result.stage_events = [event.to_payload() for event in self.events]
+        self.result.stage_durations_ms = dict(self.stage_durations_ms)
+        self.result.listener_wait_ms = float(self.listener_wait_ms)
+        self.result.container_reused = bool(self.container_reused)
+        self.result.container_recreated = bool(self.container_recreated)
+        return self.result
+
+
+def project_container_lifecycle_result(lifecycle_run: ContainerLifecycleRun) -> ContainerStartResult:
+    return lifecycle_run.to_result()
+
 
 __all__ = tuple(name for name in globals() if not name.startswith("_"))
