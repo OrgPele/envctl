@@ -2278,6 +2278,11 @@ class StructureLayoutTests(unittest.TestCase):
         general_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_general.py"
         rendering_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_topic_rendering.py"
         catalog_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_topic_catalog.py"
+        lifecycle_catalog = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_topic_lifecycle.py"
+        planning_catalog = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_topic_planning.py"
+        action_catalog = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_topic_actions.py"
+        inspection_catalog = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_topic_inspection.py"
+        maintenance_catalog = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_topic_maintenance.py"
         topics_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_topics.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "help_text.py"
 
@@ -2285,6 +2290,11 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(general_owner.is_file())
         self.assertTrue(rendering_owner.is_file())
         self.assertTrue(catalog_owner.is_file())
+        self.assertTrue(lifecycle_catalog.is_file())
+        self.assertTrue(planning_catalog.is_file())
+        self.assertTrue(action_catalog.is_file())
+        self.assertTrue(inspection_catalog.is_file())
+        self.assertTrue(maintenance_catalog.is_file())
         self.assertTrue(topics_owner.is_file())
         metadata_text = metadata_owner.read_text(encoding="utf-8")
         general_text = general_owner.read_text(encoding="utf-8")
@@ -2298,7 +2308,12 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class CommandHelpTopic", rendering_text)
         self.assertIn("def render_command_help", rendering_text)
         self.assertIn("COMMAND_HELP_TOPICS", catalog_text)
-        self.assertIn("CommandHelpTopic(", catalog_text)
+        self.assertIn("from envctl_engine.runtime.help_topic_lifecycle import", catalog_text)
+        self.assertIn("from envctl_engine.runtime.help_topic_planning import", catalog_text)
+        self.assertIn("from envctl_engine.runtime.help_topic_actions import", catalog_text)
+        self.assertIn("from envctl_engine.runtime.help_topic_inspection import", catalog_text)
+        self.assertIn("from envctl_engine.runtime.help_topic_maintenance import", catalog_text)
+        self.assertLessEqual(len(catalog_text.splitlines()), 90)
         self.assertIn("def help_text_for_route", topics_text)
         self.assertIn("from envctl_engine.runtime.help_topic_catalog import", topics_text)
         self.assertIn("from envctl_engine.runtime.help_topic_rendering import", topics_text)
