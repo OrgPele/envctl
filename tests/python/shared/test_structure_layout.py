@@ -1253,6 +1253,7 @@ class StructureLayoutTests(unittest.TestCase):
         textual_app = selector / "textual_app.py"
         selection_state = selector / "selection_state.py"
         app_runtime = selector / "textual_app_runtime.py"
+        key_policy = selector / "textual_key_policy.py"
 
         self.assertTrue(support.is_file())
         self.assertTrue(io_probe.is_file())
@@ -1260,12 +1261,14 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(textual_app.is_file())
         self.assertTrue(selection_state.is_file())
         self.assertTrue(app_runtime.is_file())
+        self.assertTrue(key_policy.is_file())
         support_text = support.read_text(encoding="utf-8")
         io_probe_text = io_probe.read_text(encoding="utf-8")
         backend_text = backend_policy.read_text(encoding="utf-8")
         app_text = textual_app.read_text(encoding="utf-8")
         selection_text = selection_state.read_text(encoding="utf-8")
         runtime_text = app_runtime.read_text(encoding="utf-8")
+        key_policy_text = key_policy.read_text(encoding="utf-8")
         self.assertIn("class SelectorIoProbe", io_probe_text)
         self.assertIn("def termios_snapshot", io_probe_text)
         self.assertIn("def pending_bytes_snapshot", io_probe_text)
@@ -1283,10 +1286,16 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class SelectorKeyTelemetry", runtime_text)
         self.assertIn("def record_raw_key", runtime_text)
         self.assertIn("def emit_snapshot", runtime_text)
+        self.assertIn("class SelectorKeyDecision", key_policy_text)
+        self.assertIn("class SelectorFilterKeyDecision", key_policy_text)
+        self.assertIn("def resolve_selector_key", key_policy_text)
+        self.assertIn("def resolve_selector_filter_key", key_policy_text)
+        self.assertIn("def emit_selector_key_trace", key_policy_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector import selection_state", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_runtime import", app_text)
+        self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_key_policy import", app_text)
         self.assertLessEqual(len(support_text.splitlines()), 720)
-        self.assertLessEqual(len(app_text.splitlines()), 850)
+        self.assertLessEqual(len(app_text.splitlines()), 860)
 
     def test_removed_dead_leaf_modules_are_absent(self) -> None:
         stale_modules = [

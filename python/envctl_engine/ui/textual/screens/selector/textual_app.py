@@ -21,6 +21,13 @@ from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
     SelectorKeyTelemetry,
     SelectorStatusPresenter,
 )
+from envctl_engine.ui.textual.screens.selector.textual_key_policy import (
+    SelectorFilterKeyDecision,
+    SelectorKeyDecision,
+    emit_selector_key_trace,
+    resolve_selector_filter_key,
+    resolve_selector_key,
+)
 from envctl_engine.ui.textual.screens.selector.support import (
     _RowRef,
     _emit,
@@ -643,9 +650,9 @@ def create_selector_app(
 
         async def on_key(self, event: Key) -> None:
             if self._key_telemetry.record_raw_key(event.key) and key_trace_verbose:
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
+                emit_selector_key_trace(
+                    emit=emit,
+                    deep_debug=deep_debug,
                     event="ui.selector.key.raw",
                     selector_id=selector_id,
                     key=event.key,
@@ -656,14 +663,14 @@ def create_selector_app(
                 )
             focused_id = self._focused_widget_id()
             filter_focused = focused_id == "selector-filter"
-            if event.key == "tab":
+            decision = resolve_selector_key(event.key, filter_focused=filter_focused)
+            if decision is SelectorKeyDecision.CYCLE_FOCUS:
                 event.stop()
                 event.prevent_default()
                 self.action_cycle_focus()
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.key",
+                emit_selector_key_trace(
+                    emit=emit,
+                    deep_debug=deep_debug,
                     selector_id=selector_id,
                     key=event.key,
                     focused_widget_id=focused_id,
@@ -676,15 +683,14 @@ def create_selector_app(
                 widget=self.query_one("#selector-filter", Input), event=event
             ):
                 return
-            if event.key == "enter":
+            if decision is SelectorKeyDecision.SUBMIT:
                 event.stop()
                 event.prevent_default()
                 self._suppress_list_selected_once = True
                 await self.action_submit(cause="enter_key")
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.key",
+                emit_selector_key_trace(
+                    emit=emit,
+                    deep_debug=deep_debug,
                     selector_id=selector_id,
                     key=event.key,
                     focused_widget_id=focused_id,
@@ -693,16 +699,15 @@ def create_selector_app(
                     handled=True,
                 )
                 return
-            if event.key == "slash" and not filter_focused:
+            if decision is SelectorKeyDecision.FOCUS_FILTER:
                 event.stop()
                 event.prevent_default()
                 filter_input = self.query_one("#selector-filter", Input)
                 filter_input.value = ""
                 self.action_focus_filter(reason="slash_focus_filter")
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.key",
+                emit_selector_key_trace(
+                    emit=emit,
+                    deep_debug=deep_debug,
                     selector_id=selector_id,
                     key=event.key,
                     focused_widget_id=focused_id,
@@ -714,14 +719,15 @@ def create_selector_app(
         async def _maybe_handle_filter_focus_key(self, event: Key) -> bool:
             if self._focused_widget_id() != "selector-filter":
                 return False
-            if event.key not in {"up", "down", "j", "k", "w", "s", "space"}:
+            decision = resolve_selector_filter_key(event.key)
+            if decision is SelectorFilterKeyDecision.NOOP:
                 return False
             event.stop()
             event.prevent_default()
             self.action_focus_list(reason="filter_key_recover")
-            if event.key in {"up", "k", "w"}:
+            if decision is SelectorFilterKeyDecision.NAV_UP:
                 await self.action_nav_up()
-            elif event.key in {"down", "j", "s"}:
+            elif decision is SelectorFilterKeyDecision.NAV_DOWN:
                 await self.action_nav_down()
             else:
                 await self.action_toggle()
@@ -741,9 +747,9 @@ def create_selector_app(
                 key = str(event.key)
                 self._key_telemetry.record_event_key(key)
                 if key_trace_verbose:
-                    _emit_selector_debug(
-                        emit,
-                        enabled=deep_debug,
+                    emit_selector_key_trace(
+                        emit=emit,
+                        deep_debug=deep_debug,
                         event="ui.selector.key.event",
                         selector_id=selector_id,
                         key=key,
