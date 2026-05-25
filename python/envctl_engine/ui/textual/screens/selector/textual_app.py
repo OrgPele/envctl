@@ -23,10 +23,10 @@ from envctl_engine.ui.textual.screens.selector.textual_app_initial_navigation im
 from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
     SelectorEventController,
     SelectorFocusController,
-    SelectorKeyTelemetry,
     SelectorStatusController,
 )
 from envctl_engine.ui.textual.screens.selector.textual_app_key_trace import emit_app_key_trace
+from envctl_engine.ui.textual.screens.selector.textual_key_telemetry import SelectorKeyTelemetry
 from envctl_engine.ui.textual.screens.selector.textual_key_policy import (
     SelectorFilterKeyDecision,
     SelectorKeyDecision,
