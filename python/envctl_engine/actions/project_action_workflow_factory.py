@@ -8,7 +8,13 @@ from typing import Any
 
 import envctl_engine.actions.action_ship_support as ship_support
 from envctl_engine.actions.action_git_state_support import DirtyWorktreeReport
-from envctl_engine.actions.project_action_workflows import ProjectActionWorkflowRunner
+from envctl_engine.actions.project_action_workflows import (
+    ProjectActionCommitWorkflowDependencies,
+    ProjectActionGitWorkflowDependencies,
+    ProjectActionPullRequestWorkflowDependencies,
+    ProjectActionReviewWorkflowDependencies,
+    ProjectActionWorkflowRunner,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,32 +50,40 @@ class ProjectActionWorkflowFactory:
 
     def build(self) -> ProjectActionWorkflowRunner:
         return ProjectActionWorkflowRunner(
-            resolve_git_root_fn=self.resolve_git_root_fn,
-            which_fn=self.which_fn,
-            git_output_fn=self.git_output_fn,
-            run_git_fn=self.run_git_fn,
-            print_error_fn=self.print_error_fn,
-            partition_envctl_protected_paths_fn=self.partition_envctl_protected_paths_fn,
-            ordered_unique_paths_fn=self.ordered_unique_paths_fn,
-            resolve_base_branch_fn=self.resolve_base_branch_fn,
-            existing_pr_url_fn=self.existing_pr_url_fn,
-            probe_dirty_worktree_fn=self.probe_dirty_worktree,
-            run_commit_action_fn=self.run_commit_action_fn,
-            pr_title_fn=self.pr_title_fn,
-            pr_body_fn=self.pr_body_fn,
-            write_pr_body_file_fn=self.write_pr_body_file_fn,
-            print_process_output_fn=self.print_process_output_fn,
-            run_process_fn=self.run_process_fn,
-            run_pr_action_fn=self.run_pr_action_fn,
-            github_pr_checks_fn=self.github_pr_checks_fn,
-            resolve_analyze_mode_fn=self.resolve_analyze_mode_fn,
-            resolve_original_plan_fn=self.resolve_original_plan_fn,
-            resolve_review_base_fn=self.resolve_review_base_fn,
-            analysis_iterations_fn=self.analysis_iterations,
-            run_analyze_helper_fn=self.run_analyze_helper,
-            tree_diffs_output_path_fn=self.tree_diffs_output_path_fn,
-            original_plan_markdown_lines_fn=self.original_plan_markdown_lines,
-            sanitize_label_fn=self.sanitize_label_fn,
+            git=ProjectActionGitWorkflowDependencies(
+                resolve_git_root_fn=self.resolve_git_root_fn,
+                which_fn=self.which_fn,
+                git_output_fn=self.git_output_fn,
+                run_git_fn=self.run_git_fn,
+                print_error_fn=self.print_error_fn,
+                print_process_output_fn=self.print_process_output_fn,
+                run_process_fn=self.run_process_fn,
+            ),
+            commit=ProjectActionCommitWorkflowDependencies(
+                partition_envctl_protected_paths_fn=self.partition_envctl_protected_paths_fn,
+                ordered_unique_paths_fn=self.ordered_unique_paths_fn,
+            ),
+            pull_request=ProjectActionPullRequestWorkflowDependencies(
+                resolve_base_branch_fn=self.resolve_base_branch_fn,
+                existing_pr_url_fn=self.existing_pr_url_fn,
+                probe_dirty_worktree_fn=self.probe_dirty_worktree,
+                run_commit_action_fn=self.run_commit_action_fn,
+                pr_title_fn=self.pr_title_fn,
+                pr_body_fn=self.pr_body_fn,
+                write_pr_body_file_fn=self.write_pr_body_file_fn,
+                run_pr_action_fn=self.run_pr_action_fn,
+                github_pr_checks_fn=self.github_pr_checks_fn,
+            ),
+            review=ProjectActionReviewWorkflowDependencies(
+                resolve_analyze_mode_fn=self.resolve_analyze_mode_fn,
+                resolve_original_plan_fn=self.resolve_original_plan_fn,
+                resolve_review_base_fn=self.resolve_review_base_fn,
+                analysis_iterations_fn=self.analysis_iterations,
+                run_analyze_helper_fn=self.run_analyze_helper,
+                tree_diffs_output_path_fn=self.tree_diffs_output_path_fn,
+                original_plan_markdown_lines_fn=self.original_plan_markdown_lines,
+                sanitize_label_fn=self.sanitize_label_fn,
+            ),
         )
 
     def probe_dirty_worktree(self, project_root: Path, repo_root: Path, project_name: str) -> DirtyWorktreeReport:
