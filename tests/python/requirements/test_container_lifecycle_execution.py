@@ -14,6 +14,7 @@ from envctl_engine.requirements.common import ContainerStartResult
 from envctl_engine.requirements.container_lifecycle_execution import ContainerLifecycleDockerClient
 from envctl_engine.requirements.container_lifecycle_execution import ContainerLifecycleExecutor
 from envctl_engine.requirements.container_lifecycle_execution import ContainerLifecycleRecorder
+from envctl_engine.requirements.container_lifecycle_probe_phase import ContainerLifecycleProbePhase
 
 
 class ContainerLifecycleExecutionTests(unittest.TestCase):
@@ -153,6 +154,22 @@ class ContainerLifecycleExecutionTests(unittest.TestCase):
         self.assertIn("from envctl_engine.requirements.container_lifecycle_state import", source)
         self.assertLessEqual(source.count("AdapterLifecycleEvent("), 0)
         self.assertLessEqual(source.count("ContainerStartResult("), 0)
+
+    def test_probe_recovery_phase_is_owned_by_probe_owner(self) -> None:
+        self.assertTrue(hasattr(ContainerLifecycleProbePhase, "attempt_local_settle"))
+        self.assertTrue(hasattr(ContainerLifecycleProbePhase, "restart_after_probe_failure"))
+        self.assertTrue(hasattr(ContainerLifecycleProbePhase, "recreate_after_restart_failure"))
+        self.assertTrue(hasattr(ContainerLifecycleProbePhase, "run"))
+
+        source = Path("python/envctl_engine/requirements/container_lifecycle_execution.py").read_text(encoding="utf-8")
+        probe_source = Path("python/envctl_engine/requirements/container_lifecycle_probe_phase.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("class ContainerLifecycleProbePhase", probe_source)
+        self.assertIn("ContainerLifecycleProbePhase(", source)
+        self.assertLessEqual(len(inspect.getsourcelines(ContainerLifecycleExecutor._run_readiness_probe_phase)[0]), 5)
+        self.assertLessEqual(source.count("probe.retry.restart"), 1)
+        self.assertGreaterEqual(probe_source.count("probe.retry.restart"), 1)
 
     def test_run_stays_as_phase_orchestrator(self) -> None:
         run_lines, _ = inspect.getsourcelines(ContainerLifecycleExecutor.run)

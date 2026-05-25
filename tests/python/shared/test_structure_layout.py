@@ -118,6 +118,7 @@ class StructureLayoutTests(unittest.TestCase):
         model_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "adapter_lifecycle_models.py"
         docker_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "container_lifecycle_docker.py"
         state_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "container_lifecycle_state.py"
+        probe_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "container_lifecycle_probe_phase.py"
         lifecycle_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "container_lifecycle_execution.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "adapter_base.py"
 
@@ -126,12 +127,14 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(model_owner.is_file())
         self.assertTrue(docker_owner.is_file())
         self.assertTrue(state_owner.is_file())
+        self.assertTrue(probe_owner.is_file())
         self.assertTrue(lifecycle_owner.is_file())
         policy_text = policy_owner.read_text(encoding="utf-8")
         cleanup_text = cleanup_owner.read_text(encoding="utf-8")
         model_text = model_owner.read_text(encoding="utf-8")
         docker_text = docker_owner.read_text(encoding="utf-8")
         state_text = state_owner.read_text(encoding="utf-8")
+        probe_text = probe_owner.read_text(encoding="utf-8")
         lifecycle_text = lifecycle_owner.read_text(encoding="utf-8")
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("def env_bool", policy_text)
@@ -143,9 +146,12 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class ContainerLifecycleDockerClient", docker_text)
         self.assertIn("class ContainerLifecycleState", state_text)
         self.assertIn("class ContainerLifecycleRecorder", state_text)
+        self.assertIn("class ContainerLifecycleProbePhase", probe_text)
         self.assertIn("from envctl_engine.requirements.container_lifecycle_docker import", lifecycle_text)
+        self.assertIn("from .container_lifecycle_probe_phase import", lifecycle_text)
         self.assertIn("from envctl_engine.requirements.container_lifecycle_state import", lifecycle_text)
         self.assertNotIn("class ContainerLifecycleDockerClient", lifecycle_text)
+        self.assertNotIn("class ContainerLifecycleProbePhase", lifecycle_text)
         self.assertNotIn("class ContainerLifecycleRecorder", lifecycle_text)
         self.assertIn("class ContainerLifecycleExecutor", lifecycle_text)
         self.assertIn("def run_container_lifecycle", lifecycle_text)
