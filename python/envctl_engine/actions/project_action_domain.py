@@ -94,52 +94,75 @@ ReviewBaseResolutionError = review_plan_support.ReviewBaseResolutionError
 OriginalPlanResolution = review_plan_support.OriginalPlanResolution
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectActionWorkflowFactory:
+    """Builds project-action workflow runners from the domain compatibility surface."""
+
+    def build(self) -> ProjectActionWorkflowRunner:
+        return ProjectActionWorkflowRunner(
+            resolve_git_root_fn=resolve_git_root,
+            which_fn=shutil.which,
+            git_output_fn=_git_output,
+            run_git_fn=_run_git,
+            print_error_fn=_print_error,
+            partition_envctl_protected_paths_fn=_partition_envctl_protected_paths,
+            ordered_unique_paths_fn=_ordered_unique_paths,
+            resolve_base_branch_fn=_resolve_pr_base_branch,
+            existing_pr_url_fn=existing_pr_url,
+            probe_dirty_worktree_fn=self.probe_dirty_worktree,
+            run_commit_action_fn=run_commit_action,
+            pr_title_fn=_pr_title,
+            pr_body_fn=_pr_body,
+            write_pr_body_file_fn=_write_pr_body_file,
+            print_process_output_fn=_print_process_output,
+            run_process_fn=subprocess.run,
+            run_pr_action_fn=run_pr_action,
+            github_pr_checks_fn=_github_pr_checks,
+            resolve_analyze_mode_fn=_resolve_analyze_mode,
+            resolve_original_plan_fn=_resolve_original_plan,
+            resolve_review_base_fn=_resolve_review_base,
+            analysis_iterations_fn=self.analysis_iterations,
+            run_analyze_helper_fn=self.run_analyze_helper,
+            tree_diffs_output_path_fn=_tree_diffs_output_path_from_workflow,
+            original_plan_markdown_lines_fn=self.original_plan_markdown_lines,
+            sanitize_label_fn=sanitize_label,
+        )
+
+    @staticmethod
+    def probe_dirty_worktree(project_root: Path, repo_root: Path, project_name: str) -> DirtyWorktreeReport:
+        return probe_dirty_worktree(project_root, repo_root, project_name=project_name)
+
+    @staticmethod
+    def analysis_iterations(context: ActionProjectContext, mode: str) -> list[str]:
+        return _analysis_iterations(context, mode=mode)
+
+    @staticmethod
+    def run_analyze_helper(
+        context: ActionProjectContext,
+        helper: Path,
+        iterations: list[str],
+        mode: str,
+        scope: str,
+        review_base: ReviewBaseResolution | None,
+        original_plan: OriginalPlanResolution,
+    ) -> int:
+        return _run_analyze_helper(
+            context=context,
+            helper=helper,
+            iterations=iterations,
+            mode=mode,
+            scope=scope,
+            review_base=review_base,
+            original_plan=original_plan,
+        )
+
+    @staticmethod
+    def original_plan_markdown_lines(original_plan: OriginalPlanResolution) -> list[str]:
+        return _original_plan_markdown_lines(original_plan, include_contents=True)
+
+
 def _workflow_runner() -> ProjectActionWorkflowRunner:
-    return ProjectActionWorkflowRunner(
-        resolve_git_root_fn=resolve_git_root,
-        which_fn=shutil.which,
-        git_output_fn=_git_output,
-        run_git_fn=_run_git,
-        print_error_fn=_print_error,
-        partition_envctl_protected_paths_fn=_partition_envctl_protected_paths,
-        ordered_unique_paths_fn=_ordered_unique_paths,
-        resolve_base_branch_fn=_resolve_pr_base_branch,
-        existing_pr_url_fn=existing_pr_url,
-        probe_dirty_worktree_fn=lambda project_root, repo_root, project_name: probe_dirty_worktree(
-            project_root,
-            repo_root,
-            project_name=project_name,
-        ),
-        run_commit_action_fn=run_commit_action,
-        pr_title_fn=_pr_title,
-        pr_body_fn=_pr_body,
-        write_pr_body_file_fn=_write_pr_body_file,
-        print_process_output_fn=_print_process_output,
-        run_process_fn=subprocess.run,
-        run_pr_action_fn=run_pr_action,
-        github_pr_checks_fn=_github_pr_checks,
-        resolve_analyze_mode_fn=_resolve_analyze_mode,
-        resolve_original_plan_fn=_resolve_original_plan,
-        resolve_review_base_fn=_resolve_review_base,
-        analysis_iterations_fn=lambda context, mode: _analysis_iterations(context, mode=mode),
-        run_analyze_helper_fn=lambda context, helper, iterations, mode, scope, review_base, original_plan: (
-            _run_analyze_helper(
-                context=context,
-                helper=helper,
-                iterations=iterations,
-                mode=mode,
-                scope=scope,
-                review_base=review_base,
-                original_plan=original_plan,
-            )
-        ),
-        tree_diffs_output_path_fn=_tree_diffs_output_path_from_workflow,
-        original_plan_markdown_lines_fn=lambda original_plan: _original_plan_markdown_lines(
-            original_plan,
-            include_contents=True,
-        ),
-        sanitize_label_fn=sanitize_label,
-    )
+    return ProjectActionWorkflowFactory().build()
 
 
 def run_commit_action(context: ActionProjectContext) -> int:
@@ -275,10 +298,9 @@ def run_review_action(context: ActionProjectContext) -> int:
 
 
 DirtyWorktreeReport = git_state_support.DirtyWorktreeReport
-
-
-def resolve_git_root(project_root: Path, repo_root: Path) -> Path:
-    return git_state_support.resolve_git_root(project_root, repo_root)
+resolve_git_root = git_state_support.resolve_git_root
+_classify_dirty_porcelain = git_state_support.classify_dirty_porcelain
+sanitize_label = git_state_support.sanitize_label
 
 
 def probe_dirty_worktree(project_root: Path, repo_root: Path, *, project_name: str = "") -> DirtyWorktreeReport:
@@ -288,10 +310,6 @@ def probe_dirty_worktree(project_root: Path, repo_root: Path, *, project_name: s
         project_name=project_name,
         git_output=_git_output,
     )
-
-
-def _classify_dirty_porcelain(status_output: str) -> tuple[bool, bool, bool]:
-    return git_state_support.classify_dirty_porcelain(status_output)
 
 
 def detect_default_branch(git_root: Path) -> str:
@@ -307,14 +325,7 @@ def existing_pr_url(git_root: Path, branch: str) -> str:
     )
 
 
-def sanitize_label(value: str) -> str:
-    return git_state_support.sanitize_label(value)
-
-
-def _resolve_original_plan(context: ActionProjectContext) -> OriginalPlanResolution:
-    return review_plan_support.resolve_original_plan(context)
-
-
+_resolve_original_plan = review_plan_support.resolve_original_plan
 _read_worktree_provenance = review_plan_support.read_worktree_provenance
 _resolve_plan_file_from_record = review_plan_support.resolve_plan_file_from_record
 _infer_original_plan_file = review_plan_support.infer_original_plan_file
@@ -347,8 +358,7 @@ def _resolve_pr_base_branch(context: ActionProjectContext, git_root: Path) -> st
     return detect_default_branch(git_root)
 
 
-def _resolve_analyze_mode(context: ActionProjectContext) -> str:
-    return review_plan_support.resolve_analyze_mode(context)
+_resolve_analyze_mode = review_plan_support.resolve_analyze_mode
 
 
 def _resolve_review_base(context: ActionProjectContext, git_root: Path) -> ReviewBaseResolution:
@@ -402,14 +412,8 @@ def _resolve_review_base_ref(git_root: Path, *, base_branch: str, preferred_ref:
 
 _branch_name_from_ref = review_plan_support.branch_name_from_ref
 _load_worktree_provenance = review_plan_support.load_worktree_provenance
-
-
-def _write_commit_message_file(message: str) -> Path:
-    return commit_support.write_commit_message_file(message)
-
-
-def _atomic_write(path: Path, text: str) -> None:
-    commit_support.atomic_write(path, text)
+_write_commit_message_file = commit_support.write_commit_message_file
+_atomic_write = commit_support.atomic_write
 
 
 def _analysis_iterations(context: ActionProjectContext, *, mode: str) -> list[str]:
@@ -443,12 +447,11 @@ def _run_analyze_helper(
     )
 
 
+_file_has_text = review_artifact_support.file_has_text
+
+
 def _tree_changelog_path(context: ActionProjectContext) -> Path | None:
     return review_artifact_support.tree_changelog_path(context, sanitize_label_fn=sanitize_label)
-
-
-def _file_has_text(path: Path) -> bool:
-    return review_artifact_support.file_has_text(path)
 
 
 def _summary_output_path(repo_root: Path, directory: str, prefix: str, label: str | None = None) -> Path:
@@ -484,8 +487,7 @@ def _tree_diffs_output_path_from_workflow(context: ActionProjectContext, directo
     return _tree_diffs_output_path(context, directory, prefix)
 
 
-def _write_markdown_lines(path: Path, lines: list[str]) -> None:
-    review_artifact_support.write_markdown_lines(path, lines)
+_write_markdown_lines = review_artifact_support.write_markdown_lines
 
 
 def _run_git(git_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -496,8 +498,7 @@ def _git_output(git_root: Path, args: list[str]) -> str:
     return git_state_support.git_output(git_root, args, run_git_fn=_run_git)
 
 
-def _print_process_output(result: subprocess.CompletedProcess[str]) -> None:
-    git_state_support.print_process_output(result)
+_print_process_output = git_state_support.print_process_output
 
 
 def _first_existing_path(*paths: Path) -> Path:

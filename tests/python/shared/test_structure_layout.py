@@ -401,6 +401,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("action_git_state_support", facade_text)
         self.assertIn("action_ship_support", facade_text)
         self.assertIn("project_action_workflows", facade_text)
+        self.assertIn("class ProjectActionWorkflowFactory", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 520)
 
     def test_action_migrate_support_is_split_by_responsibility(self) -> None:

@@ -23,7 +23,7 @@ class ProjectActionWorkflowRunner:
     run_git_fn: Callable[[Path, list[str]], subprocess.CompletedProcess[str]]
     print_error_fn: Callable[[str, subprocess.CompletedProcess[str]], None]
     partition_envctl_protected_paths_fn: Callable[..., Any]
-    ordered_unique_paths_fn: Callable[[list[str]], list[str]]
+    ordered_unique_paths_fn: Callable[..., list[str]]
     resolve_base_branch_fn: Callable[[Any, Path], str]
     existing_pr_url_fn: Callable[[Path, str], str]
     probe_dirty_worktree_fn: Callable[[Path, Path, str], DirtyWorktreeReport]
@@ -34,7 +34,7 @@ class ProjectActionWorkflowRunner:
     print_process_output_fn: Callable[[subprocess.CompletedProcess[str]], None]
     run_process_fn: Callable[..., subprocess.CompletedProcess[str]]
     run_pr_action_fn: Callable[[Any], int]
-    github_pr_checks_fn: Callable[[Path, str], dict[str, Any]]
+    github_pr_checks_fn: ship_support.GithubPrChecks
     resolve_analyze_mode_fn: Callable[[Any], str]
     resolve_original_plan_fn: Callable[[Any], Any]
     resolve_review_base_fn: Callable[[Any, Path], Any]
