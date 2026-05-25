@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
+from ....config.persistence import ManagedConfigValues, validate_managed_values
+from .config_wizard_fields import _visible_command_fields, _visible_directory_fields, _visible_port_fields
+
 FieldRows = tuple[tuple[str, str], ...]
+FirstDirectoryError = Callable[[FieldRows], str | None]
 
 
 def component_step_status(*, component_split_available: bool) -> str:
@@ -63,3 +69,43 @@ def port_step_status(*, visible_fields: FieldRows) -> str:
 
 def fallback_step_status() -> str:
     return "Use Enter for Next/Save, Space to toggle, Escape to cancel."
+
+
+def resolve_config_wizard_status(
+    step: str,
+    values: ManagedConfigValues,
+    *,
+    component_split_available: bool,
+    first_directory_error: FirstDirectoryError,
+) -> str:
+    if step in {"components", "service_startup", "additional_services", "review"}:
+        validation = validate_managed_values(
+            values,
+            require_entrypoints=step == "review",
+        )
+        if validation.valid:
+            return status_for_valid_config_step(
+                step,
+                component_split_available=component_split_available,
+            )
+        return validation.errors[0]
+    if step == "directories":
+        visible_fields = _visible_directory_fields(values)
+        return directory_step_status(
+            visible_fields=visible_fields,
+            first_error=first_directory_error(visible_fields) if visible_fields else None,
+        )
+    if step == "commands":
+        visible_fields = _visible_command_fields(values)
+        return command_step_status(
+            visible_fields=visible_fields,
+            first_error=first_directory_error(visible_fields) if visible_fields else None,
+        )
+    if step == "ports":
+        visible_fields = _visible_port_fields(values)
+        return port_step_status(visible_fields=visible_fields)
+    return fallback_step_status()
+
+
+def resolve_config_wizard_action_state(*, step_index: int, step_count: int) -> tuple[bool, str]:
+    return step_index == 0, "Save" if step_index == step_count - 1 else "Next"

@@ -1220,6 +1220,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def apply_text_field_values", value_text)
         self.assertIn("def apply_port_field_values", value_text)
         self.assertIn("def status_for_valid_config_step", status_text)
+        self.assertIn("def resolve_config_wizard_status", status_text)
+        self.assertIn("def resolve_config_wizard_action_state", status_text)
         self.assertIn("CONFIG_WIZARD_APP_CSS", layout_text)
         self.assertIn("def compose_config_wizard_layout", layout_text)
         self.assertIn("class ConfigWizardKeyDecision", navigation_text)

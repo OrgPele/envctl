@@ -45,11 +45,8 @@ from .config_wizard_list_rendering import (
 )
 from .config_wizard_navigation import move_config_wizard_list_index, resolve_config_wizard_key
 from .config_wizard_status import (
-    command_step_status,
-    directory_step_status,
-    fallback_step_status,
-    port_step_status,
-    status_for_valid_config_step,
+    resolve_config_wizard_action_state,
+    resolve_config_wizard_status,
 )
 from .config_wizard_step_flow import should_show_service_startup_step, sync_wizard_steps
 from .config_wizard_suggestions import (
@@ -421,8 +418,10 @@ def build_config_wizard_app(
         def _refresh_actions(self) -> None:
             back = self.query_one("#btn-back", Button)
             next_button = self.query_one("#btn-next", Button)
-            back.disabled = self.step_index == 0
-            next_button.label = "Save" if self.step_index == len(self._steps) - 1 else "Next"
+            back.disabled, next_button.label = resolve_config_wizard_action_state(
+                step_index=self.step_index,
+                step_count=len(self._steps),
+            )
 
         def _refresh_status(self, message: str | None = None) -> None:
             status = self.query_one("#config-status", Static)
@@ -431,53 +430,16 @@ def build_config_wizard_app(
                 status.update(message)
                 self.refresh_bindings()
                 return
-            step = self._current_step()
-            if step in {"components", "service_startup", "additional_services", "review"}:
-                validation = validate_managed_values(
+            status.update(
+                resolve_config_wizard_status(
+                    self._current_step(),
                     self.values,
-                    require_entrypoints=step == "review",
+                    component_split_available=self._component_split_available(),
+                    first_directory_error=lambda visible_fields: self._first_directory_error(
+                        visible_fields=visible_fields
+                    ),
                 )
-                if validation.valid:
-                    status.update(
-                        status_for_valid_config_step(
-                            step,
-                            component_split_available=self._component_split_available(),
-                        )
-                    )
-                else:
-                    status.update(validation.errors[0])
-                self.refresh_bindings()
-                return
-            if step == "directories":
-                visible_fields = _visible_directory_fields(self.values)
-                status.update(
-                    directory_step_status(
-                        visible_fields=visible_fields,
-                        first_error=(
-                            self._first_directory_error(visible_fields=visible_fields) if visible_fields else None
-                        ),
-                    )
-                )
-                self.refresh_bindings()
-                return
-            if step == "commands":
-                visible_fields = _visible_command_fields(self.values)
-                status.update(
-                    command_step_status(
-                        visible_fields=visible_fields,
-                        first_error=(
-                            self._first_directory_error(visible_fields=visible_fields) if visible_fields else None
-                        ),
-                    )
-                )
-                self.refresh_bindings()
-                return
-            if step == "ports":
-                visible_fields = _visible_port_fields(self.values)
-                status.update(port_step_status(visible_fields=visible_fields))
-                self.refresh_bindings()
-                return
-            status.update(fallback_step_status())
+            )
             self.refresh_bindings()
 
         def _focus_current_step(self) -> None:
