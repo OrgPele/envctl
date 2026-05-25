@@ -650,6 +650,25 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("ProcessLifecycleProbeMixin", runner_text)
         self.assertLessEqual(len(runner_text.splitlines()), 340)
 
+    def test_debug_bundle_diagnostics_has_selector_and_startup_owners(self) -> None:
+        debug = REPO_ROOT / "python" / "envctl_engine" / "debug"
+        facade = debug / "debug_bundle_diagnostics.py"
+        selector_owner = debug / "debug_bundle_selector_diagnostics.py"
+        startup_owner = debug / "debug_bundle_startup_diagnostics.py"
+
+        self.assertTrue(selector_owner.is_file())
+        self.assertTrue(startup_owner.is_file())
+        selector_text = selector_owner.read_text(encoding="utf-8")
+        startup_text = startup_owner.read_text(encoding="utf-8")
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("class SelectorDiagnostics", selector_text)
+        self.assertIn("def analyze_selector_diagnostics", selector_text)
+        self.assertIn("class StartupDiagnostics", startup_text)
+        self.assertIn("def analyze_startup_diagnostics", startup_text)
+        self.assertIn("analyze_selector_diagnostics", facade_text)
+        self.assertIn("analyze_startup_diagnostics", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 380)
+
     def test_command_loop_has_spinner_owner(self) -> None:
         ui = REPO_ROOT / "python" / "envctl_engine" / "ui"
         loop = ui / "command_loop.py"
