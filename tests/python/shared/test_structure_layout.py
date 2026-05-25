@@ -1370,6 +1370,7 @@ class StructureLayoutTests(unittest.TestCase):
         prompt_toolkit_io = selector / "prompt_toolkit_io_instrumentation.py"
         app_key_trace = selector / "textual_app_key_trace.py"
         initial_navigation = selector / "textual_app_initial_navigation.py"
+        selection_actions = selector / "textual_app_selection_actions.py"
         key_telemetry = selector / "textual_key_telemetry.py"
         textual_app = selector / "textual_app.py"
         selection_state = selector / "selection_state.py"
@@ -1384,6 +1385,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(prompt_toolkit_io.is_file())
         self.assertTrue(app_key_trace.is_file())
         self.assertTrue(initial_navigation.is_file())
+        self.assertTrue(selection_actions.is_file())
         self.assertTrue(key_telemetry.is_file())
         self.assertTrue(textual_app.is_file())
         self.assertTrue(selection_state.is_file())
@@ -1397,6 +1399,7 @@ class StructureLayoutTests(unittest.TestCase):
         prompt_toolkit_text = prompt_toolkit_io.read_text(encoding="utf-8")
         app_key_trace_text = app_key_trace.read_text(encoding="utf-8")
         initial_navigation_text = initial_navigation.read_text(encoding="utf-8")
+        selection_actions_text = selection_actions.read_text(encoding="utf-8")
         key_telemetry_text = key_telemetry.read_text(encoding="utf-8")
         app_text = textual_app.read_text(encoding="utf-8")
         selection_text = selection_state.read_text(encoding="utf-8")
@@ -1420,6 +1423,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def instrument_prompt_toolkit_posix_io", prompt_toolkit_text)
         self.assertIn("def emit_app_key_trace", app_key_trace_text)
         self.assertIn("class SelectorInitialNavigationRunner", initial_navigation_text)
+        self.assertIn("class SelectorSelectionActions", selection_actions_text)
+        self.assertIn("def handle_list_selection", selection_actions_text)
+        self.assertIn("def selector_row_model_index_from_widget", selection_actions_text)
         self.assertIn("class SelectorKeyTelemetry", key_telemetry_text)
         self.assertIn("def record_raw_key", key_telemetry_text)
         self.assertIn("def emit_snapshot", key_telemetry_text)
@@ -1443,6 +1449,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.ui.textual.screens.selector import selection_state", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_key_trace import", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_initial_navigation import", app_text)
+        self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_selection_actions import", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_key_telemetry import", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_runtime import", app_text)
         self.assertIn("SelectorStatusController", app_text)

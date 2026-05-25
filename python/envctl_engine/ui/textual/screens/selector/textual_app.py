@@ -26,6 +26,10 @@ from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
     SelectorStatusController,
 )
 from envctl_engine.ui.textual.screens.selector.textual_app_key_trace import emit_app_key_trace
+from envctl_engine.ui.textual.screens.selector.textual_app_selection_actions import (
+    SelectorSelectionActions,
+    selector_row_model_index_from_widget,
+)
 from envctl_engine.ui.textual.screens.selector.textual_key_telemetry import SelectorKeyTelemetry
 from envctl_engine.ui.textual.screens.selector.textual_key_policy import (
     SelectorFilterKeyDecision,
@@ -116,6 +120,15 @@ def create_selector_app(
                 timeout_seconds=status_error_timeout_seconds,
                 set_timer=self.set_timer,
                 sync_status=self._sync_status,
+            )
+            self._selection_actions = SelectorSelectionActions(
+                rows=self._rows,
+                prompt=prompt,
+                multi=multi,
+                exclusive_token=exclusive_token,
+                emit=emit,
+                render_rows=self._render_rows,
+                focus_list=self.action_focus_list,
             )
             self._suppress_list_selected_once = False
 
@@ -291,44 +304,10 @@ def create_selector_app(
             self.action_focus_list(reason=reason)
 
         async def _toggle_model_index(self, model_index: int) -> None:
-            row = selection_state.toggle_selector_model_index(
-                self._rows,
-                model_index,
-                multi=multi,
-                exclusive_token=exclusive_token,
-            )
-            if row is None:
-                return
-            _emit(
-                emit,
-                "ui.selection.interaction",
-                prompt=prompt,
-                action="toggle",
-                multi=multi,
-                model_index=model_index,
-                token=row.item.token,
-                selected=row.selected,
-            )
-            _emit(emit, "ui.selection.toggle", token=row.item.token, selected=row.selected)
-            await self._render_rows()
-            self.action_focus_list(reason="toggle")
+            await self._selection_actions.toggle_model_index(model_index)
 
         async def _select_model_index(self, model_index: int) -> None:
-            row = selection_state.select_selector_model_index(self._rows, model_index, multi=multi)
-            if row is None:
-                return
-            _emit(
-                emit,
-                "ui.selection.interaction",
-                prompt=prompt,
-                action="select",
-                multi=multi,
-                model_index=model_index,
-                token=row.item.token,
-                selected=True,
-            )
-            _emit(emit, "ui.selection.toggle", token=row.item.token, selected=True)
-            await self._render_rows()
+            await self._selection_actions.select_model_index(model_index)
 
         async def action_toggle(self) -> None:
             model_index = self._focused_model_index()
@@ -337,16 +316,7 @@ def create_selector_app(
             await self._toggle_model_index(model_index)
 
         async def action_toggle_visible(self) -> None:
-            should_select = selection_state.toggle_visible_selector_rows(
-                self._rows,
-                multi=multi,
-                exclusive_token=exclusive_token,
-            )
-            if should_select is None:
-                return
-            _emit(emit, "ui.selection.toggle", token="__VISIBLE__", selected=should_select)
-            await self._render_rows()
-            self.action_focus_list(reason="toggle_visible")
+            await self._selection_actions.toggle_visible()
 
         def _emit_key_debug(
             self,
@@ -477,11 +447,7 @@ def create_selector_app(
         async def action_submit(self, *, cause: str = "enter") -> None:
             if self.query_one("#selector-filter", Input).has_focus:
                 self.action_focus_list(reason="submit_from_filter")
-            values = selection_state.selector_submit_values(
-                self._rows,
-                multi=multi,
-                focused_index=self._focused_model_index(),
-            )
+            values = self._selection_actions.submit_values(focused_index=self._focused_model_index())
             if not values:
                 self._show_status_error("No items were selected. Press Space or click to select at least one.")
                 self._event_controller.submit_blocked(cause=cause)
@@ -498,50 +464,23 @@ def create_selector_app(
             if self._suppress_list_selected_once:
                 self._suppress_list_selected_once = False
                 return
-            _emit(
-                emit,
-                "ui.selection.interaction",
-                prompt=prompt,
-                action="list_selected",
-                multi=multi,
+            await self._selection_actions.handle_list_selection(
                 list_index=event.index,
+                index_map=self._controller.index_map,
             )
-            if event.index < 0 or event.index >= len(self._controller.index_map):
-                _emit(
-                    emit,
-                    "ui.selection.interaction",
-                    prompt=prompt,
-                    action="list_selected_out_of_range",
-                    multi=multi,
-                    list_index=event.index,
-                    visible_count=len(self._controller.index_map),
-                )
-                return
-            model_index = self._controller.index_map[event.index]
-            if multi:
-                await self._toggle_model_index(model_index)
-            else:
-                await self._select_model_index(model_index)
-            self.action_focus_list(reason="list_selected")
 
         async def on_click(self, event: Click) -> None:
             if multi:
                 return
-            widget = getattr(event, "widget", None)
-            while widget is not None:
-                widget_id = str(getattr(widget, "id", "") or "").strip()
-                if widget_id.startswith("selector-row-"):
-                    try:
-                        model_index = int(widget_id.rsplit("-", 1)[1])
-                    except (TypeError, ValueError):
-                        return
-                    if model_index < 0 or model_index >= len(self._rows):
-                        return
-                    event.stop()
-                    await self._select_model_index(model_index)
-                    await self.action_submit(cause="mouse_click")
-                    return
-                widget = getattr(widget, "parent", None)
+            model_index = selector_row_model_index_from_widget(
+                getattr(event, "widget", None),
+                row_count=len(self._rows),
+            )
+            if model_index is None:
+                return
+            event.stop()
+            await self._select_model_index(model_index)
+            await self.action_submit(cause="mouse_click")
 
         async def on_key(self, event: Key) -> None:
             if self._key_telemetry.record_raw_key(event.key) and key_trace_verbose:
