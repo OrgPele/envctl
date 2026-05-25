@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 import subprocess
 from typing import Any, Callable, Mapping
@@ -51,7 +52,7 @@ class ProjectActionRunner:
         self.raw_command = runtime.env.get(env_key)
         self.interactive_command = bool(route.flags.get("interactive_command"))
         self.process_runtime: Any | None = None
-        self.stream_review_output = False
+        self.stream_action_output = False
         self.command_extra_env = dict(extra_env)
 
     def run(self) -> int:
@@ -60,7 +61,7 @@ class ProjectActionRunner:
             return 1
 
         self.process_runtime = resolve_process_runtime(self.runtime)
-        self.stream_review_output = self._should_stream_review_output()
+        self.stream_action_output = self._should_stream_action_output()
         self.command_extra_env = self._command_extra_env()
 
         return self.execute_targeted_action_fn(
@@ -72,7 +73,7 @@ class ProjectActionRunner:
             process_run=self.process_run,
             emit_status=self.emit_status,
             interactive_print_failures=(not self.interactive_command) or self.command_name in {"pr", "review"},
-            emit_success_output=not self.stream_review_output,
+            emit_success_output=not self.stream_action_output,
             on_success=self.success_handler,
             on_failure=self.failure_handler,
             success_print_formatter=self.success_print_message if self.command_name == "ship" else None,
@@ -113,19 +114,24 @@ class ProjectActionRunner:
         process_runtime = self.process_runtime
         if process_runtime is None:
             raise RuntimeError("process runtime has not been initialized")
-        if self.stream_review_output:
+        if self.stream_action_output:
+            stream_kwargs: dict[str, object] = {
+                "cwd": cwd,
+                "env": dict(env),
+                "timeout": 300.0,
+                "show_spinner": False,
+                "echo_output": True,
+            }
+            if _callable_accepts_keyword(process_runtime.run_streaming, "callback"):
+                stream_kwargs["callback"] = lambda _line: None
             completed = process_runtime.run_streaming(
                 command,
-                cwd=cwd,
-                env=dict(env),
-                timeout=300.0,
-                show_spinner=False,
-                echo_output=True,
+                **stream_kwargs,
             )
             return subprocess.CompletedProcess(
                 args=command,
                 returncode=completed.returncode,
-                stdout="" if completed.returncode == 0 else str(completed.stdout or ""),
+                stdout=self._streamed_stdout(completed),
                 stderr=str(getattr(completed, "stderr", "") or ""),
             )
         return process_runtime.run(
@@ -141,7 +147,13 @@ class ProjectActionRunner:
     def success_status_message(self, context: object, completed: Any) -> str:
         return ship_action_status_message(str(getattr(context, "name")), completed)
 
-    def _should_stream_review_output(self) -> bool:
+    def _should_stream_action_output(self) -> bool:
+        if self.command_name == "ship":
+            return bool(
+                not self.interactive_command
+                and self.process_runtime is not None
+                and hasattr(self.process_runtime, "run_streaming")
+            )
         return bool(
             self.command_name == "review"
             and not self.interactive_command
@@ -152,9 +164,25 @@ class ProjectActionRunner:
 
     def _command_extra_env(self) -> dict[str, str]:
         command_extra_env = dict(self.extra_env)
-        if self.stream_review_output:
+        if self.stream_action_output and self.command_name == "review":
             command_extra_env["ENVCTL_ACTION_FORCE_RICH"] = "1"
         return command_extra_env
+
+    def _streamed_stdout(self, completed: Any) -> str:
+        stdout = str(getattr(completed, "stdout", "") or "")
+        if self.command_name == "review" and int(getattr(completed, "returncode", 1) or 0) == 0:
+            return ""
+        return stdout
+
+
+def _callable_accepts_keyword(callback: Callable[..., object], keyword: str) -> bool:
+    try:
+        parameters = inspect.signature(callback).parameters
+    except (TypeError, ValueError):
+        return False
+    return keyword in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+    )
 
 
 def run_project_action(

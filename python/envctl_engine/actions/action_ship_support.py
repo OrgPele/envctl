@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+import inspect
 from pathlib import Path
 import subprocess
+import sys
 import time
 from typing import Any, Callable
 
@@ -184,12 +186,14 @@ class ShipWorkflowRunner:
 
     def _run_checks_phase(self, state: ShipWorkflowState) -> int:
         checks_fn = self.dependencies.github_pr_checks or globals()["github_pr_checks"]
-        checks = checks_fn(
-            state.git_root,
-            branch=state.branch,
-            pr_url=state.pr_url,
-            expected_head_sha=state.after_sha,
-        )
+        check_kwargs: dict[str, object] = {
+            "branch": state.branch,
+            "pr_url": state.pr_url,
+            "expected_head_sha": state.after_sha,
+        }
+        if _callable_accepts_keyword(checks_fn, "progress_callback"):
+            check_kwargs["progress_callback"] = self._emit_check_progress
+        checks = checks_fn(state.git_root, **check_kwargs)
         status = str(checks.get("state") or ("pr_created" if state.pr_created else "pr_exists"))
         if status:
             state.step_statuses.append(status)
@@ -204,6 +208,10 @@ class ShipWorkflowRunner:
             checks=checks,
             merge_conflicts=state.merge_conflicts,
         )
+
+    @staticmethod
+    def _emit_check_progress(message: str) -> None:
+        print(message, file=sys.stderr)
 
     def _finish(
         self,
@@ -235,6 +243,16 @@ class ShipWorkflowRunner:
             merge_conflicts=merge_conflicts,
         )
         return print_ship_result(payload, json_output=state.json_output, ok=ok)
+
+
+def _callable_accepts_keyword(callback: Callable[..., object], keyword: str) -> bool:
+    try:
+        parameters = inspect.signature(callback).parameters
+    except (TypeError, ValueError):
+        return False
+    return keyword in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+    )
 
 
 def run_ship_workflow(

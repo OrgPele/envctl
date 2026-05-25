@@ -459,14 +459,17 @@ Commit defaults:
 generated worktree or project, run it without `--project`; use `--project
 <name>` only when shipping from another checkout. `ship` commits, pushes,
 creates a PR when none exists, reuses or updates the existing PR otherwise, predicts merge conflicts, waits for GitHub PR checks
-until they pass, fail, time out, or report no check contexts, and returns the structured JSON result by default including
+until they pass, fail, time out, or report no check contexts, and prints a progress update every 10 seconds while checks are still running.
+If GitHub has attached the pushed head commit but still has no check contexts after 10 seconds, `ship` reports
+`no_checks_reported` immediately instead of waiting for the full timeout. The command returns the structured JSON result by default including
 the PR URL, `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`,
 `failing_checks`, `pending_checks`, and `checks_error`. `--json` remains accepted as a compatibility no-op;
 use `--human` only when compact terminal output is preferred. The check wait timeout defaults to 2 minutes; pending
 checks after that window are reported as `checks_pending_timeout` without failing the handoff command, while actual failed
 checks still return a non-zero exit. The timeout can be tuned with
 `ENVCTL_SHIP_CHECK_TIMEOUT_SECONDS` and
-`ENVCTL_SHIP_CHECK_POLL_INTERVAL_SECONDS`.
+`ENVCTL_SHIP_CHECK_POLL_INTERVAL_SECONDS`; the no-check-context grace can be tuned with
+`ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS`.
 
 Optional plan-agent launch config for `--plan`:
 

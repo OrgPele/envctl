@@ -5,7 +5,7 @@ import inspect
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -227,6 +227,70 @@ class ActionShipSupportTests(unittest.TestCase):
         )
         self.assertEqual(payload["passed_checks"], [{"name": "pytest", "state": "SUCCESS"}])
         self.assertEqual(payload["pr_url"], "https://github.com/acme/repo/pull/8")
+
+    def test_run_ship_workflow_prints_check_progress_to_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            context = SimpleNamespace(
+                repo_root=repo_root,
+                project_root=repo_root,
+                project_name="Main",
+                env={"ENVCTL_ACTION_JSON": "true"},
+            )
+
+            def git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/demo\n"
+                if args == ["rev-parse", "HEAD"]:
+                    return "abc123\n"
+                return ""
+
+            def github_pr_checks(
+                _git_root: Path,
+                *,
+                branch: str,
+                pr_url: str,
+                expected_head_sha: str,
+                progress_callback: object,
+            ) -> dict[str, object]:
+                self.assertEqual(branch, "feature/demo")
+                self.assertEqual(pr_url, "https://github.com/acme/repo/pull/7")
+                self.assertEqual(expected_head_sha, "abc123")
+                self.assertTrue(callable(progress_callback))
+                progress_callback("ship: GitHub checks still running after 10s")
+                return {
+                    "state": "checks_passed",
+                    "passed_checks": [{"name": "pytest", "state": "SUCCESS"}],
+                    "failing_checks": [],
+                    "pending_checks": [],
+                    "duration_seconds": 10.0,
+                }
+
+            with redirect_stdout(StringIO()) as stdout, redirect_stderr(StringIO()) as stderr:
+                code = run_ship_workflow(
+                    context,
+                    resolve_git_root=lambda project_root, repo_root: project_root,
+                    git_available=True,
+                    git_output=git_output,
+                    run_git=lambda _git_root, args: subprocess.CompletedProcess(args=args, returncode=0),
+                    resolve_base_branch=lambda _context, _git_root: "main",
+                    resolve_base_ref=lambda _git_root, _base_branch: "origin/main",
+                    run_commit_action=lambda _context: 0,
+                    run_pr_action=lambda _context: 0,
+                    probe_dirty_worktree=lambda *_args, **_kwargs: SimpleNamespace(dirty=False),
+                    existing_pr_url=lambda _git_root, _branch: "https://github.com/acme/repo/pull/7",
+                    partition_envctl_protected_paths=lambda _status: SimpleNamespace(
+                        protected_staged_paths=[],
+                        protected_skipped_paths=[],
+                    ),
+                    ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
+                    github_pr_checks=github_pr_checks,
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr.getvalue(), "ship: GitHub checks still running after 10s\n")
+        self.assertEqual(json.loads(stdout.getvalue())["status"], "checks_passed")
 
     def test_run_ship_workflow_returns_success_with_pending_status_when_checks_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

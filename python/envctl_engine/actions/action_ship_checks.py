@@ -7,14 +7,14 @@ import re
 import shutil
 import subprocess
 import time
-from typing import Mapping
+from typing import Callable, Mapping
 
 FAILING_CHECK_STATES = {"FAILURE", "FAILED", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
 PASSING_CHECK_STATES = {"SUCCESS", "PASSED", "COMPLETED", "NEUTRAL", "SKIPPED"}
 TERMINAL_SHIP_CHECK_STATES = {"checks_passed", "checks_failed", "gh_unavailable", "no_checks_reported"}
 DEFAULT_CHECK_TIMEOUT_SECONDS = 120.0
 DEFAULT_CHECK_POLL_INTERVAL_SECONDS = 10.0
-DEFAULT_NO_CHECKS_GRACE_SECONDS = 30.0
+DEFAULT_NO_CHECKS_GRACE_SECONDS = 10.0
 DEFAULT_FAILURE_EXCERPT_LINES = 80
 DEFAULT_FAILURE_EXCERPT_CHARS = 12_000
 _ACTION_JOB_URL_RE = re.compile(r"/actions/runs/(?P<run_id>\d+)/job/(?P<job_id>\d+)")
@@ -31,6 +31,7 @@ def github_pr_checks(
     timeout_seconds: float | None = None,
     poll_interval_seconds: float | None = None,
     no_checks_grace_seconds: float | None = None,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
     gh_path = shutil.which("gh")
     if gh_path is None:
@@ -56,6 +57,7 @@ def github_pr_checks(
         else _float_env("ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS")
     )
     no_checks_grace = DEFAULT_NO_CHECKS_GRACE_SECONDS if no_checks_grace is None else max(no_checks_grace, 0.0)
+    next_progress_at = poll_interval
 
     while True:
         result = (
@@ -74,6 +76,10 @@ def github_pr_checks(
         if result["state"] in TERMINAL_SHIP_CHECK_STATES:
             return result
         elapsed = time.monotonic() - started
+        if progress_callback is not None and elapsed >= next_progress_at:
+            progress_callback(_check_progress_message(result, elapsed_seconds=elapsed, timeout_seconds=timeout))
+            while next_progress_at <= elapsed:
+                next_progress_at += poll_interval
         if elapsed >= timeout:
             return {
                 **result,
@@ -82,6 +88,32 @@ def github_pr_checks(
                 "timeout_seconds": timeout,
             }
         time.sleep(min(poll_interval, max(timeout - elapsed, 0.1)))
+
+
+def _check_progress_message(
+    result: Mapping[str, object],
+    *,
+    elapsed_seconds: float,
+    timeout_seconds: float,
+) -> str:
+    pending = _check_count(result.get("pending_checks"))
+    passed = _check_count(result.get("passed_checks"))
+    failed = _check_count(result.get("failing_checks"))
+    return (
+        f"ship: GitHub checks still running after {_format_seconds(elapsed_seconds)} "
+        f"(pending={pending}, passed={passed}, failed={failed}, timeout={_format_seconds(timeout_seconds)})"
+    )
+
+
+def _check_count(value: object) -> int:
+    return len(value) if isinstance(value, list) else 0
+
+
+def _format_seconds(value: float) -> str:
+    rounded = round(value)
+    if abs(value - rounded) < 0.001:
+        return f"{rounded}s"
+    return f"{value:.1f}s"
 
 
 def _query_expected_head_pr_checks(

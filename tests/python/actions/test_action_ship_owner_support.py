@@ -173,6 +173,94 @@ def test_github_pr_checks_default_timeout_is_two_minute_wait_window() -> None:
     assert action_ship_checks.DEFAULT_CHECK_TIMEOUT_SECONDS == 120.0
 
 
+def test_github_pr_checks_default_no_checks_grace_is_ten_seconds() -> None:
+    assert action_ship_checks.DEFAULT_NO_CHECKS_GRACE_SECONDS == 10.0
+
+
+def test_github_pr_checks_reports_no_checks_after_ten_second_grace_for_expected_head(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    clock = {"now": 0.0}
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "headRefOid": "newsha",
+                    "statusCheckRollup": [],
+                    "url": "https://github.com/acme/repo/pull/7",
+                }
+            ),
+            stderr="",
+        )
+
+    def fake_sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
+    monkeypatch.setattr(action_ship_checks.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(action_ship_checks.time, "sleep", fake_sleep)
+
+    checks = action_ship_checks.github_pr_checks(
+        tmp_path,
+        branch="feature/demo",
+        pr_url="https://github.com/acme/repo/pull/7",
+        expected_head_sha="newsha",
+        timeout_seconds=120.0,
+        poll_interval_seconds=10.0,
+    )
+
+    assert checks["state"] == "no_checks_reported"
+    assert checks["duration_seconds"] == 10.0
+    assert len(calls) == 2
+
+
+def test_github_pr_checks_emits_progress_every_poll_interval_while_pending(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    clock = {"now": 0.0}
+    updates: list[str] = []
+    outputs = [
+        {"headRefOid": "newsha", "statusCheckRollup": [{"name": "pytest", "status": "IN_PROGRESS"}]},
+        {"headRefOid": "newsha", "statusCheckRollup": [{"name": "pytest", "status": "IN_PROGRESS"}]},
+        {
+            "headRefOid": "newsha",
+            "statusCheckRollup": [{"name": "pytest", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+        },
+    ]
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
+
+    def fake_sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
+    monkeypatch.setattr(action_ship_checks.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(action_ship_checks.time, "sleep", fake_sleep)
+
+    checks = action_ship_checks.github_pr_checks(
+        tmp_path,
+        branch="feature/demo",
+        pr_url="https://github.com/acme/repo/pull/7",
+        expected_head_sha="newsha",
+        timeout_seconds=120.0,
+        poll_interval_seconds=10.0,
+        progress_callback=updates.append,
+    )
+
+    assert checks["state"] == "checks_passed"
+    assert updates == [
+        "ship: GitHub checks still running after 10s (pending=1, passed=0, failed=0, timeout=120s)"
+    ]
+
+
 def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
