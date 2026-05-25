@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Callable
+from typing import Any, Callable
 
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.textual.list_controller import TextualListController
@@ -23,10 +23,10 @@ from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
     SelectorKeyTelemetry,
     SelectorStatusController,
 )
+from envctl_engine.ui.textual.screens.selector.textual_app_key_trace import emit_app_key_trace
 from envctl_engine.ui.textual.screens.selector.textual_key_policy import (
     SelectorFilterKeyDecision,
     SelectorKeyDecision,
-    emit_selector_key_trace,
     resolve_selector_filter_key,
     resolve_selector_key,
 )
@@ -62,6 +62,9 @@ def create_selector_app(
     from textual.containers import Horizontal, Vertical
     from textual.events import Click, Key
     from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
+
+    def trace_key(**payload: Any) -> None:
+        emit_app_key_trace(emit=emit, deep_debug=deep_debug, selector_id=selector_id, **payload)
 
     class SelectorApp(App[list[str] | None]):
         ESCAPE_TO_MINIMIZE = False
@@ -291,9 +294,6 @@ def create_selector_app(
                     lambda: asyncio.create_task(self.action_submit(cause="initial_navigation_submit"))
                 )
 
-        def _focused_row(self) -> _RowRef | None:
-            return self._controller.focused_row(self._list().index)
-
         async def _sync_single_select_focus_selection(self, *, reason: str) -> None:
             if multi:
                 return
@@ -501,9 +501,6 @@ def create_selector_app(
             else:
                 self.action_focus_button(next_target, reason="tab_cycle")
 
-        def _selected_values(self) -> list[str]:
-            return selection_state.selected_selector_values(self._rows)
-
         async def action_submit(self, *, cause: str = "enter") -> None:
             if self.query_one("#selector-filter", Input).has_focus:
                 self.action_focus_list(reason="submit_from_filter")
@@ -575,11 +572,8 @@ def create_selector_app(
 
         async def on_key(self, event: Key) -> None:
             if self._key_telemetry.record_raw_key(event.key) and key_trace_verbose:
-                emit_selector_key_trace(
-                    emit=emit,
-                    deep_debug=deep_debug,
+                trace_key(
                     event="ui.selector.key.raw",
-                    selector_id=selector_id,
                     key=event.key,
                     focused_widget_id=self._focused_widget_id(),
                     list_index_before=self._list().index,
@@ -593,10 +587,7 @@ def create_selector_app(
                 event.stop()
                 event.prevent_default()
                 self.action_cycle_focus()
-                emit_selector_key_trace(
-                    emit=emit,
-                    deep_debug=deep_debug,
-                    selector_id=selector_id,
+                trace_key(
                     key=event.key,
                     focused_widget_id=focused_id,
                     list_index_before=self._list().index,
@@ -613,10 +604,7 @@ def create_selector_app(
                 event.prevent_default()
                 self._suppress_list_selected_once = True
                 await self.action_submit(cause="enter_key")
-                emit_selector_key_trace(
-                    emit=emit,
-                    deep_debug=deep_debug,
-                    selector_id=selector_id,
+                trace_key(
                     key=event.key,
                     focused_widget_id=focused_id,
                     list_index_before=self._list().index,
@@ -630,10 +618,7 @@ def create_selector_app(
                 filter_input = self.query_one("#selector-filter", Input)
                 filter_input.value = ""
                 self.action_focus_filter(reason="slash_focus_filter")
-                emit_selector_key_trace(
-                    emit=emit,
-                    deep_debug=deep_debug,
-                    selector_id=selector_id,
+                trace_key(
                     key=event.key,
                     focused_widget_id=focused_id,
                     list_index_before=self._list().index,
@@ -672,11 +657,8 @@ def create_selector_app(
                 key = str(event.key)
                 self._key_telemetry.record_event_key(key)
                 if key_trace_verbose:
-                    emit_selector_key_trace(
-                        emit=emit,
-                        deep_debug=deep_debug,
+                    trace_key(
                         event="ui.selector.key.event",
-                        selector_id=selector_id,
                         key=key,
                         focused_widget_id=self._focused_widget_id(),
                         list_index_before=self._list().index,
