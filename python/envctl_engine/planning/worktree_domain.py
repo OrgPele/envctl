@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
 
-from envctl_engine.actions.actions_worktree import delete_worktree_path
 from envctl_engine.planning.worktree_creation_commands import (
     worktree_branch_exists as _worktree_branch_exists_impl,
     worktree_branch_name as _worktree_branch_name_impl,
@@ -87,28 +86,36 @@ from envctl_engine.planning.worktree_provenance import (
     resolve_branch_ref as _resolve_branch_ref_impl,
     write_worktree_provenance as _write_worktree_provenance_impl,
 )
-from envctl_engine.planning.worktree_runtime_bridge import PlanningRuntimeBridge
+from envctl_engine.planning.worktree_runtime_bridge import create_planning_runtime_bridge
 from envctl_engine.planning.plan_agent.models import (
     PlanWorktreeSyncResult,
 )
 from envctl_engine.planning.protocols import ProjectContextLike
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.runtime.runtime_context import resolve_process_runtime
-from envctl_engine.planning import (
-    discover_tree_projects,
-)
 from envctl_engine.ui.spinner_service import SpinnerPolicy
-from envctl_engine.ui.textual.screens.planning_selector import select_planning_counts_textual
 
 
-def _planning_runtime_bridge(self: Any) -> PlanningRuntimeBridge:
-    return PlanningRuntimeBridge(
-        runtime=self,
-        delete_worktree_path=delete_worktree_path,
-        discover_tree_projects=discover_tree_projects,
-        process_runtime_factory=resolve_process_runtime,
-        select_planning_counts=select_planning_counts_textual,
-        output=print,
+def delete_worktree_path(*args: Any, **kwargs: Any) -> Any:
+    """Compatibility patch point for legacy worktree-domain callers."""
+    from envctl_engine.actions.actions_worktree import delete_worktree_path as delete_worktree_path_impl
+
+    return delete_worktree_path_impl(*args, **kwargs)
+
+
+def select_planning_counts_textual(*args: Any, **kwargs: Any) -> Any:
+    """Compatibility patch point for legacy planning-selector tests/callers."""
+    from envctl_engine.ui.textual.screens.planning_selector import (
+        select_planning_counts_textual as select_planning_counts_textual_impl,
+    )
+
+    return select_planning_counts_textual_impl(*args, **kwargs)
+
+
+def _planning_runtime_bridge(self: Any) -> Any:
+    return create_planning_runtime_bridge(
+        self,
+        delete_worktree_path_fn=delete_worktree_path,
+        select_planning_counts_fn=select_planning_counts_textual,
     )
 
 
@@ -298,7 +305,7 @@ def _prompt_planning_selection(
     raw_projects: list[tuple[str, Path]],
     *,
     persist_memory: bool = True,
-) -> dict[str, int]:
+) -> dict[str, int] | None:
     return _planning_runtime_bridge(self).prompt_planning_selection(
         planning_files=planning_files,
         raw_projects=raw_projects,

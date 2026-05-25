@@ -205,7 +205,7 @@ class PlanningRuntimeBridge:
         raw_projects: list[tuple[str, Path]],
         *,
         persist_memory: bool = True,
-    ) -> dict[str, int]:
+    ) -> dict[str, int] | None:
         runtime = self.runtime
         return prompt_planning_selection(
             planning_files=planning_files,
@@ -393,3 +393,34 @@ class PlanningRuntimeBridge:
             ),
             emit_message=self.output,
         )
+
+
+def create_planning_runtime_bridge(
+    runtime: Any,
+    *,
+    delete_worktree_path_fn: Callable[..., Any] | None = None,
+    discover_tree_projects_fn: Callable[[Path, str], list[tuple[str, Path]]] | None = None,
+    process_runtime_factory: Callable[[Any], Any] | None = None,
+    select_planning_counts_fn: Callable[..., Any] | None = None,
+    output: Callable[..., None] = print,
+) -> PlanningRuntimeBridge:
+    """Build the runtime-backed planning bridge with production collaborators."""
+    if delete_worktree_path_fn is None:
+        from envctl_engine.actions.actions_worktree import delete_worktree_path as delete_worktree_path_fn
+    if discover_tree_projects_fn is None:
+        from envctl_engine.planning import discover_tree_projects as discover_tree_projects_fn
+    if process_runtime_factory is None:
+        from envctl_engine.runtime.runtime_context import resolve_process_runtime as process_runtime_factory
+    if select_planning_counts_fn is None:
+        from envctl_engine.ui.textual.screens.planning_selector import (
+            select_planning_counts_textual as select_planning_counts_fn,
+        )
+
+    return PlanningRuntimeBridge(
+        runtime=runtime,
+        delete_worktree_path=delete_worktree_path_fn,
+        discover_tree_projects=discover_tree_projects_fn,
+        process_runtime_factory=process_runtime_factory,
+        select_planning_counts=select_planning_counts_fn,
+        output=output,
+    )

@@ -7,6 +7,7 @@ from io import StringIO
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 import tempfile
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -31,11 +32,11 @@ class EngineRuntimeDispatchTests(unittest.TestCase):
         )
 
         with (
-            __import__("unittest").mock.patch(
+            patch(
                 "envctl_engine.runtime.engine_runtime_dispatch.ProcessProbe",
                 side_effect=lambda backend: ("probe", backend),
             ),
-            __import__("unittest").mock.patch(
+            patch(
                 "envctl_engine.runtime.engine_runtime_dispatch.dispatch_command",
                 return_value=9,
             ) as command_dispatch,
@@ -72,11 +73,11 @@ class EngineRuntimeDispatchTests(unittest.TestCase):
         )
 
         with (
-            __import__("unittest").mock.patch(
+            patch(
                 "envctl_engine.runtime.engine_runtime_dispatch.ProcessProbe",
                 side_effect=lambda backend: ("probe", backend),
             ),
-            __import__("unittest").mock.patch(
+            patch(
                 "envctl_engine.runtime.engine_runtime_dispatch.dispatch_command",
                 return_value=4,
             ),
@@ -180,7 +181,7 @@ class EngineRuntimeDispatchTests(unittest.TestCase):
         runtime = SimpleNamespace(config=SimpleNamespace(supabase_auth_users=()))
         route = SimpleNamespace(command="supabase-user", mode="main", flags={"json": True}, passthrough_args=["list"])
 
-        with __import__("unittest").mock.patch(
+        with patch(
             "envctl_engine.runtime.utility_command_support.run_supabase_user_command",
             return_value=0,
         ) as command:
