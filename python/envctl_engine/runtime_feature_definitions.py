@@ -425,6 +425,8 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         shell_source_of_truth=(),
         python_source_of_truth=(
             "python/envctl_engine/runtime/inspection_support.py",
+            "python/envctl_engine/runtime/service_status_truth.py",
+            "python/envctl_engine/runtime/service_post_start_truth.py",
             "python/envctl_engine/runtime/engine_runtime_service_truth.py",
             "python/envctl_engine/state/action_command_support.py",
             "python/envctl_engine/state/action_health_support.py",
@@ -440,6 +442,9 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         shell_source_of_truth=(),
         python_source_of_truth=(
             "python/envctl_engine/runtime/inspection_support.py",
+            "python/envctl_engine/runtime/service_truth_diagnostics.py",
+            "python/envctl_engine/runtime/service_status_truth.py",
+            "python/envctl_engine/runtime/service_post_start_truth.py",
             "python/envctl_engine/runtime/engine_runtime_service_truth.py",
             "python/envctl_engine/state/action_command_support.py",
             "python/envctl_engine/state/action_log_support.py",

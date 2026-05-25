@@ -1133,6 +1133,40 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertNotIn("ThreadPoolExecutor", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 90)
 
+    def test_runtime_service_truth_has_cohesive_owner_modules(self) -> None:
+        diagnostics_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "service_truth_diagnostics.py"
+        listener_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "service_listener_truth.py"
+        status_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "service_status_truth.py"
+        post_start_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "service_post_start_truth.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_service_truth.py"
+
+        self.assertTrue(diagnostics_owner.is_file())
+        self.assertTrue(listener_owner.is_file())
+        self.assertTrue(status_owner.is_file())
+        self.assertTrue(post_start_owner.is_file())
+        diagnostics_text = diagnostics_owner.read_text(encoding="utf-8")
+        self.assertIn("def command_result_error_text", diagnostics_text)
+        self.assertIn("def service_listener_failure_detail", diagnostics_text)
+        self.assertIn("def tail_log_error_line", diagnostics_text)
+        listener_text = listener_owner.read_text(encoding="utf-8")
+        self.assertIn("def wait_for_service_listener", listener_text)
+        self.assertIn("def detect_service_actual_port", listener_text)
+        self.assertIn("def service_truth_fallback_enabled", listener_text)
+        status_text = status_owner.read_text(encoding="utf-8")
+        self.assertIn("def service_truth_status", status_text)
+        self.assertIn("def rebind_stale_service_pid", status_text)
+        self.assertIn("def listener_pids_for_port", status_text)
+        self.assertIn("def refresh_service_listener_pids", status_text)
+        post_start_text = post_start_owner.read_text(encoding="utf-8")
+        self.assertIn("def assert_project_services_post_start_truth", post_start_text)
+        self.assertIn("service_listener_failure_detail", post_start_text)
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.runtime.service_truth_diagnostics import", facade_text)
+        self.assertIn("from envctl_engine.runtime.service_listener_truth import", facade_text)
+        self.assertIn("from envctl_engine.runtime.service_status_truth import", facade_text)
+        self.assertIn("from envctl_engine.runtime.service_post_start_truth import", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 80)
+
     def test_dashboard_command_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_support.py"
         input_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_input_support.py"
