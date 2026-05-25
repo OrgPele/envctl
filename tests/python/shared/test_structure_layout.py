@@ -1103,6 +1103,36 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("RuntimeLifecycleFacadeMixin", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 430)
 
+    def test_runtime_state_truth_has_cohesive_owner_modules(self) -> None:
+        fingerprint_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "state_fingerprint_support.py"
+        port_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "requirement_port_truth.py"
+        status_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "requirement_status_truth.py"
+        reconcile_owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "requirement_reconcile_truth.py"
+        facade = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_state_truth.py"
+
+        self.assertTrue(fingerprint_owner.is_file())
+        self.assertTrue(port_owner.is_file())
+        self.assertTrue(status_owner.is_file())
+        self.assertTrue(reconcile_owner.is_file())
+        self.assertIn("def state_fingerprint", fingerprint_owner.read_text(encoding="utf-8"))
+        port_text = port_owner.read_text(encoding="utf-8")
+        self.assertIn("def reconcile_requirement_container_ports", port_text)
+        self.assertIn("def expected_requirement_container_name", port_text)
+        self.assertIn("def container_port_for_component", port_text)
+        status_text = status_owner.read_text(encoding="utf-8")
+        self.assertIn("def requirement_runtime_status", status_text)
+        self.assertIn("def adopt_requirement_container", status_text)
+        reconcile_text = reconcile_owner.read_text(encoding="utf-8")
+        self.assertIn("def reconcile_requirements_truth", reconcile_text)
+        self.assertIn("def reconcile_state_truth", reconcile_text)
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.runtime.state_fingerprint_support import", facade_text)
+        self.assertIn("from envctl_engine.runtime.requirement_port_truth import", facade_text)
+        self.assertIn("from envctl_engine.runtime.requirement_status_truth import", facade_text)
+        self.assertIn("from envctl_engine.runtime.requirement_reconcile_truth import", facade_text)
+        self.assertNotIn("ThreadPoolExecutor", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 90)
+
     def test_dashboard_command_support_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_support.py"
         input_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "command_input_support.py"
