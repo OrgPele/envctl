@@ -257,6 +257,17 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("actions_test_classification", discovery_text)
         self.assertLessEqual(len(discovery_text.splitlines()), 540)
 
+    def test_action_test_planning_uses_explicit_planner_objects(self) -> None:
+        plan_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_plan_support.py"
+        service_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_service_support.py"
+
+        plan_text = plan_owner.read_text(encoding="utf-8")
+        service_text = service_owner.read_text(encoding="utf-8")
+        self.assertIn("class TestExecutionPlanner", plan_text)
+        self.assertIn("def build(self) -> list[TestExecutionSpec]", plan_text)
+        self.assertIn("class AdditionalServiceTestPlanner", service_text)
+        self.assertIn("def build(self) -> list[TestExecutionSpec]", service_text)
+
     def test_project_action_domain_has_output_and_artifact_owners(self) -> None:
         commit_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_commit_support.py"
         protected_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_protected_artifacts.py"

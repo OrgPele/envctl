@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, ClassVar, Mapping
 
 from envctl_engine.actions.action_command_support import service_types_from_route_services
 from envctl_engine.actions.action_failed_rerun_support import build_failed_test_execution_specs_from_state
@@ -122,6 +123,68 @@ def build_failed_test_execution_specs_for_orchestrator(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class TestExecutionPlanner:
+    __test__: ClassVar[bool] = False
+
+    route: Route
+    targets: list[object]
+    target_contexts: list[TestTargetContext]
+    include_backend: bool
+    include_frontend: bool
+    run_all: bool
+    untested: bool
+    env: Mapping[str, str]
+    config: object
+    action_replacements_builder: Callable[..., dict[str, str]]
+    split_command: Callable[[str, Mapping[str, str]], list[str]]
+    failed_spec_builder: Callable[..., list[TestExecutionSpec]]
+    additional_service_spec_builder: Callable[..., list[TestExecutionSpec]]
+    is_legacy_tree_test_script: Callable[[list[str]], bool]
+
+    def build(self) -> list[TestExecutionSpec]:
+        if bool(self.route.flags.get("failed")):
+            return self.failed_spec_builder(route=self.route, target_contexts=self.target_contexts)
+        service_specs = self.additional_service_spec_builder(
+            route=self.route,
+            targets=self.targets,
+            target_contexts=self.target_contexts,
+        )
+        if service_specs:
+            return service_specs
+        return build_test_execution_specs(
+            shared_raw_command=self._configured_command("ENVCTL_ACTION_TEST_CMD"),
+            backend_raw_command=self._configured_command("ENVCTL_BACKEND_TEST_CMD"),
+            frontend_raw_command=self._configured_command("ENVCTL_FRONTEND_TEST_CMD"),
+            target_contexts=self.target_contexts,
+            repo_root=Path(getattr(self.config, "base_dir")),
+            include_backend=self.include_backend,
+            include_frontend=self.include_frontend,
+            frontend_test_path=self._frontend_test_path(),
+            run_all=self.run_all,
+            untested=self.untested,
+            split_command=lambda command_raw, replacements: self.split_command(command_raw, dict(replacements)),
+            replacements_for_target=self._replacements_for_target,
+            is_legacy_tree_test_script=self.is_legacy_tree_test_script,
+        )
+
+    def _configured_command(self, key: str) -> str | None:
+        return _first_non_empty(
+            self.env.get(key),
+            getattr(self.config, "raw", {}).get(key, ""),
+        )
+
+    def _frontend_test_path(self) -> str | None:
+        return _first_non_empty(
+            getattr(self.config, "frontend_test_path", ""),
+            self.env.get("ENVCTL_FRONTEND_TEST_PATH"),
+            getattr(self.config, "raw", {}).get("ENVCTL_FRONTEND_TEST_PATH", ""),
+        )
+
+    def _replacements_for_target(self, target: object | None) -> dict[str, str]:
+        return self.action_replacements_builder(self.targets, target=target)
+
+
 def build_test_execution_specs_for_route(
     *,
     route: Route,
@@ -139,46 +202,22 @@ def build_test_execution_specs_for_route(
     additional_service_spec_builder: Callable[..., list[TestExecutionSpec]],
     is_legacy_tree_test_script: Callable[[list[str]], bool],
 ) -> list[TestExecutionSpec]:
-    if bool(route.flags.get("failed")):
-        return failed_spec_builder(route=route, target_contexts=target_contexts)
-    shared_raw = _first_non_empty(
-        env.get("ENVCTL_ACTION_TEST_CMD"),
-        getattr(config, "raw", {}).get("ENVCTL_ACTION_TEST_CMD", ""),
-    )
-    backend_raw = _first_non_empty(
-        env.get("ENVCTL_BACKEND_TEST_CMD"),
-        getattr(config, "raw", {}).get("ENVCTL_BACKEND_TEST_CMD", ""),
-    )
-    frontend_raw = _first_non_empty(
-        env.get("ENVCTL_FRONTEND_TEST_CMD"),
-        getattr(config, "raw", {}).get("ENVCTL_FRONTEND_TEST_CMD", ""),
-    )
-    service_specs = additional_service_spec_builder(
+    return TestExecutionPlanner(
         route=route,
         targets=targets,
         target_contexts=target_contexts,
-    )
-    if service_specs:
-        return service_specs
-    return build_test_execution_specs(
-        shared_raw_command=shared_raw,
-        backend_raw_command=backend_raw,
-        frontend_raw_command=frontend_raw,
-        target_contexts=target_contexts,
-        repo_root=Path(getattr(config, "base_dir")),
         include_backend=include_backend,
         include_frontend=include_frontend,
-        frontend_test_path=_first_non_empty(
-            getattr(config, "frontend_test_path", ""),
-            env.get("ENVCTL_FRONTEND_TEST_PATH"),
-            getattr(config, "raw", {}).get("ENVCTL_FRONTEND_TEST_PATH", ""),
-        ),
         run_all=run_all,
         untested=untested,
-        split_command=lambda command_raw, replacements: split_command(command_raw, dict(replacements)),
-        replacements_for_target=lambda target: action_replacements_builder(targets, target=target),
+        env=env,
+        config=config,
+        action_replacements_builder=action_replacements_builder,
+        split_command=split_command,
+        failed_spec_builder=failed_spec_builder,
+        additional_service_spec_builder=additional_service_spec_builder,
         is_legacy_tree_test_script=is_legacy_tree_test_script,
-    )
+    ).build()
 
 
 def _first_non_empty(*values: object) -> str | None:

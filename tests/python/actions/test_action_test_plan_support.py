@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import unittest
 
+from envctl_engine.actions.action_test_plan_support import TestExecutionPlanner
 from envctl_engine.actions.action_test_plan_support import build_test_execution_specs_for_route
 from envctl_engine.actions.action_test_plan_support import command_start_status
 from envctl_engine.actions.action_test_plan_support import parallel_test_worker_count, parallel_tests_enabled
@@ -217,6 +218,35 @@ class ActionTestPlanSupportTests(unittest.TestCase):
         self.assertEqual(specs[0].spec.command[:2], ["npm", "test"])
         self.assertEqual(specs[0].project_name, "feature-a-1")
         self.assertEqual(specs[0].spec.cwd, Path("/repo/trees/feature-a/1"))
+
+    def test_test_execution_planner_reuses_route_dependencies_without_argument_sprawl(self) -> None:
+        route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        target = SimpleNamespace(name="feature-a-1", root="/repo/trees/feature-a/1")
+        context = TargetContext(project_name="feature-a-1", project_root=Path(target.root), target_obj=target)
+        planner = TestExecutionPlanner(
+            route=route,
+            targets=[target],
+            target_contexts=[context],
+            include_backend=True,
+            include_frontend=False,
+            run_all=False,
+            untested=True,
+            env={"ENVCTL_BACKEND_TEST_CMD": "pytest {project}"},
+            config=SimpleNamespace(raw={}, base_dir=Path("/repo"), frontend_test_path=""),
+            action_replacements_builder=lambda _targets, target: {"project": target.name},
+            split_command=lambda raw, replacements: [
+                token.replace("{project}", replacements["project"]) for token in raw.split()
+            ],
+            failed_spec_builder=lambda **_kwargs: [],
+            additional_service_spec_builder=lambda **_kwargs: [],
+            is_legacy_tree_test_script=lambda _command: False,
+        )
+
+        specs = planner.build()
+
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].spec.command, ["pytest", "feature-a-1"])
+        self.assertEqual(specs[0].project_name, "feature-a-1")
 
 
 if __name__ == "__main__":
