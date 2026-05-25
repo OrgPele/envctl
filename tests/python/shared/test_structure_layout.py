@@ -1154,6 +1154,7 @@ class StructureLayoutTests(unittest.TestCase):
         component_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_components.py"
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_fields.py"
         hint_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_hints.py"
+        form_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_form.py"
         value_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_values.py"
         status_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_status.py"
         layout_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_layout.py"
@@ -1172,6 +1173,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(component_owner.is_file())
         self.assertTrue(owner.is_file())
         self.assertTrue(hint_owner.is_file())
+        self.assertTrue(form_owner.is_file())
         self.assertTrue(value_owner.is_file())
         self.assertTrue(status_owner.is_file())
         self.assertTrue(layout_owner.is_file())
@@ -1183,6 +1185,7 @@ class StructureLayoutTests(unittest.TestCase):
         component_text = component_owner.read_text(encoding="utf-8")
         owner_text = owner.read_text(encoding="utf-8")
         hint_text = hint_owner.read_text(encoding="utf-8")
+        form_text = form_owner.read_text(encoding="utf-8")
         value_text = value_owner.read_text(encoding="utf-8")
         status_text = status_owner.read_text(encoding="utf-8")
         layout_text = layout_owner.read_text(encoding="utf-8")
@@ -1206,6 +1209,10 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class ConfigWizardHintResolver", hint_text)
         self.assertIn("def directory_validation_error", hint_text)
         self.assertIn("def field_hint_text", hint_text)
+        self.assertIn("class ConfigWizardFormController", form_text)
+        self.assertIn("def sync_directory_inputs", form_text)
+        self.assertIn("def apply_additional_service_inputs", form_text)
+        self.assertIn("def apply_port_inputs", form_text)
         self.assertIn("class ConfigWizardValueApplyResult", value_text)
         self.assertIn("def wizard_field_value", value_text)
         self.assertIn("def apply_text_field_values", value_text)
@@ -1227,6 +1234,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from . import config_wizard_values as value_policy", app_text)
         self.assertIn("from .config_wizard_fields import", screen_text)
         self.assertIn("from .config_wizard_fields import", app_text)
+        self.assertIn("from .config_wizard_form import ConfigWizardFormController", app_text)
         self.assertIn("from .config_wizard_hints import", app_text)
         self.assertIn("from .config_wizard_layout import", app_text)
         self.assertIn("from .config_wizard_navigation import", app_text)
@@ -1235,7 +1243,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from .config_wizard_step_flow import", app_text)
         self.assertIn("from .config_wizard_suggestions import", app_text)
         self.assertLessEqual(len(screen_text.splitlines()), 90)
-        self.assertLessEqual(len(app_text.splitlines()), 900)
+        self.assertLessEqual(len(app_text.splitlines()), 820)
 
     def test_textual_selector_has_backend_policy_owner(self) -> None:
         selector = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "selector"

@@ -22,27 +22,19 @@ from . import config_wizard_components as component_policy
 from . import config_wizard_values as value_policy
 from .config_wizard_components import ComponentRow, ConfigWizardComponentInteraction
 from .config_wizard_fields import (
-    _ADDITIONAL_SERVICE_FIELDS,
-    _COMMAND_FIELDS,
-    _DIRECTORY_FIELDS,
-    _PORT_FIELDS,
     _SERVICE_STARTUP_FIELDS,
     _STEP_HELP_TEXT,
     _STEP_TITLES,
-    _additional_service_field_value,
     _additional_service_input_id,
-    build_additional_service_from_input_values,
-    _directory_error_id,
     _directory_field_name_from_input_id,
-    _directory_hint_id,
     _directory_input_id,
-    _field_label_id,
     _hydrate_wizard_values,
     _port_input_id,
     _visible_command_fields,
     _visible_directory_fields,
     _visible_port_fields,
 )
+from .config_wizard_form import ConfigWizardFormController
 from .config_wizard_hints import ConfigWizardHintResolver
 from .config_wizard_layout import CONFIG_WIZARD_APP_CSS, compose_config_wizard_layout
 from .config_wizard_list_rendering import (
@@ -116,6 +108,17 @@ def build_config_wizard_app(
                 local_state,
                 suggestions_by_field=self._suggestions_by_field,
                 field_value=self._field_value,
+            )
+            self._form_controller = ConfigWizardFormController(
+                app=self,
+                values=self.values,
+                base_dir=local_state.base_dir,
+                hints=self._field_hints,
+                input_cls=Input,
+                label_cls=Label,
+                static_cls=Static,
+                refresh_status=self._refresh_status,
+                current_step=self._current_step,
             )
             self._save_result: ConfigSaveResult | None = None
             self._steps: list[str] = []
@@ -401,66 +404,19 @@ def build_config_wizard_app(
             component_policy.toggle_service_startup_value(self.values, field_name, mode)
 
         def _sync_directory_inputs(self, visible_fields: tuple[tuple[str, str], ...]) -> None:
-            visible_names = {field_name for field_name, _label in visible_fields}
-            for field_name, _label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS):
-                label = self.query_one(f"#{_field_label_id('directory', field_name)}", Label)
-                directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
-                hint = self.query_one(f"#{_directory_hint_id(field_name)}", Static)
-                error = self.query_one(f"#{_directory_error_id(field_name)}", Static)
-                label.display = field_name in visible_names
-                directory_input.display = field_name in visible_names
-                hint.display = field_name in visible_names
-                error.display = field_name in visible_names
-                if field_name in visible_names:
-                    directory_input.value = str(self._field_value(field_name))
-                    self._refresh_directory_validation(field_name)
-                    self._refresh_field_hint(field_name, raw=directory_input.value)
-                else:
-                    directory_input.remove_class("directory-invalid")
-                    hint.update("")
-                    error.update("")
-                    error.remove_class("directory-error-visible")
+            self._form_controller.sync_directory_inputs(visible_fields)
 
         def _sync_port_inputs(self, visible_fields: tuple[tuple[str, str], ...]) -> None:
-            visible_names = {field_name for field_name, _label in visible_fields}
-            for field_name, _label in _PORT_FIELDS:
-                label = self.query_one(f"#{_field_label_id('port', field_name)}", Label)
-                port_input = self.query_one(f"#{_port_input_id(field_name)}", Input)
-                label.display = field_name in visible_names
-                port_input.display = field_name in visible_names
-                if field_name in visible_names:
-                    port_input.value = str(self._field_value(field_name))
+            self._form_controller.sync_port_inputs(visible_fields)
 
         def _sync_additional_service_inputs(self) -> None:
-            service = self.values.additional_services[0] if self.values.additional_services else None
-            for field_name, _label in _ADDITIONAL_SERVICE_FIELDS:
-                service_input = self.query_one(f"#{_additional_service_input_id(field_name)}", Input)
-                service_input.value = _additional_service_field_value(service, field_name)
+            self._form_controller.sync_additional_service_inputs()
 
         def _additional_service_input_value(self, field_name: str) -> str:
-            return str(self.query_one(f"#{_additional_service_input_id(field_name)}", Input).value or "").strip()
+            return self._form_controller.additional_service_input_value(field_name)
 
         def _apply_additional_service_inputs(self) -> bool:
-            existing_service = self.values.additional_services[0] if self.values.additional_services else None
-            result = build_additional_service_from_input_values(
-                self._additional_service_input_value,
-                existing_service=existing_service,
-            )
-            if result.remove_current:
-                self.values.additional_services = self.values.additional_services[1:]
-                return True
-            if result.error_message is not None:
-                self._refresh_status(result.error_message)
-                if result.focus_field is not None:
-                    self.query_one(f"#{_additional_service_input_id(result.focus_field)}", Input).focus()
-                return False
-            if result.service is not None:
-                self.values.additional_services = (result.service, *self.values.additional_services[1:])
-            validation = validate_managed_values(self.values, require_directories=False, require_entrypoints=False)
-            if not validation.valid:
-                self._refresh_status(validation.errors[0])
-                return False
-            return True
+            return self._form_controller.apply_additional_service_inputs()
 
         def _refresh_actions(self) -> None:
             back = self.query_one("#btn-back", Button)
@@ -567,40 +523,22 @@ def build_config_wizard_app(
             return self._component_interaction.nearest_selectable_index(index, step=step)
 
         def _directory_label(self, field_name: str) -> str:
-            return self._field_hints.directory_label(field_name)
+            return self._form_controller.directory_label(field_name)
 
         def _refresh_field_hint(self, field_name: str, *, raw: str | None = None) -> None:
-            hint = self.query_one(f"#{_directory_hint_id(field_name)}", Static)
-            hint.update(self._field_hint_text(field_name, raw=raw))
+            self._form_controller.refresh_field_hint(field_name, raw=raw)
 
         def _field_hint_text(self, field_name: str, *, raw: str | None = None) -> str:
-            return self._field_hints.field_hint_text(field_name, raw=raw)
+            return self._form_controller.field_hint_text(field_name, raw=raw)
 
         def _directory_validation_error(self, field_name: str, *, raw: str | None = None) -> str | None:
-            return self._field_hints.directory_validation_error(field_name, raw=raw)
+            return self._form_controller.directory_validation_error(field_name, raw=raw)
 
         def _refresh_directory_validation(self, field_name: str, *, raw: str | None = None) -> None:
-            directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
-            error = self.query_one(f"#{_directory_error_id(field_name)}", Static)
-            message = self._directory_validation_error(
-                field_name, raw=raw if raw is not None else directory_input.value
-            )
-            if message is None:
-                directory_input.remove_class("directory-invalid")
-                error.update("")
-                error.remove_class("directory-error-visible")
-                return
-            directory_input.add_class("directory-invalid")
-            error.update(message)
-            error.add_class("directory-error-visible")
+            self._form_controller.refresh_directory_validation(field_name, raw=raw)
 
         def _first_directory_error(self, *, visible_fields: tuple[tuple[str, str], ...] | None = None) -> str | None:
-            fields = visible_fields if visible_fields is not None else _visible_directory_fields(self.values)
-            for field_name, _label in fields:
-                message = self._directory_validation_error(field_name)
-                if message is not None:
-                    return message
-            return None
+            return self._form_controller.first_directory_error(visible_fields=visible_fields)
 
         def action_cursor_up(self) -> None:
             if self._current_step() not in {"default_mode", "components", "service_startup"}:
@@ -842,43 +780,11 @@ def build_config_wizard_app(
                 if self._current_step() == "directories"
                 else _visible_command_fields(self.values)
             )
-            raw_values: dict[str, str] = {}
-            for field_name, label in visible_fields:
-                directory_input = self.query_one(f"#{_directory_input_id(field_name)}", Input)
-                raw = directory_input.value.strip()
-                raw_values[field_name] = raw
-                self._refresh_directory_validation(field_name, raw=raw)
-                self._refresh_field_hint(field_name, raw=raw)
-            result = value_policy.apply_text_field_values(
-                self.values,
-                base_dir=local_state.base_dir,
-                visible_fields=visible_fields,
-                raw_values=raw_values,
-            )
-            if not result.valid:
-                self._refresh_status(result.error_message or "Invalid configuration value.")
-                if result.focus_field is not None:
-                    self.query_one(f"#{_directory_input_id(result.focus_field)}", Input).focus()
-                return False
-            return True
+            return self._form_controller.apply_directory_inputs(visible_fields)
 
         def _apply_port_inputs(self) -> bool:
-            raw_values: dict[str, str] = {}
             visible_fields = _visible_port_fields(self.values)
-            for field_name, _label in visible_fields:
-                port_input = self.query_one(f"#{_port_input_id(field_name)}", Input)
-                raw_values[field_name] = port_input.value.strip()
-            result = value_policy.apply_port_field_values(
-                self.values,
-                visible_fields=visible_fields,
-                raw_values=raw_values,
-            )
-            if not result.valid:
-                self._refresh_status(result.error_message or "Invalid port configuration.")
-                if result.focus_field is not None:
-                    self.query_one(f"#{_port_input_id(result.focus_field)}", Input).focus()
-                return False
-            return True
+            return self._form_controller.apply_port_inputs(visible_fields)
 
     return ConfigWizardApp(), run_policy
 
