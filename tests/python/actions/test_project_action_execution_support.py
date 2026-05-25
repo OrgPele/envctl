@@ -194,6 +194,59 @@ class ProjectActionExecutionSupportTests(unittest.TestCase):
         self.assertEqual(completed.stdout, "")
         self.assertFalse(captured["emit_success_output"])
 
+    def test_ship_action_uses_structured_status_success_messages(self) -> None:
+        route = parse_route(["ship", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        target = SimpleNamespace(name="feature-a-1", root="/repo/trees/feature-a/1")
+        captured: dict[str, object] = {}
+
+        def execute_targeted_action_fn(**kwargs: object) -> int:
+            captured.update(kwargs)
+            context = SimpleNamespace(name="feature-a-1", root=target.root, target_obj=target)
+            completed = subprocess.CompletedProcess(
+                ["envctl", "ship"],
+                0,
+                stdout=(
+                    "{\n"
+                    '  "contract_version": "envctl.ship.v1",\n'
+                    '  "operation_statuses": {"commit": "success", "push": "success", "pr": "existing", "merge_conflicts": "none", "checks": "pending"},\n'
+                    '  "pr_url": "https://github.test/acme/envctl/pull/12",\n'
+                    '  "status": "checks_pending_timeout"\n'
+                    "}\n"
+                ),
+                stderr="",
+            )
+            captured["print_message"] = kwargs["success_print_formatter"](context, completed)
+            captured["status_message"] = kwargs["success_status_formatter"](context, completed)
+            return 0
+
+        runtime = SimpleNamespace(env={}, process_runner=_Runner())
+
+        code = run_project_action(
+            runtime=runtime,
+            route=route,
+            targets=[target],
+            command_name="ship",
+            env_key="ENVCTL_ACTION_SHIP_CMD",
+            default_command=["envctl", "ship"],
+            default_cwd=Path("/repo"),
+            default_append_project_path=False,
+            extra_env={},
+            action_replacements_builder=lambda _targets, target: {"project": target.name},
+            action_env_builder=lambda *_args, **_kwargs: {},
+            emit_status=lambda _message: None,
+            success_handler=lambda *_args, **_kwargs: None,
+            failure_handler=lambda *_args, **_kwargs: None,
+            stdout_is_live_terminal=lambda: False,
+            execute_targeted_action_fn=execute_targeted_action_fn,
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn("success_print_formatter", captured)
+        self.assertIn("success_status_formatter", captured)
+        self.assertIn("checks_pending_timeout", captured["print_message"])
+        self.assertIn("checks_pending_timeout", captured["status_message"])
+        self.assertNotIn("succeeded", captured["print_message"])
+
 
 if __name__ == "__main__":
     unittest.main()

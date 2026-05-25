@@ -12,6 +12,9 @@ from envctl_engine.actions.project_action_report_support import (
     persist_project_action_result,
     project_action_success_status,
     review_success_artifact_paths,
+    ship_action_payload,
+    ship_action_status,
+    ship_action_status_message,
     write_project_action_failure_report,
 )
 
@@ -37,6 +40,38 @@ class ProjectActionReportSupportTests(unittest.TestCase):
 
         self.assertEqual(project_action_success_status(command_name="pr", completed=completed), "skipped")
         self.assertEqual(project_action_success_status(command_name="review", completed=completed), "success")
+
+    def test_ship_action_status_reads_structured_output(self) -> None:
+        output = (
+            "Committed and pushed changes\n"
+            "{\n"
+            '  "branch": "feature-a",\n'
+            '  "contract_version": "envctl.ship.v1",\n'
+            '  "operation_statuses": {\n'
+            '    "checks": "pending",\n'
+            '    "commit": "success",\n'
+            '    "merge_conflicts": "none",\n'
+            '    "pr": "existing",\n'
+            '    "push": "success"\n'
+            "  },\n"
+            '  "pr_url": "https://github.test/acme/envctl/pull/12",\n'
+            '  "status": "checks_pending_timeout"\n'
+            "}\n"
+        )
+        completed = SimpleNamespace(stdout=output)
+
+        self.assertEqual(ship_action_payload(output)["status"], "checks_pending_timeout")
+        self.assertEqual(ship_action_status(completed), "checks_pending_timeout")
+        self.assertEqual(project_action_success_status(command_name="ship", completed=completed), "checks_pending_timeout")
+
+        message = ship_action_status_message("feature-a", completed)
+        self.assertIn("checks_pending_timeout", message)
+        self.assertIn("commit=success", message)
+        self.assertIn("push=success", message)
+        self.assertIn("merge_conflicts=none", message)
+        self.assertIn("checks=pending", message)
+        self.assertIn("https://github.test/acme/envctl/pull/12", message)
+        self.assertNotIn("succeeded", message)
 
     def test_build_project_action_success_handler_persists_review_artifacts_and_status(self) -> None:
         persisted: list[dict[str, object]] = []

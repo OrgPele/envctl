@@ -307,6 +307,39 @@ class ActionTargetSupportTests(unittest.TestCase):
             self.assertEqual(seen, [("Main", "https://github.com/acme/supportopia/pull/123")])
             self.assertIn("pr succeeded for Main", emitted)
 
+    def test_execute_targeted_action_can_replace_generic_success_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = _Target(name="Main", root=tmpdir)
+            printed: list[str] = []
+            emitted: list[str] = []
+
+            code = execute_targeted_action(
+                targets=[target],
+                command_name="ship",
+                interactive_command=False,
+                resolve_command=lambda _context: ActionCommandResolution(command=["envctl", "ship"], cwd=Path(tmpdir)),
+                build_env=lambda _context: {},
+                process_run=lambda _command, _cwd, _env: _Completed(
+                    returncode=0,
+                    stdout='{"contract_version": "envctl.ship.v1", "status": "checks_pending_timeout"}\n',
+                ),
+                emit_status=emitted.append,
+                printer=printed.append,
+                emit_success_output=False,
+                success_print_formatter=lambda context, _completed: (
+                    f"ship action status for {context.name}: checks_pending_timeout"
+                ),
+                success_status_formatter=lambda context, _completed: (
+                    f"ship status for {context.name}: checks_pending_timeout"
+                ),
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(printed, ["ship action status for Main: checks_pending_timeout"])
+            self.assertIn("ship status for Main: checks_pending_timeout", emitted)
+            self.assertNotIn("ship action succeeded for Main.", printed)
+            self.assertNotIn("ship succeeded for Main", emitted)
+
 
 if __name__ == "__main__":
     unittest.main()

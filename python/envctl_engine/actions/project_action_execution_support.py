@@ -5,6 +5,7 @@ import subprocess
 from typing import Any, Callable, Mapping
 
 from envctl_engine.actions.action_target_support import ActionCommandResolution
+from envctl_engine.actions.project_action_report_support import ship_action_status_message
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_process_runtime
 
@@ -74,6 +75,8 @@ class ProjectActionRunner:
             emit_success_output=not self.stream_review_output,
             on_success=self.success_handler,
             on_failure=self.failure_handler,
+            success_print_formatter=self.success_print_message if self.command_name == "ship" else None,
+            success_status_formatter=self.success_status_message if self.command_name == "ship" else None,
         )
 
     def resolve_command(self, context: object) -> ActionCommandResolution:
@@ -107,8 +110,11 @@ class ProjectActionRunner:
         )
 
     def process_run(self, command: list[str], cwd: Path, env: Mapping[str, str]) -> subprocess.CompletedProcess[str]:
+        process_runtime = self.process_runtime
+        if process_runtime is None:
+            raise RuntimeError("process runtime has not been initialized")
         if self.stream_review_output:
-            completed = self.process_runtime.run_streaming(
+            completed = process_runtime.run_streaming(
                 command,
                 cwd=cwd,
                 env=dict(env),
@@ -122,12 +128,18 @@ class ProjectActionRunner:
                 stdout="" if completed.returncode == 0 else str(completed.stdout or ""),
                 stderr=str(getattr(completed, "stderr", "") or ""),
             )
-        return self.process_runtime.run(
+        return process_runtime.run(
             command,
             cwd=cwd,
             env=dict(env),
             timeout=300.0,
         )
+
+    def success_print_message(self, context: object, completed: Any) -> str:
+        return ship_action_status_message(str(getattr(context, "name")), completed)
+
+    def success_status_message(self, context: object, completed: Any) -> str:
+        return ship_action_status_message(str(getattr(context, "name")), completed)
 
     def _should_stream_review_output(self) -> bool:
         return bool(
