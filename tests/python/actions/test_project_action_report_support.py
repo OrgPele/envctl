@@ -120,13 +120,14 @@ class ProjectActionReportSupportTests(unittest.TestCase):
             report = write_project_action_failure_report(
                 runtime,
                 run_id="run-1",
-                project_name="Feature A",
+                project_name="Feature/A v2",
                 command_name="review",
                 output="boom",
             )
             report_text = report.read_text(encoding="utf-8")
 
-            self.assertEqual(report.name, "Feature_A_review.txt")
+            self.assertEqual(report.name, "Feature_A_v2_review.txt")
+            self.assertEqual(report.parent, repo / "runs" / "run-1")
         self.assertEqual(report_text, "boom\n")
 
     def test_persist_project_action_result_records_migrate_failure_report(self) -> None:

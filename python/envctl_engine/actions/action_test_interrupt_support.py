@@ -5,6 +5,8 @@ import threading
 import time
 from typing import Any, Callable
 
+from envctl_engine.runtime.runtime_context import optional_process_runtime
+
 __all__ = ["TestSuiteInterruptRegistry"]
 
 
@@ -44,7 +46,7 @@ class TestSuiteInterruptRegistry:
             if pid in self._termination_results:
                 return self._termination_results[pid]
 
-        process_runner = getattr(self.runtime, "process_runner", None)
+        process_runner = optional_process_runtime(self.runtime)
         terminator = getattr(process_runner, "terminate_process_group", None)
         if not callable(terminator):
             terminator = getattr(process_runner, "terminate", None)

@@ -5,7 +5,7 @@ from enum import Enum
 import re
 from typing import Callable
 
-from envctl_engine.requirements.common import is_bind_conflict
+from envctl_engine.requirements.common_contracts import is_bind_conflict
 from envctl_engine.shared.reason_codes import (
     PortFailureReason,
     RequirementFailureReason,

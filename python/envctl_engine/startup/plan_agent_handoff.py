@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import AbstractContextManager
 from pathlib import Path
 import shlex
-import time
-from typing import Any
+from typing import Any, cast
 
 from envctl_engine.planning.plan_agent.config import resolve_plan_agent_launch_config
 from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
@@ -16,180 +14,15 @@ from envctl_engine.planning.plan_agent.models import (
 )
 from envctl_engine.planning.plan_agent.recovery import plan_agent_native_recovery_command
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.startup.plan_agent_dependency_bootstrap import prepare_plan_agent_dependencies_for_launch
+from envctl_engine.startup.plan_agent_launch_spinner import (
+    launch_plan_agent_terminals_with_spinner,
+    plan_agent_launch_spinner_label as _plan_agent_launch_spinner_label,
+    plan_agent_launch_spinner_message as _plan_agent_launch_spinner_message,
+    plan_agent_launch_spinner_success_message as _plan_agent_launch_spinner_success_message,
+)
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
-from envctl_engine.ui.spinner import spinner, use_spinner_policy
-from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 from envctl_engine.startup.session import LocalStartupFailure, StartupSession
-
-
-def launch_plan_agent_terminals_with_spinner(
-    runtime: Any,
-    *,
-    route: object,
-    created_worktrees: tuple[object, ...],
-    launch_config: object,
-    suppress_progress_output: bool,
-    launch_fn: Callable[..., object] = launch_plan_agent_terminals,
-    resolve_spinner_policy_fn: Callable[[dict[str, object]], object] = resolve_spinner_policy,
-    emit_spinner_policy_fn: Callable[..., None] = emit_spinner_policy,
-    spinner_fn: Callable[..., AbstractContextManager[Any]] = spinner,
-    use_spinner_policy_fn: Callable[[object], AbstractContextManager[object]] = use_spinner_policy,
-) -> object:
-    spinner_policy = resolve_spinner_policy_fn(dict(runtime.env))
-    use_launch_spinner = (
-        bool(getattr(spinner_policy, "enabled", False))
-        and bool(getattr(launch_config, "enabled", False))
-        and bool(created_worktrees)
-        and not suppress_progress_output
-    )
-    emit_spinner_policy_fn(
-        runtime._emit,
-        spinner_policy,
-        context={"component": "startup_orchestrator", "op_id": "plan_agent.launch"},
-    )
-    if not use_launch_spinner:
-        return launch_fn(runtime, route=route, created_worktrees=created_worktrees)
-
-    launch_message = plan_agent_launch_spinner_message(launch_config, count=len(created_worktrees))
-    with use_spinner_policy_fn(spinner_policy), spinner_fn(launch_message, enabled=True) as active_spinner:
-        runtime._emit(
-            "ui.spinner.lifecycle",
-            component="startup_orchestrator",
-            op_id="plan_agent.launch",
-            state="start",
-            message=launch_message,
-        )
-        try:
-            launch_result = launch_fn(runtime, route=route, created_worktrees=created_worktrees)
-        except Exception:
-            failure_message = "AI session launch failed"
-            active_spinner.fail(failure_message)
-            runtime._emit(
-                "ui.spinner.lifecycle",
-                component="startup_orchestrator",
-                op_id="plan_agent.launch",
-                state="fail",
-                message=failure_message,
-            )
-            runtime._emit(
-                "ui.spinner.lifecycle",
-                component="startup_orchestrator",
-                op_id="plan_agent.launch",
-                state="stop",
-            )
-            raise
-        status = str(getattr(launch_result, "status", "")).strip().lower()
-        if status == "failed":
-            failure_message = "AI session launch failed"
-            active_spinner.fail(failure_message)
-            runtime._emit(
-                "ui.spinner.lifecycle",
-                component="startup_orchestrator",
-                op_id="plan_agent.launch",
-                state="fail",
-                message=failure_message,
-            )
-        else:
-            success_message = plan_agent_launch_spinner_success_message(launch_config, count=len(created_worktrees))
-            active_spinner.succeed(success_message)
-            runtime._emit(
-                "ui.spinner.lifecycle",
-                component="startup_orchestrator",
-                op_id="plan_agent.launch",
-                state="success",
-                message=success_message,
-            )
-        runtime._emit(
-            "ui.spinner.lifecycle",
-            component="startup_orchestrator",
-            op_id="plan_agent.launch",
-            state="stop",
-        )
-    return launch_result
-
-
-def prepare_plan_agent_dependencies_for_launch(
-    runtime: Any,
-    session: StartupSession,
-    *,
-    created_worktrees: tuple[object, ...],
-    launch_config: object,
-    report_progress: Callable[..., None],
-    prepare_fn: Callable[..., object] = prepare_project_dependencies,
-    monotonic_fn: Callable[[], float] = time.monotonic,
-) -> None:
-    if not bool(getattr(launch_config, "enabled", False)) or not created_worktrees:
-        return
-    route = session.effective_route
-    if route.flags.get("launch_dependencies") is False:
-        runtime._emit(
-            "planning.dependency_bootstrap.finish",
-            status="skipped",
-            reason="disabled_by_flag",
-            project_count=0,
-            duration_ms=0.0,
-        )
-        return
-    context_by_name = {context.name: context for context in session.selected_contexts}
-    bootstrap_started = monotonic_fn()
-    runtime._emit(
-        "planning.dependency_bootstrap.start",
-        project_count=len(created_worktrees),
-        projects=[worktree.name for worktree in created_worktrees],
-        cli=getattr(launch_config, "cli", ""),
-        transport=getattr(launch_config, "transport", ""),
-    )
-    results: list[object] = []
-    try:
-        for worktree in created_worktrees:
-            context = context_by_name.get(worktree.name)
-            if context is None:
-                continue
-            report_progress(
-                route,
-                f"Preparing dependencies for {worktree.name}...",
-                project=worktree.name,
-            )
-            project_started = monotonic_fn()
-            result = prepare_fn(
-                runtime,
-                context=context,
-                route=route,
-                run_id=session.run_id,
-            )
-            results.append(result)
-            runtime._emit(
-                "planning.dependency_bootstrap.project",
-                project=worktree.name,
-                status="ok",
-                backend_manager=result.backend.manager,
-                frontend_manager=result.frontend.manager,
-                skipped=list(result.skipped),
-                duration_ms=round((monotonic_fn() - project_started) * 1000.0, 2),
-            )
-            report_progress(
-                route,
-                (
-                    f"Dependencies ready for {worktree.name}: "
-                    f"backend={result.backend.manager} frontend={result.frontend.manager}"
-                ),
-                project=worktree.name,
-            )
-    except Exception as exc:
-        runtime._emit(
-            "planning.dependency_bootstrap.finish",
-            status="failed",
-            error=str(exc),
-            duration_ms=round((monotonic_fn() - bootstrap_started) * 1000.0, 2),
-        )
-        raise
-    session.plan_agent_dependency_bootstrap_results = tuple(results)
-    runtime._emit(
-        "planning.dependency_bootstrap.finish",
-        status="ok",
-        project_count=len(results),
-        duration_ms=round((monotonic_fn() - bootstrap_started) * 1000.0, 2),
-    )
 
 
 def prepare_and_launch_plan_agent_worktrees(
@@ -229,13 +62,16 @@ def prepare_and_launch_plan_agent_worktrees(
             report_progress=report_progress,
             prepare_fn=prepare_fn,
         )
-    launch_result = launch_with_spinner(
-        runtime,
-        route=session.effective_route,
-        created_worktrees=created_worktrees,
-        launch_config=launch_config,
-        suppress_progress_output=suppress_progress_output(session.effective_route),
-        launch_fn=launch_fn,
+    launch_result = cast(
+        PlanAgentLaunchResult,
+        launch_with_spinner(
+            runtime,
+            route=session.effective_route,
+            created_worktrees=created_worktrees,
+            launch_config=launch_config,
+            suppress_progress_output=suppress_progress_output(session.effective_route),
+            launch_fn=launch_fn,
+        ),
     )
     session.plan_agent_launch_result = launch_result
     session.plan_agent_attach_target = getattr(launch_result, "attach_target", None)
@@ -456,27 +292,15 @@ def plan_agent_launch_failure_message(launch_result: object) -> str:
 
 
 def plan_agent_launch_spinner_label(launch_config: object) -> str:
-    transport = str(getattr(launch_config, "transport", "")).strip().lower()
-    cli = str(getattr(launch_config, "cli", "")).strip().lower()
-    if transport == "omx":
-        return "OMX-managed Codex"
-    if cli == "opencode":
-        return "OpenCode"
-    if cli == "codex":
-        return "Codex"
-    return "AI"
+    return _plan_agent_launch_spinner_label(launch_config)
 
 
 def plan_agent_launch_spinner_message(launch_config: object, *, count: int) -> str:
-    label = plan_agent_launch_spinner_label(launch_config)
-    noun = "session" if count == 1 else "sessions"
-    return f"Launching {label} AI {noun}..."
+    return _plan_agent_launch_spinner_message(launch_config, count=count)
 
 
 def plan_agent_launch_spinner_success_message(launch_config: object, *, count: int) -> str:
-    label = plan_agent_launch_spinner_label(launch_config)
-    noun = "session" if count == 1 else "sessions"
-    return f"{label} AI {noun} ready"
+    return _plan_agent_launch_spinner_success_message(launch_config, count=count)
 
 
 def local_startup_failure_reason(error: str) -> str | None:

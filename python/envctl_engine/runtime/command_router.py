@@ -31,6 +31,17 @@ from envctl_engine.runtime.command_catalog import (
 )
 from envctl_engine.runtime.command_models import Route, RouteError
 from envctl_engine.runtime.command_policy import apply_command_policy, apply_mode_token
+from envctl_engine.runtime.command_special_flags import (
+    apply_default_headless_policy,
+    apply_default_runtime_scope_policy,
+    handle_env_assignment,
+    handle_special_flag,
+    set_dependency_scope,
+    set_runtime_scope,
+    validate_dependency_scope_flags,
+    validate_plan_agent_cli_flags,
+    validate_plan_agent_workflow_flags,
+)
 
 
 @dataclass(slots=True)
@@ -346,162 +357,23 @@ def _require_following_value(classified: list[dict[str, str | object]], index: i
 
 
 def _handle_special_flag(flags: dict[str, object], token: str) -> None:
-    """Handle special flag tokens with specific semantics."""
-    if token == "--backend":
-        _set_runtime_scope(flags, "backend")
-    elif token == "--frontend":
-        _set_runtime_scope(flags, "frontend")
-    elif token in {"--both", "--fullstack"}:
-        _set_runtime_scope(flags, "fullstack")
-    elif token in {"--dependencies", "--deps"}:
-        _set_runtime_scope(flags, "dependencies")
-    elif token == "--entire-system":
-        _set_runtime_scope(flags, "entire-system")
-    elif token == "--blast-keep-worktree-volumes":
-        flags["blast_keep_worktree_volumes"] = True
-    elif token == "--blast-remove-worktree-volumes":
-        flags["blast_keep_worktree_volumes"] = False
-    elif token == "--blast-remove-main-volumes":
-        flags["blast_remove_main_volumes"] = True
-    elif token == "--blast-keep-main-volumes":
-        flags["blast_remove_main_volumes"] = False
-    elif token in {"--stop-all-remove-volumes", "--remove-volumes"}:
-        flags["stop_all_remove_volumes"] = True
-    elif token == "--no-parallel-trees":
-        flags["parallel_trees"] = False
-    elif token in {"--test-sequential", "--no-test-parallel"}:
-        flags["test_parallel"] = False
-    elif token in {"--service-sequential", "--no-service-parallel"}:
-        flags["service_parallel"] = False
-    elif token in {"--service-prep-sequential", "--no-service-prep-parallel"}:
-        flags["service_prep_parallel"] = False
-    elif token in {
-        "--deps-sequential",
-        "--sequential-deps",
-        "--requirements-sequential",
-        "--no-requirements-parallel",
-    }:
-        flags["requirements_parallel"] = False
-    elif token == "--ignore-service-deps":
-        flags["ignore_service_deps"] = True
-    elif token == "--only-backend":
-        flags["launch_backend"] = True
-        flags["launch_frontend"] = False
-        flags["launch_dependencies"] = False
-    elif token == "--only-frontend":
-        flags["launch_backend"] = False
-        flags["launch_frontend"] = True
-        flags["launch_dependencies"] = False
-    elif token in {"--no-dependencies", "--no-deps"}:
-        flags["launch_dependencies"] = False
-    elif token in {"--no-infra", "--no-infrastructure"}:
-        flags["launch_backend"] = False
-        flags["launch_frontend"] = False
-        flags["launch_dependencies"] = False
-    elif token in {"--shared-dep", "--shared-deps", "--shared-dependency", "--shared-dependencies"}:
-        _set_dependency_scope(flags, "shared")
-    elif token in {
-        "--managed-dep",
-        "--managed-deps",
-        "--managed-dependency",
-        "--managed-dependencies",
-        "--no-external-dep",
-        "--no-external-deps",
-        "--no-external-dependency",
-        "--no-external-dependencies",
-    }:
-        flags["external_dependencies_mode"] = "managed"
-    elif token in {
-        "--isolated-dep",
-        "--isolated-deps",
-        "--isolated-dependency",
-        "--isolated-dependencies",
-        "--separate-dep",
-        "--separate-deps",
-        "--separate-dependency",
-        "--separate-dependencies",
-    }:
-        _set_dependency_scope(flags, "isolated")
-    elif token in {"--no-seed-requirements-from-base", "--no-copy-db-storage"}:
-        flags["seed_requirements_from_base"] = False
-    elif token in {"fresh=true", "FRESH=true"}:
-        flags["fresh"] = True
-    elif token in {"resume=true", "RESUME=true"}:
-        # Handled in command resolution
-        pass
-    elif token in {"docker=true", "DOCKER=true"}:
-        flags["docker"] = True
-    elif token in {"docker-temp=true", "DOCKER_TEMP=true"}:
-        flags["docker_temp"] = True
-    elif token in {"force=true", "FORCE=true"}:
-        flags["force"] = True
-    elif token in {
-        "copy-db-storage=true",
-        "COPY_DB_STORAGE=true",
-        "seed-requirements-from-base=true",
-        "SEED_REQUIREMENTS_FROM_BASE=true",
-    }:
-        flags["seed_requirements_from_base"] = True
-    elif token in {
-        "copy-db-storage=false",
-        "COPY_DB_STORAGE=false",
-        "seed-requirements-from-base=false",
-        "SEED_REQUIREMENTS_FROM_BASE=false",
-    }:
-        flags["seed_requirements_from_base"] = False
-    elif token in {"parallel-trees=true", "PARALLEL_TREES=true", "RUN_SH_OPT_PARALLEL_TREES=true"}:
-        flags["parallel_trees"] = True
-    elif token in {"parallel-trees=false", "PARALLEL_TREES=false", "RUN_SH_OPT_PARALLEL_TREES=false"}:
-        flags["parallel_trees"] = False
-    elif (
-        token.startswith("parallel-trees-max=")
-        or token.startswith("PARALLEL_TREES_MAX=")
-        or token.startswith("RUN_SH_OPT_PARALLEL_TREES_MAX=")
-    ):
-        flags["parallel_trees_max"] = token.split("=", 1)[1]
-    elif token.startswith("frontend-test-runner=") or token.startswith("FRONTEND_TEST_RUNNER="):
-        flags["frontend_test_runner"] = token.split("=", 1)[1]
+    handle_special_flag(flags, token)
 
 
 def _set_runtime_scope(flags: dict[str, object], scope: str) -> None:
-    existing = flags.get("runtime_scope")
-    if existing is not None and existing != scope:
-        raise RouteError("Use only one runtime scope flag (--backend, --frontend, --fullstack, or --dependencies).")
-    flags["runtime_scope"] = scope
+    set_runtime_scope(flags, scope)
 
 
 def _apply_default_runtime_scope_policy(state: _ParserState) -> None:
-    if state.command not in {"start", "restart"}:
-        return
-    if state.flags.get("runtime_scope") is not None:
-        return
-    if any(key in state.flags for key in ("launch_backend", "launch_frontend", "launch_dependencies")):
-        return
-    if state.command in {"start", "restart"} and state.flags.get("services"):
-        return
-    if state.command == "restart" and state.projects:
-        return
-    state.flags["runtime_scope"] = "entire-system"
+    apply_default_runtime_scope_policy(state.command, flags=state.flags, projects=state.projects)
 
 
 def _set_dependency_scope(flags: dict[str, object], scope: str) -> None:
-    existing = flags.get("dependency_scope")
-    if existing is not None and existing != scope:
-        raise RouteError("Use only one dependency scope flag (--shared-deps or --isolated-deps).")
-    flags["dependency_scope"] = scope
+    set_dependency_scope(flags, scope)
 
 
 def _validate_dependency_scope_flags(state: _ParserState) -> None:
-    scope = state.flags.get("dependency_scope")
-    if scope is None:
-        return
-    if scope == "isolated" and state.mode == "main" and not _route_sets_up_worktrees(state):
-        raise RouteError("Main always uses shared dependencies; --isolated-deps only applies to --trees.")
-    if scope == "shared" and state.flags.get("launch_dependencies") is False:
-        raise RouteError(
-            "--shared-deps requires managed dependencies; remove --no-deps, --only-backend, "
-            "--only-frontend, or --no-infra."
-        )
+    validate_dependency_scope_flags(state.mode, flags=state.flags, sets_up_worktrees=_route_sets_up_worktrees(state))
 
 
 def _route_sets_up_worktrees(state: _ParserState) -> bool:
@@ -509,75 +381,7 @@ def _route_sets_up_worktrees(state: _ParserState) -> bool:
 
 
 def _handle_env_assignment(flags: dict[str, object], token: str) -> None:
-    """Handle env-style assignments (KEY=value, no leading dashes)."""
-    key, value = token.split("=", 1)
-    lowered = value.lower()
-    if key in {"FRONTEND_TEST_RUNNER", "frontend-test-runner"}:
-        flags["frontend_test_runner"] = value
-        return
-    if key in {"test-parallel-max", "TEST_PARALLEL_MAX", "ENVCTL_ACTION_TEST_PARALLEL_MAX"}:
-        flags["test_parallel_max"] = value
-        return
-    if key in {"PARALLEL_TREES_MAX", "parallel-trees-max", "RUN_SH_OPT_PARALLEL_TREES_MAX"}:
-        flags["parallel_trees_max"] = value
-        return
-    if key in {"fresh", "FRESH"} and lowered == "true":
-        flags["fresh"] = True
-        return
-    if key in {"resume", "RESUME"} and lowered == "true":
-        flags["resume"] = True
-        return
-    if key in {"docker", "DOCKER"} and lowered == "true":
-        flags["docker"] = True
-        return
-    if key in {"docker-temp", "DOCKER_TEMP"} and lowered == "true":
-        flags["docker_temp"] = True
-        return
-    if key in {"force", "FORCE"} and lowered == "true":
-        flags["force"] = True
-        return
-    if key in {"backend", "BACKEND"}:
-        if lowered in {"true", "1", "yes", "on"}:
-            flags["backend"] = True
-        elif lowered in {"false", "0", "no", "off"}:
-            flags["backend"] = False
-        return
-    if key in {"test-parallel", "TEST_PARALLEL", "ENVCTL_ACTION_TEST_PARALLEL"}:
-        if lowered in {"true", "1", "yes", "on"}:
-            flags["test_parallel"] = True
-        elif lowered in {"false", "0", "no", "off"}:
-            flags["test_parallel"] = False
-        return
-    if key in {"service-parallel", "SERVICE_PARALLEL", "ENVCTL_SERVICE_ATTACH_PARALLEL"}:
-        if lowered in {"true", "1", "yes", "on"}:
-            flags["service_parallel"] = True
-        elif lowered in {"false", "0", "no", "off"}:
-            flags["service_parallel"] = False
-        return
-    if key in {"service-prep-parallel", "SERVICE_PREP_PARALLEL", "ENVCTL_SERVICE_PREP_PARALLEL"}:
-        if lowered in {"true", "1", "yes", "on"}:
-            flags["service_prep_parallel"] = True
-        elif lowered in {"false", "0", "no", "off"}:
-            flags["service_prep_parallel"] = False
-        return
-    if key in {"frontend", "FRONTEND"}:
-        if lowered in {"true", "1", "yes", "on"}:
-            flags["frontend"] = True
-        elif lowered in {"false", "0", "no", "off"}:
-            flags["frontend"] = False
-        return
-    if key in {"copy-db-storage", "COPY_DB_STORAGE", "seed-requirements-from-base", "SEED_REQUIREMENTS_FROM_BASE"}:
-        if lowered == "true":
-            flags["seed_requirements_from_base"] = True
-        elif lowered == "false":
-            flags["seed_requirements_from_base"] = False
-        return
-    if key in {"parallel-trees", "PARALLEL_TREES", "RUN_SH_OPT_PARALLEL_TREES"}:
-        lowered = value.lower()
-        if lowered == "true":
-            flags["parallel_trees"] = True
-        elif lowered == "false":
-            flags["parallel_trees"] = False
+    handle_env_assignment(flags, token)
 
 
 def _handle_plan_flag(state: _ParserState, token: str) -> None:
@@ -622,47 +426,15 @@ def _apply_mode_override_flag(state: _ParserState) -> None:
 
 
 def _apply_default_headless_policy(state: _ParserState) -> None:
-    if state.command not in DEFAULT_HEADLESS_COMMANDS:
-        return
-    if bool(state.flags.get("interactive")):
-        return
-    if bool(state.flags.get("batch")):
-        return
-    state.flags["batch"] = True
-    state.flags["default_headless"] = True
+    apply_default_headless_policy(state.command, state.flags)
 
 
 def _validate_plan_agent_cli_flags(state: _ParserState) -> None:
-    if not bool(state.flags.get("codex")) and not bool(state.flags.get("opencode")):
-        return
-    if bool(state.flags.get("codex")) and bool(state.flags.get("opencode")):
-        raise RouteError("Use only one of --codex or --opencode.")
-    if bool(state.flags.get("omx")) and bool(state.flags.get("opencode")):
-        raise RouteError("--opencode is only supported with cmux or --tmux plan-agent launches; --omx uses Codex.")
-    if bool(state.flags.get("opencode")) and (bool(state.flags.get("goal")) or bool(state.flags.get("codex_goal"))):
-        raise RouteError(
-            "Codex /goal framing is only supported with Codex plan-agent launches; "
-            "use --codex or omit --opencode."
-        )
-    if bool(state.flags.get("ulw")) and bool(state.flags.get("no_ulw_loop")):
-        raise RouteError("Use only one of --ulw or --no-ulw-loop.")
+    validate_plan_agent_cli_flags(state.flags)
 
 
 def _validate_plan_agent_workflow_flags(state: _ParserState) -> None:
-    ultragoal = bool(state.flags.get("ultragoal"))
-    ralph = bool(state.flags.get("ralph"))
-    team = bool(state.flags.get("team"))
-    enabled_workflows = [
-        name
-        for name, enabled in (("--ultragoal", ultragoal), ("--ralph", ralph), ("--team", team))
-        if enabled
-    ]
-    if not enabled_workflows:
-        return
-    if len(enabled_workflows) > 1:
-        raise RouteError("Use only one of --ultragoal, --ralph, or --team.")
-    if not bool(state.flags.get("omx")):
-        raise RouteError("--ultragoal, --ralph, and --team are only supported with --omx.")
+    validate_plan_agent_workflow_flags(state.flags)
 
 
 def _default_mode(env: Mapping[str, str]) -> str:

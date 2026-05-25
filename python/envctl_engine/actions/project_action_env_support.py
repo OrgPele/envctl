@@ -9,7 +9,9 @@ from envctl_engine.actions.action_command_support import (
     build_action_extra_env,
     build_action_replacements,
 )
+from envctl_engine.actions.action_target_support import action_target_identity
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.runtime_context import resolve_state_repository
 
 
 def action_replacements(
@@ -38,12 +40,13 @@ def action_env(
     route_mode = getattr(route, "mode", None)
     state = runtime.load_existing_state(mode=route_mode) if isinstance(route_mode, str) else None
     run_id = getattr(state, "run_id", None)
-    tree_diffs_root = runtime.state_repository.tree_diffs_dir_path(run_id)
+    state_repository = resolve_state_repository(runtime)
+    tree_diffs_root = state_repository.tree_diffs_dir_path(run_id)  # type: ignore[attr-defined]
     return build_action_env(
         process_env=os.environ if process_env is None else process_env,
         runtime_env=runtime.env,
         repo_root=runtime.config.base_dir,
-        runtime_root=runtime.state_repository.runtime_root,
+        runtime_root=state_repository.runtime_root,  # type: ignore[attr-defined]
         run_id=run_id,
         tree_diffs_root=tree_diffs_root,
         command_name=command_name,
@@ -71,9 +74,8 @@ def test_action_extra_env(
         return {}
     if target is None:
         return {}
-    project_name = str(getattr(target, "name", "") or "").strip()
-    target_root_raw = str(getattr(target, "root", "") or "").strip()
-    if not project_name or not target_root_raw:
+    identity = action_target_identity(target)
+    if identity is None:
         return {}
     state = runtime.load_existing_state(mode=getattr(route, "mode", None))
     if state is None:
@@ -81,12 +83,12 @@ def test_action_extra_env(
     requirements_map = getattr(state, "requirements", None)
     if not isinstance(requirements_map, dict):
         return {}
-    requirements = requirements_map.get(project_name)
+    requirements = requirements_map.get(identity.name)
     if requirements is None:
         return {}
     context = project_context_builder(
-        project_name=project_name,
-        project_root=Path(target_root_raw),
+        project_name=identity.name,
+        project_root=identity.root,
         requirements=requirements,
     )
     projector = getattr(runtime.raw_runtime, "_project_service_env", None)
@@ -123,8 +125,11 @@ def migrate_action_env(
     if target is None:
         return env
 
-    project_name = str(getattr(target, "name", "")).strip()
-    target_root = Path(str(getattr(target, "root")))
+    identity = action_target_identity(target)
+    if identity is None:
+        return env
+    project_name = identity.name
+    target_root = identity.root
     resolved_backend_cwd = backend_cwd(target_root)
     runtime_raw = runtime.raw_runtime
     context = contract_context_builder(project_name=project_name, target_root=target_root)

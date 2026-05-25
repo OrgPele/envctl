@@ -5,6 +5,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import unittest
 
+from envctl_engine.actions import action_test_plan_support
+from envctl_engine.actions.action_test_plan_support import OrchestratorTestPlanDependencies
+from envctl_engine.actions.action_test_plan_support import RuntimeSplitCommandAdapter
+from envctl_engine.actions.action_test_plan_support import TestExecutionPolicy
+from envctl_engine.actions.action_test_plan_support import TestExecutionPlanner
+from envctl_engine.actions.action_test_plan_support import TestStatusRenderer
 from envctl_engine.actions.action_test_plan_support import build_test_execution_specs_for_route
 from envctl_engine.actions.action_test_plan_support import command_start_status
 from envctl_engine.actions.action_test_plan_support import parallel_test_worker_count, parallel_tests_enabled
@@ -20,6 +26,19 @@ from envctl_engine.runtime.command_router import parse_route
 
 
 class ActionTestPlanSupportTests(unittest.TestCase):
+    def test_orchestrator_test_plan_wiring_uses_named_dependency_adapters(self) -> None:
+        source = Path(action_test_plan_support.__file__).read_text(encoding="utf-8")
+
+        self.assertIn("class OrchestratorTestPlanDependencies", source)
+        self.assertIn("class RuntimeSplitCommandAdapter", source)
+        self.assertIn("class TestStatusRenderer", source)
+        self.assertIn("class TestExecutionPolicy", source)
+        self.assertNotIn("split_command=lambda", source)
+        self.assertTrue(callable(OrchestratorTestPlanDependencies.failed_specs))
+        self.assertTrue(callable(RuntimeSplitCommandAdapter.__call__))
+        self.assertTrue(callable(TestStatusRenderer.execution_status))
+        self.assertTrue(callable(TestExecutionPolicy.parallel_enabled))
+
     def test_status_rendering_matches_action_command_surface(self) -> None:
         targets = [SimpleNamespace(name="api"), SimpleNamespace(name="web")]
 
@@ -217,6 +236,35 @@ class ActionTestPlanSupportTests(unittest.TestCase):
         self.assertEqual(specs[0].spec.command[:2], ["npm", "test"])
         self.assertEqual(specs[0].project_name, "feature-a-1")
         self.assertEqual(specs[0].spec.cwd, Path("/repo/trees/feature-a/1"))
+
+    def test_test_execution_planner_reuses_route_dependencies_without_argument_sprawl(self) -> None:
+        route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        target = SimpleNamespace(name="feature-a-1", root="/repo/trees/feature-a/1")
+        context = TargetContext(project_name="feature-a-1", project_root=Path(target.root), target_obj=target)
+        planner = TestExecutionPlanner(
+            route=route,
+            targets=[target],
+            target_contexts=[context],
+            include_backend=True,
+            include_frontend=False,
+            run_all=False,
+            untested=True,
+            env={"ENVCTL_BACKEND_TEST_CMD": "pytest {project}"},
+            config=SimpleNamespace(raw={}, base_dir=Path("/repo"), frontend_test_path=""),
+            action_replacements_builder=lambda _targets, target: {"project": target.name},
+            split_command=lambda raw, replacements: [
+                token.replace("{project}", replacements["project"]) for token in raw.split()
+            ],
+            failed_spec_builder=lambda **_kwargs: [],
+            additional_service_spec_builder=lambda **_kwargs: [],
+            is_legacy_tree_test_script=lambda _command: False,
+        )
+
+        specs = planner.build()
+
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].spec.command, ["pytest", "feature-a-1"])
+        self.assertEqual(specs[0].project_name, "feature-a-1")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from envctl_engine.runtime.runtime_context import optional_process_runtime
+
 
 _SESSION_PREFIX = "envctl-codex"
 _DEFAULT_WINDOW = "codex"
@@ -220,7 +222,7 @@ def _tmux_session_exists(runtime: Any, session_name: str) -> bool:
 def _run_probe(runtime: Any, command: tuple[str, ...], *, cwd: Path) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env.update(dict(getattr(runtime, "env", {}) or {}))
-    process_runner = getattr(runtime, "process_runner", None)
+    process_runner = optional_process_runtime(runtime)
     if process_runner is not None and hasattr(process_runner, "run_probe"):
         return process_runner.run_probe(command, cwd=cwd, env=env, timeout=10.0)
     if process_runner is not None and hasattr(process_runner, "run"):
@@ -237,7 +239,7 @@ def _run_probe(runtime: Any, command: tuple[str, ...], *, cwd: Path) -> subproce
 
 
 def _attach_interactive(runtime: Any, command: tuple[str, ...], *, cwd: Path) -> int:
-    process_runner = getattr(runtime, "process_runner", None)
+    process_runner = optional_process_runtime(runtime)
     try:
         if process_runner is not None and hasattr(process_runner, "start_interactive_child"):
             process = process_runner.start_interactive_child(command, cwd=cwd, env=getattr(runtime, "env", {}))

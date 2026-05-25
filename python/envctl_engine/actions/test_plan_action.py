@@ -20,7 +20,7 @@ _PREFIX_TESTS: tuple[tuple[str, str, str], ...] = (
 )
 
 _PROMPT_PREFIX = "python/envctl_engine/runtime/prompt_templates/"
-_PROMPT_TEST = "tests/python/runtime/test_prompt_install_support.py"
+_PROMPT_TEST = "tests/python/runtime/test_prompt_install_support_templates.py"
 
 
 def build_test_plan(

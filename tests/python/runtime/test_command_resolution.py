@@ -17,6 +17,19 @@ from envctl_engine.runtime.command_resolution import (  # type: ignore[attr-defi
 
 
 class CommandResolutionTests(unittest.TestCase):
+    def test_command_resolution_keeps_autodetection_in_service_owner_module(self) -> None:
+        facade_source = (PYTHON_ROOT / "envctl_engine/runtime/command_resolution.py").read_text(encoding="utf-8")
+        owner_source = (PYTHON_ROOT / "envctl_engine/runtime/service_command_autodetect.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("service_command_autodetect", facade_source)
+        self.assertIn("def autodetect_service_command", owner_source)
+        self.assertIn("def suggest_service_start_command", owner_source)
+        self.assertIn("def suggest_service_directory", owner_source)
+        self.assertNotIn("def _autodetect_backend", facade_source)
+        self.assertNotIn("def _npm_like_dev_command", facade_source)
+
     def test_configured_backend_command_accepts_relative_python_from_backend_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

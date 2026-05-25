@@ -1,15 +1,36 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, Sequence, cast
+from typing import Any, Callable, Mapping
 
 from envctl_engine.runtime.lifecycle_blast_support import LifecycleBlastCleanupSupport
 from envctl_engine.runtime.engine_runtime_lifecycle_support import release_requirement_ports
+from envctl_engine.runtime.lifecycle_dependency_stop import (
+    release_requirement_component_ports,
+    release_selected_dependency_components,
+    requirements_have_enabled_components,
+    select_dependency_components_for_stop,
+)
+from envctl_engine.runtime.lifecycle_service_stop_selection import (
+    select_services_for_stop,
+    service_matches_runtime_scope,
+)
+from envctl_engine.runtime.lifecycle_stopped_metadata import (
+    has_dashboard_stopped_services,
+    project_name_from_stopped_service,
+    project_root_from_stopped_service,
+    remember_dashboard_stopped_services,
+    service_type_from_stopped_service,
+    should_preserve_stopped_dashboard_state,
+)
+from envctl_engine.runtime.runtime_context import (
+    resolve_port_allocator,
+    resolve_process_runtime,
+    resolve_state_repository,
+)
+from envctl_engine.shared.protocols import PortAllocator, ProcessRuntime, StateRepository
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
-from envctl_engine.shared.services import service_matches_selector, service_project_name, service_slug_from_record
 from envctl_engine.ui.selection_support import (
     interactive_selection_allowed,
     project_names_from_state,
@@ -19,30 +40,6 @@ from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F4
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
-from envctl_engine.requirements.core import dependency_definitions
-
-
-class _StateRepositoryProtocol(Protocol):
-    def save_selected_stop_state(
-        self,
-        *,
-        state: RunState,
-        emit: Callable[..., None],
-        runtime_map_builder: Callable[[RunState], dict[str, object]],
-    ) -> dict[str, object]: ...
-
-    def purge(self, *, aggressive: bool = False) -> None: ...
-
-
-class _ProcessRuntimeProtocol(Protocol):
-    def run(
-        self,
-        cmd: Sequence[str],
-        *,
-        cwd: str | os.PathLike[str] | None = None,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> object: ...
 
 
 class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
@@ -170,153 +167,47 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
 
     @staticmethod
     def _should_preserve_stopped_dashboard_state(route: Route) -> bool:
-        if bool(route.flags.get("interactive_command")):
-            return True
-        if bool(route.flags.get("stop_preserve_requirements")):
-            return True
-        services = route.flags.get("services")
-        return isinstance(services, list) and any(str(item).strip() for item in services)
+        return should_preserve_stopped_dashboard_state(route)
 
     def _remember_dashboard_stopped_services(self, state: RunState, selected_services: set[str]) -> None:
-        if not selected_services:
-            return
-        raw_existing = state.metadata.get("dashboard_stopped_services")
-        existing_items = raw_existing if isinstance(raw_existing, list) else []
-        by_name: dict[str, dict[str, str]] = {}
-        for item in existing_items:
-            if not isinstance(item, Mapping):
-                continue
-            name = str(item.get("name", "") or "").strip()
-            project = str(item.get("project", "") or "").strip()
-            service_type = str(item.get("type", "") or "").strip().lower()
-            if name and project and service_type:
-                by_name[name] = {"name": name, "project": project, "type": service_type}
-
-        raw_roots = state.metadata.get("project_roots")
-        project_roots = dict(raw_roots) if isinstance(raw_roots, Mapping) else {}
-        raw_configured_types = state.metadata.get("dashboard_configured_service_types")
-        configured_types = {
-            str(item).strip().lower()
-            for item in (raw_configured_types if isinstance(raw_configured_types, list) else [])
-            if str(item).strip()
-        }
-
-        for service_name in sorted(selected_services):
-            service = state.services.get(service_name)
-            if service is None:
-                continue
-            project = service_project_name(service)
-            if not project:
-                project = str(self.runtime._project_name_from_service(service_name) or "").strip()  # type: ignore[attr-defined]
-            if not project:
-                project = self._project_name_from_stopped_service(service_name)
-            service_type = self._service_type_from_stopped_service(service_name, service)
-            if not project or not service_type:
-                continue
-            by_name[service_name] = {"name": service_name, "project": project, "type": service_type}
-            configured_types.add(service_type)
-            if project not in project_roots:
-                root = self._project_root_from_stopped_service(service, service_type=service_type)
-                if root:
-                    project_roots[project] = root
-
-        if by_name:
-            state.metadata["dashboard_stopped_services"] = [by_name[name] for name in sorted(by_name)]
-        if project_roots:
-            state.metadata["project_roots"] = {str(key): str(value) for key, value in project_roots.items()}
-        if configured_types:
-            state.metadata["dashboard_configured_service_types"] = sorted(configured_types)
+        remember_dashboard_stopped_services(
+            state,
+            selected_services,
+            project_name_from_service_fn=lambda service_name: str(
+                self.runtime._project_name_from_service(service_name) or ""  # type: ignore[attr-defined]
+            ).strip(),
+        )
 
     @staticmethod
     def _has_dashboard_stopped_services(state: RunState) -> bool:
-        raw = state.metadata.get("dashboard_stopped_services")
-        return isinstance(raw, list) and bool(raw)
+        return has_dashboard_stopped_services(state)
 
     @staticmethod
     def _project_name_from_stopped_service(service_name: str) -> str:
-        trimmed = str(service_name).strip()
-        for suffix in (" Backend", " Frontend"):
-            if trimmed.endswith(suffix):
-                return trimmed[: -len(suffix)].strip()
-        return ""
+        return project_name_from_stopped_service(service_name)
 
     @staticmethod
     def _service_type_from_stopped_service(service_name: str, service: object) -> str:
-        service_type = service_slug_from_record(service)
-        if service_type:
-            return service_type
-        lowered = str(service_name).strip().lower()
-        if lowered.endswith(" backend"):
-            return "backend"
-        if lowered.endswith(" frontend"):
-            return "frontend"
-        return ""
+        return service_type_from_stopped_service(service_name, service)
 
     @staticmethod
     def _project_root_from_stopped_service(service: object, *, service_type: str) -> str:
-        cwd_raw = str(getattr(service, "cwd", "") or "").strip()
-        if not cwd_raw:
-            return ""
-        cwd = Path(cwd_raw).expanduser()
-        if cwd.name.lower() == service_type:
-            return str(cwd.parent)
-        return str(cwd)
+        return project_root_from_stopped_service(service, service_type=service_type)
 
     def _select_services_for_stop(self, state: RunState, route: Route) -> set[str]:
-        if route.command != "stop":
-            return set(state.services.keys())
-        if bool(route.flags.get("all")):
-            return set(state.services.keys())
-
-        runtime_scope = route.flags.get("runtime_scope")
-        if runtime_scope in {"backend", "frontend"}:
-            return {
-                name
-                for name, service in state.services.items()
-                if self._service_matches_runtime_scope(name, service, str(runtime_scope))
-            }
-        if runtime_scope in {"fullstack", "entire-system"}:
-            return set(state.services.keys())
-        if runtime_scope == "dependencies":
-            return set()
-
-        selected: set[str] = set()
-        has_selectors = False
-        services_flag = route.flags.get("services")
-        if isinstance(services_flag, list):
-            has_selectors = has_selectors or bool(services_flag)
-            for raw in services_flag:
-                target = str(raw).strip().lower()
-                if not target:
-                    continue
-                for name, service in state.services.items():
-                    if name.lower() == target or service_matches_selector(service, target):
-                        selected.add(name)
-
-        project_names = {name.lower() for name in route.projects}
         selectors_from_passthrough = getattr(self.runtime, "_selectors_from_passthrough", None)
-        if callable(selectors_from_passthrough):
-            project_names.update(selectors_from_passthrough(route.passthrough_args))
-        has_selectors = has_selectors or bool(project_names)
-        if project_names:
-            for name in state.services:
-                project = self.runtime._project_name_from_service(name).lower()  # type: ignore[attr-defined]
-                if project and project in project_names:
-                    selected.add(name)
-
-        if not selected and has_selectors:
-            return set()
-        if not selected and self._select_dependency_components_for_stop(state, route):
-            return set()
-        if not selected:
-            selection = self._interactive_stop_selection(route, state)
-            if selection is not None:
-                if selection.cancelled:
-                    return set()
-                selected = self._services_from_selection(selection, state)
-        if not selected:
-            return set(state.services.keys())
-        return selected
+        return select_services_for_stop(
+            state,
+            route,
+            project_name_from_service_fn=lambda service_name: self.runtime._project_name_from_service(  # type: ignore[attr-defined]
+                service_name
+            ),
+            selectors_from_passthrough_fn=(
+                selectors_from_passthrough if callable(selectors_from_passthrough) else lambda _args: set()
+            ),
+            interactive_stop_selection_fn=self._interactive_stop_selection,
+            services_from_selection_fn=self._services_from_selection,
+        )
 
     def _execute_stop_dependencies(self, route: Route, state: RunState) -> int:
         def operation() -> int:
@@ -356,74 +247,26 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
         )
 
     def _select_dependency_components_for_stop(self, state: RunState, route: Route) -> dict[str, set[str]]:
-        raw_components = route.flags.get("stop_dependency_components")
-        if not isinstance(raw_components, list):
-            return {}
-        known_definitions = {definition.id for definition in dependency_definitions()}
-        selected: dict[str, set[str]] = {}
-        project_key_by_lower = {str(project).strip().casefold(): project for project in state.requirements}
-        for raw in raw_components:
-            project_name, separator, dependency_id = str(raw).partition(":")
-            if not separator:
-                continue
-            project_key = project_key_by_lower.get(project_name.strip().casefold())
-            if project_key is None:
-                continue
-            normalized_dependency = dependency_id.strip().lower()
-            if normalized_dependency not in known_definitions:
-                continue
-            component = state.requirements[project_key].component(normalized_dependency)
-            if not bool(component.get("enabled", False)):
-                continue
-            selected.setdefault(project_key, set()).add(normalized_dependency)
-        return selected
+        return select_dependency_components_for_stop(state, route)
 
     def _release_selected_dependency_components(
         self,
         state: RunState,
         selected_dependencies: dict[str, set[str]],
     ) -> None:
-        for project_name, dependency_ids in selected_dependencies.items():
-            requirements = state.requirements.get(project_name)
-            if requirements is None:
-                continue
-            for dependency_id in dependency_ids:
-                component = requirements.component(dependency_id)
-                if not bool(component.get("enabled", False)):
-                    continue
-                if not bool(component.get("external")):
-                    self._release_requirement_component_ports(component)
-                requirements.components[dependency_id] = {}
-            if not self._requirements_have_enabled_components(requirements):
-                state.requirements.pop(project_name, None)
+        release_selected_dependency_components(
+            state,
+            selected_dependencies,
+            release_component_ports_fn=self._release_requirement_component_ports,
+        )
 
     def _release_requirement_component_ports(self, component: Mapping[str, object]) -> None:
-        ports: set[int] = set()
-        final = component.get("final")
-        if isinstance(final, int) and final > 0:
-            ports.add(final)
-        resources = component.get("resources")
-        if isinstance(resources, Mapping):
-            for value in resources.values():
-                if isinstance(value, int) and value > 0:
-                    ports.add(value)
-        port_planner = getattr(self.runtime, "port_planner", None)
-        release = getattr(port_planner, "release", None)
-        if not callable(release):
-            return
-        for port in sorted(ports):
-            release(port)
+        port_allocator = self._port_allocator(self.runtime)
+        release_requirement_component_ports(component, release_port_fn=port_allocator.release)
 
     @staticmethod
     def _requirements_have_enabled_components(requirements: object) -> bool:
-        components = getattr(requirements, "components", {})
-        if not isinstance(components, Mapping):
-            return False
-        return any(
-            bool(component.get("enabled", False))
-            for component in components.values()
-            if isinstance(component, Mapping)
-        )
+        return requirements_have_enabled_components(requirements)
 
     def _release_requirement_ports(self, requirements: object) -> None:
         release = getattr(self.runtime, "_release_requirement_ports", None)
@@ -434,11 +277,7 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
 
     @staticmethod
     def _service_matches_runtime_scope(name: str, service: object, runtime_scope: str) -> bool:
-        service_type = str(getattr(service, "type", "") or "").strip().lower()
-        if service_type == runtime_scope:
-            return True
-        lowered_name = str(name).strip().lower()
-        return lowered_name.endswith(f" {runtime_scope}")
+        return service_matches_runtime_scope(name, service, runtime_scope)
 
     def _interactive_stop_selection(self, route: Route, state: RunState) -> TargetSelection | None:
         if not self._interactive_selection_allowed(route):
@@ -593,21 +432,13 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
             return code
 
     @staticmethod
-    def _state_repository(runtime: object) -> _StateRepositoryProtocol:
-        runtime_context = getattr(runtime, "runtime_context", None)
-        candidate = getattr(runtime_context, "state_repository", None)
-        if candidate is None:
-            candidate = getattr(runtime, "state_repository", None)
-        if candidate is None:
-            raise RuntimeError("state repository dependency is not configured")
-        return cast(_StateRepositoryProtocol, candidate)
+    def _state_repository(runtime: object) -> StateRepository:
+        return resolve_state_repository(runtime)
 
     @staticmethod
-    def _process_runtime(runtime: object) -> _ProcessRuntimeProtocol:
-        runtime_context = getattr(runtime, "runtime_context", None)
-        candidate = getattr(runtime_context, "process_runtime", None)
-        if candidate is None:
-            candidate = getattr(runtime, "process_runner", None)
-        if candidate is None:
-            raise RuntimeError("process runtime dependency is not configured")
-        return cast(_ProcessRuntimeProtocol, candidate)
+    def _process_runtime(runtime: object) -> ProcessRuntime:
+        return resolve_process_runtime(runtime)
+
+    @staticmethod
+    def _port_allocator(runtime: object) -> PortAllocator:
+        return resolve_port_allocator(runtime)

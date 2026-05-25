@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from envctl_engine.actions.action_test_summary_artifacts import (
+    FailedTestSummaryWriter,
+    TestSummaryArtifactPersistor,
     _project_roots_from_outcomes,
     _project_roots_from_targets,
     new_test_results_run_dir_path,
@@ -50,6 +52,7 @@ __all__ = [
     "default_git_state_components",
     "exception_body_block",
     "exception_context_markers",
+    "FailedTestSummaryWriter",
     "format_summary_error_lines",
     "is_captured_output_header",
     "is_exception_context_marker",
@@ -65,6 +68,7 @@ __all__ = [
     "short_failed_summary_path",
     "structured_summary_lines",
     "suite_display_name",
+    "TestSummaryArtifactPersistor",
     "user_code_frame_blocks",
     "write_failed_tests_summary",
     "write_failed_tests_summary_for_orchestrator",

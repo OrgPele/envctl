@@ -1,71 +1,62 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-import json
-import os
-import re
-import shlex
+# ruff: noqa: F401
 import shutil
-import subprocess
-import sys
-import threading
-import time
-from importlib import resources
-from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
-from envctl_engine.planning import planning_feature_name
 from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
-from envctl_engine.runtime.codex_tmux_support import (
-    _attach_interactive,
-    _completed_process_error_text as _tmux_completed_process_error_text,
-    _run_probe as _run_tmux_probe,
-    _sanitize_name as _sanitize_tmux_name,
-    _tmux_session_exists,
-)
-from envctl_engine.runtime.prompt_install_support import (
-    resolve_codex_direct_prompt_body,
-    resolve_opencode_direct_prompt_body,
-)
-from envctl_engine.state.models import RunState
-from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 
-from envctl_engine.planning.plan_agent.constants import *
-from envctl_engine.planning.plan_agent.models import *
+from envctl_engine.planning.plan_agent.launch_policy import (
+    PlanAgentLaunchPolicy,
+    cli_ready_delay_seconds,
+    codex_tui_queue_workflow_supported,
+    command_executable,
+    default_plan_agent_cli_command,
+    default_plan_agent_surface_transport,
+    guidance_attach_command,
+    missing_launch_commands,
+    normalize_plan_agent_surface_transport,
+    parse_codex_cycles,
+    uses_direct_submission,
+    workflow_mode_for_launch_config,
+)
+from envctl_engine.planning.plan_agent.models import PlanAgentLaunchConfig
+
+
+def _launch_policy(
+    config: EngineConfig,
+    env: dict[str, str] | None = None,
+    *,
+    route: object | None = None,
+) -> PlanAgentLaunchPolicy:
+    env_map = dict(env or {})
+    _apply_plan_agent_aliases(env_map, explicit_values=env_map)
+    return PlanAgentLaunchPolicy(
+        config=config,
+        env=env_map,
+        route=route,
+        command_available=shutil.which,
+    )
+
 
 def _parse_codex_cycles(raw: object) -> tuple[int, str | None]:
-    normalized = str(raw or "").strip()
-    if not normalized:
-        return 0, None
-    value = parse_int_or_none(normalized)
-    if value is None:
-        return 0, "invalid_codex_cycles"
-    if value < 0:
-        return 0, "invalid_codex_cycles"
-    if value > _PLAN_AGENT_CODEX_CYCLE_CAP:
-        return _PLAN_AGENT_CODEX_CYCLE_CAP, "bounded_codex_cycles"
-    return value, None
+    return parse_codex_cycles(raw)
 
 
 def _workflow_mode_for_launch_config(launch_config: PlanAgentLaunchConfig) -> str:
-    if _codex_tui_queue_workflow_supported(launch_config) and launch_config.codex_cycles > 0:
-        return _PLAN_AGENT_WORKFLOW_CODEX_CYCLES
-    return _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT
+    return workflow_mode_for_launch_config(launch_config)
 
 
 def _codex_tui_queue_workflow_supported(launch_config: PlanAgentLaunchConfig) -> bool:
-    return launch_config.cli == "codex" and launch_config.transport in {"cmux", "tmux", "omx"}
+    return codex_tui_queue_workflow_supported(launch_config)
 
 
 def _uses_direct_submission(*, cli: str, direct_prompt_enabled: bool) -> bool:
-    normalized_cli = str(cli).strip().lower()
-    if normalized_cli == "codex":
-        return True
-    return normalized_cli == "opencode" and direct_prompt_enabled
+    return uses_direct_submission(cli=cli, direct_prompt_enabled=direct_prompt_enabled)
 
 
 def _cli_ready_delay_seconds(cli: str) -> float:
-    return _CLI_READY_DELAY_SECONDS_BY_CLI.get(str(cli).strip().lower(), _DEFAULT_CLI_READY_DELAY_SECONDS)
+    return cli_ready_delay_seconds(cli)
 
 
 def resolve_plan_agent_launch_config(
@@ -74,231 +65,23 @@ def resolve_plan_agent_launch_config(
     *,
     route: object | None = None,
 ) -> PlanAgentLaunchConfig:
-    env_map = dict(env or {})
-    _apply_plan_agent_aliases(env_map, explicit_values=env_map)
-    route_flags = getattr(route, "flags", {}) or {}
-    cmux_launch_requested = bool(route_flags.get("cmux"))
-    opencode_launch_requested = bool(route_flags.get("opencode"))
-    cmux_alias_requested = parse_bool(env_map.get("CMUX") or config.raw.get("CMUX"), False)
-    cmux_workspace = str(
-        env_map.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
-        or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
-        or ""
-    ).strip()
-    current_cmux_workspace = str(env_map.get("CMUX_WORKSPACE_ID") or config.raw.get("CMUX_WORKSPACE_ID") or "").strip()
-    configured_surface_transport = str(
-        env_map.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
-        or config.raw.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT")
-        or _default_plan_agent_surface_transport()
-    ).strip().lower() or _default_plan_agent_surface_transport()
-    configured_surface_transport = _resolve_available_plan_agent_surface_transport(configured_surface_transport)
-    surface_transport_warning = None
-    if configured_surface_transport not in {"cmux", "tmux", "superset"}:
-        surface_transport_warning = "invalid_surface_transport"
-        configured_surface_transport = _default_plan_agent_surface_transport()
-    transport: Literal["cmux", "tmux", "omx", "superset"]
-    if bool(route_flags.get("omx")):
-        transport = "omx"
-    elif bool(route_flags.get("tmux")):
-        transport = "tmux"
-    elif cmux_launch_requested or cmux_alias_requested or bool(cmux_workspace) or bool(current_cmux_workspace):
-        transport = "cmux"
-    elif opencode_launch_requested:
-        transport = _default_plan_agent_surface_transport()
-    else:
-        transport = configured_surface_transport
-    cli = str(
-        "opencode"
-        if bool(route_flags.get("opencode"))
-        else (
-            "codex"
-            if bool(route_flags.get("codex")) or transport == "omx"
-            else (
-            env_map.get("ENVCTL_PLAN_AGENT_CLI")
-            or config.raw.get("ENVCTL_PLAN_AGENT_CLI")
-            or "codex"
-            )
-        )
-    ).strip().lower() or "codex"
-    codex_yolo_enabled = parse_bool(
-        env_map.get("ENVCTL_PLAN_AGENT_CODEX_YOLO")
-        or config.raw.get("ENVCTL_PLAN_AGENT_CODEX_YOLO"),
-        True,
-    )
-    cli_command = str(
-        env_map.get("ENVCTL_PLAN_AGENT_CLI_CMD")
-        or config.raw.get("ENVCTL_PLAN_AGENT_CLI_CMD")
-        or _default_plan_agent_cli_command(cli, codex_yolo_enabled=codex_yolo_enabled)
-    ).strip() or cli
-    preset = str(
-        env_map.get("ENVCTL_PLAN_AGENT_PRESET")
-        or config.raw.get("ENVCTL_PLAN_AGENT_PRESET")
-        or _DEFAULT_PRESET
-    ).strip() or _DEFAULT_PRESET
-    shell = str(
-        env_map.get("ENVCTL_PLAN_AGENT_SHELL")
-        or config.raw.get("ENVCTL_PLAN_AGENT_SHELL")
-        or _DEFAULT_SHELL
-    ).strip() or _DEFAULT_SHELL
-    superset_project = str(
-        env_map.get("ENVCTL_PLAN_AGENT_SUPERSET_PROJECT")
-        or config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_PROJECT")
-        or ""
-    ).strip()
-    superset_workspace = str(
-        env_map.get("ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE")
-        or config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE")
-        or ""
-    ).strip()
-    superset_host = str(
-        env_map.get("ENVCTL_PLAN_AGENT_SUPERSET_HOST")
-        or config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_HOST")
-        or ""
-    ).strip()
-    codex_cycles, codex_cycles_warning = _parse_codex_cycles(
-        env_map.get("ENVCTL_PLAN_AGENT_CODEX_CYCLES")
-        or config.raw.get("ENVCTL_PLAN_AGENT_CODEX_CYCLES")
-        or ""
-    )
-    enabled = parse_bool(
-        env_map.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE")
-        or config.raw.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"),
-        False,
-    ) or any(
-        (
-            bool(cmux_workspace),
-            cmux_alias_requested,
-            cmux_launch_requested,
-            opencode_launch_requested,
-            bool(superset_project or superset_workspace),
-            bool(route_flags.get("tmux")) or bool(route_flags.get("omx")),
-        )
-    )
-    direct_prompt_enabled = parse_bool(
-        env_map.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT")
-        or config.raw.get("ENVCTL_PLAN_AGENT_DIRECT_PROMPT"),
-        True if cli == "opencode" else False,
-    )
-    ulw_loop_prefix = parse_bool(
-        env_map.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX")
-        or config.raw.get("ENVCTL_PLAN_AGENT_ULW_LOOP_PREFIX"),
-        True if (cli == "opencode" and direct_prompt_enabled) else False,
-    )
-    ulw_suffix = parse_bool(
-        env_map.get("ENVCTL_PLAN_AGENT_APPEND_ULW")
-        or config.raw.get("ENVCTL_PLAN_AGENT_APPEND_ULW"),
-        False,
-    )
-    if bool(route_flags.get("ulw")):
-        ulw_loop_prefix = True
-        if cli == "opencode":
-            direct_prompt_enabled = True
-    if bool(route_flags.get("no_ulw_loop")):
-        ulw_loop_prefix = False
-    omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
-    if bool(route_flags.get("ultragoal")):
-        omx_workflow = "ultragoal"
-    elif bool(route_flags.get("ralph")):
-        omx_workflow = "ralph"
-    elif bool(route_flags.get("team")):
-        omx_workflow = "team"
-    goal_enabled = False
-    if cli == "codex":
-        goal_enabled = parse_bool(
-            env_map.get("ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE")
-            or config.raw.get("ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE"),
-            True,
-        )
-        if bool(route_flags.get("goal")) or bool(route_flags.get("codex_goal")):
-            goal_enabled = True
-        if bool(route_flags.get("no_goal")) or bool(route_flags.get("no_codex_goal")):
-            goal_enabled = False
-    return PlanAgentLaunchConfig(
-        enabled=enabled,
-        transport=transport,
-        cli=cli,
-        cli_command=cli_command,
-        preset=preset,
-        codex_cycles=codex_cycles,
-        codex_cycles_warning=codex_cycles_warning,
-        browser_e2e_followup_enable=parse_bool(
-            env_map.get("ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE")
-            or config.raw.get("ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE"),
-            True,
-        ),
-        pr_review_comments_followup_enable=parse_bool(
-            env_map.get("ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE")
-            or config.raw.get("ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE"),
-            True,
-        ),
-        shell=shell,
-        require_cmux_context=parse_bool(
-            env_map.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT")
-            or config.raw.get("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT"),
-            True,
-        ),
-        cmux_workspace=cmux_workspace,
-        direct_prompt_enabled=direct_prompt_enabled,
-        ulw_loop_prefix=ulw_loop_prefix,
-        ulw_suffix=ulw_suffix,
-        omx_workflow=omx_workflow,
-        codex_goal_enable=goal_enabled,
-        superset_project=superset_project,
-        superset_workspace=superset_workspace,
-        superset_host=superset_host,
-        superset_local=parse_bool(
-            env_map.get("ENVCTL_PLAN_AGENT_SUPERSET_LOCAL")
-            or config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_LOCAL"),
-            True,
-        ),
-        superset_open=parse_bool(
-            env_map.get("ENVCTL_PLAN_AGENT_SUPERSET_OPEN")
-            or config.raw.get("ENVCTL_PLAN_AGENT_SUPERSET_OPEN"),
-            True,
-        ),
-        surface_transport_warning=surface_transport_warning,
-    )
+    return _launch_policy(config, env, route=route).resolve_launch_config()
 
 
 def _default_plan_agent_cli_command(cli: str, *, codex_yolo_enabled: bool = True) -> str:
-    normalized = str(cli).strip().lower()
-    if normalized == "codex":
-        if codex_yolo_enabled:
-            return f"codex {_CODEX_BYPASS_FLAGS}"
-        return "codex"
-    return normalized or "codex"
+    return default_plan_agent_cli_command(cli, codex_yolo_enabled=codex_yolo_enabled)
 
 
 def _default_plan_agent_surface_transport() -> Literal["cmux", "tmux"]:
-    return "cmux" if shutil.which("cmux") else "tmux"
+    return default_plan_agent_surface_transport(command_available=shutil.which)
 
 
 def _resolve_available_plan_agent_surface_transport(raw: str) -> str:
-    normalized = str(raw or "").strip().lower()
-    return normalized
+    return normalize_plan_agent_surface_transport(raw)
 
 
 def _cmux_transport_explicitly_requested(config: EngineConfig, env: dict[str, str], route: object | None) -> bool:
-    route_flags = getattr(route, "flags", {}) or {}
-    explicit_config_keys = set(getattr(config, "explicit_keys", ()) or ())
-    surface_transport = str(env.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT") or "").strip().lower()
-    config_surface_transport = str(config.raw.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT") or "").strip().lower()
-    return any(
-        (
-            bool(route_flags.get("cmux")),
-            parse_bool(env.get("CMUX") or config.raw.get("CMUX"), False),
-            bool(
-                str(
-                    env.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
-                    or config.raw.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE")
-                    or ""
-                ).strip()
-            ),
-            bool(str(env.get("CMUX_WORKSPACE_ID") or config.raw.get("CMUX_WORKSPACE_ID") or "").strip()),
-            surface_transport == "cmux",
-            config_surface_transport == "cmux" and "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT" in explicit_config_keys,
-        )
-    )
+    return _launch_policy(config, env, route=route).cmux_transport_explicitly_requested()
 
 
 def _route_requests_ulw(route: object | None) -> bool:
@@ -306,11 +89,11 @@ def _route_requests_ulw(route: object | None) -> bool:
 
 
 def _ulw_route_supported(*, launch_config: PlanAgentLaunchConfig) -> bool:
-    return launch_config.cli == "opencode"
+    return PlanAgentLaunchPolicy.ulw_route_supported(launch_config)
 
 
 def _guidance_attach_command(session_name: str) -> tuple[str, ...]:
-    return ("tmux", "attach", "-t", session_name)
+    return guidance_attach_command(session_name)
 
 
 def plan_agent_launch_prereq_commands(
@@ -319,61 +102,15 @@ def plan_agent_launch_prereq_commands(
     *,
     route: object | None = None,
 ) -> tuple[str, ...]:
-    launch_config = resolve_plan_agent_launch_config(config, env, route=route)
-    if not launch_config.enabled:
-        return ()
-    if launch_config.surface_transport_warning:
-        return ()
-    if launch_config.transport == "omx":
-        return ("omx", "tmux", "script", "codex")
-    if launch_config.transport == "superset":
-        return ("superset", "codex")
-    cli_executable = _command_executable(launch_config.cli_command)
-    launcher = "tmux" if launch_config.transport == "tmux" else "cmux"
-    if (
-        launcher == "cmux"
-        and shutil.which("cmux") is None
-        and not _cmux_transport_explicitly_requested(config, env or {}, route)
-    ):
-        launcher = "tmux"
-    if not cli_executable:
-        return (launcher,)
-    return (launcher, cli_executable)
+    return _launch_policy(config, env, route=route).prereq_commands()
 
 
 def _command_executable(raw_command: str) -> str | None:
-    try:
-        parsed = shlex.split(raw_command)
-    except ValueError:
-        return None
-    if not parsed:
-        return None
-    return str(parsed[0]).strip() or None
+    return command_executable(raw_command)
 
 
 def _missing_launch_commands(runtime: Any, launch_config: PlanAgentLaunchConfig) -> list[str]:
-    if launch_config.transport == "omx":
-        required = ["omx", "tmux", "script", "codex"]
-    elif launch_config.transport == "superset":
-        required = ["superset", "codex"]
-    else:
-        required = ["tmux" if launch_config.transport == "tmux" else "cmux"]
-        cli_executable = _command_executable(launch_config.cli_command)
-        shell_executable = _command_executable(launch_config.shell)
-        if cli_executable:
-            required.append(cli_executable)
-        if shell_executable:
-            required.append(shell_executable)
-        if launch_config.cli not in _SUPPORTED_PLAN_AGENT_CLIS and not _command_executable(launch_config.cli_command):
-            required.append(launch_config.cli)
-    missing: list[str] = []
-    for command in required:
-        if command in missing:
-            continue
-        if runtime._command_exists(command):
-            continue
-        missing.append(command)
-    return missing
+    return missing_launch_commands(runtime, launch_config)
 
 
 __all__ = tuple(name for name in globals() if not name.startswith("__"))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from envctl_engine.runtime.ensure_worktree_support import run_ensure_worktree_command
@@ -9,19 +10,23 @@ from envctl_engine.runtime.playwright_command_support import run_playwright_comm
 from envctl_engine.runtime.qa_user_command_support import run_qa_user_command
 from envctl_engine.runtime.supabase_user_command_support import run_supabase_user_command
 
+UtilityCommandHandler = Callable[[Any, object], int]
+
+
+def utility_command_handlers() -> dict[str, UtilityCommandHandler]:
+    return {
+        "install-prompts": run_install_prompts_command,
+        "codex-tmux": run_codex_tmux_command,
+        "ensure-worktree": run_ensure_worktree_command,
+        "supabase-user": run_supabase_user_command,
+        "qa-user": run_qa_user_command,
+        "playwright": run_playwright_command,
+    }
+
 
 def dispatch_utility_command(runtime: Any, route: object) -> int:
     command = str(getattr(route, "command", "")).strip()
-    if command == "install-prompts":
-        return run_install_prompts_command(runtime, route)
-    if command == "codex-tmux":
-        return run_codex_tmux_command(runtime, route)
-    if command == "ensure-worktree":
-        return run_ensure_worktree_command(runtime, route)
-    if command == "supabase-user":
-        return run_supabase_user_command(runtime, route)
-    if command == "qa-user":
-        return run_qa_user_command(runtime, route)
-    if command == "playwright":
-        return run_playwright_command(runtime, route)
+    handler = utility_command_handlers().get(command)
+    if handler is not None:
+        return handler(runtime, route)
     raise RuntimeError(f"Unsupported utility command: {command}")

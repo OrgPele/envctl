@@ -482,15 +482,29 @@ Runtime truth comes from:
 
 - `shared/process_runner.py`
 - `shared/process_probe.py`
-- `runtime/engine_runtime_service_truth.py`
-- `runtime/engine_runtime_state_truth.py`
+- `runtime/service_truth_diagnostics.py`
+- `runtime/service_listener_truth.py`
+- `runtime/service_status_truth.py`
+- `runtime/service_post_start_truth.py`
+- `runtime/engine_runtime_service_truth.py` as the compatibility re-export facade
+- `runtime/state_fingerprint_support.py`
+- `runtime/requirement_port_truth.py`
+- `runtime/requirement_status_truth.py`
+- `runtime/requirement_reconcile_truth.py`
+- `runtime/engine_runtime_state_truth.py` as the compatibility re-export facade
 - `runtime/engine_runtime_dashboard_truth.py`
 
 Important distinctions:
 
 - process truth: is the PID alive
 - listener truth: does the expected port have a live listener
-- state truth: does saved state match process/listener reality
+- service truth diagnostics: what log/process detail explains listener failure
+- service status truth: how live process/listener status updates service records
+- service post-start truth: how startup converts non-running services into degraded records or fatal failures
+- state fingerprint truth: does persisted state change during reconciliation
+- requirement port truth: do saved dependency ports match the live owned containers
+- requirement status truth: is each dependency healthy, disabled, simulated, external, starting, or unreachable
+- requirement reconciliation truth: how requirement and service truth are reconciled together
 - dashboard truth: what should be surfaced to operators without overprobing every render
 
 If you change service readiness behavior, you usually need to update more than one of those layers.

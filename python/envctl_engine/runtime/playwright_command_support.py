@@ -8,6 +8,7 @@ from typing import Any
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.endpoints_command_support import build_endpoints_payload
+from envctl_engine.runtime.runtime_context import optional_process_runtime, test_results_dir_path
 from envctl_engine.state.project_runtime import (
     active_project_names,
     project_resolution_event_payload,
@@ -95,7 +96,7 @@ def run_playwright_command(runtime: Any, route: Route) -> int:
             "ENVCTL_ENDPOINTS_JSON_PATH": str(endpoints_path),
         }
     )
-    runner = getattr(runtime, "process_runner", None)
+    runner = optional_process_runtime(runtime)
     run = getattr(runner, "run", None)
     if not callable(run):
         return _emit({"ok": False, "error": "process_runner_unavailable"}, json_output=json_output, ok=False)
@@ -148,12 +149,7 @@ def _emit_resolution(runtime: Any, event: str, resolution: Any, state: Any) -> N
     emitter(event, **project_resolution_event_payload(resolution, state, runtime=runtime))
 
 def _metadata_path(runtime: Any, run_id: str) -> Path:
-    repository = getattr(runtime, "state_repository", None)
-    test_results = getattr(repository, "test_results_dir_path", None)
-    if callable(test_results):
-        return Path(test_results(run_id)) / "playwright-runtime-metadata.json"
-    runtime_root = Path(getattr(runtime, "runtime_root", "."))
-    return runtime_root / "runs" / run_id / "test-results" / "playwright-runtime-metadata.json"
+    return test_results_dir_path(runtime, run_id) / "playwright-runtime-metadata.json"
 
 
 def _load_state(runtime: Any, route: Route):  # noqa: ANN201

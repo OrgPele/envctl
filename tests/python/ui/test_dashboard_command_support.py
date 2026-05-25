@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.dashboard import command_support
@@ -31,6 +32,14 @@ class DashboardCommandSupportTests(unittest.TestCase):
         self.assertIn("migrate", hidden)
         self.assertIn("install-prompts", hidden)
         self.assertNotIn("restart", hidden)
+
+    def test_dispatch_kill_session_compatibility_wrapper_keeps_default_selector(self) -> None:
+        runtime = SimpleNamespace()
+
+        with patch.object(command_support.command_input_support, "dispatch_kill_session") as dispatch:
+            command_support.dispatch_kill_session(runtime)
+
+        dispatch.assert_called_once_with(runtime)
 
 
 if __name__ == "__main__":

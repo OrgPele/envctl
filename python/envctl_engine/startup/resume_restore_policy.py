@@ -1,28 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, cast
+from typing import Any, Mapping
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.runtime_context import resolve_port_allocator, resolve_state_repository
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.shared.protocols import PortAllocator, StateRepository
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
-
-
-class _StateRepositoryProtocol(Protocol):
-    def save_resume_state(
-        self,
-        *,
-        state: RunState,
-        emit: Callable[..., None],
-        runtime_map_builder: Callable[[RunState], dict[str, object]],
-    ) -> dict[str, object]: ...
-
-
-class _PortAllocatorProtocol(Protocol):
-    def reserve_next(self, _preferred: int, *, owner: str) -> int: ...
-    def update_final_port(self, _plan: object, _final_port: int, *, source: str) -> None: ...
-    def release(self, _port: int) -> None: ...
 
 
 def _restore_parallel_config(
@@ -185,7 +171,7 @@ def _reserve_application_service_ports(
     orchestrator,
     rt: Any,
     context: object,
-    port_allocator: _PortAllocatorProtocol,
+    port_allocator: PortAllocator,
     *,
     selected_service_types: set[str] | None = None,
 ) -> None:
@@ -295,21 +281,9 @@ def apply_ports_to_context(orchestrator, context: object, state: RunState) -> No
             rt._set_plan_port(context_ports["frontend"], port)  # type: ignore[attr-defined]
 
 
-def _state_repository(runtime: object) -> _StateRepositoryProtocol:
-    runtime_context = getattr(runtime, "runtime_context", None)
-    candidate = getattr(runtime_context, "state_repository", None)
-    if candidate is None:
-        candidate = getattr(runtime, "state_repository", None)
-    if candidate is None:
-        raise RuntimeError("state repository dependency is not configured")
-    return cast(_StateRepositoryProtocol, candidate)
+def _state_repository(runtime: object) -> StateRepository:
+    return resolve_state_repository(runtime)
 
 
-def _port_allocator(runtime: object) -> _PortAllocatorProtocol:
-    runtime_context = getattr(runtime, "runtime_context", None)
-    candidate = getattr(runtime_context, "port_allocator", None)
-    if candidate is None:
-        candidate = getattr(runtime, "port_planner", None)
-    if candidate is None:
-        raise RuntimeError("port allocator dependency is not configured")
-    return cast(_PortAllocatorProtocol, candidate)
+def _port_allocator(runtime: object) -> PortAllocator:
+    return resolve_port_allocator(runtime)

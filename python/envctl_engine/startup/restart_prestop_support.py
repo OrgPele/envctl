@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.runtime_context import resolve_port_allocator, resolve_process_runtime
 from envctl_engine.shared.services import service_project_name, service_slug_from_record
 from envctl_engine.startup.startup_selection_support import (
     _restart_selected_services,
@@ -421,8 +422,8 @@ def terminate_restart_orphan_listeners_with_runtime(
     selected_services: set[str],
     aggressive: bool,
 ) -> None:
-    process_runtime = getattr(runtime, "process_runner", None)
-    port_allocator = getattr(runtime, "port_planner", None)
+    process_runtime = resolve_process_runtime(runtime)
+    port_allocator = resolve_port_allocator(runtime)
     terminate_restart_orphan_listeners(
         state=state,
         selected_services=selected_services,

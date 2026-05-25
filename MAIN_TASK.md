@@ -90,12 +90,11 @@ Completed and preserved planning ownership slices:
 - `actions/action_migrate_support.py` owns migrate result records, backend-env hints, compact multi-project failure
   summaries, migrate failure headline selection, migrate requirements/context projection, migration failure log
   rendering, and report path display.
-- `actions/project_action_env_support.py` owns project action replacements, base action environment construction,
-  backend test env projection, and migrate backend env contract metadata persistence.
-- `actions/project_action_execution_support.py` owns project action command resolution, streaming review execution
-  policy, process-run wiring, and targeted-action execution handoff.
-- `actions/project_action_report_support.py` owns project action success/failure handler construction, project action
-  success status, review artifact path parsing, failure report writing, and persisted project action report metadata.
+- `actions/project_action_support.py` owns project action replacements, base action environment construction,
+  backend test env projection, migrate backend env contract metadata persistence, project action command resolution,
+  streaming review execution policy, process-run wiring, targeted-action execution handoff, project action
+  success/failure handler construction, project action success status, review artifact path parsing, failure report
+  writing, and persisted project action report metadata.
 - `planning/worktree_domain.py` remains a compatibility facade for those extracted helpers.
 
 Fully implement the remaining decomposition work without changing CLI semantics, persistent state formats, generated
@@ -332,16 +331,12 @@ Fully implemented:
   selection, migrate requirements/context projection, migration failure log rendering, and report path display are owned by
   `python/envctl_engine/actions/action_migrate_support.py`, with
   `ActionCommandOrchestrator` retaining compatibility wrappers for existing dashboard/runtime callers.
-- Project action replacements, base action environment construction, backend test env projection, and migrate backend
-  env contract metadata persistence are owned by
-  `python/envctl_engine/actions/project_action_env_support.py`, with `ActionCommandOrchestrator` retaining
-  compatibility wrappers for existing dashboard/runtime callers.
-- Project action command resolution, streaming review execution policy, process-run wiring, and targeted-action
-  execution handoff are owned by `python/envctl_engine/actions/project_action_execution_support.py`, with
-  `ActionCommandOrchestrator` retaining compatibility wrappers for existing dashboard/runtime callers.
-- Project action success/failure handler construction, project action success status, review artifact path parsing,
-  failure report writing, and persisted project action report metadata are owned by
-  `python/envctl_engine/actions/project_action_report_support.py`.
+- Project action replacements, base action environment construction, backend test env projection, migrate backend env
+  contract metadata persistence, project action command resolution, streaming review execution policy, process-run
+  wiring, targeted-action execution handoff, success/failure handler construction, project action success status,
+  review artifact path parsing, failure report writing, and persisted project action report metadata are owned by
+  `python/envctl_engine/actions/project_action_support.py`, with `ActionCommandOrchestrator` retaining compatibility
+  wrappers for existing dashboard/runtime callers.
 - Startup final run-state construction, preserved-service merge-event emission, project startup warning rendering and
   route-level warning output routing, restart port rebound summary text, plan dry-run preview text, final failure
   resolution/text, final failure status/context rendering, headless plan output gating, headless plan-session summary validation/printing/text,

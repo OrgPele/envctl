@@ -4,7 +4,8 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
-from ..common import container_exists, run_docker, run_result_error
+from ..container_state_support import container_exists
+from ..docker_runtime import run_docker, run_result_error
 from .formatting import _sanitize_service_state_text
 
 
@@ -242,5 +243,4 @@ def _parse_compose_ps_status(value: object) -> tuple[str | None, str | None]:
     if "starting" in lowered:
         health = "starting"
     return status or lowered.split()[0], health
-
 

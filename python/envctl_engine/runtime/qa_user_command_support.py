@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 from envctl_engine.requirements.supabase_auth_users import SupabaseAuthAdminClient, SupabaseAuthAdminError
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.runtime_context import run_dir_path
 from envctl_engine.runtime.supabase_user_command_support import _connection_from_requirements
 from envctl_engine.state.project_runtime import (
     active_project_names,
@@ -407,11 +408,7 @@ def _write_artifact(
 
 
 def _artifact_path(runtime: Any, run_id: str) -> Path:
-    repository = getattr(runtime, "state_repository", None)
-    run_dir = getattr(repository, "run_dir_path", None)
-    if callable(run_dir):
-        return Path(run_dir(run_id)) / "qa-user-ensure.json"
-    return Path(getattr(runtime, "runtime_root", ".")) / "runs" / run_id / "qa-user-ensure.json"
+    return run_dir_path(runtime, run_id) / "qa-user-ensure.json"
 
 
 def _emit_resolution(runtime: Any, event: str, resolution: Any, state: Any) -> None:
