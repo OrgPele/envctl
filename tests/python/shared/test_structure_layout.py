@@ -324,6 +324,7 @@ class StructureLayoutTests(unittest.TestCase):
         ship_contract_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_contract.py"
         ship_conflicts_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_conflicts.py"
         ship_checks_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_checks.py"
+        workflow_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_workflows.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "actions" / "project_action_domain.py"
 
         self.assertTrue(commit_owner.is_file())
@@ -340,6 +341,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(ship_contract_owner.is_file())
         self.assertTrue(ship_conflicts_owner.is_file())
         self.assertTrue(ship_checks_owner.is_file())
+        self.assertTrue(workflow_owner.is_file())
         commit_text = commit_owner.read_text(encoding="utf-8")
         self.assertIn("def run_commit_workflow", commit_text)
         self.assertIn("def resolve_commit_message", commit_text)
@@ -374,6 +376,12 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def predicted_merge_conflict_report", ship_conflicts_owner.read_text(encoding="utf-8"))
         self.assertIn("def normalize_github_pr_checks", ship_checks_owner.read_text(encoding="utf-8"))
         self.assertLessEqual(len(ship_text.splitlines()), 230)
+        workflow_text = workflow_owner.read_text(encoding="utf-8")
+        self.assertIn("class ProjectActionWorkflowRunner", workflow_text)
+        self.assertIn("def run_commit_action", workflow_text)
+        self.assertIn("def run_pr_action", workflow_text)
+        self.assertIn("def run_ship_action", workflow_text)
+        self.assertIn("def run_review_action", workflow_text)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("action_commit_support", facade_text)
         self.assertIn("action_protected_artifacts", facade_text)
@@ -383,7 +391,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("action_review_plan_support", facade_text)
         self.assertIn("action_git_state_support", facade_text)
         self.assertIn("action_ship_support", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 700)
+        self.assertIn("project_action_workflows", facade_text)
+        self.assertLessEqual(len(facade_text.splitlines()), 520)
 
     def test_action_migrate_support_is_split_by_responsibility(self) -> None:
         context_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_migrate_context_support.py"
@@ -1446,12 +1455,13 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_worktree_creation_flow_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_creation_flow.py"
-        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
+        creation_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_creation_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(creation_bridge.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_creation_flow import",
-            runtime_bridge.read_text(encoding="utf-8"),
+            creation_bridge.read_text(encoding="utf-8"),
         )
 
     def test_worktree_plan_selection_has_owned_module(self) -> None:
@@ -1511,13 +1521,14 @@ class StructureLayoutTests(unittest.TestCase):
     def test_worktree_setup_coordinator_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_setup_coordinator.py"
         protocols = REPO_ROOT / "python" / "envctl_engine" / "planning" / "protocols.py"
-        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
+        setup_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_setup_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
         self.assertTrue(protocols.is_file())
+        self.assertTrue(setup_bridge.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_setup_coordinator import",
-            runtime_bridge.read_text(encoding="utf-8"),
+            setup_bridge.read_text(encoding="utf-8"),
         )
         self.assertIn("from envctl_engine.planning.protocols import ProjectContextLike", owner.read_text(encoding="utf-8"))
         self.assertNotIn("class ProjectContextLike(Protocol)", owner.read_text(encoding="utf-8"))
