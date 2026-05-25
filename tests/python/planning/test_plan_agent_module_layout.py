@@ -435,17 +435,18 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             self.assertNotIn("Extracted in later mechanical waves", text)
             self.assertNotIn("Constants stay in launch", text)
 
-    def test_workflow_facade_uses_explicit_compatibility_imports(self) -> None:
-        path = PLAN_AGENT_ROOT / "workflow.py"
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        wildcard_imports = [
-            node.module
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-            for alias in node.names
-            if alias.name == "*"
-        ]
-        self.assertEqual([], wildcard_imports)
+    def test_plan_agent_facades_use_explicit_compatibility_imports(self) -> None:
+        for filename in ("workflow.py", "recovery.py"):
+            path = PLAN_AGENT_ROOT / filename
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            wildcard_imports = [
+                node.module
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom)
+                for alias in node.names
+                if alias.name == "*"
+            ]
+            self.assertEqual([], wildcard_imports, filename)
 
 
 if __name__ == "__main__":
