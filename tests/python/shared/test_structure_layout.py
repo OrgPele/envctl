@@ -2189,6 +2189,24 @@ class StructureLayoutTests(unittest.TestCase):
             selection_bridge.read_text(encoding="utf-8"),
         )
 
+    def test_planning_menu_behavior_has_owner_modules(self) -> None:
+        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "menu.py"
+        render_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "menu_rendering.py"
+        input_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "menu_input.py"
+        selection_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "menu_selection.py"
+
+        self.assertTrue(render_owner.is_file())
+        self.assertTrue(input_owner.is_file())
+        self.assertTrue(selection_owner.is_file())
+        facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.planning.menu_rendering import", facade_text)
+        self.assertIn("from envctl_engine.planning.menu_input import", facade_text)
+        self.assertIn("from envctl_engine.planning.menu_selection import", facade_text)
+        self.assertIn("def render_planning_selection_menu", render_owner.read_text(encoding="utf-8"))
+        self.assertIn("def read_planning_menu_key", input_owner.read_text(encoding="utf-8"))
+        self.assertIn("def apply_planning_menu_key", selection_owner.read_text(encoding="utf-8"))
+        self.assertLessEqual(len(facade_text.splitlines()), 340)
+
     def test_worktree_setup_entries_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_setup_entries.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
