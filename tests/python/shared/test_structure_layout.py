@@ -627,6 +627,29 @@ class StructureLayoutTests(unittest.TestCase):
         facade = actions / "action_test_summary_support.py"
         self.assertLessEqual(len(facade.read_text(encoding="utf-8").splitlines()), 140)
 
+    def test_process_runner_has_launch_and_lifecycle_owners(self) -> None:
+        shared = REPO_ROOT / "python" / "envctl_engine" / "shared"
+        runner = shared / "process_runner.py"
+        launch_owner = shared / "process_launch_support.py"
+        lifecycle_owner = shared / "process_lifecycle_probe.py"
+
+        self.assertTrue(launch_owner.is_file())
+        self.assertTrue(lifecycle_owner.is_file())
+        launch_text = launch_owner.read_text(encoding="utf-8")
+        lifecycle_text = lifecycle_owner.read_text(encoding="utf-8")
+        runner_text = runner.read_text(encoding="utf-8")
+        self.assertIn("class LaunchRecord", launch_text)
+        self.assertIn("class ProcessLaunchMixin", launch_text)
+        self.assertIn("def start_background", launch_text)
+        self.assertIn("def launch_diagnostics_summary", launch_text)
+        self.assertIn("class ProcessLifecycleProbeMixin", lifecycle_text)
+        self.assertIn("def wait_for_port", lifecycle_text)
+        self.assertIn("def process_tree_listener_pids", lifecycle_text)
+        self.assertIn("def terminate_process_group", lifecycle_text)
+        self.assertIn("ProcessLaunchMixin", runner_text)
+        self.assertIn("ProcessLifecycleProbeMixin", runner_text)
+        self.assertLessEqual(len(runner_text.splitlines()), 340)
+
     def test_state_action_orchestrator_has_log_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_log_support.py"
         health_owner = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_health_support.py"
