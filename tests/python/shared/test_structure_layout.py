@@ -1522,6 +1522,28 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.planning.protocols import ProjectContextLike", owner.read_text(encoding="utf-8"))
         self.assertNotIn("class ProjectContextLike(Protocol)", owner.read_text(encoding="utf-8"))
 
+    def test_worktree_runtime_setup_bridge_has_owned_module(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_setup_runtime_bridge.py"
+        creation_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_creation_runtime_bridge.py"
+        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
+
+        self.assertTrue(owner.is_file())
+        self.assertTrue(creation_owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        creation_owner_text = creation_owner.read_text(encoding="utf-8")
+        self.assertIn("class WorktreeSetupRuntimeBridge", owner_text)
+        self.assertIn("def apply_setup_worktree_selection", owner_text)
+        self.assertIn("def apply_multi_setup_entry", owner_text)
+        self.assertIn("def apply_single_setup_entry", owner_text)
+        self.assertIn("class WorktreeCreationRuntimeBridge", creation_owner_text)
+        self.assertIn("def create_single_worktree", creation_owner_text)
+        self.assertIn("def create_feature_worktrees_result", creation_owner_text)
+        self.assertIn("def run_worktree_add", creation_owner_text)
+        runtime_bridge_text = runtime_bridge.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.planning.worktree_setup_runtime_bridge import", runtime_bridge_text)
+        self.assertIn("from envctl_engine.planning.worktree_creation_runtime_bridge import", runtime_bridge_text)
+        self.assertLessEqual(len(runtime_bridge_text.splitlines()), 430)
+
     def test_worktree_sync_deletion_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_deletion.py"
         runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
