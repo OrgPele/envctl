@@ -54,13 +54,20 @@ class ContainerLifecycleExecutionTests(unittest.TestCase):
         self.assertTrue(hasattr(ContainerLifecycleExecutor, "_emit"))
         self.assertTrue(hasattr(ContainerLifecycleExecutor, "_add_stage_duration"))
         self.assertTrue(hasattr(ContainerLifecycleExecutor, "_run_result"))
+        self.assertTrue(hasattr(ContainerLifecycleExecutor, "_success"))
         self.assertTrue(hasattr(ContainerLifecycleExecutor, "_failure"))
+        self.assertTrue(hasattr(ContainerLifecycleExecutor, "_reset_to_requested_port"))
         self.assertTrue(hasattr(ContainerLifecycleExecutor, "_recover_timeout_created_container"))
         self.assertTrue(hasattr(ContainerLifecycleExecutor, "_attempt_local_settle"))
 
         overview_names = set(ContainerLifecycleExecutor.run.__code__.co_varnames)
         self.assertNotIn("_emit", overview_names)
         self.assertNotIn("_failure", overview_names)
+
+    def test_success_projection_is_centralized(self) -> None:
+        source = Path("python/envctl_engine/requirements/container_lifecycle_execution.py").read_text(encoding="utf-8")
+        self.assertEqual(source.count("success=True"), 1)
+        self.assertEqual(source.count("port_mismatch_action=state.mismatch_action"), 2)
 
 
 if __name__ == "__main__":

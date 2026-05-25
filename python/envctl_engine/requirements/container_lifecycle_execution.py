@@ -89,6 +89,24 @@ class ContainerLifecycleExecutor:
             container_recreated=state.container_recreated,
         )
 
+    def _success(self) -> ContainerLifecycleRun:
+        state = self._state
+        return self._run_result(
+            result=ContainerStartResult(
+                success=True,
+                container_name=self.template.container_name,
+                effective_port=int(state.effective_port),
+                port_adopted=bool(state.port_adopted),
+                port_mismatch_requested_port=state.mismatch_requested_port,
+                port_mismatch_existing_port=state.mismatch_existing_port,
+                port_mismatch_action=state.mismatch_action,
+            )
+        )
+
+    def _reset_to_requested_port(self) -> None:
+        self._state.effective_port = int(self.template.port)
+        self._state.port_adopted = False
+
     def _failure(
         self,
         error: str,
@@ -143,8 +161,7 @@ class ContainerLifecycleExecutor:
                     state.effective_port = int(mapped_port)
                     state.port_adopted = True
                 else:
-                    state.effective_port = int(template.port)
-                    state.port_adopted = False
+                    self._reset_to_requested_port()
                 self._emit(
                     "probe.retry.recreate.timeout_recovered" if recreate else "start.create.timeout_recovered",
                     reason=reason_code_to_string(RequirementLifecycleReason.HARD_START_FAILURE),
@@ -250,8 +267,7 @@ class ContainerLifecycleExecutor:
                         stage="discover.recreate.failed",
                     )
                 exists = False
-                self._state.effective_port = int(template.port)
-                self._state.port_adopted = False
+                self._reset_to_requested_port()
             elif mapped_port != template.port:
                 self._state.mismatch_requested_port = int(template.port)
                 self._state.mismatch_existing_port = int(mapped_port)
@@ -286,8 +302,7 @@ class ContainerLifecycleExecutor:
                             stage="discover.recreate.failed",
                         )
                     exists = False
-                    self._state.effective_port = int(template.port)
-                    self._state.port_adopted = False
+                    self._reset_to_requested_port()
             status, status_error = container_status(
                 template.process_runner,
                 container_name=template.container_name,
@@ -335,8 +350,7 @@ class ContainerLifecycleExecutor:
                             stage="discover.created_bind_conflict.cleanup_failed",
                         )
                     exists = False
-                    self._state.effective_port = int(template.port)
-                    self._state.port_adopted = False
+                    self._reset_to_requested_port()
         self._add_stage_duration("discover", discover_started)
     
         start_or_create_started = time.monotonic()
@@ -428,8 +442,7 @@ class ContainerLifecycleExecutor:
                     )
             self._add_stage_duration("start", start_or_create_started)
         else:
-            self._state.effective_port = int(template.port)
-            self._state.port_adopted = False
+            self._reset_to_requested_port()
             create_error = template.create_container()
             if create_error and is_bind_conflict(create_error):
                 self._emit(
@@ -510,17 +523,7 @@ class ContainerLifecycleExecutor:
                     else "after adopted-existing settle",
                 )
                 if settled:
-                    return self._run_result(
-                        result=ContainerStartResult(
-                            success=True,
-                            container_name=template.container_name,
-                            effective_port=int(self._state.effective_port),
-                            port_adopted=bool(self._state.port_adopted),
-                            port_mismatch_requested_port=self._state.mismatch_requested_port,
-                            port_mismatch_existing_port=self._state.mismatch_existing_port,
-                            port_mismatch_action=self._state.mismatch_action,
-                        )
-                    )
+                    return self._success()
                 probe_error_text = settled_error
                 if not template.restart_on_listener_timeout:
                     return self._failure(
@@ -543,17 +546,7 @@ class ContainerLifecycleExecutor:
             self._add_stage_duration("probe", probe_started)
             if ready:
                 self._emit("probe.healthy")
-                return self._run_result(
-                    result=ContainerStartResult(
-                        success=True,
-                        container_name=template.container_name,
-                        effective_port=int(self._state.effective_port),
-                        port_adopted=bool(self._state.port_adopted),
-                        port_mismatch_requested_port=self._state.mismatch_requested_port,
-                        port_mismatch_existing_port=self._state.mismatch_existing_port,
-                        port_mismatch_action=self._state.mismatch_action,
-                    )
-                )
+                return self._success()
     
         retryable = template.retryable_probe_error(probe_error_text)
         recovered_or_adopted = self._state.timeout_recovered_create or self._state.port_adopted
@@ -572,17 +565,7 @@ class ContainerLifecycleExecutor:
                 else "after adopted-existing settle",
             )
             if settled:
-                return self._run_result(
-                    result=ContainerStartResult(
-                        success=True,
-                        container_name=template.container_name,
-                        effective_port=int(self._state.effective_port),
-                        port_adopted=bool(self._state.port_adopted),
-                        port_mismatch_requested_port=self._state.mismatch_requested_port,
-                        port_mismatch_existing_port=self._state.mismatch_existing_port,
-                        port_mismatch_action=self._state.mismatch_action,
-                    )
-                )
+                return self._success()
             return self._failure(
                 settled_error,
                 reason_code=reason_code_to_string(RequirementFailureReason.NETWORK_UNREACHABLE),
@@ -653,17 +636,7 @@ class ContainerLifecycleExecutor:
                 self._add_stage_duration("probe", restart_probe_started)
                 if ready:
                     self._emit("probe.healthy.after_restart")
-                    return self._run_result(
-                        result=ContainerStartResult(
-                            success=True,
-                            container_name=template.container_name,
-                            effective_port=int(self._state.effective_port),
-                            port_adopted=bool(self._state.port_adopted),
-                            port_mismatch_requested_port=self._state.mismatch_requested_port,
-                            port_mismatch_existing_port=self._state.mismatch_existing_port,
-                            port_mismatch_action=self._state.mismatch_action,
-                        )
-                    )
+                    return self._success()
                 retryable = template.retryable_probe_error(probe_error_text)
     
             if template.recreate_on_probe_failure and retryable:
@@ -705,8 +678,7 @@ class ContainerLifecycleExecutor:
                             stage="probe.retry.recreate.failed",
                         )
                 else:
-                    self._state.effective_port = int(template.port)
-                    self._state.port_adopted = False
+                    self._reset_to_requested_port()
                     if self._state.mismatch_action == "adopt_existing":
                         self._state.mismatch_action = "recreate_after_adopted_existing_unreachable"
                 recreate_listener_started = time.monotonic()
@@ -730,17 +702,7 @@ class ContainerLifecycleExecutor:
                 self._add_stage_duration("recreate", recreate_started)
                 if ready:
                     self._emit("probe.healthy.after_recreate")
-                    return self._run_result(
-                        result=ContainerStartResult(
-                            success=True,
-                            container_name=template.container_name,
-                            effective_port=int(self._state.effective_port),
-                            port_adopted=bool(self._state.port_adopted),
-                            port_mismatch_requested_port=self._state.mismatch_requested_port,
-                            port_mismatch_existing_port=self._state.mismatch_existing_port,
-                            port_mismatch_action=self._state.mismatch_action,
-                        )
-                    )
+                    return self._success()
     
         return self._failure(
             probe_error_text or template.probe_failure_fallback,
