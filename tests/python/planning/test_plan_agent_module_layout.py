@@ -45,6 +45,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "config.py",
             "constants.py",
             "launch.py",
+            "launch_evaluation.py",
             "models.py",
             "omx_attach_support.py",
             "omx_lock_support.py",
@@ -198,6 +199,10 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "_parse_codex_cycles",
                 "resolve_plan_agent_launch_config",
                 "plan_agent_launch_prereq_commands",
+            },
+            "launch_evaluation.py": {
+                "PlanAgentLaunchEvaluation",
+                "build_plan_agent_launch_evaluation",
             },
             "workflow_build.py": {
                 "_build_plan_agent_workflow",
