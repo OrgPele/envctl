@@ -1369,6 +1369,7 @@ class StructureLayoutTests(unittest.TestCase):
         textual_driver = selector / "textual_driver_instrumentation.py"
         prompt_toolkit_io = selector / "prompt_toolkit_io_instrumentation.py"
         app_key_trace = selector / "textual_app_key_trace.py"
+        focus_actions = selector / "textual_app_focus_actions.py"
         key_actions = selector / "textual_app_key_actions.py"
         initial_navigation = selector / "textual_app_initial_navigation.py"
         navigation_actions = selector / "textual_app_navigation_actions.py"
@@ -1386,6 +1387,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(textual_driver.is_file())
         self.assertTrue(prompt_toolkit_io.is_file())
         self.assertTrue(app_key_trace.is_file())
+        self.assertTrue(focus_actions.is_file())
         self.assertTrue(key_actions.is_file())
         self.assertTrue(initial_navigation.is_file())
         self.assertTrue(navigation_actions.is_file())
@@ -1402,6 +1404,7 @@ class StructureLayoutTests(unittest.TestCase):
         textual_driver_text = textual_driver.read_text(encoding="utf-8")
         prompt_toolkit_text = prompt_toolkit_io.read_text(encoding="utf-8")
         app_key_trace_text = app_key_trace.read_text(encoding="utf-8")
+        focus_actions_text = focus_actions.read_text(encoding="utf-8")
         key_actions_text = key_actions.read_text(encoding="utf-8")
         initial_navigation_text = initial_navigation.read_text(encoding="utf-8")
         navigation_actions_text = navigation_actions.read_text(encoding="utf-8")
@@ -1428,6 +1431,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def instrument_textual_parser_keys", textual_driver_text)
         self.assertIn("def instrument_prompt_toolkit_posix_io", prompt_toolkit_text)
         self.assertIn("def emit_app_key_trace", app_key_trace_text)
+        self.assertIn("class SelectorFocusActions", focus_actions_text)
+        self.assertIn("def focus_list", focus_actions_text)
+        self.assertIn("def cycle_focus", focus_actions_text)
         self.assertIn("class SelectorKeyActions", key_actions_text)
         self.assertIn("def handle_key", key_actions_text)
         self.assertIn("def handle_filter_focus_key", key_actions_text)
@@ -1460,6 +1466,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def resolve_selector_filter_key", key_policy_text)
         self.assertIn("def emit_selector_key_trace", key_policy_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector import selection_state", app_text)
+        self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_focus_actions import", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_key_actions import", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_key_trace import", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_initial_navigation import", app_text)

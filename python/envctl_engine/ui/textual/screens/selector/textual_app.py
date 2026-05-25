@@ -7,7 +7,6 @@ from typing import Any, Callable
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.textual.list_controller import TextualListController
 from envctl_engine.ui.textual.list_row_styles import apply_selectable_list_index
-from envctl_engine.ui.textual.list_row_styles import focus_selectable_list
 from envctl_engine.ui.textual.screens.selector import selection_state
 from envctl_engine.ui.textual.screens.selector.textual_app_chrome import (
     SELECTOR_BINDINGS,
@@ -19,6 +18,7 @@ from envctl_engine.ui.textual.screens.selector.textual_app_lifecycle import (
 from envctl_engine.ui.textual.screens.selector.textual_app_initial_navigation import (
     SelectorInitialNavigationRunner,
 )
+from envctl_engine.ui.textual.screens.selector.textual_app_focus_actions import SelectorFocusActions
 from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
     SelectorEventController,
     SelectorFocusController,
@@ -176,26 +176,13 @@ def create_selector_app(
             return self._controller.focused_model_index(self._list().index)
 
         def _focused_widget_id(self) -> str:
-            try:
-                focused = getattr(self, "focused", None)
-            except Exception:
-                focused = None
-            return self._focus_controller.widget_id(
-                focused=focused,
-                list_has_focus=self._list().has_focus,
-                filter_has_focus=self.query_one("#selector-filter", Input).has_focus,
-            )
+            return self._focus_actions().focused_widget_id()
 
         def _focus_order(self) -> tuple[str, ...]:
-            return self._focus_controller.focus_order(
-                run_enabled=not self.query_one("#btn-run", Button).disabled,
-            )
+            return self._focus_actions().focus_order()
 
         def _emit_focus(self, *, reason: str) -> None:
-            self._focus_controller.emit_focus(
-                reason=reason,
-                current_widget_id=self._focused_widget_id(),
-            )
+            self._focus_actions()._emit_focus(reason=reason)
 
         async def _render_rows(self) -> None:
             async with self._render_lock:
@@ -365,37 +352,36 @@ def create_selector_app(
                 suppress_list_selected_once=lambda value: setattr(self, "_suppress_list_selected_once", value),
             )
 
+        def _focus_actions(self) -> SelectorFocusActions:
+            def current_focused() -> object | None:
+                try:
+                    return getattr(self, "focused", None)
+                except Exception:
+                    return None
+
+            return SelectorFocusActions(
+                app=self,
+                controller=self._controller,
+                focus_controller=self._focus_controller,
+                list_view=self._list,
+                filter_input=lambda: self.query_one("#selector-filter", Input),
+                button=lambda button_id: self.query_one(f"#{button_id}", Button),
+                run_button=lambda: self.query_one("#btn-run", Button),
+                current_focused=current_focused,
+                set_allow_filter_focus=lambda value: setattr(self, "_allow_filter_focus", value),
+            )
+
         def action_focus_filter(self, *, reason: str = "focus_filter") -> None:
-            filter_input = self.query_one("#selector-filter", Input)
-            self._allow_filter_focus = True
-            filter_input.can_focus = True
-            filter_input.focus()
-            self._emit_focus(reason=reason)
+            self._focus_actions().focus_filter(reason=reason)
 
         def action_focus_list(self, *, reason: str = "focus_list", target_index: int | None = None) -> None:
-            list_view = self._list()
-            index = self._controller.ensure_list_index(target_index if target_index is not None else list_view.index)
-            apply_selectable_list_index(list_view, index)
-            self._allow_filter_focus = False
-            focus_selectable_list(self, list_view, index)
-            self._emit_focus(reason=reason)
+            self._focus_actions().focus_list(reason=reason, target_index=target_index)
 
         def action_focus_button(self, button_id: str, *, reason: str) -> None:
-            self._allow_filter_focus = False
-            self.query_one(f"#{button_id}", Button).focus()
-            self._emit_focus(reason=reason)
+            self._focus_actions().focus_button(button_id, reason=reason)
 
         def action_cycle_focus(self) -> None:
-            next_target = self._controller.cycle_focus_target(
-                current_target=self._focused_widget_id(),
-                focus_order=self._focus_order(),
-            )
-            if next_target == "selector-list":
-                self.action_focus_list(reason="tab_cycle")
-            elif next_target == "selector-filter":
-                self.action_focus_filter(reason="tab_cycle")
-            else:
-                self.action_focus_button(next_target, reason="tab_cycle")
+            self._focus_actions().cycle_focus()
 
         async def action_submit(self, *, cause: str = "enter") -> None:
             if self.query_one("#selector-filter", Input).has_focus:
