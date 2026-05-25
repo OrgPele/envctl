@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-25T10:04:05+00:00",
+  "generated_at": "2026-05-25T16:26:10+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -1519,7 +1519,11 @@
       "python_source_of_truth": [
         "python/envctl_engine/requirements/supabase.py",
         "python/envctl_engine/requirements/supabase_lifecycle/orchestrator.py",
-        "python/envctl_engine/requirements/common.py"
+        "python/envctl_engine/requirements/common.py",
+        "python/envctl_engine/requirements/common_contracts.py",
+        "python/envctl_engine/requirements/docker_runtime.py",
+        "python/envctl_engine/requirements/docker_image_support.py",
+        "python/envctl_engine/requirements/container_state_support.py"
       ],
       "evidence_tests": [
         "tests/python/requirements/test_supabase_requirements_reliability.py",

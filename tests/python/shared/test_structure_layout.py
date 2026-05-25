@@ -1875,6 +1875,28 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.startup.requirements_native_telemetry import", adapter_text)
         self.assertLessEqual(len(adapter_text.splitlines()), 390)
 
+    def test_requirements_common_has_docker_owner_modules(self) -> None:
+        common = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "common.py"
+        contracts_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "common_contracts.py"
+        runtime_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "docker_runtime.py"
+        image_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "docker_image_support.py"
+        container_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "container_state_support.py"
+
+        self.assertTrue(contracts_owner.is_file())
+        self.assertTrue(runtime_owner.is_file())
+        self.assertTrue(image_owner.is_file())
+        self.assertTrue(container_owner.is_file())
+        common_text = common.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.requirements.common_contracts import", common_text)
+        self.assertIn("from envctl_engine.requirements.docker_runtime import", common_text)
+        self.assertIn("from envctl_engine.requirements.docker_image_support import", common_text)
+        self.assertIn("from envctl_engine.requirements.container_state_support import", common_text)
+        self.assertIn("class RetryResult", contracts_owner.read_text(encoding="utf-8"))
+        self.assertIn("def run_docker", runtime_owner.read_text(encoding="utf-8"))
+        self.assertIn("def ensure_docker_image_present", image_owner.read_text(encoding="utf-8"))
+        self.assertIn("def container_host_port", container_owner.read_text(encoding="utf-8"))
+        self.assertLessEqual(len(common_text.splitlines()), 140)
+
     def test_requirements_startup_has_component_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_component_startup.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "requirements_startup_domain.py"

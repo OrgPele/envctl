@@ -1019,6 +1019,10 @@ EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
             "python/envctl_engine/requirements/supabase.py",
             "python/envctl_engine/requirements/supabase_lifecycle/orchestrator.py",
             "python/envctl_engine/requirements/common.py",
+            "python/envctl_engine/requirements/common_contracts.py",
+            "python/envctl_engine/requirements/docker_runtime.py",
+            "python/envctl_engine/requirements/docker_image_support.py",
+            "python/envctl_engine/requirements/container_state_support.py",
         ),
         evidence_tests=(
             "tests/python/requirements/test_supabase_requirements_reliability.py",
