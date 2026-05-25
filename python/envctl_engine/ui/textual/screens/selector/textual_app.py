@@ -26,6 +26,9 @@ from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
     SelectorStatusController,
 )
 from envctl_engine.ui.textual.screens.selector.textual_app_key_trace import emit_app_key_trace
+from envctl_engine.ui.textual.screens.selector.textual_app_navigation_actions import (
+    SelectorNavigationActions,
+)
 from envctl_engine.ui.textual.screens.selector.textual_app_selection_actions import (
     SelectorSelectionActions,
     selector_row_model_index_from_widget,
@@ -287,21 +290,7 @@ def create_selector_app(
             ).apply()
 
         async def _sync_single_select_focus_selection(self, *, reason: str) -> None:
-            if multi:
-                return
-            model_index = self._focused_model_index()
-            if model_index is None or model_index < 0 or model_index >= len(self._rows):
-                return
-            changed = False
-            for idx, row in enumerate(self._rows):
-                selected = idx == model_index
-                if row.selected != selected:
-                    row.selected = selected
-                    changed = True
-            if not changed:
-                return
-            await self._render_rows()
-            self.action_focus_list(reason=reason)
+            await self._navigation_actions().sync_single_select_focus_selection(reason=reason)
 
         async def _toggle_model_index(self, model_index: int) -> None:
             await self._selection_actions.toggle_model_index(model_index)
@@ -341,75 +330,27 @@ def create_selector_app(
             )
 
         async def action_nav_up(self) -> None:
-            list_index_before = self._controller.ensure_list_index(self._list().index)
-            focus_before = self._focused_widget_id()
-            if not self._list().has_focus:
-                target_index = self._controller.cursor_up(list_index_before)
-                self.action_focus_list(reason="key_recover", target_index=target_index)
-            else:
-                self._list().index = self._controller.cursor_up(self._list().index)
-            list_index_after = self._list().index
-            focused_model_index = self._focused_model_index()
-            if focused_model_index is not None:
-                self._last_user_model_index = focused_model_index
-            await self._sync_single_select_focus_selection(reason="nav_up")
-            at_top_edge = list_index_before is not None and list_index_after == list_index_before == 0
-            self._key_telemetry.mark_navigation(
-                "up",
-                edge_hint="top boundary" if at_top_edge else "",
-            )
-            self._sync_status()
-            self._emit_key_debug(
-                key="up",
-                focus_before=focus_before,
-                list_index_before=list_index_before,
-                handled=True,
-            )
+            await self._navigation_actions().nav_up()
 
         async def action_nav_down(self) -> None:
-            list_index_before = self._controller.ensure_list_index(self._list().index)
-            focus_before = self._focused_widget_id()
-            if not self._list().has_focus:
-                target_index = self._controller.cursor_down(list_index_before)
-                self.action_focus_list(reason="key_recover", target_index=target_index)
-            else:
-                self._list().index = self._controller.cursor_down(self._list().index)
-            list_index_after = self._list().index
-            focused_model_index = self._focused_model_index()
-            if focused_model_index is not None:
-                self._last_user_model_index = focused_model_index
-            await self._sync_single_select_focus_selection(reason="nav_down")
-            max_view_index = len(self._controller.index_map) - 1
-            self._key_telemetry.mark_navigation(
-                "down",
-                edge_hint=(
-                    "bottom boundary"
-                    if (
-                        list_index_before is not None
-                        and max_view_index >= 0
-                        and list_index_after == list_index_before == max_view_index
-                    )
-                    else ""
-                )
-            )
-            self._sync_status()
-            self._emit_key_debug(
-                key="down",
-                focus_before=focus_before,
-                list_index_before=list_index_before,
-                handled=True,
-            )
+            await self._navigation_actions().nav_down()
 
         def action_ignore_escape(self) -> None:
-            list_index_before = self._list().index
-            focus_before = self._focused_widget_id()
-            if not self._list().has_focus:
-                self.action_focus_list(reason="escape_recover")
-            self._emit_key_debug(
-                key="escape",
-                focus_before=focus_before,
-                list_index_before=list_index_before,
-                handled=True,
+            self._navigation_actions().ignore_escape()
+
+        def _navigation_actions(self) -> SelectorNavigationActions:
+            return SelectorNavigationActions(
+                rows=self._rows,
+                multi=multi,
+                controller=self._controller,
+                list_view=self._list(),
+                render_rows=self._render_rows,
+                focus_list=self.action_focus_list,
+                focused_widget_id=self._focused_widget_id,
+                set_last_user_model_index=lambda index: setattr(self, "_last_user_model_index", index),
+                mark_navigation=self._key_telemetry.mark_navigation,
+                sync_status=self._sync_status,
+                emit_key_debug=self._emit_key_debug,
             )
 
         def action_focus_filter(self, *, reason: str = "focus_filter") -> None:
