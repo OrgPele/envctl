@@ -8,8 +8,10 @@ from envctl_engine.startup.resume_progress import ResumeProjectSpinnerGroup as _
 from envctl_engine.startup.resume_restore_execution import (
     ResumeRestoreDependencies,
     ResumeRestoreRunner,
-    _format_project_timing_line as _format_project_timing_line,
-    _mark_restore_failure_requirements as _mark_restore_failure_requirements,
+)
+from envctl_engine.startup.resume_restore_results import (
+    format_project_timing_line as _format_project_timing_line,  # noqa: F401
+    mark_restore_failure_requirements as _mark_restore_failure_requirements,  # noqa: F401
 )
 from envctl_engine.startup.resume_restore_policy import (
     _configured_restore_service_types as _configured_restore_service_types,
@@ -57,4 +59,3 @@ def restore_missing(
             project_spinner_group_cls=project_spinner_group_cls,
         ),
     ).execute()
-

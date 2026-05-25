@@ -2103,10 +2103,14 @@ class StructureLayoutTests(unittest.TestCase):
     def test_resume_restore_policy_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "resume_restore_policy.py"
         execution_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "resume_restore_execution.py"
+        project_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "resume_restore_project.py"
+        result_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "resume_restore_results.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "resume_restore_support.py"
 
         self.assertTrue(owner.is_file())
         self.assertTrue(execution_owner.is_file())
+        self.assertTrue(project_owner.is_file())
+        self.assertTrue(result_owner.is_file())
         owner_text = owner.read_text(encoding="utf-8")
         self.assertIn("def _restore_parallel_config", owner_text)
         self.assertIn("def _requirements_reuse_decision", owner_text)
@@ -2118,10 +2122,16 @@ class StructureLayoutTests(unittest.TestCase):
         execution_owner_text = execution_owner.read_text(encoding="utf-8")
         self.assertIn("class ResumeRestoreDependencies", execution_owner_text)
         self.assertIn("class ResumeRestoreRunner", execution_owner_text)
-        self.assertIn("class ResumeProjectRestoreRunner", execution_owner_text)
+        self.assertNotIn("class ResumeProjectRestoreRunner", execution_owner_text)
         self.assertIn("def _execute_restore_missing", execution_owner_text)
         self.assertIn("def _run_restore_jobs", execution_owner_text)
-        self.assertIn("def _format_project_timing_line", execution_owner_text)
+        project_owner_text = project_owner.read_text(encoding="utf-8")
+        self.assertIn("class ResumeProjectRestoreRunner", project_owner_text)
+        self.assertIn("def _round_ms", project_owner_text)
+        result_owner_text = result_owner.read_text(encoding="utf-8")
+        self.assertIn("def apply_restore_result", result_owner_text)
+        self.assertIn("def format_project_timing_line", result_owner_text)
+        self.assertIn("def mark_restore_failure_requirements", result_owner_text)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.startup.resume_restore_execution import", facade_text)
         self.assertIn("from envctl_engine.startup.resume_restore_policy import", facade_text)
