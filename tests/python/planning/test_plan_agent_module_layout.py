@@ -65,6 +65,8 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "tmux_launch_support.py",
             "tmux_transport.py",
             "workflow.py",
+            "workflow_build.py",
+            "workflow_prompt_support.py",
         }
         actual = {path.name for path in PLAN_AGENT_ROOT.glob("*.py")}
         self.assertTrue(expected.issubset(actual))
@@ -193,11 +195,21 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "resolve_plan_agent_launch_config",
                 "plan_agent_launch_prereq_commands",
             },
-            "workflow.py": {
+            "workflow_build.py": {
+                "_build_plan_agent_workflow",
+                "_browser_e2e_instruction_text",
+                "_finalization_instruction_text",
+                "_slash_command",
+                "_tab_title_for_worktree",
+                "PlanAgentWorkflowBuilder",
+            },
+            "workflow_prompt_support.py": {
                 "_workflow_step_prompt_text",
                 "_resolve_preset_submission_text",
                 "_shape_prompt_text",
                 "_runtime_addresses_prompt_section",
+            },
+            "workflow.py": {
                 "_codex_goal_text_for_worktree",
                 "_emit_codex_goal_event",
                 "_wrap_omx_initial_prompt_for_workflow",
@@ -380,7 +392,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             definitions[path.name] = {
                 node.name
                 for node in ast.walk(tree)
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
             }
         for filename, names in expected.items():
             missing = sorted(names - definitions.get(filename, set()))
