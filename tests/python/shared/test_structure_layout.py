@@ -1422,16 +1422,32 @@ class StructureLayoutTests(unittest.TestCase):
     def test_ui_backend_has_selector_handoff_owner(self) -> None:
         backend = REPO_ROOT / "python" / "envctl_engine" / "ui" / "backend.py"
         selector_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "backend_selector_support.py"
+        debug_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "backend_selector_debug.py"
+        tty_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "backend_selector_tty.py"
+        subprocess_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "backend_selector_subprocess.py"
 
         self.assertTrue(selector_owner.is_file())
+        self.assertTrue(debug_owner.is_file())
+        self.assertTrue(tty_owner.is_file())
+        self.assertTrue(subprocess_owner.is_file())
         backend_text = backend.read_text(encoding="utf-8")
         selector_text = selector_owner.read_text(encoding="utf-8")
+        debug_text = debug_owner.read_text(encoding="utf-8")
+        tty_text = tty_owner.read_text(encoding="utf-8")
+        subprocess_text = subprocess_owner.read_text(encoding="utf-8")
         self.assertIn("from .backend_selector_support import", backend_text)
         self.assertIn("class TextualInteractiveBackend", backend_text)
         self.assertIn("def select_project_targets_via_textual", selector_text)
         self.assertIn("def select_grouped_targets_via_textual", selector_text)
+        self.assertIn("from envctl_engine.ui.backend_selector_subprocess import", selector_text)
+        self.assertIn("from envctl_engine.ui.backend_selector_tty import", selector_text)
+        self.assertIn("def debug_tty_group_enabled", debug_text)
+        self.assertIn("def emit_parent_selector_thread_snapshot", debug_text)
         self.assertIn("def run_selector_preflight", selector_text)
-        self.assertIn("def run_selector_subprocess", selector_text)
+        self.assertIn("def stdin_tty_fd", tty_text)
+        self.assertIn("def drain_stdin_escape_tail", tty_text)
+        self.assertIn("def run_selector_subprocess", subprocess_text)
+        self.assertLessEqual(len(selector_text.splitlines()), 230)
         self.assertLessEqual(len(backend_text.splitlines()), 240)
 
     def test_removed_dead_leaf_modules_are_absent(self) -> None:

@@ -352,10 +352,10 @@ class SelectorInputPreflightTests(unittest.TestCase):
             "multi": True,
         }
         with (
-            patch("envctl_engine.ui.backend_selector_support.subprocess.run") as run_subprocess,
-            patch("envctl_engine.ui.backend_selector_support.tempfile.TemporaryDirectory") as tmpdir_factory,
-            patch("envctl_engine.ui.backend_selector_support.Path.write_text"),
-            patch("envctl_engine.ui.backend_selector_support.Path.read_text", return_value='{"cancelled": true}'),
+            patch("envctl_engine.ui.backend_selector_subprocess.subprocess.run") as run_subprocess,
+            patch("envctl_engine.ui.backend_selector_subprocess.tempfile.TemporaryDirectory") as tmpdir_factory,
+            patch("envctl_engine.ui.backend_selector_subprocess.Path.write_text"),
+            patch("envctl_engine.ui.backend_selector_subprocess.Path.read_text", return_value='{"cancelled": true}'),
             patch("envctl_engine.ui.terminal_session.temporary_tty_character_mode") as char_mode,
         ):
             tmpdir_factory.return_value.__enter__.return_value = "/tmp/envctl-selector-test"
@@ -381,10 +381,10 @@ class SelectorInputPreflightTests(unittest.TestCase):
             "multi": True,
         }
         with (
-            patch("envctl_engine.ui.backend_selector_support.subprocess.run") as run_subprocess,
-            patch("envctl_engine.ui.backend_selector_support.tempfile.TemporaryDirectory") as tmpdir_factory,
-            patch("envctl_engine.ui.backend_selector_support.Path.write_text"),
-            patch("envctl_engine.ui.backend_selector_support.Path.read_text", return_value='{"cancelled": true}'),
+            patch("envctl_engine.ui.backend_selector_subprocess.subprocess.run") as run_subprocess,
+            patch("envctl_engine.ui.backend_selector_subprocess.tempfile.TemporaryDirectory") as tmpdir_factory,
+            patch("envctl_engine.ui.backend_selector_subprocess.Path.write_text"),
+            patch("envctl_engine.ui.backend_selector_subprocess.Path.read_text", return_value='{"cancelled": true}'),
             patch("envctl_engine.ui.terminal_session.temporary_standard_output_pendin") as pendin_mode,
         ):
             tmpdir_factory.return_value.__enter__.return_value = "/tmp/envctl-selector-test"
@@ -397,10 +397,10 @@ class SelectorInputPreflightTests(unittest.TestCase):
     def test_escape_tail_drain_is_nonblocking(self) -> None:
         with (
             patch(
-                "envctl_engine.ui.backend_selector_support.select.select",
+                "envctl_engine.ui.backend_selector_tty.select.select",
                 side_effect=[([9], [], []), ([], [], [])],
             ) as select_call,
-            patch("envctl_engine.ui.backend_selector_support.os.read", return_value=b"x"),
+            patch("envctl_engine.ui.backend_selector_tty.os.read", return_value=b"x"),
         ):
             drained = selector_support.drain_stdin_escape_tail(
                 fd=9,
