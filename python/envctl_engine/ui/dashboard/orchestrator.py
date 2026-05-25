@@ -52,12 +52,6 @@ _REVIEW_TAB_OPEN_TOKEN = "__REVIEW_TAB_OPEN__"
 _REVIEW_TAB_SKIP_TOKEN = "__REVIEW_TAB_SKIP__"
 _REVIEW_TAB_LAUNCH_FLAG = "dashboard_review_tab_launch"
 
-_DASHBOARD_PR_COMPAT_SYMBOLS = (
-    probe_dirty_worktree,
-    launch_review_agent_terminal,
-    review_agent_launch_readiness,
-)
-
 
 class DashboardOrchestrator(DashboardCommandMixin, DashboardFailureDetailMixin):
     def __init__(self, runtime: Any) -> None:
@@ -174,9 +168,23 @@ class DashboardOrchestrator(DashboardCommandMixin, DashboardFailureDetailMixin):
     def _maybe_prepare_pr_commit(self, route: Route, state: RunState, rt: object) -> tuple[Route | None, RunState]:
         return pr_and_target_support.maybe_prepare_pr_commit(self, route, state, rt)
 
+    @staticmethod
+    def _pr_dependencies() -> pr_and_target_support.DashboardPrDependencies:
+        return pr_and_target_support.DashboardPrDependencies(
+            probe_dirty_worktree=probe_dirty_worktree,
+            launch_review_agent_terminal=launch_review_agent_terminal,
+            review_agent_launch_readiness=review_agent_launch_readiness,
+            run_selector=_run_selector_with_impl,
+        )
+
     def _dirty_pr_reports(self, route: Route, state: RunState, runtime: Any) -> list[DirtyWorktreeReport]:
-        pr_and_target_support.probe_dirty_worktree = probe_dirty_worktree
-        return pr_and_target_support.dirty_pr_reports(self, route, state, runtime)
+        return pr_and_target_support.dirty_pr_reports(
+            self,
+            route,
+            state,
+            runtime,
+            dependencies=self._pr_dependencies(),
+        )
 
     def _dedupe_route_projects_by_git_root(self, route: Route, state: RunState, rt: object) -> Route:
         return pr_and_target_support.dedupe_route_projects_by_git_root(self, route, state, rt)
@@ -189,12 +197,22 @@ class DashboardOrchestrator(DashboardCommandMixin, DashboardFailureDetailMixin):
         return pr_and_target_support.project_roots_for_route(self, route, state, runtime)
 
     def _maybe_offer_review_tab_launch(self, route: Route, state: RunState, rt: object) -> None:
-        pr_and_target_support.launch_review_agent_terminal = launch_review_agent_terminal
-        pr_and_target_support.maybe_offer_review_tab_launch(self, route, state, rt)
+        pr_and_target_support.maybe_offer_review_tab_launch(
+            self,
+            route,
+            state,
+            rt,
+            dependencies=self._pr_dependencies(),
+        )
 
     def _apply_review_tab_launch_selection(self, route: Route, state: RunState, rt: object) -> Route:
-        pr_and_target_support.review_agent_launch_readiness = review_agent_launch_readiness
-        return pr_and_target_support.apply_review_tab_launch_selection(self, route, state, rt)
+        return pr_and_target_support.apply_review_tab_launch_selection(
+            self,
+            route,
+            state,
+            rt,
+            dependencies=self._pr_dependencies(),
+        )
 
     def _review_tab_target(self, route: Route, state: RunState, runtime: Any) -> tuple[str, Path] | None:
         return pr_and_target_support.review_tab_target(self, route, state, runtime)
@@ -211,19 +229,24 @@ class DashboardOrchestrator(DashboardCommandMixin, DashboardFailureDetailMixin):
     def _dirty_pr_prompt(dirty_targets: list[DirtyWorktreeReport]) -> str:
         return pr_and_target_support.dirty_pr_prompt(dirty_targets)
 
-    @staticmethod
-    def _prompt_review_tab_menu(runtime: Any, *, project_name: str) -> DirtyPrDecision:
-        pr_and_target_support._run_selector_with_impl = _run_selector_with_impl
-        return pr_and_target_support.prompt_review_tab_menu(runtime, project_name=project_name)
+    def _prompt_review_tab_menu(self, runtime: Any, *, project_name: str) -> DirtyPrDecision:
+        return pr_and_target_support.prompt_review_tab_menu(
+            runtime,
+            project_name=project_name,
+            dependencies=self._pr_dependencies(),
+        )
 
     @staticmethod
     def _dirty_categories(report: DirtyWorktreeReport) -> list[str]:
         return pr_and_target_support.dirty_categories(report)
 
-    @staticmethod
-    def _prompt_dirty_pr_menu(runtime: Any, *, title: str, prompt: str) -> DirtyPrDecision:
-        pr_and_target_support._run_selector_with_impl = _run_selector_with_impl
-        return pr_and_target_support.prompt_dirty_pr_menu(runtime, title=title, prompt=prompt)
+    def _prompt_dirty_pr_menu(self, runtime: Any, *, title: str, prompt: str) -> DirtyPrDecision:
+        return pr_and_target_support.prompt_dirty_pr_menu(
+            runtime,
+            title=title,
+            prompt=prompt,
+            dependencies=self._pr_dependencies(),
+        )
 
     @staticmethod
     def _prompt_yes_no_dialog(runtime: Any, *, title: str, prompt: str) -> DirtyPrDecision:
