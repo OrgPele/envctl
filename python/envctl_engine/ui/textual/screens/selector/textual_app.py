@@ -17,6 +17,9 @@ from envctl_engine.ui.textual.screens.selector.textual_app_chrome import (
 from envctl_engine.ui.textual.screens.selector.textual_app_lifecycle import (
     apply_selector_mount,
 )
+from envctl_engine.ui.textual.screens.selector.textual_app_initial_navigation import (
+    SelectorInitialNavigationRunner,
+)
 from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
     SelectorEventController,
     SelectorFocusController,
@@ -211,7 +214,7 @@ def create_selector_app(
                 self._controller.finish_render()
                 self._initial_model_index = None
                 self._sync_status()
-                self._sync_confirm_state()
+                self.query_one("#btn-run", Button).disabled = not bool(self._controller.index_map)
                 if not checkpoint.filter_has_focus:
                     self.action_focus_list()
 
@@ -252,47 +255,23 @@ def create_selector_app(
         def _show_status_error(self, message: str) -> None:
             self._status_controller.show_error(message)
 
-        def _sync_confirm_state(self) -> None:
-            run_button = self.query_one("#btn-run", Button)
-            run_button.disabled = not bool(self._controller.index_map)
-
         def _apply_initial_navigation(self) -> None:
-            if not initial_navigation:
-                return
-            self.action_focus_list(reason="initial_navigation")
-            submit_requested = False
-            selection_changed = False
-            for action in initial_navigation:
-                list_index_before = self._controller.ensure_list_index(self._list().index)
-                if action == "down":
-                    target_index = self._controller.cursor_down(list_index_before)
-                    apply_selectable_list_index(self._list(), target_index)
-                    self._key_telemetry.mark_navigation("down")
-                elif action == "up":
-                    target_index = self._controller.cursor_up(list_index_before)
-                    apply_selectable_list_index(self._list(), target_index)
-                    self._key_telemetry.mark_navigation("up")
-                elif action == "submit":
-                    submit_requested = True
-                    continue
-                else:
-                    continue
-                model_index = self._focused_model_index()
-                if model_index is not None:
-                    self._last_user_model_index = model_index
-                if not multi and model_index is not None and 0 <= model_index < len(self._rows):
-                    for idx, row in enumerate(self._rows):
-                        selected = idx == model_index
-                        if row.selected != selected:
-                            row.selected = selected
-                            selection_changed = True
-            self._sync_status()
-            if selection_changed:
-                self.call_after_refresh(lambda: asyncio.create_task(self._render_rows()))
-            if submit_requested:
-                self.call_after_refresh(
+            SelectorInitialNavigationRunner(
+                actions=initial_navigation,
+                rows=self._rows,
+                multi=multi,
+                controller=self._controller,
+                list_view=self._list(),
+                focus_list=self.action_focus_list,
+                mark_navigation=self._key_telemetry.mark_navigation,
+                focused_model_index=self._focused_model_index,
+                set_last_user_model_index=lambda index: setattr(self, "_last_user_model_index", index),
+                sync_status=self._sync_status,
+                schedule_render=lambda: self.call_after_refresh(lambda: asyncio.create_task(self._render_rows())),
+                schedule_submit=lambda: self.call_after_refresh(
                     lambda: asyncio.create_task(self.action_submit(cause="initial_navigation_submit"))
-                )
+                ),
+            ).apply()
 
         async def _sync_single_select_focus_selection(self, *, reason: str) -> None:
             if multi:
@@ -369,12 +348,6 @@ def create_selector_app(
             await self._render_rows()
             self.action_focus_list(reason="toggle_visible")
 
-        def action_cursor_up(self) -> None:
-            self._list().index = self._controller.cursor_up(self._list().index)
-
-        def action_cursor_down(self) -> None:
-            self._list().index = self._controller.cursor_down(self._list().index)
-
         def _emit_key_debug(
             self,
             *,
@@ -404,7 +377,7 @@ def create_selector_app(
                 target_index = self._controller.cursor_up(list_index_before)
                 self.action_focus_list(reason="key_recover", target_index=target_index)
             else:
-                self.action_cursor_up()
+                self._list().index = self._controller.cursor_up(self._list().index)
             list_index_after = self._list().index
             focused_model_index = self._focused_model_index()
             if focused_model_index is not None:
@@ -430,7 +403,7 @@ def create_selector_app(
                 target_index = self._controller.cursor_down(list_index_before)
                 self.action_focus_list(reason="key_recover", target_index=target_index)
             else:
-                self.action_cursor_down()
+                self._list().index = self._controller.cursor_down(self._list().index)
             list_index_after = self._list().index
             focused_model_index = self._focused_model_index()
             if focused_model_index is not None:

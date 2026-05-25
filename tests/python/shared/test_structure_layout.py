@@ -1369,6 +1369,7 @@ class StructureLayoutTests(unittest.TestCase):
         textual_driver = selector / "textual_driver_instrumentation.py"
         prompt_toolkit_io = selector / "prompt_toolkit_io_instrumentation.py"
         app_key_trace = selector / "textual_app_key_trace.py"
+        initial_navigation = selector / "textual_app_initial_navigation.py"
         textual_app = selector / "textual_app.py"
         selection_state = selector / "selection_state.py"
         app_runtime = selector / "textual_app_runtime.py"
@@ -1381,6 +1382,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(textual_driver.is_file())
         self.assertTrue(prompt_toolkit_io.is_file())
         self.assertTrue(app_key_trace.is_file())
+        self.assertTrue(initial_navigation.is_file())
         self.assertTrue(textual_app.is_file())
         self.assertTrue(selection_state.is_file())
         self.assertTrue(app_runtime.is_file())
@@ -1392,6 +1394,7 @@ class StructureLayoutTests(unittest.TestCase):
         textual_driver_text = textual_driver.read_text(encoding="utf-8")
         prompt_toolkit_text = prompt_toolkit_io.read_text(encoding="utf-8")
         app_key_trace_text = app_key_trace.read_text(encoding="utf-8")
+        initial_navigation_text = initial_navigation.read_text(encoding="utf-8")
         app_text = textual_app.read_text(encoding="utf-8")
         selection_text = selection_state.read_text(encoding="utf-8")
         runtime_text = app_runtime.read_text(encoding="utf-8")
@@ -1413,6 +1416,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def instrument_textual_parser_keys", textual_driver_text)
         self.assertIn("def instrument_prompt_toolkit_posix_io", prompt_toolkit_text)
         self.assertIn("def emit_app_key_trace", app_key_trace_text)
+        self.assertIn("class SelectorInitialNavigationRunner", initial_navigation_text)
         self.assertIn("def build_selector_rows", selection_text)
         self.assertIn("def apply_selector_filter", selection_text)
         self.assertIn("def selector_visibility_counts", selection_text)
@@ -1433,11 +1437,12 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def emit_selector_key_trace", key_policy_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector import selection_state", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_key_trace import", app_text)
+        self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_initial_navigation import", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_runtime import", app_text)
         self.assertIn("SelectorStatusController", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_key_policy import", app_text)
         self.assertLessEqual(len(support_text.splitlines()), 180)
-        self.assertLessEqual(len(app_text.splitlines()), 750)
+        self.assertLessEqual(len(app_text.splitlines()), 725)
 
     def test_ui_backend_has_selector_handoff_owner(self) -> None:
         backend = REPO_ROOT / "python" / "envctl_engine" / "ui" / "backend.py"
