@@ -436,7 +436,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             self.assertNotIn("Constants stay in launch", text)
 
     def test_plan_agent_facades_use_explicit_compatibility_imports(self) -> None:
-        for filename in ("workflow.py", "recovery.py"):
+        for filename in ("config.py", "workflow.py", "recovery.py"):
             path = PLAN_AGENT_ROOT / filename
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             wildcard_imports = [

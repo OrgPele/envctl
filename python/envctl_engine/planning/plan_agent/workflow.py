@@ -170,6 +170,7 @@ from envctl_engine.planning.plan_agent.workflow_review_support import (
     _review_prompt_arguments,
     resolve_plan_agent_launch_command,
 )
+import envctl_engine.runtime.runtime_context as runtime_context
 
 
 def _surface_respawn_command(launch_config: PlanAgentLaunchConfig, worktree: CreatedPlanWorktree) -> str:
