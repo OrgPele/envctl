@@ -777,6 +777,8 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_plan_agent_launch_tests_are_split_by_transport_owner(self) -> None:
         planning_tests = REPO_ROOT / "tests" / "python" / "planning"
+        policy_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "plan_agent" / "launch_policy.py"
+        config_facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "plan_agent" / "config.py"
         expected = [
             "plan_agent_launch_support_test_support.py",
             "test_plan_agent_launch_cmux.py",
@@ -791,6 +793,7 @@ class StructureLayoutTests(unittest.TestCase):
             "test_plan_agent_launch_omx_workflow.py",
             "test_plan_agent_launch_options.py",
             "test_plan_agent_launch_readiness.py",
+            "test_plan_agent_launch_policy.py",
             "test_plan_agent_launch_superset.py",
             "test_plan_agent_launch_superset_desktop.py",
             "test_plan_agent_launch_tmux.py",
@@ -804,6 +807,12 @@ class StructureLayoutTests(unittest.TestCase):
         for filename in expected:
             with self.subTest(path=filename):
                 self.assertTrue((planning_tests / filename).is_file())
+
+        self.assertTrue(policy_owner.is_file())
+        self.assertIn("class PlanAgentLaunchPolicy", policy_owner.read_text(encoding="utf-8"))
+        config_text = config_facade.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.planning.plan_agent.launch_policy import", config_text)
+        self.assertLessEqual(len(config_text.splitlines()), 140)
 
         legacy = planning_tests / "test_plan_agent_launch_support.py"
         self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
