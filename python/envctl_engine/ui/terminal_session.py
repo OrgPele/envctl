@@ -12,6 +12,11 @@ from typing import cast
 from envctl_engine.runtime.runtime_dependency_contract import python_dependency_available
 from . import terminal_input_stream
 from .capabilities import prompt_toolkit_disabled
+from .terminal_command_readers import (
+    TerminalCommandReaderDeps,
+    read_command_line_basic,
+    read_command_line_fallback,
+)
 from .debug_flight_recorder import DebugFlightRecorder
 from .terminal_tty_modes import (
     _canonical_line_state as _canonical_line_state,
@@ -179,6 +184,27 @@ def _prompt_toolkit_no_cpr() -> Iterator[None]:
             os.environ[key] = previous
 
 
+def _terminal_command_reader_deps() -> TerminalCommandReaderDeps:
+    return TerminalCommandReaderDeps(
+        environ=os.environ,
+        stdin=sys.stdin,
+        stdout=sys.stdout,
+        stdout_fallback=(getattr(sys, "__stdout__", None) or sys.stdout),
+        can_interactive_tty=can_interactive_tty,
+        os_isatty=os.isatty,
+        stdin_fileno=sys.stdin.fileno,
+        open_tty=lambda tty_path: open(tty_path, "rb", buffering=0),
+        ensure_tty_line_mode=_ensure_tty_line_mode,
+        discard_stale_control_sequences=_discard_stale_control_sequences,
+        read_line_from_fd_graceful=_read_line_from_fd_graceful,
+        read_line_from_fd=_read_line_from_fd,
+        read_command_line_fallback=_read_command_line_fallback,
+        basic_input_fd_enabled=_basic_input_fd_enabled,
+        restore_terminal_after_input=restore_terminal_after_input,
+        canonical_line_state=_canonical_line_state,
+    )
+
+
 def _read_command_line_fallback(
     prompt: str,
     env: Mapping[str, str],
@@ -187,113 +213,14 @@ def _read_command_line_fallback(
     emit: Callable[..., None] | None = None,
     debug_recorder: DebugFlightRecorder | None = None,
 ) -> str:
-    if not can_interactive_tty():
-        if callable(emit):
-            emit("ui.input.read.begin", component="ui.terminal_session", backend="fallback", non_tty=True)
-        value = input_provider(prompt)
-        if callable(emit):
-            emit(
-                "ui.input.read.end",
-                component="ui.terminal_session",
-                backend="fallback",
-                bytes_read=len(str(value).encode("utf-8", errors="ignore")),
-                non_tty=True,
-            )
-        return value
-    tty_path = env.get("TTY_DEVICE") or os.environ.get("TTY_DEVICE") or "/dev/tty"
-    try:
-        handle = open(tty_path, "rb", buffering=0)
-    except OSError:
-        return input_provider(prompt)
-    fd = handle.fileno()
-    if callable(emit):
-        emit("ui.input.read.begin", component="ui.terminal_session", backend="fallback", tty_device=tty_path)
-    if debug_recorder is not None:
-        debug_recorder.write_tty_context(
-            {
-                "stdin_tty": bool(sys.stdin.isatty()),
-                "stdout_tty": bool(sys.stdout.isatty()),
-                "tty_device": tty_path,
-                "term": os.environ.get("TERM", ""),
-            }
-        )
-    try:
-        discarded_bytes = 0
-        try:
-            discarded_bytes = _discard_stale_control_sequences(fd=fd)
-            if callable(emit):
-                emit(
-                    "ui.input.flush",
-                    component="ui.terminal_session",
-                    backend="fallback",
-                    result="ok",
-                    discarded_bytes=discarded_bytes,
-                )
-        except Exception:
-            if callable(emit):
-                emit(
-                    "ui.input.flush",
-                    component="ui.terminal_session",
-                    backend="fallback",
-                    result="failed",
-                    discarded_bytes=0,
-                )
-            if debug_recorder is not None:
-                debug_recorder.append_anomaly(
-                    {
-                        "event": "ui.anomaly.tcflush_failed",
-                        "severity": "low",
-                        "backend": "fallback",
-                    }
-                )
-        _ensure_tty_line_mode(fd=fd)
-        if debug_recorder is not None:
-            debug_recorder.append_tty_state_transition(
-                {
-                    "event": "ui.tty.transition",
-                    "action": "line_mode",
-                    "discarded_bytes": discarded_bytes,
-                }
-            )
-        sys.stdout.write(prompt)
-        sys.stdout.flush()
-
-        total_bytes = 0
-        dropped_escape_sequences = 0
-        source = "tty_graceful"
-
-        def on_bytes(data: bytes) -> None:
-            nonlocal total_bytes
-            total_bytes += len(data)
-            if debug_recorder is not None:
-                debug_recorder.record_input_bytes(data, component="ui.terminal_session", backend="fallback")
-
-        try:
-            text, dropped_escape_sequences = _read_line_from_fd_graceful(
-                fd,
-                on_bytes=on_bytes,
-                emit=emit,
-            )
-        except Exception:
-            source = "tty_line"
-            text = _read_line_from_fd(fd, on_bytes=on_bytes)
-            dropped_escape_sequences = 0
-        if callable(emit):
-            emit(
-                "ui.input.read.end",
-                component="ui.terminal_session",
-                backend="fallback",
-                bytes_read=total_bytes,
-                source=source,
-                dropped_escape_sequences=dropped_escape_sequences,
-            )
-        return text
-    finally:
-        restore_terminal_after_input(fd=fd, original_state=_canonical_line_state(fd=fd), emit=emit)
-        try:
-            handle.close()
-        except Exception:
-            pass
+    return read_command_line_fallback(
+        prompt,
+        env,
+        input_provider,
+        deps=_terminal_command_reader_deps(),
+        emit=emit,
+        debug_recorder=debug_recorder,
+    )
 
 
 def _read_command_line_basic(
@@ -305,110 +232,15 @@ def _read_command_line_basic(
     emit: Callable[..., None] | None = None,
     debug_recorder: DebugFlightRecorder | None = None,
 ) -> str:
-    if callable(emit):
-        emit("ui.input.read.begin", component="ui.terminal_session", backend="basic_input")
-    if debug_recorder is not None:
-        debug_recorder.write_tty_context(
-            {
-                "stdin_tty": bool(sys.stdin.isatty()),
-                "stdout_tty": bool(sys.stdout.isatty()),
-                "term": os.environ.get("TERM", ""),
-                "backend": "basic_input",
-            }
-        )
-    text = ""
-    used_fd_reader = False
-    used_tty_fallback = False
-    if input_provider_is_default and can_interactive_tty() and _basic_input_fd_enabled():
-        try:
-            fd = sys.stdin.fileno()
-            if not os.isatty(fd):
-                raise OSError
-            _ensure_tty_line_mode(fd=fd)
-            _discard_stale_control_sequences(fd=fd)
-            sys.stdout.write(prompt)
-            sys.stdout.flush()
-            total_bytes = 0
-
-            def on_bytes(data: bytes) -> None:
-                nonlocal total_bytes
-                total_bytes += len(data)
-                if debug_recorder is not None and debug_recorder.config.mode == "deep":
-                    debug_recorder.record_input_bytes(
-                        data,
-                        component="ui.terminal_session",
-                        backend="basic_input",
-                    )
-
-            text, dropped_escape_sequences = _read_line_from_fd_graceful(
-                fd,
-                on_bytes=on_bytes,
-                emit=emit,
-            )
-            used_fd_reader = True
-            if callable(emit):
-                emit(
-                    "ui.input.read.end",
-                    component="ui.terminal_session",
-                    backend="basic_input",
-                    bytes_read=total_bytes,
-                    source="fd",
-                    dropped_escape_sequences=dropped_escape_sequences,
-                )
-        except Exception:
-            used_fd_reader = False
-
-    if not used_fd_reader:
-        if input_provider_is_default and can_interactive_tty():
-            try:
-                text = _read_command_line_fallback(
-                    prompt,
-                    (env or {}),
-                    input_provider,
-                    emit=emit,
-                    debug_recorder=debug_recorder,
-                )
-                used_tty_fallback = True
-            except Exception:
-                used_tty_fallback = False
-
-        if not used_tty_fallback:
-            value = input_provider(prompt)
-            text = str(value)
-            if debug_recorder is not None and debug_recorder.config.mode == "deep":
-                # Preserve deep-mode input signal without switching to raw /dev/tty fallback.
-                debug_recorder.record_input_bytes(
-                    (text + "\n").encode("utf-8", errors="ignore"),
-                    component="ui.terminal_session",
-                    backend="basic_input",
-                )
-            if callable(emit):
-                emit(
-                    "ui.input.read.end",
-                    component="ui.terminal_session",
-                    backend="basic_input",
-                    bytes_read=len(text.encode("utf-8", errors="ignore")),
-                    source="provider",
-                )
-        elif callable(emit):
-            emit(
-                "ui.input.read.end",
-                component="ui.terminal_session",
-                backend="basic_input",
-                bytes_read=len(text.encode("utf-8", errors="ignore")),
-                source="tty_fallback",
-            )
-
-    if debug_recorder is not None and debug_recorder.config.mode == "deep":
-        debug_recorder.append_tty_state_transition(
-            {
-                "event": "ui.tty.transition",
-                "action": "basic_input_read",
-                "source": ("fd" if used_fd_reader else ("tty_fallback" if used_tty_fallback else "provider")),
-                "stdin_tty": bool(sys.stdin.isatty()),
-            }
-        )
-    return text
+    return read_command_line_basic(
+        prompt,
+        input_provider,
+        deps=_terminal_command_reader_deps(),
+        env=env,
+        input_provider_is_default=input_provider_is_default,
+        emit=emit,
+        debug_recorder=debug_recorder,
+    )
 
 
 class TerminalSession:

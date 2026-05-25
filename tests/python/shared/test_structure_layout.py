@@ -1518,6 +1518,7 @@ class StructureLayoutTests(unittest.TestCase):
         facade = REPO_ROOT / "python" / "envctl_engine" / "ui" / "terminal_session.py"
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "terminal_tty_modes.py"
         stream_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "terminal_input_stream.py"
+        command_reader_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "terminal_command_readers.py"
 
         self.assertTrue(owner.is_file())
         owner_text = owner.read_text(encoding="utf-8")
@@ -1531,10 +1532,16 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class TerminalInputBuffer", stream_text)
         self.assertIn("def read_line_from_fd", stream_text)
         self.assertIn("def discard_stale_control_sequences", stream_text)
+        self.assertTrue(command_reader_owner.is_file())
+        command_reader_text = command_reader_owner.read_text(encoding="utf-8")
+        self.assertIn("class TerminalCommandReaderDeps", command_reader_text)
+        self.assertIn("def read_command_line_fallback", command_reader_text)
+        self.assertIn("def read_command_line_basic", command_reader_text)
         facade_text = facade.read_text(encoding="utf-8")
+        self.assertIn("from .terminal_command_readers import", facade_text)
         self.assertIn("from .terminal_tty_modes import", facade_text)
         self.assertIn("from . import terminal_input_stream", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 620)
+        self.assertLessEqual(len(facade_text.splitlines()), 430)
 
     def test_textual_planning_selector_has_model_owner(self) -> None:
         selector = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "planning_selector.py"
