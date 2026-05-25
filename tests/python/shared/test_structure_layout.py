@@ -1126,16 +1126,19 @@ class StructureLayoutTests(unittest.TestCase):
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_path_support.py"
         menu_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_menu_terminal_support.py"
         spinner_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_spinner_support.py"
+        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
         protocols = REPO_ROOT / "python" / "envctl_engine" / "planning" / "protocols.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
 
         self.assertTrue(owner.is_file())
         self.assertTrue(menu_owner.is_file())
         self.assertTrue(spinner_owner.is_file())
+        self.assertTrue(runtime_bridge.is_file())
         self.assertTrue(protocols.is_file())
         owner_text = owner.read_text(encoding="utf-8")
         menu_owner_text = menu_owner.read_text(encoding="utf-8")
         spinner_owner_text = spinner_owner.read_text(encoding="utf-8")
+        runtime_bridge_text = runtime_bridge.read_text(encoding="utf-8")
         self.assertIn("def preferred_tree_root_for_feature", owner_text)
         self.assertIn("def trees_root_for_worktree", owner_text)
         self.assertIn("def resolve_planning_selection_target", owner_text)
@@ -1145,14 +1148,19 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def worktree_spinner_policy", spinner_owner_text)
         self.assertIn("def worktree_spinner_update", spinner_owner_text)
         self.assertIn("def worktree_spinner_stop", spinner_owner_text)
+        self.assertIn("class PlanningRuntimeBridge", runtime_bridge_text)
+        self.assertIn("def create_single_worktree", runtime_bridge_text)
+        self.assertIn("def sync_plan_worktrees_from_plan_counts", runtime_bridge_text)
+        self.assertIn("def delete_feature_worktrees", runtime_bridge_text)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.planning.worktree_path_support import", facade_text)
         self.assertIn("from envctl_engine.planning.worktree_menu_terminal_support import", facade_text)
         self.assertIn("from envctl_engine.planning.worktree_spinner_support import", facade_text)
+        self.assertIn("from envctl_engine.planning.worktree_runtime_bridge import PlanningRuntimeBridge", facade_text)
         self.assertIn("from envctl_engine.planning.protocols import ProjectContextLike", facade_text)
         self.assertNotIn("class ProjectContextLike(Protocol)", facade_text)
         self.assertNotIn("return _coerce_setup_entries_impl(flags=route.flags, flag_name=flag_name, value_name=value_name)\n    return _coerce_setup_entries_impl", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 920)
+        self.assertLessEqual(len(facade_text.splitlines()), 720)
 
     def test_startup_helpers_share_project_context_protocol(self) -> None:
         helper_paths = [
