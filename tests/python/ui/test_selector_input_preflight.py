@@ -8,6 +8,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.ui import backend as ui_backend
+from envctl_engine.ui import backend_selector_support as selector_support
 from envctl_engine.ui.selection_types import TargetSelection
 
 
@@ -32,11 +33,11 @@ class SelectorInputPreflightTests(unittest.TestCase):
     def test_preflight_emits_tty_transition_without_flush_or_drain_by_default(self) -> None:
         runtime = _RuntimeStub()
         with (
-            patch("envctl_engine.ui.backend._stdin_tty_fd", return_value=7),
-            patch("envctl_engine.ui.backend._normalize_stdin_line_mode", return_value=True),
-            patch("envctl_engine.ui.backend._drain_stdin_escape_tail", return_value=5),
+            patch("envctl_engine.ui.backend_selector_support.stdin_tty_fd", return_value=7),
+            patch("envctl_engine.ui.backend_selector_support.normalize_stdin_line_mode", return_value=True),
+            patch("envctl_engine.ui.backend_selector_support.drain_stdin_escape_tail", return_value=5),
         ):
-            ui_backend._run_selector_preflight(  # noqa: SLF001
+            selector_support.run_selector_preflight(
                 runtime,
                 selector_kind="grouped",
                 prompt="Restart",
@@ -69,11 +70,11 @@ class SelectorInputPreflightTests(unittest.TestCase):
                 },
                 clear=False,
             ),
-            patch("envctl_engine.ui.backend._stdin_tty_fd", return_value=7),
-            patch("envctl_engine.ui.backend._normalize_stdin_line_mode", return_value=True),
-            patch("envctl_engine.ui.backend._drain_stdin_escape_tail", return_value=5),
+            patch("envctl_engine.ui.backend_selector_support.stdin_tty_fd", return_value=7),
+            patch("envctl_engine.ui.backend_selector_support.normalize_stdin_line_mode", return_value=True),
+            patch("envctl_engine.ui.backend_selector_support.drain_stdin_escape_tail", return_value=5),
         ):
-            ui_backend._run_selector_preflight(  # noqa: SLF001
+            selector_support.run_selector_preflight(
                 runtime,
                 selector_kind="grouped",
                 prompt="Restart",
@@ -95,12 +96,12 @@ class SelectorInputPreflightTests(unittest.TestCase):
         runtime = _RuntimeStub()
         with (
             patch.dict("os.environ", {"TERM_PROGRAM": "Apple_Terminal"}, clear=False),
-            patch("envctl_engine.ui.backend._selector_subprocess_enabled", return_value=False),
-            patch("envctl_engine.ui.backend._stdin_tty_fd", return_value=7),
-            patch("envctl_engine.ui.backend._normalize_stdin_line_mode", return_value=True),
-            patch("envctl_engine.ui.backend._drain_stdin_escape_tail", return_value=3),
+            patch("envctl_engine.ui.backend_selector_support.selector_subprocess_enabled", return_value=False),
+            patch("envctl_engine.ui.backend_selector_support.stdin_tty_fd", return_value=7),
+            patch("envctl_engine.ui.backend_selector_support.normalize_stdin_line_mode", return_value=True),
+            patch("envctl_engine.ui.backend_selector_support.drain_stdin_escape_tail", return_value=3),
         ):
-            ui_backend._run_selector_preflight(  # noqa: SLF001
+            selector_support.run_selector_preflight(
                 runtime,
                 selector_kind="grouped",
                 prompt="Restart",
@@ -122,11 +123,11 @@ class SelectorInputPreflightTests(unittest.TestCase):
         runtime = _RuntimeStub()
         with (
             patch.dict("os.environ", {"TERM_PROGRAM": "Apple_Terminal"}, clear=False),
-            patch("envctl_engine.ui.backend._selector_subprocess_enabled", return_value=True),
-            patch("envctl_engine.ui.backend._stdin_tty_fd", return_value=7),
-            patch("envctl_engine.ui.backend._normalize_stdin_line_mode", return_value=True),
+            patch("envctl_engine.ui.backend_selector_support.selector_subprocess_enabled", return_value=True),
+            patch("envctl_engine.ui.backend_selector_support.stdin_tty_fd", return_value=7),
+            patch("envctl_engine.ui.backend_selector_support.normalize_stdin_line_mode", return_value=True),
         ):
-            ui_backend._run_selector_preflight(  # noqa: SLF001
+            selector_support.run_selector_preflight(
                 runtime,
                 selector_kind="grouped",
                 prompt="Restart",
@@ -150,10 +151,10 @@ class SelectorInputPreflightTests(unittest.TestCase):
         with (
             patch.dict("os.environ", {"TERM_PROGRAM": "Apple_Terminal"}, clear=False),
             patch("envctl_engine.ui.terminal_session.normalize_standard_tty_state") as normalize_tty,
-            patch("envctl_engine.ui.backend._stdin_tty_fd", return_value=7),
-            patch("envctl_engine.ui.backend._normalize_stdin_line_mode", return_value=True),
+            patch("envctl_engine.ui.backend_selector_support.stdin_tty_fd", return_value=7),
+            patch("envctl_engine.ui.backend_selector_support.normalize_stdin_line_mode", return_value=True),
         ):
-            ui_backend._run_selector_preflight(  # noqa: SLF001
+            selector_support.run_selector_preflight(
                 runtime,
                 selector_kind="grouped",
                 prompt="Restart",
@@ -178,11 +179,11 @@ class SelectorInputPreflightTests(unittest.TestCase):
             "ENVCTL_DEBUG_PLAN_TTY_GROUP": "termios",
         }
         with (
-            patch("envctl_engine.ui.backend._stdin_tty_fd", return_value=7),
-            patch("envctl_engine.ui.backend._normalize_stdin_line_mode") as normalize_stdin,
-            patch("envctl_engine.ui.backend._drain_stdin_escape_tail") as drain_tail,
+            patch("envctl_engine.ui.backend_selector_support.stdin_tty_fd", return_value=7),
+            patch("envctl_engine.ui.backend_selector_support.normalize_stdin_line_mode") as normalize_stdin,
+            patch("envctl_engine.ui.backend_selector_support.drain_stdin_escape_tail") as drain_tail,
         ):
-            ui_backend._run_selector_preflight(  # noqa: SLF001
+            selector_support.run_selector_preflight(
                 runtime,
                 selector_kind="grouped",
                 prompt="Restart",
@@ -211,8 +212,8 @@ class SelectorInputPreflightTests(unittest.TestCase):
 
     def test_preflight_non_tty_still_emits_begin_end(self) -> None:
         runtime = _RuntimeStub()
-        with patch("envctl_engine.ui.backend._stdin_tty_fd", return_value=None):
-            ui_backend._run_selector_preflight(  # noqa: SLF001
+        with patch("envctl_engine.ui.backend_selector_support.stdin_tty_fd", return_value=None):
+            selector_support.run_selector_preflight(
                 runtime,
                 selector_kind="project",
                 prompt="Test targets",
@@ -233,7 +234,7 @@ class SelectorInputPreflightTests(unittest.TestCase):
         runtime = _RuntimeStub()
         backend = ui_backend.TextualInteractiveBackend()
         with (
-            patch("envctl_engine.ui.backend._run_selector_preflight") as preflight,
+            patch("envctl_engine.ui.backend_selector_support.run_selector_preflight") as preflight,
             patch(
                 "envctl_engine.ui.textual.screens.selector.select_project_targets_textual",
                 return_value=object(),
@@ -266,7 +267,7 @@ class SelectorInputPreflightTests(unittest.TestCase):
         runtime = _RuntimeStub()
         backend = ui_backend.LegacyInteractiveBackend()
         with (
-            patch("envctl_engine.ui.backend._run_selector_preflight") as preflight,
+            patch("envctl_engine.ui.backend_selector_support.run_selector_preflight") as preflight,
             patch(
                 "envctl_engine.ui.textual.screens.selector.select_project_targets_textual",
                 return_value=object(),
@@ -296,16 +297,16 @@ class SelectorInputPreflightTests(unittest.TestCase):
         self.assertEqual(preflight.call_count, 2)
 
     def test_character_mode_launch_enabled_for_selector_handoff(self) -> None:
-        self.assertFalse(ui_backend._selector_launch_character_mode_enabled())  # noqa: SLF001
+        self.assertFalse(selector_support.selector_launch_character_mode_enabled())
 
     def test_character_mode_launch_can_be_enabled_explicitly(self) -> None:
         with patch.dict("os.environ", {"ENVCTL_UI_SELECTOR_CHARACTER_MODE": "1"}, clear=False):
-            self.assertTrue(ui_backend._selector_launch_character_mode_enabled())  # noqa: SLF001
+            self.assertTrue(selector_support.selector_launch_character_mode_enabled())
 
     def test_selector_subprocess_enabled_by_default_on_apple_terminal(self) -> None:
         runtime = _RuntimeStub()
         with patch.dict("os.environ", {"TERM_PROGRAM": "Apple_Terminal"}, clear=False):
-            self.assertTrue(ui_backend._selector_subprocess_enabled(runtime))  # noqa: SLF001
+            self.assertTrue(selector_support.selector_subprocess_enabled(runtime))
 
     def test_selector_subprocess_can_be_disabled_explicitly(self) -> None:
         runtime = _RuntimeStub()
@@ -314,17 +315,17 @@ class SelectorInputPreflightTests(unittest.TestCase):
             {"TERM_PROGRAM": "Apple_Terminal", "ENVCTL_UI_TEXTUAL_SELECTOR_SUBPROCESS": "0"},
             clear=False,
         ):
-            self.assertFalse(ui_backend._selector_subprocess_enabled(runtime))  # noqa: SLF001
+            self.assertFalse(selector_support.selector_subprocess_enabled(runtime))
 
     def test_grouped_selector_uses_subprocess_when_enabled(self) -> None:
         runtime = _RuntimeStub()
         backend = ui_backend.TextualInteractiveBackend()
         projects = [type("Project", (), {"name": "Project A"})()]
         with (
-            patch("envctl_engine.ui.backend._run_selector_preflight"),
-            patch("envctl_engine.ui.backend._selector_subprocess_enabled", return_value=True),
+            patch("envctl_engine.ui.backend_selector_support.run_selector_preflight"),
+            patch("envctl_engine.ui.backend_selector_support.selector_subprocess_enabled", return_value=True),
             patch(
-                "envctl_engine.ui.backend._run_selector_subprocess",
+                "envctl_engine.ui.backend_selector_support.run_selector_subprocess",
                 return_value=TargetSelection(service_names=["Project A Backend"]),
             ) as run_subprocess,
         ):
@@ -351,15 +352,15 @@ class SelectorInputPreflightTests(unittest.TestCase):
             "multi": True,
         }
         with (
-            patch("envctl_engine.ui.backend.subprocess.run") as run_subprocess,
-            patch("envctl_engine.ui.backend.tempfile.TemporaryDirectory") as tmpdir_factory,
-            patch("envctl_engine.ui.backend.Path.write_text"),
-            patch("envctl_engine.ui.backend.Path.read_text", return_value='{"cancelled": true}'),
+            patch("envctl_engine.ui.backend_selector_support.subprocess.run") as run_subprocess,
+            patch("envctl_engine.ui.backend_selector_support.tempfile.TemporaryDirectory") as tmpdir_factory,
+            patch("envctl_engine.ui.backend_selector_support.Path.write_text"),
+            patch("envctl_engine.ui.backend_selector_support.Path.read_text", return_value='{"cancelled": true}'),
             patch("envctl_engine.ui.terminal_session.temporary_tty_character_mode") as char_mode,
         ):
             tmpdir_factory.return_value.__enter__.return_value = "/tmp/envctl-selector-test"
             tmpdir_factory.return_value.__exit__.return_value = False
-            ui_backend._run_selector_subprocess(runtime=runtime, payload=payload)  # noqa: SLF001
+            selector_support.run_selector_subprocess(runtime=runtime, payload=payload)
 
         run_subprocess.assert_called_once()
         char_mode.assert_not_called()
@@ -380,15 +381,15 @@ class SelectorInputPreflightTests(unittest.TestCase):
             "multi": True,
         }
         with (
-            patch("envctl_engine.ui.backend.subprocess.run") as run_subprocess,
-            patch("envctl_engine.ui.backend.tempfile.TemporaryDirectory") as tmpdir_factory,
-            patch("envctl_engine.ui.backend.Path.write_text"),
-            patch("envctl_engine.ui.backend.Path.read_text", return_value='{"cancelled": true}'),
+            patch("envctl_engine.ui.backend_selector_support.subprocess.run") as run_subprocess,
+            patch("envctl_engine.ui.backend_selector_support.tempfile.TemporaryDirectory") as tmpdir_factory,
+            patch("envctl_engine.ui.backend_selector_support.Path.write_text"),
+            patch("envctl_engine.ui.backend_selector_support.Path.read_text", return_value='{"cancelled": true}'),
             patch("envctl_engine.ui.terminal_session.temporary_standard_output_pendin") as pendin_mode,
         ):
             tmpdir_factory.return_value.__enter__.return_value = "/tmp/envctl-selector-test"
             tmpdir_factory.return_value.__exit__.return_value = False
-            ui_backend._run_selector_subprocess(runtime=runtime, payload=payload)  # noqa: SLF001
+            selector_support.run_selector_subprocess(runtime=runtime, payload=payload)
 
         run_subprocess.assert_called_once()
         pendin_mode.assert_not_called()
@@ -396,12 +397,12 @@ class SelectorInputPreflightTests(unittest.TestCase):
     def test_escape_tail_drain_is_nonblocking(self) -> None:
         with (
             patch(
-                "envctl_engine.ui.backend.select.select",
+                "envctl_engine.ui.backend_selector_support.select.select",
                 side_effect=[([9], [], []), ([], [], [])],
             ) as select_call,
-            patch("envctl_engine.ui.backend.os.read", return_value=b"x"),
+            patch("envctl_engine.ui.backend_selector_support.os.read", return_value=b"x"),
         ):
-            drained = ui_backend._drain_stdin_escape_tail(  # noqa: SLF001
+            drained = selector_support.drain_stdin_escape_tail(
                 fd=9,
                 max_window_seconds=0.03,
                 max_bytes=8,

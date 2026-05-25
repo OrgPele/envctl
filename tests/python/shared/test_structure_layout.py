@@ -1419,6 +1419,21 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertLessEqual(len(support_text.splitlines()), 720)
         self.assertLessEqual(len(app_text.splitlines()), 790)
 
+    def test_ui_backend_has_selector_handoff_owner(self) -> None:
+        backend = REPO_ROOT / "python" / "envctl_engine" / "ui" / "backend.py"
+        selector_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "backend_selector_support.py"
+
+        self.assertTrue(selector_owner.is_file())
+        backend_text = backend.read_text(encoding="utf-8")
+        selector_text = selector_owner.read_text(encoding="utf-8")
+        self.assertIn("from .backend_selector_support import", backend_text)
+        self.assertIn("class TextualInteractiveBackend", backend_text)
+        self.assertIn("def select_project_targets_via_textual", selector_text)
+        self.assertIn("def select_grouped_targets_via_textual", selector_text)
+        self.assertIn("def run_selector_preflight", selector_text)
+        self.assertIn("def run_selector_subprocess", selector_text)
+        self.assertLessEqual(len(backend_text.splitlines()), 240)
+
     def test_removed_dead_leaf_modules_are_absent(self) -> None:
         stale_modules = [
             "python/envctl_engine/test_output/coverage.py",
