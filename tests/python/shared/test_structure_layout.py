@@ -982,6 +982,9 @@ class StructureLayoutTests(unittest.TestCase):
         )
         target_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "project_target_support.py"
         selection_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "target_selection_support.py"
+        service_catalog_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "target_service_catalog.py"
+        )
         review_tab_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "review_tab_support.py"
         pr_selection_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "pr_selection_support.py"
         pr_commit_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "pr_commit_support.py"
@@ -996,6 +999,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(failure_mixin.is_file())
         self.assertTrue(target_owner.is_file())
         self.assertTrue(selection_owner.is_file())
+        self.assertTrue(service_catalog_owner.is_file())
         self.assertTrue(review_tab_owner.is_file())
         self.assertTrue(pr_selection_owner.is_file())
         self.assertTrue(pr_commit_owner.is_file())
@@ -1019,7 +1023,12 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class DashboardFailureDetailMixin", failure_mixin_text)
         self.assertIn("def _print_interactive_failure_details", failure_mixin_text)
         self.assertIn("def _print_migrate_result_details", failure_mixin_text)
-        self.assertIn("def apply_interactive_target_selection", selection_owner.read_text(encoding="utf-8"))
+        selection_owner_text = selection_owner.read_text(encoding="utf-8")
+        service_catalog_text = service_catalog_owner.read_text(encoding="utf-8")
+        self.assertIn("def apply_interactive_target_selection", selection_owner_text)
+        self.assertIn("class DashboardServiceCatalog", service_catalog_text)
+        self.assertIn("def available_service_types", service_catalog_text)
+        self.assertIn("def service_names_for_types", service_catalog_text)
         self.assertIn("def apply_pr_selection", pr_selection_owner.read_text(encoding="utf-8"))
         self.assertIn("def maybe_prepare_pr_commit", pr_commit_owner.read_text(encoding="utf-8"))
         self.assertIn("def dirty_pr_reports", pr_scope_owner.read_text(encoding="utf-8"))
