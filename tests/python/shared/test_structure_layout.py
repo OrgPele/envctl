@@ -1261,6 +1261,29 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from . import terminal_input_stream", facade_text)
         self.assertLessEqual(len(facade_text.splitlines()), 620)
 
+    def test_textual_planning_selector_has_model_owner(self) -> None:
+        selector = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "planning_selector.py"
+        model_owner = (
+            REPO_ROOT
+            / "python"
+            / "envctl_engine"
+            / "ui"
+            / "textual"
+            / "screens"
+            / "planning_selector_model.py"
+        )
+
+        self.assertTrue(model_owner.is_file())
+        selector_text = selector.read_text(encoding="utf-8")
+        model_text = model_owner.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.ui.textual.screens.planning_selector_model import", selector_text)
+        self.assertIn("class PlanningRow", model_text)
+        self.assertIn("class PlanningSelectionModel", model_text)
+        self.assertIn("def render_entries", model_text)
+        self.assertIn("def status_text", model_text)
+        self.assertIn("def result", model_text)
+        self.assertLessEqual(len(selector_text.splitlines()), 560)
+
     def test_textual_config_wizard_has_field_owner(self) -> None:
         screen = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard.py"
         app_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_app.py"

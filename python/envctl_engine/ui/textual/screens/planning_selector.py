@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 import time
 from typing import Callable
 
@@ -18,6 +17,7 @@ from envctl_engine.ui.textual.list_row_styles import (
     selectable_list_row_classes,
     selectable_list_row_css,
 )
+from envctl_engine.ui.textual.screens.planning_selector_model import PlanningRow, PlanningSelectionModel
 from .selector import (
     _deep_debug_enabled,
     _guard_textual_nonblocking_read,
@@ -37,14 +37,6 @@ def _emit(emit: Callable[..., None] | None, event: str, **payload: object) -> No
     if not callable(emit):
         return
     emit(event, component="ui.textual.planning_selector", **payload)
-
-
-@dataclass(slots=True)
-class _PlanningRow:
-    plan_file: str
-    count: int
-    existing: int
-    visible: bool = True
 
 
 def select_planning_counts_textual(
@@ -77,14 +69,11 @@ def select_planning_counts_textual(
     from textual.events import Key
     from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
 
-    rows = [
-        _PlanningRow(
-            plan_file=plan_file,
-            count=max(0, int(selected_counts.get(plan_file, 0))),
-            existing=max(0, int(existing_counts.get(plan_file, 0))),
-        )
-        for plan_file in planning_files
-    ]
+    selection_model = PlanningSelectionModel.from_counts(
+        planning_files=planning_files,
+        selected_counts=selected_counts,
+        existing_counts=existing_counts,
+    )
 
     class PlanningSelectorApp(App[dict[str, int] | None]):
         BINDINGS = [
@@ -141,7 +130,8 @@ def select_planning_counts_textual(
 
         def __init__(self) -> None:
             super().__init__()
-            self._rows: list[_PlanningRow] = rows
+            self._selection_model = selection_model
+            self._rows: list[PlanningRow] = selection_model.rows
             self._controller = TextualListController(self._rows)
             self._render_lock = asyncio.Lock()
             self._event_key_counts: dict[str, int] = {}
@@ -242,7 +232,7 @@ def select_planning_counts_textual(
                 focus_order.append("btn-run")
             return tuple(focus_order)
 
-        def _focused_row(self) -> _PlanningRow | None:
+        def _focused_row(self) -> PlanningRow | None:
             return self._controller.focused_row(self._list().index)
 
         async def _toggle_model_index(self, model_index: int) -> None:
@@ -258,10 +248,11 @@ def select_planning_counts_textual(
                 plan_file=row.plan_file,
                 current_count=row.count,
             )
-            if row.count > 0:
-                await self._set_count(row, 0)
-            else:
-                await self._set_count(row, self._default_count(row))
+            toggled = self._selection_model.toggle_model_index(model_index)
+            if toggled is None:
+                return
+            _emit(emit, "ui.selection.toggle", target=toggled.plan_file, count=toggled.count)
+            await self._render_rows()
 
         async def _render_rows(self) -> None:
             async with self._render_lock:
@@ -274,18 +265,13 @@ def select_planning_counts_textual(
                 await list_view.clear()
                 self._controller.index_map = []
                 rendered_items: list[ListItem] = []
-                for idx, row in enumerate(self._rows):
-                    if not row.visible:
-                        continue
-                    self._controller.index_map.append(idx)
-                    existing = f" (existing {row.existing}x)" if row.existing > 0 else ""
-                    marker = "●" if row.count > 0 else "○"
-                    text = f"{marker} [{row.count}x] {row.plan_file}{existing}"
+                for entry in self._selection_model.render_entries():
+                    self._controller.index_map.append(entry.model_index)
                     rendered_items.append(
                         ListItem(
-                            Label(text, markup=False),
-                            id=f"planning-row-{idx}",
-                            classes=selectable_list_row_classes("planning-row", selected=row.count > 0),
+                            Label(entry.text, markup=False),
+                            id=f"planning-row-{entry.model_index}",
+                            classes=selectable_list_row_classes("planning-row", selected=entry.selected),
                         )
                     )
                 if rendered_items:
@@ -298,23 +284,14 @@ def select_planning_counts_textual(
                     self.action_focus_list()
 
         def _sync_status(self) -> None:
-            visible = [row for row in self._rows if row.visible]
-            selected = sum(1 for row in visible if row.count > 0)
-            total_selected = sum(1 for row in self._rows if row.count > 0)
-            self._status().update(
-                f"{selected} selected visible • {total_selected} selected total • {len(visible)} visible"
-            )
+            self._status().update(self._selection_model.status_text())
 
         def _sync_run_state(self) -> None:
             run_button = self.query_one("#btn-run", Button)
-            run_button.disabled = not any((row.count > 0) or (row.existing > 0) for row in self._rows)
+            run_button.disabled = not self._selection_model.run_enabled()
 
-        @staticmethod
-        def _default_count(row: _PlanningRow) -> int:
-            return row.existing if row.existing > 0 else 1
-
-        async def _set_count(self, row: _PlanningRow, count: int) -> None:
-            row.count = max(0, int(count))
+        async def _set_count(self, row: PlanningRow, count: int) -> None:
+            self._selection_model.set_count(row, count)
             _emit(emit, "ui.selection.toggle", target=row.plan_file, count=row.count)
             await self._render_rows()
 
@@ -343,8 +320,8 @@ def select_planning_counts_textual(
             should_enable = self._controller.apply_visible_toggle(
                 is_visible=lambda row: row.visible,
                 is_active=lambda row: row.count > 0,
-                activate=lambda row: setattr(row, "count", self._default_count(row)),
-                deactivate=lambda row: setattr(row, "count", 0),
+                activate=self._selection_model.activate_row,
+                deactivate=self._selection_model.deactivate_row,
             )
             if should_enable is None:
                 return
@@ -384,10 +361,7 @@ def select_planning_counts_textual(
                 self.action_focus_button(next_target)
 
         def _result(self) -> dict[str, int]:
-            has_existing = any(row.existing > 0 for row in self._rows)
-            if has_existing:
-                return {row.plan_file: int(row.count) for row in self._rows}
-            return {row.plan_file: int(row.count) for row in self._rows if row.count > 0}
+            return self._selection_model.result()
 
         def action_submit(self) -> None:
             result = self._result()
@@ -491,9 +465,7 @@ def select_planning_counts_textual(
                 )
 
         async def on_input_changed(self, event: Input.Changed) -> None:
-            query = str(event.value or "").strip().lower()
-            for row in self._rows:
-                row.visible = query in row.plan_file.lower() if query else True
+            query = self._selection_model.apply_filter(str(event.value or ""))
             _emit(emit, "ui.selection.filter.changed", query=query, screen="planning_selector")
             await self._render_rows()
 
