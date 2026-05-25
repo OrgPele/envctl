@@ -169,7 +169,7 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
             REPO_ROOT / "python/envctl_engine/actions/project_action_report_support.py",
             REPO_ROOT / "python/envctl_engine/actions/action_migrate_execution_support.py",
             REPO_ROOT / "python/envctl_engine/actions/action_worktree_runner.py",
-            REPO_ROOT / "python/envctl_engine/planning/worktree_domain.py",
+            REPO_ROOT / "python/envctl_engine/planning/worktree_runtime_bridge.py",
             REPO_ROOT / "python/envctl_engine/planning/worktree_provenance.py",
             REPO_ROOT / "python/envctl_engine/planning/worktree_code_intelligence_cgc.py",
             REPO_ROOT / "python/envctl_engine/planning/plan_agent/cmux_surface_support.py",
@@ -190,6 +190,12 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
             self.assertNotIn("runtime.state_repository.save_resume_state", raw)
             self.assertNotIn("runtime.state_repository.run_dir_path", raw)
             self.assertNotIn("runtime.state_repository.test_results_dir_path", raw)
+
+        worktree_domain = (REPO_ROOT / "python/envctl_engine/planning/worktree_domain.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("create_planning_runtime_bridge", worktree_domain)
+        self.assertNotIn("envctl_engine.runtime.runtime_context", worktree_domain)
 
     def test_runtime_context_stays_synced_when_runtime_collaborators_are_reassigned(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
