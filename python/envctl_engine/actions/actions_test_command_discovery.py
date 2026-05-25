@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import tomllib
-from typing import Callable, ClassVar, Sequence
+from typing import Callable, ClassVar
 
 from envctl_engine.actions.actions_test_frontend_paths import (
     _frontend_dir_name_from_package_root,
@@ -13,13 +12,27 @@ from envctl_engine.actions.actions_test_frontend_paths import (
     canonicalize_frontend_test_path,
 )
 from envctl_engine.actions.actions_test_models import (
-    SuggestionConfidence,
-    SuggestionTarget,
     TestCommandSpec,
     TestCommandSuggestion,
     TestPathSuggestion,
 )
-from envctl_engine.shared.node_tooling import detect_package_manager, detect_python_bin, load_package_json
+from envctl_engine.actions.actions_test_package_discovery import (
+    frontend_package_manager_test_command as frontend_package_manager_test_command,
+    package_manager_test_command as package_manager_test_command,
+    package_manager_test_command_for_root as package_manager_test_command_for_root,
+    root_package_manager_test_command as root_package_manager_test_command,
+)
+from envctl_engine.actions.actions_test_python_discovery import (
+    backend_pytest_command as backend_pytest_command,
+    root_has_pytest_config as root_has_pytest_config,
+    root_pytest_command as root_pytest_command,
+    root_unittest_discover_command as root_unittest_discover_command,
+)
+from envctl_engine.actions.actions_test_suggestions import (
+    command_text as command_text,
+    test_command_suggestion as test_command_suggestion,
+)
+from envctl_engine.shared.node_tooling import detect_python_bin
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,169 +322,3 @@ def default_test_commands(
         frontend_test_path=frontend_test_path,
         detect_python_bin_fn=detect_python_bin_fn,
     ).default_commands()
-
-
-def command_text(command: Sequence[str]) -> str:
-    return " ".join(str(part) for part in command)
-
-
-def test_command_suggestion(
-    spec: TestCommandSpec,
-    *,
-    target: SuggestionTarget,
-    is_default: bool,
-) -> TestCommandSuggestion:
-    labels = {
-        "backend_pytest": "Backend pytest",
-        "root_pytest": "Root pytest",
-        "root_unittest": "Root unittest discover",
-        "frontend_package_test": "Frontend package test",
-        "package_test": "Root package test",
-        "configured": "Configured test command",
-    }
-    confidence_by_source: dict[str, SuggestionConfidence] = {
-        "backend_pytest": "high",
-        "root_pytest": "high",
-        "root_unittest": "medium",
-        "frontend_package_test": "high",
-        "package_test": "medium",
-        "configured": "high",
-    }
-    reasons = {
-        "backend_pytest": "Detected backend pytest from backend/tests plus backend Python metadata.",
-        "root_pytest": "Detected root pytest from tests/ plus pytest configuration.",
-        "root_unittest": "Detected root tests/ without pytest metadata; unittest discover is the safe fallback.",
-        "frontend_package_test": "Detected frontend package test script from frontend/package.json.",
-        "package_test": "Detected root package test script from package.json.",
-        "configured": "Configured test command.",
-    }
-    return TestCommandSuggestion(
-        command_text=command_text(spec.command),
-        command=list(spec.command),
-        cwd=spec.cwd,
-        source=spec.source,
-        label=labels.get(spec.source, "Test command"),
-        confidence=confidence_by_source.get(spec.source, "medium"),
-        reason=reasons.get(spec.source, "Detected from local project files."),
-        target=target,
-        is_default=is_default,
-    )
-
-
-def root_unittest_discover_command(
-    base_dir: Path,
-    *,
-    detect_python_bin_fn: Callable[[Path, Path], str | None] = detect_python_bin,
-) -> list[str] | None:
-    python_exe = detect_python_bin_fn(base_dir, base_dir)
-    if not python_exe:
-        return None
-    return [
-        python_exe,
-        "-m",
-        "unittest",
-        "discover",
-        "-s",
-        "tests",
-        "-t",
-        ".",
-        "-p",
-        "test_*.py",
-    ]
-
-
-def root_pytest_command(
-    base_dir: Path,
-    *,
-    detect_python_bin_fn: Callable[[Path, Path], str | None] = detect_python_bin,
-) -> list[str] | None:
-    if not (base_dir / "tests").is_dir():
-        return None
-    if not root_has_pytest_config(base_dir):
-        return None
-    python_exe = detect_python_bin_fn(base_dir, base_dir)
-    if not python_exe:
-        return None
-    return [python_exe, "-m", "pytest", "tests"]
-
-
-def root_has_pytest_config(base_dir: Path) -> bool:
-    pyproject = base_dir / "pyproject.toml"
-    if pyproject.is_file():
-        try:
-            payload = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        except (OSError, tomllib.TOMLDecodeError):
-            payload = {}
-        tool = payload.get("tool") if isinstance(payload, dict) else None
-        if isinstance(tool, dict) and "pytest" in tool:
-            return True
-    if (base_dir / "pytest.ini").is_file():
-        return True
-    for name in ("tox.ini", "setup.cfg"):
-        path = base_dir / name
-        if not path.is_file():
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        normalized = text.lower()
-        if "[pytest]" in normalized or "[tool:pytest]" in normalized:
-            return True
-    return False
-
-
-def backend_pytest_command(
-    base_dir: Path,
-    *,
-    detect_python_bin_fn: Callable[[Path, Path], str | None] = detect_python_bin,
-) -> list[str] | None:
-    backend_dir = base_dir / "backend"
-    if not backend_dir.is_dir():
-        return None
-    if not (backend_dir / "tests").is_dir():
-        return None
-    if not ((backend_dir / "pyproject.toml").is_file() or (backend_dir / "requirements.txt").is_file()):
-        return None
-    python_exe = detect_python_bin_fn(backend_dir, base_dir)
-    if not python_exe:
-        return None
-    return [python_exe, "-m", "pytest", str(backend_dir / "tests")]
-
-
-def package_manager_test_command(base_dir: Path) -> list[str] | None:
-    for package_root in (base_dir, base_dir / "frontend"):
-        command = package_manager_test_command_for_root(package_root)
-        if command is not None:
-            return command
-    return None
-
-
-def frontend_package_manager_test_command(base_dir: Path) -> list[str] | None:
-    package_root = _frontend_test_package_root(base_dir)
-    if package_root is None:
-        return None
-    return package_manager_test_command_for_root(package_root)
-
-
-def root_package_manager_test_command(base_dir: Path) -> list[str] | None:
-    return package_manager_test_command_for_root(base_dir)
-
-
-def package_manager_test_command_for_root(package_root: Path) -> list[str] | None:
-    package_json = package_root / "package.json"
-    if not package_json.is_file():
-        return None
-    payload = load_package_json(package_json)
-    if payload is None:
-        return None
-    scripts = payload.get("scripts")
-    if not isinstance(scripts, dict):
-        return None
-    test_script = scripts.get("test")
-    if not isinstance(test_script, str) or not test_script.strip():
-        return None
-    manager = detect_package_manager(package_root)
-    if manager is None:
-        return None
-    return [manager, "run", "test"]

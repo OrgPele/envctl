@@ -279,6 +279,9 @@ class StructureLayoutTests(unittest.TestCase):
         path_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_frontend_paths.py"
         classification_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_classification.py"
         command_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_command_discovery.py"
+        python_command_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_python_discovery.py"
+        package_command_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_package_discovery.py"
+        suggestion_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_suggestions.py"
         bootstrap_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_bootstrap.py"
         discovery = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test.py"
 
@@ -286,6 +289,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(path_owner.is_file())
         self.assertTrue(classification_owner.is_file())
         self.assertTrue(command_owner.is_file())
+        self.assertTrue(python_command_owner.is_file())
+        self.assertTrue(package_command_owner.is_file())
+        self.assertTrue(suggestion_owner.is_file())
         self.assertTrue(bootstrap_owner.is_file())
         self.assertIn("class TestCommandSpec", models_owner.read_text(encoding="utf-8"))
         self.assertIn("class TestPathSuggestion", models_owner.read_text(encoding="utf-8"))
@@ -298,6 +304,21 @@ class StructureLayoutTests(unittest.TestCase):
         command_text = command_owner.read_text(encoding="utf-8")
         self.assertIn("def test_command_suggestions", command_text)
         self.assertIn("def default_test_commands", command_text)
+        self.assertIn("from envctl_engine.actions.actions_test_python_discovery import", command_text)
+        self.assertIn("from envctl_engine.actions.actions_test_package_discovery import", command_text)
+        self.assertIn("from envctl_engine.actions.actions_test_suggestions import", command_text)
+        self.assertLessEqual(len(command_text.splitlines()), 330)
+        python_command_text = python_command_owner.read_text(encoding="utf-8")
+        self.assertIn("def backend_pytest_command", python_command_text)
+        self.assertIn("def root_pytest_command", python_command_text)
+        self.assertIn("def root_unittest_discover_command", python_command_text)
+        package_command_text = package_command_owner.read_text(encoding="utf-8")
+        self.assertIn("def package_manager_test_command", package_command_text)
+        self.assertIn("def frontend_package_manager_test_command", package_command_text)
+        self.assertIn("def package_manager_test_command_for_root", package_command_text)
+        suggestion_text = suggestion_owner.read_text(encoding="utf-8")
+        self.assertIn("def command_text", suggestion_text)
+        self.assertIn("def test_command_suggestion", suggestion_text)
         bootstrap_text = bootstrap_owner.read_text(encoding="utf-8")
         self.assertIn("def ensure_repo_local_test_prereqs", bootstrap_text)
         self.assertIn("def bootstrap_python_executable", bootstrap_text)
