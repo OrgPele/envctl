@@ -114,7 +114,6 @@ class StructureLayoutTests(unittest.TestCase):
             "test_requirements_redis_adapter_contracts.py",
             "test_requirements_supabase_compose_contracts.py",
             "test_requirements_supabase_native_contracts.py",
-            "test_requirements_supabase_stack_contracts.py",
             "test_requirements_supabase_stack_auth_contracts.py",
             "test_requirements_supabase_stack_core_contracts.py",
             "test_requirements_supabase_stack_db_probe_contracts.py",
@@ -126,10 +125,36 @@ class StructureLayoutTests(unittest.TestCase):
             with self.subTest(path=filename):
                 self.assertTrue((requirements_tests / filename).is_file())
 
-        legacy = requirements_tests / "test_requirements_adapters_real_contracts.py"
-        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
-        legacy_stack = requirements_tests / "test_requirements_supabase_stack_contracts.py"
-        self.assertLessEqual(len(legacy_stack.read_text(encoding="utf-8").splitlines()), 20)
+    def test_obsolete_breadcrumb_test_suites_are_removed(self) -> None:
+        obsolete = [
+            "tests/python/actions/test_actions_cli.py",
+            "tests/python/planning/test_plan_agent_launch_cmux.py",
+            "tests/python/planning/test_plan_agent_launch_cmux_workspace.py",
+            "tests/python/planning/test_plan_agent_launch_omx.py",
+            "tests/python/planning/test_plan_agent_launch_omx_attach.py",
+            "tests/python/planning/test_plan_agent_launch_options.py",
+            "tests/python/planning/test_plan_agent_launch_support.py",
+            "tests/python/planning/test_plan_agent_launch_tmux.py",
+            "tests/python/planning/test_plan_agent_launch_workflow.py",
+            "tests/python/planning/test_planning_worktree_setup.py",
+            "tests/python/requirements/test_requirements_adapters_real_contracts.py",
+            "tests/python/requirements/test_requirements_supabase_stack_contracts.py",
+            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_engine_runtime_env.py",
+            "tests/python/runtime/test_lifecycle_parity.py",
+            "tests/python/runtime/test_lifecycle_parity_resume_restore.py",
+            "tests/python/runtime/test_prompt_install_support.py",
+            "tests/python/startup/test_startup_orchestrator_flow.py",
+            "tests/python/startup/test_startup_spinner_integration.py",
+            "tests/python/ui/test_dashboard_orchestrator_pr_flow.py",
+            "tests/python/ui/test_dashboard_orchestrator_restart_selector.py",
+            "tests/python/ui/test_dashboard_orchestrator_target_selection.py",
+            "tests/python/ui/test_dashboard_rendering_parity.py",
+        ]
+
+        for relative_path in obsolete:
+            with self.subTest(path=relative_path):
+                self.assertFalse((REPO_ROOT / relative_path).exists())
 
     def test_requirement_adapter_base_has_policy_and_cleanup_owners(self) -> None:
         policy_owner = REPO_ROOT / "python" / "envctl_engine" / "requirements" / "adapter_policy.py"
@@ -226,9 +251,6 @@ class StructureLayoutTests(unittest.TestCase):
         for filename in expected:
             with self.subTest(path=filename):
                 self.assertTrue((actions_tests / filename).is_file())
-
-        legacy = actions_tests / "test_actions_cli.py"
-        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
     def test_action_command_orchestrator_has_facade_mixins(self) -> None:
         test_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_command_test_facade.py"
@@ -585,7 +607,6 @@ class StructureLayoutTests(unittest.TestCase):
             "test_lifecycle_parity_restore_startup.py",
             "test_lifecycle_parity_resume_legacy.py",
             "test_lifecycle_parity_resume_policy.py",
-            "test_lifecycle_parity_resume_restore.py",
             "test_lifecycle_parity_state_actions.py",
             "test_lifecycle_parity_stop_health.py",
         ]
@@ -593,11 +614,6 @@ class StructureLayoutTests(unittest.TestCase):
         for filename in expected:
             with self.subTest(path=filename):
                 self.assertTrue((runtime_tests / filename).is_file())
-
-        legacy = runtime_tests / "test_lifecycle_parity.py"
-        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
-        resume_restore_breadcrumb = runtime_tests / "test_lifecycle_parity_resume_restore.py"
-        self.assertLessEqual(len(resume_restore_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
 
     def test_runtime_lifecycle_cleanup_has_blast_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "lifecycle_blast_support.py"
@@ -635,9 +651,6 @@ class StructureLayoutTests(unittest.TestCase):
             with self.subTest(path=filename):
                 self.assertTrue((runtime_tests / filename).is_file())
 
-        legacy = runtime_tests / "test_engine_runtime_command_parity.py"
-        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
-
     def test_runtime_env_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
         expected = [
@@ -652,9 +665,6 @@ class StructureLayoutTests(unittest.TestCase):
         for filename in expected:
             with self.subTest(path=filename):
                 self.assertTrue((runtime_tests / filename).is_file())
-
-        legacy = runtime_tests / "test_engine_runtime_env.py"
-        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
     def test_runtime_env_dependency_projection_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "engine_runtime_dependency_env.py"
@@ -768,9 +778,6 @@ class StructureLayoutTests(unittest.TestCase):
         for filename in expected:
             with self.subTest(path=filename):
                 self.assertTrue((runtime_tests / filename).is_file())
-
-        legacy = runtime_tests / "test_prompt_install_support.py"
-        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
     def test_prompt_install_support_is_split_by_owner(self) -> None:
         runtime = REPO_ROOT / "python" / "envctl_engine" / "runtime"
@@ -1001,23 +1008,25 @@ class StructureLayoutTests(unittest.TestCase):
         )
         expected = [
             "plan_agent_launch_support_test_support.py",
-            "test_plan_agent_launch_cmux.py",
             "test_plan_agent_launch_cmux_cycles.py",
             "test_plan_agent_launch_cmux_goal.py",
             "test_plan_agent_launch_cmux_review.py",
-            "test_plan_agent_launch_cmux_workspace.py",
-            "test_plan_agent_launch_omx.py",
-            "test_plan_agent_launch_omx_attach.py",
+            "test_plan_agent_launch_cmux_workspace_configured.py",
+            "test_plan_agent_launch_cmux_workspace_created.py",
+            "test_plan_agent_launch_cmux_workspace_default.py",
+            "test_plan_agent_launch_cmux_workspace_flow.py",
             "test_plan_agent_launch_omx_config.py",
             "test_plan_agent_launch_omx_spawn.py",
             "test_plan_agent_launch_omx_workflow.py",
-            "test_plan_agent_launch_options.py",
             "test_plan_agent_launch_readiness.py",
             "test_plan_agent_launch_policy.py",
             "test_plan_agent_launch_superset.py",
             "test_plan_agent_launch_superset_desktop.py",
-            "test_plan_agent_launch_tmux.py",
-            "test_plan_agent_launch_workflow.py",
+            "test_plan_agent_launch_tmux_existing_session.py",
+            "test_plan_agent_launch_tmux_flow.py",
+            "test_plan_agent_launch_tmux_identity_window.py",
+            "test_plan_agent_launch_tmux_readiness.py",
+            "test_plan_agent_launch_tmux_workflow_queue.py",
             "test_plan_agent_launch_workflow_build.py",
             "test_plan_agent_launch_workflow_prompt.py",
             "test_plan_agent_launch_workflow_queue.py",
@@ -1069,15 +1078,6 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.planning.plan_agent.launch_policy import", config_text)
         self.assertLessEqual(len(config_text.splitlines()), 140)
 
-        legacy = planning_tests / "test_plan_agent_launch_support.py"
-        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
-        cmux_breadcrumb = planning_tests / "test_plan_agent_launch_cmux.py"
-        self.assertLessEqual(len(cmux_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
-        omx_breadcrumb = planning_tests / "test_plan_agent_launch_omx.py"
-        self.assertLessEqual(len(omx_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
-        workflow_breadcrumb = planning_tests / "test_plan_agent_launch_workflow.py"
-        self.assertLessEqual(len(workflow_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
-
     def test_planning_worktree_setup_tests_are_split_by_owner(self) -> None:
         planning_tests = REPO_ROOT / "tests" / "python" / "planning"
         expected = [
@@ -1094,9 +1094,6 @@ class StructureLayoutTests(unittest.TestCase):
             with self.subTest(path=filename):
                 self.assertTrue((planning_tests / filename).is_file())
 
-        legacy = planning_tests / "test_planning_worktree_setup.py"
-        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
-
     def test_startup_orchestrator_flow_tests_are_split_by_phase_owner(self) -> None:
         startup_tests = REPO_ROOT / "tests" / "python" / "startup"
         expected = [
@@ -1111,9 +1108,6 @@ class StructureLayoutTests(unittest.TestCase):
         for filename in expected:
             with self.subTest(path=filename):
                 self.assertTrue((startup_tests / filename).is_file())
-
-        legacy = startup_tests / "test_startup_orchestrator_flow.py"
-        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
     def test_startup_spinner_tests_are_split_by_behavior_owner(self) -> None:
         startup_tests = REPO_ROOT / "tests" / "python" / "startup"
@@ -1130,9 +1124,6 @@ class StructureLayoutTests(unittest.TestCase):
         for filename in expected:
             with self.subTest(path=filename):
                 self.assertTrue((startup_tests / filename).is_file())
-
-        legacy = startup_tests / "test_startup_spinner_integration.py"
-        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
     def test_service_bootstrap_tests_are_split_by_env_owner(self) -> None:
         startup_tests = REPO_ROOT / "tests" / "python" / "startup"
@@ -1419,23 +1410,25 @@ class StructureLayoutTests(unittest.TestCase):
         expected = [
             "dashboard_orchestrator_test_support.py",
             "test_dashboard_orchestrator_failure_details.py",
-            "test_dashboard_orchestrator_pr_flow.py",
             "test_dashboard_orchestrator_pr_flow_dirty.py",
             "test_dashboard_orchestrator_pr_flow_failure_details.py",
             "test_dashboard_orchestrator_pr_flow_messages.py",
             "test_dashboard_orchestrator_pr_flow_selection.py",
-            "test_dashboard_orchestrator_restart_selector.py",
+            "test_dashboard_orchestrator_restart_configured_missing.py",
+            "test_dashboard_orchestrator_restart_resources.py",
+            "test_dashboard_orchestrator_restart_selection_basic.py",
             "test_dashboard_orchestrator_review_tab.py",
             "test_dashboard_orchestrator_stop_scope.py",
-            "test_dashboard_orchestrator_target_selection.py",
+            "test_dashboard_orchestrator_target_return_flow.py",
+            "test_dashboard_orchestrator_target_service_scope.py",
+            "test_dashboard_orchestrator_target_shortcuts.py",
+            "test_dashboard_orchestrator_target_single_project.py",
+            "test_dashboard_orchestrator_target_trees.py",
         ]
 
         for filename in expected:
             with self.subTest(path=filename):
                 self.assertTrue((ui_tests / filename).is_file())
-
-        pr_flow_breadcrumb = ui_tests / "test_dashboard_orchestrator_pr_flow.py"
-        self.assertLessEqual(len(pr_flow_breadcrumb.read_text(encoding="utf-8").splitlines()), 20)
 
     def test_dashboard_rendering_parity_tests_are_split_by_owner(self) -> None:
         ui_tests = REPO_ROOT / "tests" / "python" / "ui"
@@ -1451,9 +1444,6 @@ class StructureLayoutTests(unittest.TestCase):
         for filename in expected:
             with self.subTest(path=filename):
                 self.assertTrue((ui_tests / filename).is_file())
-
-        legacy = ui_tests / "test_dashboard_rendering_parity.py"
-        self.assertLessEqual(len(legacy.read_text(encoding="utf-8").splitlines()), 20)
 
     def test_dashboard_rendering_has_ai_session_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "ai_session_rendering.py"

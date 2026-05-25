@@ -21,7 +21,7 @@ LIFECYCLE_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         ),
         evidence_tests=(
             "tests/python/runtime/test_engine_runtime_real_startup.py",
-            "tests/python/runtime/test_lifecycle_parity.py",
+            "tests/python/runtime/test_lifecycle_parity_restore_startup.py",
         ),
         parity_status="verified_python",
         notes="Core startup flows are owned by Python and covered by runtime/lifecycle parity tests.",
@@ -37,7 +37,7 @@ LIFECYCLE_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         ),
         evidence_tests=(
             "tests/python/state/test_state_roundtrip.py",
-            "tests/python/runtime/test_lifecycle_parity.py",
+            "tests/python/runtime/test_lifecycle_parity_resume_policy.py",
         ),
         parity_status="verified_python",
         notes="Python resume is the current default path and is exercised by state/lifecycle tests.",
@@ -52,8 +52,8 @@ LIFECYCLE_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/ui/dashboard/orchestrator.py",
         ),
         evidence_tests=(
-            "tests/python/runtime/test_lifecycle_parity.py",
-            "tests/python/startup/test_startup_spinner_integration.py",
+            "tests/python/runtime/test_lifecycle_parity_mode_scope.py",
+            "tests/python/startup/test_startup_restart_service_scope.py",
         ),
         parity_status="verified_python",
         notes="Restart orchestration and selector behavior are covered in runtime and UI suites.",
@@ -68,7 +68,7 @@ LIFECYCLE_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py",
         ),
         evidence_tests=(
-            "tests/python/runtime/test_lifecycle_parity.py",
+            "tests/python/runtime/test_lifecycle_parity_stop_health.py",
             "tests/python/runtime/test_lifecycle_cleanup_spinner_integration.py",
         ),
         parity_status="verified_python",
@@ -83,7 +83,7 @@ LIFECYCLE_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/runtime/engine_runtime.py",
             "python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py",
         ),
-        evidence_tests=("tests/python/runtime/test_lifecycle_parity.py",),
+        evidence_tests=("tests/python/runtime/test_lifecycle_parity_stop_health.py",),
         parity_status="verified_python",
         notes="Python stop-all is covered by runtime parity and end-to-end tests.",
     ),

@@ -69,7 +69,7 @@ ACTION_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/actions/actions_git.py",
         ),
         evidence_tests=(
-            "tests/python/actions/test_actions_cli.py",
+            "tests/python/actions/test_actions_cli_pr.py",
             "tests/python/actions/test_actions_parity.py",
         ),
         parity_status="verified_python",
@@ -77,7 +77,7 @@ ACTION_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         current_behavior="Python PR creation supports helper and gh-backed paths, but legacy helper assumptions still shape the contract.",
         missing_python_behavior="Finish defining the PR action contract so Python behavior is the source of truth for helper execution, output, and failure handling.",
         python_owner_module="python/envctl_engine/actions/project_action_domain.py",
-        proposed_tests=("tests/python/actions/test_actions_cli.py",),
+        proposed_tests=("tests/python/actions/test_actions_cli_pr.py",),
         severity="medium",
         rollout_risk="PR workflows may still depend on helper-specific assumptions that are not fully captured in Python tests.",
         wave="Wave D",
@@ -94,7 +94,7 @@ ACTION_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/actions/actions_git.py",
         ),
         evidence_tests=(
-            "tests/python/actions/test_actions_cli.py",
+            "tests/python/actions/test_actions_cli_commit.py",
             "tests/python/actions/test_actions_parity.py",
         ),
         parity_status="verified_python",
@@ -102,7 +102,7 @@ ACTION_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         current_behavior="Python commit flows work for normal interactive and headless cases, but commit-message sourcing and helper assumptions are still mixed with legacy expectations.",
         missing_python_behavior="Make Python the clear source of truth for commit message discovery, non-interactive failure cases, and pushed-branch reporting.",
         python_owner_module="python/envctl_engine/actions/project_action_domain.py",
-        proposed_tests=("tests/python/actions/test_actions_cli.py",),
+        proposed_tests=("tests/python/actions/test_actions_cli_commit.py",),
         severity="medium",
         rollout_risk="Edge-case commit flows can still diverge from user expectations if legacy message-resolution behavior is not fully proven.",
         wave="Wave D",
@@ -141,7 +141,7 @@ ACTION_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/state/repository.py",
         ),
         evidence_tests=(
-            "tests/python/actions/test_actions_cli.py",
+            "tests/python/actions/test_actions_cli_review_completion.py",
             "tests/python/actions/test_actions_parity.py",
         ),
         parity_status="verified_python",
@@ -150,7 +150,7 @@ ACTION_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         missing_python_behavior="Define and prove a stable Python-owned review contract for helper output, retained files, and output semantics so shell helper behavior is no longer the oracle.",
         python_owner_module="python/envctl_engine/actions/project_action_domain.py",
         proposed_tests=(
-            "tests/python/actions/test_actions_cli.py",
+            "tests/python/actions/test_actions_cli_review_completion.py",
             "tests/python/actions/test_actions_parity.py",
         ),
         severity="medium",

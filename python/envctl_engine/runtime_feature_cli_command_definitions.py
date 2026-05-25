@@ -52,7 +52,7 @@ CLI_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         ),
         evidence_tests=(
             "tests/python/runtime/test_cli_router.py",
-            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_engine_runtime_command_parity_help.py",
             "tests/python/runtime/test_command_exit_codes.py",
         ),
         parity_status="verified_python",
@@ -71,7 +71,7 @@ CLI_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         user_visible=True,
         shell_source_of_truth=(),
         python_source_of_truth=("python/envctl_engine/runtime/command_router.py",),
-        evidence_tests=("tests/python/runtime/test_engine_runtime_command_parity.py",),
+        evidence_tests=("tests/python/runtime/test_engine_runtime_command_parity_delegates.py",),
         parity_status="verified_python",
         notes="List-commands is explicitly parity-tested against the shell inventory.",
     ),
@@ -86,8 +86,8 @@ CLI_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/runtime/engine_runtime_dispatch.py",
         ),
         evidence_tests=(
-            "tests/python/runtime/test_prompt_install_support.py",
-            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_prompt_install_support_install_flow.py",
+            "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
         ),
         parity_status="verified_python",
         notes="Install-prompts is Python-owned and intentionally excluded from dashboard interactive command entry.",
@@ -104,7 +104,7 @@ CLI_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         ),
         evidence_tests=(
             "tests/python/runtime/test_codex_tmux_support.py",
-            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
             "tests/python/runtime/test_command_exit_codes.py",
         ),
         parity_status="verified_python",
@@ -122,7 +122,7 @@ CLI_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         ),
         evidence_tests=(
             "tests/python/runtime/test_ensure_worktree_command.py",
-            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
             "tests/python/runtime/test_command_dispatch_matrix.py",
         ),
         parity_status="verified_python",
@@ -144,7 +144,7 @@ CLI_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "tests/python/runtime/test_cli_router.py",
             "tests/python/runtime/test_command_exit_codes.py",
             "tests/python/runtime/test_supabase_user_command_support.py",
-            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
             "tests/python/requirements/test_supabase_auth_users.py",
         ),
         parity_status="verified_python",
@@ -179,7 +179,7 @@ CLI_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/runtime/command_router.py",
         ),
         evidence_tests=(
-            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
             "tests/python/runtime/test_engine_runtime_real_startup.py",
         ),
         parity_status="verified_python",
@@ -196,7 +196,7 @@ CLI_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         ),
         evidence_tests=(
             "tests/python/runtime/test_command_router_contract.py",
-            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
         ),
         parity_status="verified_python",
         notes="List-trees is Python-owned and covered by router/runtime tests.",

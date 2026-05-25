@@ -125,7 +125,7 @@ INSPECTION_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         evidence_tests=(
             "tests/python/runtime/test_startup_inspection_support.py",
             "tests/python/runtime/test_engine_runtime_command_parity_explain.py",
-            "tests/python/runtime/test_engine_runtime_env.py",
+            "tests/python/runtime/test_engine_runtime_env_service_projection.py",
         ),
         parity_status="verified_python",
         notes="Explain-startup dispatch stays in inspection_support; startup selection/preflight payload ownership lives in startup_inspection_support.",
@@ -158,7 +158,7 @@ INSPECTION_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         ),
         evidence_tests=(
             "tests/python/ui/test_terminal_ui_dashboard_loop.py",
-            "tests/python/ui/test_dashboard_rendering_parity.py",
+            "tests/python/ui/test_dashboard_rendering_parity_services.py",
         ),
         parity_status="verified_python",
         notes="Python dashboard rendering and command-loop behavior are covered by dashboard rendering and terminal UI tests.",
@@ -167,7 +167,7 @@ INSPECTION_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         python_owner_module="python/envctl_engine/ui/dashboard/orchestrator.py",
         proposed_tests=(
             "tests/python/ui/test_terminal_ui_dashboard_loop.py",
-            "tests/python/ui/test_dashboard_rendering_parity.py",
+            "tests/python/ui/test_dashboard_rendering_parity_services.py",
         ),
         severity="medium",
         rollout_risk="Small dashboard regressions are highly visible to operators even when core runtime behavior is correct.",
@@ -186,7 +186,7 @@ INSPECTION_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         evidence_tests=(
             "tests/python/runtime/test_endpoints_command_support.py",
             "tests/python/state/test_project_runtime_resolution.py",
-            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
             "tests/python/runtime/test_command_exit_codes.py",
         ),
         parity_status="verified_python",
@@ -202,7 +202,7 @@ INSPECTION_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/runtime/session_management.py",
         ),
         evidence_tests=(
-            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_engine_runtime_command_parity_state_config.py",
             "tests/python/runtime/test_command_dispatch_matrix.py",
         ),
         parity_status="verified_python",

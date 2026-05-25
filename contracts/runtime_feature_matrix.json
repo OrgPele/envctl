@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-25T16:46:49+00:00",
+  "generated_at": "2026-05-25T19:04:10+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -496,7 +496,7 @@
       ],
       "evidence_tests": [
         "tests/python/runtime/test_codex_tmux_support.py",
-        "tests/python/runtime/test_engine_runtime_command_parity.py",
+        "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
         "tests/python/runtime/test_command_exit_codes.py"
       ],
       "parity_status": "verified_python",
@@ -516,7 +516,7 @@
         "python/envctl_engine/actions/actions_git.py"
       ],
       "evidence_tests": [
-        "tests/python/actions/test_actions_cli.py",
+        "tests/python/actions/test_actions_cli_commit.py",
         "tests/python/actions/test_actions_parity.py"
       ],
       "parity_status": "verified_python",
@@ -526,7 +526,7 @@
       "missing_python_behavior": "Make Python the clear source of truth for commit message discovery, non-interactive failure cases, and pushed-branch reporting.",
       "python_owner_module": "python/envctl_engine/actions/project_action_domain.py",
       "proposed_tests": [
-        "tests/python/actions/test_actions_cli.py"
+        "tests/python/actions/test_actions_cli_commit.py"
       ],
       "severity": "medium",
       "rollout_risk": "Edge-case commit flows can still diverge from user expectations if legacy message-resolution behavior is not fully proven.",
@@ -562,7 +562,7 @@
       ],
       "evidence_tests": [
         "tests/python/ui/test_terminal_ui_dashboard_loop.py",
-        "tests/python/ui/test_dashboard_rendering_parity.py"
+        "tests/python/ui/test_dashboard_rendering_parity_services.py"
       ],
       "parity_status": "verified_python",
       "notes": "Python dashboard rendering and command-loop behavior are covered by dashboard rendering and terminal UI tests.",
@@ -572,7 +572,7 @@
       "python_owner_module": "python/envctl_engine/ui/dashboard/orchestrator.py",
       "proposed_tests": [
         "tests/python/ui/test_terminal_ui_dashboard_loop.py",
-        "tests/python/ui/test_dashboard_rendering_parity.py"
+        "tests/python/ui/test_dashboard_rendering_parity_services.py"
       ],
       "severity": "medium",
       "rollout_risk": "Small dashboard regressions are highly visible to operators even when core runtime behavior is correct.",
@@ -641,7 +641,7 @@
       ],
       "evidence_tests": [
         "tests/python/actions/test_action_worktree_runner.py",
-        "tests/python/planning/test_planning_worktree_setup.py"
+        "tests/python/planning/test_planning_worktree_setup_selection.py"
       ],
       "parity_status": "verified_python",
       "notes": "Delete-worktree flows are Python-owned and exercised by action/planning tests.",
@@ -658,7 +658,7 @@
         "python/envctl_engine/runtime/engine_runtime.py"
       ],
       "evidence_tests": [
-        "tests/python/runtime/test_engine_runtime_command_parity.py"
+        "tests/python/runtime/test_engine_runtime_command_parity_doctor.py"
       ],
       "parity_status": "verified_python",
       "notes": "Doctor is Python-owned and explicitly covered by runtime command parity tests.",
@@ -667,7 +667,7 @@
       "missing_python_behavior": "Keep the doctor output contract focused on runtime readiness and state diagnostics, then cover those fields explicitly in Python tests.",
       "python_owner_module": "python/envctl_engine/debug/doctor_orchestrator.py",
       "proposed_tests": [
-        "tests/python/runtime/test_engine_runtime_command_parity.py"
+        "tests/python/runtime/test_engine_runtime_command_parity_doctor.py"
       ],
       "severity": "low",
       "rollout_risk": "Doctor output drift is mostly a diagnostics/readiness concern, but it can confuse operators during cutover.",
@@ -687,7 +687,7 @@
       "evidence_tests": [
         "tests/python/runtime/test_endpoints_command_support.py",
         "tests/python/state/test_project_runtime_resolution.py",
-        "tests/python/runtime/test_engine_runtime_command_parity.py",
+        "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
         "tests/python/runtime/test_command_exit_codes.py"
       ],
       "parity_status": "verified_python",
@@ -707,7 +707,7 @@
       ],
       "evidence_tests": [
         "tests/python/runtime/test_ensure_worktree_command.py",
-        "tests/python/runtime/test_engine_runtime_command_parity.py",
+        "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
         "tests/python/runtime/test_command_dispatch_matrix.py"
       ],
       "parity_status": "verified_python",
@@ -751,7 +751,7 @@
       "evidence_tests": [
         "tests/python/runtime/test_startup_inspection_support.py",
         "tests/python/runtime/test_engine_runtime_command_parity_explain.py",
-        "tests/python/runtime/test_engine_runtime_env.py"
+        "tests/python/runtime/test_engine_runtime_env_service_projection.py"
       ],
       "parity_status": "verified_python",
       "notes": "Explain-startup dispatch stays in inspection_support; startup selection/preflight payload ownership lives in startup_inspection_support.",
@@ -792,7 +792,7 @@
       ],
       "evidence_tests": [
         "tests/python/runtime/test_cli_router.py",
-        "tests/python/runtime/test_engine_runtime_command_parity.py",
+        "tests/python/runtime/test_engine_runtime_command_parity_help.py",
         "tests/python/runtime/test_command_exit_codes.py"
       ],
       "parity_status": "verified_python",
@@ -820,8 +820,8 @@
         "python/envctl_engine/runtime/engine_runtime_dispatch.py"
       ],
       "evidence_tests": [
-        "tests/python/runtime/test_prompt_install_support.py",
-        "tests/python/runtime/test_engine_runtime_command_parity.py"
+        "tests/python/runtime/test_prompt_install_support_install_flow.py",
+        "tests/python/runtime/test_engine_runtime_command_parity_delegates.py"
       ],
       "parity_status": "verified_python",
       "notes": "Install-prompts is Python-owned and intentionally excluded from dashboard interactive command entry.",
@@ -837,7 +837,7 @@
         "python/envctl_engine/runtime/command_router.py"
       ],
       "evidence_tests": [
-        "tests/python/runtime/test_engine_runtime_command_parity.py"
+        "tests/python/runtime/test_engine_runtime_command_parity_delegates.py"
       ],
       "parity_status": "verified_python",
       "notes": "List-commands is explicitly parity-tested against the shell inventory.",
@@ -854,7 +854,7 @@
         "python/envctl_engine/runtime/command_router.py"
       ],
       "evidence_tests": [
-        "tests/python/runtime/test_engine_runtime_command_parity.py",
+        "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
         "tests/python/runtime/test_engine_runtime_real_startup.py"
       ],
       "parity_status": "verified_python",
@@ -873,7 +873,7 @@
       ],
       "evidence_tests": [
         "tests/python/runtime/test_command_router_contract.py",
-        "tests/python/runtime/test_engine_runtime_command_parity.py"
+        "tests/python/runtime/test_engine_runtime_command_parity_delegates.py"
       ],
       "parity_status": "verified_python",
       "notes": "List-trees is Python-owned and covered by router/runtime tests.",
@@ -953,7 +953,7 @@
         "python/envctl_engine/startup/startup_orchestrator.py"
       ],
       "evidence_tests": [
-        "tests/python/planning/test_planning_worktree_setup.py",
+        "tests/python/planning/test_planning_worktree_setup_selection.py",
         "tests/python/runtime/test_engine_runtime_real_startup.py"
       ],
       "parity_status": "verified_python",
@@ -994,7 +994,7 @@
         "python/envctl_engine/actions/actions_git.py"
       ],
       "evidence_tests": [
-        "tests/python/actions/test_actions_cli.py",
+        "tests/python/actions/test_actions_cli_pr.py",
         "tests/python/actions/test_actions_parity.py"
       ],
       "parity_status": "verified_python",
@@ -1004,7 +1004,7 @@
       "missing_python_behavior": "Finish defining the PR action contract so Python behavior is the source of truth for helper execution, output, and failure handling.",
       "python_owner_module": "python/envctl_engine/actions/project_action_domain.py",
       "proposed_tests": [
-        "tests/python/actions/test_actions_cli.py"
+        "tests/python/actions/test_actions_cli_pr.py"
       ],
       "severity": "medium",
       "rollout_risk": "PR workflows may still depend on helper-specific assumptions that are not fully captured in Python tests.",
@@ -1061,8 +1061,8 @@
         "python/envctl_engine/ui/dashboard/orchestrator.py"
       ],
       "evidence_tests": [
-        "tests/python/runtime/test_lifecycle_parity.py",
-        "tests/python/startup/test_startup_spinner_integration.py"
+        "tests/python/runtime/test_lifecycle_parity_mode_scope.py",
+        "tests/python/startup/test_startup_restart_service_scope.py"
       ],
       "parity_status": "verified_python",
       "notes": "Restart orchestration and selector behavior are covered in runtime and UI suites.",
@@ -1080,7 +1080,7 @@
       ],
       "evidence_tests": [
         "tests/python/state/test_state_roundtrip.py",
-        "tests/python/runtime/test_lifecycle_parity.py"
+        "tests/python/runtime/test_lifecycle_parity_resume_policy.py"
       ],
       "parity_status": "verified_python",
       "notes": "Python resume is the current default path and is exercised by state/lifecycle tests.",
@@ -1098,7 +1098,7 @@
         "python/envctl_engine/state/repository.py"
       ],
       "evidence_tests": [
-        "tests/python/actions/test_actions_cli.py",
+        "tests/python/actions/test_actions_cli_review_completion.py",
         "tests/python/actions/test_actions_parity.py"
       ],
       "parity_status": "verified_python",
@@ -1108,7 +1108,7 @@
       "missing_python_behavior": "Define and prove a stable Python-owned review contract for helper output, retained files, and output semantics so shell helper behavior is no longer the oracle.",
       "python_owner_module": "python/envctl_engine/actions/project_action_domain.py",
       "proposed_tests": [
-        "tests/python/actions/test_actions_cli.py",
+        "tests/python/actions/test_actions_cli_review_completion.py",
         "tests/python/actions/test_actions_parity.py"
       ],
       "severity": "medium",
@@ -1145,7 +1145,7 @@
         "python/envctl_engine/runtime/session_management.py"
       ],
       "evidence_tests": [
-        "tests/python/runtime/test_engine_runtime_command_parity.py",
+        "tests/python/runtime/test_engine_runtime_command_parity_state_config.py",
         "tests/python/runtime/test_command_dispatch_matrix.py"
       ],
       "parity_status": "verified_python",
@@ -1226,7 +1226,7 @@
       ],
       "evidence_tests": [
         "tests/python/runtime/test_engine_runtime_real_startup.py",
-        "tests/python/runtime/test_lifecycle_parity.py"
+        "tests/python/runtime/test_lifecycle_parity_restore_startup.py"
       ],
       "parity_status": "verified_python",
       "notes": "Core startup flows are owned by Python and covered by runtime/lifecycle parity tests.",
@@ -1243,7 +1243,7 @@
         "python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py"
       ],
       "evidence_tests": [
-        "tests/python/runtime/test_lifecycle_parity.py",
+        "tests/python/runtime/test_lifecycle_parity_stop_health.py",
         "tests/python/runtime/test_lifecycle_cleanup_spinner_integration.py"
       ],
       "parity_status": "verified_python",
@@ -1261,7 +1261,7 @@
         "python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py"
       ],
       "evidence_tests": [
-        "tests/python/runtime/test_lifecycle_parity.py"
+        "tests/python/runtime/test_lifecycle_parity_stop_health.py"
       ],
       "parity_status": "verified_python",
       "notes": "Python stop-all is covered by runtime parity and end-to-end tests.",
@@ -1284,7 +1284,7 @@
         "tests/python/runtime/test_cli_router.py",
         "tests/python/runtime/test_command_exit_codes.py",
         "tests/python/runtime/test_supabase_user_command_support.py",
-        "tests/python/runtime/test_engine_runtime_command_parity.py",
+        "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
         "tests/python/requirements/test_supabase_auth_users.py"
       ],
       "parity_status": "verified_python",
@@ -1430,7 +1430,7 @@
       ],
       "evidence_tests": [
         "tests/python/runtime/test_cli_router_parity.py",
-        "tests/python/runtime/test_engine_runtime_command_parity.py"
+        "tests/python/runtime/test_engine_runtime_command_parity_delegates.py"
       ],
       "parity_status": "verified_python",
       "notes": "Parser compatibility is now enforced against the Python-owned public command and documentation surface."
@@ -1455,7 +1455,7 @@
       "missing_python_behavior": "Exhaustively prove plan selection, run reuse, and interactive handoff semantics across add/remove/zero-scale transitions so shell is no longer needed as a behavior oracle.",
       "python_owner_module": "python/envctl_engine/planning/worktree_domain.py",
       "proposed_tests": [
-        "tests/python/planning/test_planning_worktree_setup.py",
+        "tests/python/planning/test_planning_worktree_setup_selection.py",
         "tests/python/runtime/test_engine_runtime_real_startup.py"
       ],
       "severity": "medium",
@@ -1473,7 +1473,7 @@
         "python/envctl_engine/runtime/command_router.py"
       ],
       "evidence_tests": [
-        "tests/python/planning/test_planning_worktree_setup.py",
+        "tests/python/planning/test_planning_worktree_setup_selection.py",
         "tests/python/runtime/test_engine_runtime_real_startup.py"
       ],
       "parity_status": "verified_python",
@@ -1482,7 +1482,7 @@
       "missing_python_behavior": "Inventory and prove reuse/recreate/include flag semantics in Python planning/worktree tests so setup flows are no longer shell-defined by implication.",
       "python_owner_module": "python/envctl_engine/planning/worktree_domain.py",
       "proposed_tests": [
-        "tests/python/planning/test_planning_worktree_setup.py"
+        "tests/python/planning/test_planning_worktree_setup_selection.py"
       ],
       "severity": "medium",
       "rollout_risk": "Worktree setup flags can be destructive, so parity gaps here risk accidental reuse or recreation of the wrong tree.",
@@ -1603,7 +1603,7 @@
       ],
       "evidence_tests": [
         "tests/python/state/test_state_repository_contract.py",
-        "tests/python/actions/test_actions_cli.py",
+        "tests/python/actions/test_actions_cli_review_completion.py",
         "tests/python/actions/test_actions_parity.py"
       ],
       "parity_status": "verified_python",
@@ -1621,7 +1621,7 @@
       ],
       "evidence_tests": [
         "tests/python/state/test_state_repository_contract.py",
-        "tests/python/runtime/test_lifecycle_parity.py"
+        "tests/python/runtime/test_lifecycle_parity_stop_health.py"
       ],
       "parity_status": "verified_python",
       "notes": "Artifact retention and cleanup semantics are covered by state repository and lifecycle parity tests.",
@@ -1630,7 +1630,7 @@
       "python_owner_module": "python/envctl_engine/state/repository.py",
       "proposed_tests": [
         "tests/python/state/test_state_repository_contract.py",
-        "tests/python/runtime/test_lifecycle_parity.py"
+        "tests/python/runtime/test_lifecycle_parity_stop_health.py"
       ],
       "severity": "medium",
       "rollout_risk": "Artifact cleanup regressions can leave stale state that confuses later runs and operator debugging.",

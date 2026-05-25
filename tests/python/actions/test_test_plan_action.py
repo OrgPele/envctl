@@ -41,7 +41,7 @@ class TestPlanActionTests(unittest.TestCase):
             )
 
         self.assertIn(
-            "uv run --extra dev pytest -q tests/python/runtime/test_prompt_install_support.py",
+            "uv run --extra dev pytest -q tests/python/runtime/test_prompt_install_support_templates.py",
             [item["command"] for item in result["commands"]],
         )
 

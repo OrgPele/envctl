@@ -88,7 +88,7 @@ EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         python_source_of_truth=("python/envctl_engine/runtime/command_router.py",),
         evidence_tests=(
             "tests/python/runtime/test_cli_router_parity.py",
-            "tests/python/runtime/test_engine_runtime_command_parity.py",
+            "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
         ),
         parity_status="verified_python",
         notes="Parser compatibility is now enforced against the Python-owned public command and documentation surface.",
@@ -112,7 +112,7 @@ EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         missing_python_behavior="Exhaustively prove plan selection, run reuse, and interactive handoff semantics across add/remove/zero-scale transitions so shell is no longer needed as a behavior oracle.",
         python_owner_module="python/envctl_engine/planning/worktree_domain.py",
         proposed_tests=(
-            "tests/python/planning/test_planning_worktree_setup.py",
+            "tests/python/planning/test_planning_worktree_setup_selection.py",
             "tests/python/runtime/test_engine_runtime_real_startup.py",
         ),
         severity="medium",
@@ -129,7 +129,7 @@ EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
             "python/envctl_engine/runtime/command_router.py",
         ),
         evidence_tests=(
-            "tests/python/planning/test_planning_worktree_setup.py",
+            "tests/python/planning/test_planning_worktree_setup_selection.py",
             "tests/python/runtime/test_engine_runtime_real_startup.py",
         ),
         parity_status="verified_python",
@@ -137,7 +137,7 @@ EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         current_behavior="Setup-worktree and include-existing-worktrees flags are present, but parity evidence is still mostly external and shell-era.",
         missing_python_behavior="Inventory and prove reuse/recreate/include flag semantics in Python planning/worktree tests so setup flows are no longer shell-defined by implication.",
         python_owner_module="python/envctl_engine/planning/worktree_domain.py",
-        proposed_tests=("tests/python/planning/test_planning_worktree_setup.py",),
+        proposed_tests=("tests/python/planning/test_planning_worktree_setup_selection.py",),
         severity="medium",
         rollout_risk="Worktree setup flags can be destructive, so parity gaps here risk accidental reuse or recreation of the wrong tree.",
         wave="Wave B",
@@ -250,7 +250,7 @@ EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         ),
         evidence_tests=(
             "tests/python/state/test_state_repository_contract.py",
-            "tests/python/actions/test_actions_cli.py",
+            "tests/python/actions/test_actions_cli_review_completion.py",
             "tests/python/actions/test_actions_parity.py",
         ),
         parity_status="verified_python",
@@ -267,7 +267,7 @@ EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         ),
         evidence_tests=(
             "tests/python/state/test_state_repository_contract.py",
-            "tests/python/runtime/test_lifecycle_parity.py",
+            "tests/python/runtime/test_lifecycle_parity_stop_health.py",
         ),
         parity_status="verified_python",
         notes="Artifact retention and cleanup semantics are covered by state repository and lifecycle parity tests.",
@@ -276,7 +276,7 @@ EXTRA_FEATURES: tuple[FeatureDefinition, ...] = (
         python_owner_module="python/envctl_engine/state/repository.py",
         proposed_tests=(
             "tests/python/state/test_state_repository_contract.py",
-            "tests/python/runtime/test_lifecycle_parity.py",
+            "tests/python/runtime/test_lifecycle_parity_stop_health.py",
         ),
         severity="medium",
         rollout_risk="Artifact cleanup regressions can leave stale state that confuses later runs and operator debugging.",

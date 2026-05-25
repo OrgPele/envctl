@@ -59,7 +59,7 @@ SOURCE_TEST_DIR_MAP: Final[dict[str, str]] = {
 SCRIPT_TEST_MAP: Final[dict[str, tuple[str, ...]]] = {
     "scripts/analyze_debug_bundle.py": ("tests/python/debug/test_debug_bundle_analyzer.py",),
     "scripts/generate_python_engine_parity_manifest.py": (
-        "tests/python/runtime/test_engine_runtime_command_parity.py",
+        "tests/python/runtime/test_engine_runtime_command_parity_delegates.py",
     ),
     "scripts/generate_python_runtime_gap_plan.py": ("tests/python/runtime/test_runtime_feature_inventory.py",),
     "scripts/generate_python_runtime_gap_report.py": ("tests/python/runtime/test_runtime_feature_inventory.py",),

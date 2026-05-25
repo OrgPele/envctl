@@ -19,7 +19,7 @@ PLANNING_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "python/envctl_engine/startup/startup_orchestrator.py",
         ),
         evidence_tests=(
-            "tests/python/planning/test_planning_worktree_setup.py",
+            "tests/python/planning/test_planning_worktree_setup_selection.py",
             "tests/python/runtime/test_engine_runtime_real_startup.py",
         ),
         parity_status="verified_python",
@@ -36,7 +36,7 @@ PLANNING_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         ),
         evidence_tests=(
             "tests/python/actions/test_action_worktree_runner.py",
-            "tests/python/planning/test_planning_worktree_setup.py",
+            "tests/python/planning/test_planning_worktree_setup_selection.py",
         ),
         parity_status="verified_python",
         notes="Delete-worktree flows are Python-owned and exercised by action/planning tests.",
