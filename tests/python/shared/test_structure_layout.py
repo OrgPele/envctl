@@ -290,6 +290,7 @@ class StructureLayoutTests(unittest.TestCase):
         progress_text = progress_owner.read_text(encoding="utf-8")
         failure_text = failure_owner.read_text(encoding="utf-8")
         self.assertIn("class TestActionExecutionPlan", execution_text)
+        self.assertIn("class TestActionExecutionPlanBuilder", execution_text)
         self.assertIn("def build_test_action_execution_plan", execution_text)
         self.assertIn("def resolve_suite_spinner_decision", execution_text)
         self.assertIn("class TestSuiteExecutionResult", suite_execution_text)

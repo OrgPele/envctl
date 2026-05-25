@@ -6,6 +6,7 @@ from unittest.mock import patch
 import unittest
 
 from envctl_engine.actions.action_test_execution_support import (
+    TestActionExecutionPlanBuilder,
     build_test_action_execution_plan,
     emit_test_execution_mode,
     resolve_suite_spinner_decision,
@@ -87,6 +88,9 @@ class _PlanOrchestrator:
 
 
 class ActionTestExecutionSupportTests(unittest.TestCase):
+    def test_execution_plan_construction_has_named_builder_owner(self) -> None:
+        self.assertTrue(callable(TestActionExecutionPlanBuilder.build))
+
     def test_build_test_action_execution_plan_dedupes_prereqs_and_emits_suite_plan(self) -> None:
         orchestrator = _PlanOrchestrator()
         route = parse_route(["test", "--failed", "--backend"], env={})

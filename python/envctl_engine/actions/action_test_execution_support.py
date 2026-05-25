@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, ClassVar
 
 from envctl_engine.actions.actions_test import ensure_repo_local_test_prereqs
 from envctl_engine.actions.action_target_support import action_target_names
@@ -43,53 +43,114 @@ class SuiteSpinnerDecision:
     reason: str
 
 
+@dataclass(frozen=True, slots=True)
+class TestActionExecutionPlanBuilder:
+    __test__: ClassVar[bool] = False
+
+    orchestrator: Any
+    route: Any
+    targets: list[object]
+
+    def build(self) -> TestActionExecutionPlan:
+        self._emit_scope_status()
+        include_backend, include_frontend = self._selected_services()
+        target_contexts = self._target_contexts()
+        _ensure_test_prereqs(self.orchestrator, target_contexts)
+        execution_specs = self._execution_specs(
+            target_contexts=target_contexts,
+            include_backend=include_backend,
+            include_frontend=include_frontend,
+        )
+        parallel = self._parallel_enabled(execution_specs)
+        plan = TestActionExecutionPlan(
+            run_all=self.run_all,
+            untested=self.untested,
+            failed_only=self.failed_only,
+            interactive_command=self.interactive_command,
+            include_backend=include_backend,
+            include_frontend=include_frontend,
+            target_contexts=target_contexts,
+            execution_specs=execution_specs,
+            parallel=parallel,
+            parallel_workers=self._parallel_workers(execution_specs, parallel=parallel),
+            distinct_projects=self._distinct_projects(execution_specs),
+        )
+        emit_test_suite_plan(self.orchestrator.runtime, plan)
+        return plan
+
+    @property
+    def run_all(self) -> bool:
+        return bool(self.route.flags.get("all"))
+
+    @property
+    def untested(self) -> bool:
+        return bool(self.route.flags.get("untested"))
+
+    @property
+    def failed_only(self) -> bool:
+        return bool(self.route.flags.get("failed"))
+
+    @property
+    def interactive_command(self) -> bool:
+        return bool(self.route.flags.get("interactive_command"))
+
+    def _emit_scope_status(self) -> None:
+        project_names = action_target_names(self.targets)
+        self.orchestrator._emit_status(
+            self.orchestrator._test_scope_status(
+                project_names,
+                run_all=self.run_all,
+                untested=self.untested,
+                failed=self.failed_only,
+            )
+        )
+
+    def _selected_services(self) -> tuple[bool, bool]:
+        return self.orchestrator._test_service_selection(
+            self.route,
+            self.route.flags.get("backend"),
+            self.route.flags.get("frontend"),
+        )
+
+    def _target_contexts(self) -> list[TestTargetContext]:
+        return self.orchestrator._test_target_contexts(self.targets)
+
+    def _execution_specs(
+        self,
+        *,
+        target_contexts: list[TestTargetContext],
+        include_backend: bool,
+        include_frontend: bool,
+    ) -> list[TestExecutionSpec]:
+        return self.orchestrator._build_test_execution_specs(
+            route=self.route,
+            targets=self.targets,
+            target_contexts=target_contexts,
+            include_backend=include_backend,
+            include_frontend=include_frontend,
+            run_all=self.run_all,
+            untested=self.untested,
+        )
+
+    def _parallel_enabled(self, execution_specs: list[TestExecutionSpec]) -> bool:
+        return self.orchestrator._test_parallel_enabled(self.route, execution_specs)
+
+    def _parallel_workers(self, execution_specs: list[TestExecutionSpec], *, parallel: bool) -> int:
+        if not parallel:
+            return 1
+        return self.orchestrator._test_parallel_max_workers(self.route, execution_specs)
+
+    @staticmethod
+    def _distinct_projects(execution_specs: list[TestExecutionSpec]) -> set[str]:
+        return {
+            spec.project_name.strip().lower()
+            for spec in execution_specs
+            if spec.project_name.strip() and spec.project_name != "all-targets"
+        }
+
+
 def build_test_action_execution_plan(orchestrator: Any, route: Any, targets: list[object]) -> TestActionExecutionPlan:
-    run_all = bool(route.flags.get("all"))
-    untested = bool(route.flags.get("untested"))
-    failed_only = bool(route.flags.get("failed"))
-    project_names = action_target_names(targets)
-    orchestrator._emit_status(
-        orchestrator._test_scope_status(project_names, run_all=run_all, untested=untested, failed=failed_only)
-    )
-
-    backend_flag = route.flags.get("backend")
-    frontend_flag = route.flags.get("frontend")
-    include_backend, include_frontend = orchestrator._test_service_selection(route, backend_flag, frontend_flag)
-
-    target_contexts = orchestrator._test_target_contexts(targets)
-    _ensure_test_prereqs(orchestrator, target_contexts)
-    execution_specs = orchestrator._build_test_execution_specs(
-        route=route,
-        targets=targets,
-        target_contexts=target_contexts,
-        include_backend=include_backend,
-        include_frontend=include_frontend,
-        run_all=run_all,
-        untested=untested,
-    )
-
-    parallel = orchestrator._test_parallel_enabled(route, execution_specs)
-    parallel_workers = orchestrator._test_parallel_max_workers(route, execution_specs) if parallel else 1
-    distinct_projects = {
-        spec.project_name.strip().lower()
-        for spec in execution_specs
-        if spec.project_name.strip() and spec.project_name != "all-targets"
-    }
-    plan = TestActionExecutionPlan(
-        run_all=run_all,
-        untested=untested,
-        failed_only=failed_only,
-        interactive_command=bool(route.flags.get("interactive_command")),
-        include_backend=include_backend,
-        include_frontend=include_frontend,
-        target_contexts=target_contexts,
-        execution_specs=execution_specs,
-        parallel=parallel,
-        parallel_workers=parallel_workers,
-        distinct_projects=distinct_projects,
-    )
-    emit_test_suite_plan(orchestrator.runtime, plan)
-    return plan
+    return TestActionExecutionPlanBuilder(orchestrator=orchestrator, route=route, targets=targets).build()
 
 
 def emit_test_suite_plan(runtime: Any, plan: TestActionExecutionPlan) -> None:
