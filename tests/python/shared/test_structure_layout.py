@@ -1173,18 +1173,29 @@ class StructureLayoutTests(unittest.TestCase):
         selector = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "selector"
         support = selector / "support.py"
         backend_policy = selector / "backend_policy.py"
+        textual_app = selector / "textual_app.py"
+        selection_state = selector / "selection_state.py"
 
         self.assertTrue(support.is_file())
         self.assertTrue(backend_policy.is_file())
+        self.assertTrue(textual_app.is_file())
+        self.assertTrue(selection_state.is_file())
         support_text = support.read_text(encoding="utf-8")
         backend_text = backend_policy.read_text(encoding="utf-8")
+        app_text = textual_app.read_text(encoding="utf-8")
+        selection_text = selection_state.read_text(encoding="utf-8")
         self.assertIn("class SelectorBackendDecision", backend_text)
         self.assertIn("def selector_backend_decision", backend_text)
         self.assertIn("def selector_impl", backend_text)
         self.assertIn("def selector_driver_thread_snapshot", backend_text)
         self.assertIn("from .backend_policy import", support_text)
         self.assertIn("def _selector_backend_decision", support_text)
+        self.assertIn("def build_selector_rows", selection_text)
+        self.assertIn("def toggle_selector_model_index", selection_text)
+        self.assertIn("def fallback_selector_values", selection_text)
+        self.assertIn("from envctl_engine.ui.textual.screens.selector import selection_state", app_text)
         self.assertLessEqual(len(support_text.splitlines()), 800)
+        self.assertLessEqual(len(app_text.splitlines()), 950)
 
     def test_removed_dead_leaf_modules_are_absent(self) -> None:
         stale_modules = [

@@ -8,8 +8,8 @@ from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.textual.list_controller import TextualListController
 from envctl_engine.ui.textual.list_row_styles import apply_selectable_list_index
 from envctl_engine.ui.textual.list_row_styles import focus_selectable_list
-from envctl_engine.ui.textual.list_row_styles import selectable_list_row_classes
 from envctl_engine.ui.textual.compat import handle_text_edit_key_alias
+from envctl_engine.ui.textual.screens.selector import selection_state
 from envctl_engine.ui.textual.screens.selector.textual_app_chrome import (
     SELECTOR_BINDINGS,
     SELECTOR_CSS,
@@ -61,17 +61,15 @@ def create_selector_app(
 
         def __init__(self) -> None:
             super().__init__()
-            self._rows: list[_RowRef] = []
-            self._initial_model_index: int | None = None
+            self._rows: list[_RowRef]
+            self._initial_model_index: int | None
             self._last_focused_model_index: int | None = None
             self._last_user_model_index: int | None = None
-            for idx, item in enumerate(options):
-                selected = str(item.token).strip() in initial_token_set
-                if selected and self._initial_model_index is None:
-                    self._initial_model_index = idx
-                if selected and not multi:
-                    selected = self._initial_model_index == idx
-                self._rows.append(_RowRef(item=item, selected=selected, visible=True))
+            self._rows, self._initial_model_index = selection_state.build_selector_rows(
+                options,
+                initial_token_set,
+                multi=multi,
+            )
             self._last_user_model_index = self._initial_model_index
             self._controller = TextualListController(
                 self._rows,
@@ -133,19 +131,11 @@ def create_selector_app(
 
         @staticmethod
         def _row_text(row: _RowRef) -> str:
-            marker = "●" if row.selected else "○"
-            badge = str(row.item.kind or "").replace("_", " ").strip()
-            if not badge:
-                return f"{marker} {row.item.label}"
-            return f"{marker} {row.item.label}  ({badge})"
+            return selection_state.selector_row_text(row)
 
         @staticmethod
         def _row_classes(row: _RowRef) -> str:
-            base_classes = selectable_list_row_classes("selector-row", selected=row.selected)
-            kind = str(row.item.kind or "").replace("_", "-").strip("-")
-            if not kind:
-                return base_classes
-            return f"{base_classes} kind-{kind}"
+            return selection_state.selector_row_classes(row)
 
         def _focused_model_index(self) -> int | None:
             return self._controller.focused_model_index(self._list().index)
@@ -348,23 +338,14 @@ def create_selector_app(
             self.action_focus_list(reason=reason)
 
         async def _toggle_model_index(self, model_index: int) -> None:
-            if model_index < 0 or model_index >= len(self._rows):
+            row = selection_state.toggle_selector_model_index(
+                self._rows,
+                model_index,
+                multi=multi,
+                exclusive_token=exclusive_token,
+            )
+            if row is None:
                 return
-            row = self._rows[model_index]
-            row_token = str(row.item.token)
-            if not multi:
-                for candidate in self._rows:
-                    candidate.selected = False
-            row.selected = not row.selected if multi else True
-            if multi and row.selected and exclusive_token:
-                if row_token == exclusive_token:
-                    for idx, candidate in enumerate(self._rows):
-                        if idx != model_index:
-                            candidate.selected = False
-                else:
-                    for candidate in self._rows:
-                        if str(candidate.item.token) == exclusive_token:
-                            candidate.selected = False
             _emit(
                 emit,
                 "ui.selection.interaction",
@@ -380,15 +361,9 @@ def create_selector_app(
             self.action_focus_list(reason="toggle")
 
         async def _select_model_index(self, model_index: int) -> None:
-            if model_index < 0 or model_index >= len(self._rows):
+            row = selection_state.select_selector_model_index(self._rows, model_index, multi=multi)
+            if row is None:
                 return
-            row = self._rows[model_index]
-            if row.selected and not multi:
-                return
-            if not multi:
-                for candidate in self._rows:
-                    candidate.selected = False
-            row.selected = True
             _emit(
                 emit,
                 "ui.selection.interaction",
@@ -409,25 +384,10 @@ def create_selector_app(
             await self._toggle_model_index(model_index)
 
         async def action_toggle_visible(self) -> None:
-            if multi and exclusive_token:
-                visible_indexes = [idx for idx, row in enumerate(self._rows) if row.visible]
-                selectable_indexes = [
-                    idx for idx in visible_indexes if str(self._rows[idx].item.token) != exclusive_token
-                ]
-                if not selectable_indexes:
-                    selectable_indexes = visible_indexes
-                should_select = any(not self._rows[idx].selected for idx in selectable_indexes)
-                for idx in visible_indexes:
-                    self._rows[idx].selected = should_select and idx in selectable_indexes
-                _emit(emit, "ui.selection.toggle", token="__VISIBLE__", selected=should_select)
-                await self._render_rows()
-                self.action_focus_list(reason="toggle_visible")
-                return
-            should_select = self._controller.apply_visible_toggle(
-                is_visible=lambda row: row.visible,
-                is_active=lambda row: row.selected,
-                activate=lambda row: setattr(row, "selected", True),
-                deactivate=lambda row: setattr(row, "selected", False),
+            should_select = selection_state.toggle_visible_selector_rows(
+                self._rows,
+                multi=multi,
+                exclusive_token=exclusive_token,
             )
             if should_select is None:
                 return
@@ -573,7 +533,7 @@ def create_selector_app(
                 self.action_focus_button(next_target, reason="tab_cycle")
 
         def _selected_values(self) -> list[str]:
-            return [row.item.token for row in self._rows if row.selected and row.visible]
+            return selection_state.selected_selector_values(self._rows)
 
         async def action_submit(self, *, cause: str = "enter") -> None:
             if self.query_one("#selector-filter", Input).has_focus:
@@ -874,23 +834,14 @@ def create_selector_app(
             return self._explicit_cancel
 
         def fallback_values(self) -> list[str]:
-            selected = self._selected_values()
-            if selected:
-                return selected
             try:
                 focused = self._focused_model_index()
             except Exception:
                 focused = None
-            if focused is None:
-                focused = self._last_user_model_index
-            if focused is None:
-                focused = self._last_focused_model_index
-            if focused is not None and focused < len(self._rows):
-                return [self._rows[focused].item.token]
-            visible = [row.item.token for row in self._rows if row.visible]
-            if visible:
-                return [visible[0]]
-            return []
+            return selection_state.fallback_selector_values(
+                self._rows,
+                focused_indexes=(focused, self._last_user_model_index, self._last_focused_model_index),
+            )
 
         def _emit_key_snapshot(self) -> None:
             if not key_trace_enabled:
