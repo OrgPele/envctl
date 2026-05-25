@@ -600,6 +600,7 @@ class StructureLayoutTests(unittest.TestCase):
         defaults_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "defaults.py"
         service_parsing_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "service_parsing.py"
         persistence_values_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "persistence_values.py"
+        persistence_payload_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "persistence_payload.py"
         persistence_rendering_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "persistence_rendering.py"
         source_discovery_owner = REPO_ROOT / "python" / "envctl_engine" / "config" / "source_discovery.py"
         persistence_facade = REPO_ROOT / "python" / "envctl_engine" / "config" / "persistence.py"
@@ -611,6 +612,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(defaults_owner.is_file())
         self.assertTrue(service_parsing_owner.is_file())
         self.assertTrue(persistence_values_owner.is_file())
+        self.assertTrue(persistence_payload_owner.is_file())
         self.assertTrue(persistence_rendering_owner.is_file())
         self.assertTrue(source_discovery_owner.is_file())
         self.assertTrue(owner.is_file())
@@ -633,6 +635,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class ManagedConfigValues", persistence_values_text)
         self.assertIn("def managed_values_from_payload", persistence_values_text)
         self.assertIn("def validate_managed_values", persistence_values_text)
+        persistence_payload_text = persistence_payload_owner.read_text(encoding="utf-8")
+        self.assertIn("class ConfigPayloadHydrator", persistence_payload_text)
+        self.assertIn("def hydrate", persistence_payload_text)
         persistence_rendering_text = persistence_rendering_owner.read_text(encoding="utf-8")
         self.assertIn("def render_managed_block", persistence_rendering_text)
         self.assertIn("def merge_managed_block", persistence_rendering_text)
