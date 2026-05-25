@@ -35,6 +35,7 @@ from .config_wizard_fields import (
     _visible_directory_fields,
     _visible_port_fields,
 )
+from .config_wizard_flow_actions import ConfigWizardFlowActions
 from .config_wizard_form import ConfigWizardFormController
 from .config_wizard_hints import ConfigWizardHintResolver
 from .config_wizard_layout import CONFIG_WIZARD_APP_CSS, compose_config_wizard_layout
@@ -395,6 +396,35 @@ def build_config_wizard_app(
                 emit=lambda event, **payload: _emit(emit, event, **payload),
             )
 
+        def _flow_actions(self) -> ConfigWizardFlowActions:
+            return ConfigWizardFlowActions(
+                values=self.values,
+                steps=lambda: self._steps,
+                step_index=lambda: self.step_index,
+                set_step_index=lambda value: setattr(self, "step_index", value),
+                set_suppress_list_selected_once=lambda value: setattr(self, "_suppress_list_selected_once", value),
+                set_save_result=lambda value: setattr(self, "_save_result", value),
+                current_step=self._current_step,
+                list_has_focus=lambda: self.query_one("#config-list", ListView).has_focus,
+                refresh_all=self._refresh_all,
+                refresh_status=self._refresh_status,
+                apply_directory_inputs=self._apply_directory_inputs,
+                apply_additional_service_inputs=self._apply_additional_service_inputs,
+                apply_port_inputs=self._apply_port_inputs,
+                validate_values=lambda *, values, require_directories, require_entrypoints: validate_managed_values(
+                    values,
+                    require_directories=require_directories,
+                    require_entrypoints=require_entrypoints,
+                ),
+                save_config=lambda: save_local_config_with_ignore_policy(
+                    local_state=local_state,
+                    values=self.values,
+                    update_global_ignores=True,
+                ),
+                exit_with_result=self.exit,
+                result_factory=lambda values, save_result: ConfigWizardResult(values=values, save_result=save_result),
+            )
+
         def _render_components_step(self, list_view) -> None:
             rows = self._component_rows()
             selected_flags = self._component_interaction.selected_flags(rows)
@@ -588,11 +618,7 @@ def build_config_wizard_app(
             self._toggle_component_split()
 
         def action_submit_or_next(self) -> None:
-            if self._current_step() in {"default_mode", "components", "service_startup"}:
-                list_view = self.query_one("#config-list", ListView)
-                if list_view.has_focus:
-                    self._suppress_list_selected_once = True
-            self._advance()
+            self._flow_actions().submit_or_next()
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
             button_id = event.button.id or ""
@@ -606,47 +632,10 @@ def build_config_wizard_app(
                 self.action_submit_or_next()
 
         def _go_back(self) -> None:
-            if self.step_index <= 0:
-                return
-            self.step_index -= 1
-            self._refresh_all()
+            self._flow_actions().go_back()
 
         def _advance(self) -> None:
-            step = self._current_step()
-            if step in {"directories", "commands"} and not self._apply_directory_inputs():
-                return
-            if step == "additional_services" and not self._apply_additional_service_inputs():
-                return
-            if step == "ports" and not self._apply_port_inputs():
-                return
-            if step in {
-                "components",
-                "service_startup",
-                "additional_services",
-                "directories",
-                "commands",
-                "ports",
-                "review",
-            }:
-                validation = validate_managed_values(
-                    self.values,
-                    require_directories=step in {"directories", "commands", "ports", "review"},
-                    require_entrypoints=step in {"commands", "ports", "review"},
-                )
-                if not validation.valid:
-                    self._refresh_status(validation.errors[0])
-                    return
-            if step == self._steps[-1]:
-                save_result = save_local_config_with_ignore_policy(
-                    local_state=local_state,
-                    values=self.values,
-                    update_global_ignores=True,
-                )
-                self._save_result = save_result
-                self.exit(ConfigWizardResult(values=self.values, save_result=save_result))
-                return
-            self.step_index += 1
-            self._refresh_all()
+            self._flow_actions().advance()
 
         def _apply_directory_inputs(self) -> bool:
             visible_fields = (
