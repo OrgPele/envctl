@@ -196,7 +196,7 @@ class ShipWorkflowRunner:
         return self._finish(
             state,
             status=status,
-            ok=status not in {"checks_failed", "checks_pending_timeout", "commit_failed", "pr_failed"},
+            ok=status not in {"checks_failed", "commit_failed", "pr_failed"},
             commit_sha=state.after_sha,
             pushed=state.committed,
             pr_url=state.pr_url,

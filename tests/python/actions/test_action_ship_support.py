@@ -228,7 +228,7 @@ class ActionShipSupportTests(unittest.TestCase):
         self.assertEqual(payload["passed_checks"], [{"name": "pytest", "state": "SUCCESS"}])
         self.assertEqual(payload["pr_url"], "https://github.com/acme/repo/pull/8")
 
-    def test_run_ship_workflow_returns_failure_when_checks_timeout(self) -> None:
+    def test_run_ship_workflow_returns_success_with_pending_status_when_checks_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
             repo_root.mkdir()
@@ -274,7 +274,7 @@ class ActionShipSupportTests(unittest.TestCase):
                     },
                 )
 
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "checks_pending_timeout")
         self.assertEqual(payload["operation_statuses"]["checks"], "checks_pending_timeout")
