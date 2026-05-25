@@ -650,6 +650,22 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("ProcessLifecycleProbeMixin", runner_text)
         self.assertLessEqual(len(runner_text.splitlines()), 340)
 
+    def test_command_loop_has_spinner_owner(self) -> None:
+        ui = REPO_ROOT / "python" / "envctl_engine" / "ui"
+        loop = ui / "command_loop.py"
+        owner = ui / "command_loop_spinner.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        self.assertIn("class CommandSpinnerTracker", owner_text)
+        self.assertIn("def install_spinner_event_bridge", owner_text)
+        self.assertIn("def spinner_message_for_event", owner_text)
+        self.assertIn("def spinner_failure_message_for_event", owner_text)
+        loop_text = loop.read_text(encoding="utf-8")
+        self.assertIn("command_loop_spinner", loop_text)
+        self.assertNotIn("class _SpinnerTracker", loop_text)
+        self.assertLessEqual(len(loop_text.splitlines()), 500)
+
     def test_state_action_orchestrator_has_log_owner(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_log_support.py"
         health_owner = REPO_ROOT / "python" / "envctl_engine" / "state" / "action_health_support.py"
