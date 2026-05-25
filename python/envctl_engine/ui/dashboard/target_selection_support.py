@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
@@ -200,6 +201,7 @@ def dashboard_preselected_projects(
     state: RunState,
     projects: list[object],
     runtime: Any,
+    tree_preselected_projects_fn: Callable[..., list[str]] = _tree_preselected_projects_from_state_impl,
 ) -> list[str]:
     if str(state.mode).strip().lower() != "trees":
         return []
@@ -208,7 +210,7 @@ def dashboard_preselected_projects(
         return []
     try:
         return list(
-            _tree_preselected_projects_from_state_impl(
+            tree_preselected_projects_fn(
                 runtime=runtime,
                 project_contexts=cast(Any, projects),
             )

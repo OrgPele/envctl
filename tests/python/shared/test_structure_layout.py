@@ -1012,6 +1012,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertNotIn("pr_and_target_support.probe_dirty_worktree =", facade_text)
         self.assertNotIn("pr_and_target_support.launch_review_agent_terminal =", facade_text)
         self.assertNotIn("pr_and_target_support._run_selector_with_impl =", facade_text)
+        self.assertNotIn("target_selection_support._tree_preselected_projects_from_state_impl =", facade_text)
         self.assertIn("def apply_stop_resource_tokens", stop_owner.read_text(encoding="utf-8"))
         self.assertIn("pr_selection_support", pr_facade_text)
         self.assertIn("pr_commit_support", pr_facade_text)

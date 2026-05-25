@@ -408,13 +408,11 @@ class DashboardOrchestrator(DashboardCommandMixin, DashboardFailureDetailMixin):
         projects: list[object],
         runtime: Any,
     ) -> list[str]:
-        target_selection_support._tree_preselected_projects_from_state_impl = (
-            _tree_preselected_projects_from_state_impl
-        )
         return target_selection_support.dashboard_preselected_projects(
             state=state,
             projects=projects,
             runtime=runtime,
+            tree_preselected_projects_fn=_tree_preselected_projects_from_state_impl,
         )
 
     def _select_dashboard_service_types(

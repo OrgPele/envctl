@@ -198,6 +198,25 @@ class _Runtime:
 
 
 class DashboardTargetSelectionSupportTests(unittest.TestCase):
+    def test_dashboard_preselected_projects_uses_explicit_tree_dependency(self) -> None:
+        calls: list[tuple[object, list[object]]] = []
+        projects = [SimpleNamespace(name="feature-a-1")]
+        runtime = SimpleNamespace(startup_orchestrator=object())
+
+        def preselect(*, runtime: object, project_contexts: list[object]) -> list[str]:
+            calls.append((runtime, project_contexts))
+            return ["feature-a-1"]
+
+        result = target_selection_support.dashboard_preselected_projects(
+            state=_state(mode="trees"),
+            projects=projects,
+            runtime=runtime,
+            tree_preselected_projects_fn=preselect,
+        )
+
+        self.assertEqual(result, ["feature-a-1"])
+        self.assertEqual(calls, [(runtime, projects)])
+
     def test_select_dashboard_projects_defaults_single_project_without_selector(self) -> None:
         runtime = _Runtime()
         owner = _Owner()
