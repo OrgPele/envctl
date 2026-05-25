@@ -271,6 +271,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "_run_tmux_worktree_bootstrap",
             },
             "tmux_workflow_submission_support.py": {
+                "TmuxPromptBootstrapFlow",
                 "launch_tmux_cli_bootstrap_commands",
                 "maybe_submit_tmux_codex_goal",
                 "queue_tmux_codex_message",
