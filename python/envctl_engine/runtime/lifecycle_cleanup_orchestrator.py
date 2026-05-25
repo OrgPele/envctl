@@ -4,6 +4,12 @@ from typing import Any, Callable, Mapping
 
 from envctl_engine.runtime.lifecycle_blast_support import LifecycleBlastCleanupSupport
 from envctl_engine.runtime.engine_runtime_lifecycle_support import release_requirement_ports
+from envctl_engine.runtime.lifecycle_dependency_stop import (
+    release_requirement_component_ports,
+    release_selected_dependency_components,
+    requirements_have_enabled_components,
+    select_dependency_components_for_stop,
+)
 from envctl_engine.runtime.lifecycle_stopped_metadata import (
     has_dashboard_stopped_services,
     project_name_from_stopped_service,
@@ -31,7 +37,6 @@ from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F4
 from envctl_engine.ui.selection_types import TargetSelection
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
-from envctl_engine.requirements.core import dependency_definitions
 
 
 class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
@@ -280,71 +285,26 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
         )
 
     def _select_dependency_components_for_stop(self, state: RunState, route: Route) -> dict[str, set[str]]:
-        raw_components = route.flags.get("stop_dependency_components")
-        if not isinstance(raw_components, list):
-            return {}
-        known_definitions = {definition.id for definition in dependency_definitions()}
-        selected: dict[str, set[str]] = {}
-        project_key_by_lower = {str(project).strip().casefold(): project for project in state.requirements}
-        for raw in raw_components:
-            project_name, separator, dependency_id = str(raw).partition(":")
-            if not separator:
-                continue
-            project_key = project_key_by_lower.get(project_name.strip().casefold())
-            if project_key is None:
-                continue
-            normalized_dependency = dependency_id.strip().lower()
-            if normalized_dependency not in known_definitions:
-                continue
-            component = state.requirements[project_key].component(normalized_dependency)
-            if not bool(component.get("enabled", False)):
-                continue
-            selected.setdefault(project_key, set()).add(normalized_dependency)
-        return selected
+        return select_dependency_components_for_stop(state, route)
 
     def _release_selected_dependency_components(
         self,
         state: RunState,
         selected_dependencies: dict[str, set[str]],
     ) -> None:
-        for project_name, dependency_ids in selected_dependencies.items():
-            requirements = state.requirements.get(project_name)
-            if requirements is None:
-                continue
-            for dependency_id in dependency_ids:
-                component = requirements.component(dependency_id)
-                if not bool(component.get("enabled", False)):
-                    continue
-                if not bool(component.get("external")):
-                    self._release_requirement_component_ports(component)
-                requirements.components[dependency_id] = {}
-            if not self._requirements_have_enabled_components(requirements):
-                state.requirements.pop(project_name, None)
+        release_selected_dependency_components(
+            state,
+            selected_dependencies,
+            release_component_ports_fn=self._release_requirement_component_ports,
+        )
 
     def _release_requirement_component_ports(self, component: Mapping[str, object]) -> None:
-        ports: set[int] = set()
-        final = component.get("final")
-        if isinstance(final, int) and final > 0:
-            ports.add(final)
-        resources = component.get("resources")
-        if isinstance(resources, Mapping):
-            for value in resources.values():
-                if isinstance(value, int) and value > 0:
-                    ports.add(value)
         port_allocator = self._port_allocator(self.runtime)
-        for port in sorted(ports):
-            port_allocator.release(port)
+        release_requirement_component_ports(component, release_port_fn=port_allocator.release)
 
     @staticmethod
     def _requirements_have_enabled_components(requirements: object) -> bool:
-        components = getattr(requirements, "components", {})
-        if not isinstance(components, Mapping):
-            return False
-        return any(
-            bool(component.get("enabled", False))
-            for component in components.values()
-            if isinstance(component, Mapping)
-        )
+        return requirements_have_enabled_components(requirements)
 
     def _release_requirement_ports(self, requirements: object) -> None:
         release = getattr(self.runtime, "_release_requirement_ports", None)
