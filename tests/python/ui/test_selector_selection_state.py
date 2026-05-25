@@ -4,8 +4,11 @@ import unittest
 
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.textual.screens.selector.selection_state import (
+    apply_selector_filter,
     build_selector_rows,
     fallback_selector_values,
+    selector_submit_values,
+    selector_visibility_counts,
     select_selector_model_index,
     selected_selector_values,
     selector_row_classes,
@@ -76,6 +79,51 @@ class SelectorSelectionStateTests(unittest.TestCase):
         for row in rows:
             row.visible = False
         self.assertIsNone(toggle_visible_selector_rows(rows, multi=True, exclusive_token="failed"))
+
+    def test_filter_normalizes_query_and_updates_row_visibility(self) -> None:
+        rows, _ = build_selector_rows(
+            [_item("API Backend", "api"), _item("Worker", "worker"), _item("Frontend", "frontend")],
+            set(),
+            multi=True,
+        )
+
+        self.assertEqual(apply_selector_filter(rows, "  BACK  "), "back")
+        self.assertEqual([row.visible for row in rows], [True, False, False])
+
+        self.assertEqual(apply_selector_filter(rows, ""), "")
+        self.assertEqual([row.visible for row in rows], [True, True, True])
+
+    def test_visibility_counts_only_count_visible_selected_rows(self) -> None:
+        rows, _ = build_selector_rows(
+            [_item("Alpha", "alpha"), _item("Beta", "beta"), _item("Gamma", "gamma")],
+            {"alpha", "gamma"},
+            multi=True,
+        )
+        rows[1].visible = False
+        rows[1].selected = True
+
+        self.assertEqual(selector_visibility_counts(rows), (2, 2))
+
+    def test_submit_values_select_focused_visible_row_for_single_select_fallback(self) -> None:
+        rows, _ = build_selector_rows(
+            [_item("Alpha", "alpha"), _item("Beta", "beta"), _item("Gamma", "gamma")],
+            set(),
+            multi=False,
+        )
+        rows[0].visible = False
+
+        self.assertEqual(selector_submit_values(rows, multi=False, focused_index=0), [])
+        self.assertEqual(selector_submit_values(rows, multi=False, focused_index=1), ["beta"])
+        self.assertEqual([row.selected for row in rows], [False, True, False])
+
+    def test_submit_values_preserve_existing_selection_and_multi_select_empty_state(self) -> None:
+        rows, _ = build_selector_rows(
+            [_item("Alpha", "alpha"), _item("Beta", "beta")],
+            {"alpha"},
+            multi=True,
+        )
+
+        self.assertEqual(selector_submit_values(rows, multi=True, focused_index=1), ["alpha"])
 
     def test_select_and_fallback_values_use_visible_rows_and_focus_hints(self) -> None:
         rows, _ = build_selector_rows(

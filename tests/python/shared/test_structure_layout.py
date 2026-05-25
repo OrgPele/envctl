@@ -1280,6 +1280,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from .io_probe import SelectorIoProbe", support_text)
         self.assertIn("def _selector_backend_decision", support_text)
         self.assertIn("def build_selector_rows", selection_text)
+        self.assertIn("def apply_selector_filter", selection_text)
+        self.assertIn("def selector_visibility_counts", selection_text)
+        self.assertIn("def selector_submit_values", selection_text)
         self.assertIn("def toggle_selector_model_index", selection_text)
         self.assertIn("def fallback_selector_values", selection_text)
         self.assertIn("class SelectorStatusPresenter", runtime_text)
@@ -1295,7 +1298,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_runtime import", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_key_policy import", app_text)
         self.assertLessEqual(len(support_text.splitlines()), 720)
-        self.assertLessEqual(len(app_text.splitlines()), 860)
+        self.assertLessEqual(len(app_text.splitlines()), 850)
 
     def test_removed_dead_leaf_modules_are_absent(self) -> None:
         stale_modules = [

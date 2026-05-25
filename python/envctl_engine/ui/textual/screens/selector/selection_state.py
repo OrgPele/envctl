@@ -45,6 +45,43 @@ def selected_selector_values(rows: Sequence[_RowRef]) -> list[str]:
     return [row.item.token for row in rows if row.selected and row.visible]
 
 
+def selector_visibility_counts(rows: Sequence[_RowRef]) -> tuple[int, int]:
+    visible_count = 0
+    selected_visible_count = 0
+    for row in rows:
+        if not row.visible:
+            continue
+        visible_count += 1
+        if row.selected:
+            selected_visible_count += 1
+    return visible_count, selected_visible_count
+
+
+def apply_selector_filter(rows: Sequence[_RowRef], query: object) -> str:
+    normalized_query = str(query or "").strip().lower()
+    for row in rows:
+        row.visible = normalized_query in row.item.label.lower() if normalized_query else True
+    return normalized_query
+
+
+def selector_submit_values(
+    rows: Sequence[_RowRef],
+    *,
+    multi: bool,
+    focused_index: int | None,
+) -> list[str]:
+    values = selected_selector_values(rows)
+    if values or multi:
+        return values
+    if focused_index is None or focused_index < 0 or focused_index >= len(rows):
+        return []
+    row = rows[focused_index]
+    if not row.visible:
+        return []
+    row.selected = True
+    return [row.item.token]
+
+
 def select_selector_model_index(rows: Sequence[_RowRef], model_index: int, *, multi: bool) -> _RowRef | None:
     if model_index < 0 or model_index >= len(rows):
         return None

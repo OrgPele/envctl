@@ -210,8 +210,7 @@ def create_selector_app(
                     self.action_focus_list()
 
         def _sync_status(self) -> None:
-            visible = sum(1 for row in self._rows if row.visible)
-            selected = sum(1 for row in self._rows if row.visible and row.selected)
+            visible, selected = selection_state.selector_visibility_counts(self._rows)
             if selected:
                 self._clear_status_error()
             focused_view_index: int | None = None
@@ -536,14 +535,11 @@ def create_selector_app(
         async def action_submit(self, *, cause: str = "enter") -> None:
             if self.query_one("#selector-filter", Input).has_focus:
                 self.action_focus_list(reason="submit_from_filter")
-            values = self._selected_values()
-            if not values and not multi:
-                focused = self._focused_model_index()
-                if focused is not None and 0 <= focused < len(self._rows):
-                    row = self._rows[focused]
-                    if row.visible:
-                        values = [row.item.token]
-                        row.selected = True
+            values = selection_state.selector_submit_values(
+                self._rows,
+                multi=multi,
+                focused_index=self._focused_model_index(),
+            )
             if not values:
                 self._show_status_error("No items were selected. Press Space or click to select at least one.")
                 _emit(
@@ -761,9 +757,7 @@ def create_selector_app(
             await super().on_event(event)  # type: ignore[misc]
 
         async def on_input_changed(self, event: Input.Changed) -> None:
-            query = str(event.value or "").strip().lower()
-            for row in self._rows:
-                row.visible = query in row.item.label.lower() if query else True
+            query = selection_state.apply_selector_filter(self._rows, event.value)
             _emit(emit, "ui.selection.filter.changed", prompt=prompt, query=query)
             await self._render_rows()
 
