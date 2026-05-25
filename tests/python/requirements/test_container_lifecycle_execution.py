@@ -40,7 +40,7 @@ class ContainerLifecycleExecutionTests(unittest.TestCase):
         )
 
         with (
-            patch("envctl_engine.requirements.container_lifecycle_execution.container_exists", return_value=(False, None)),
+            patch("envctl_engine.requirements.container_lifecycle_docker.container_exists", return_value=(False, None)),
             patch("envctl_engine.requirements.container_lifecycle_execution.wait_for_port_ready", return_value=True),
         ):
             lifecycle = ContainerLifecycleExecutor(template).run()
@@ -87,10 +87,18 @@ class ContainerLifecycleExecutionTests(unittest.TestCase):
         self.assertTrue(hasattr(ContainerLifecycleDockerClient, "restart"))
 
         source = Path("python/envctl_engine/requirements/container_lifecycle_execution.py").read_text(encoding="utf-8")
-        self.assertIn("class ContainerLifecycleDockerClient", source)
+        docker_source = Path("python/envctl_engine/requirements/container_lifecycle_docker.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("class ContainerLifecycleDockerClient", docker_source)
+        self.assertIn(
+            "from envctl_engine.requirements.container_lifecycle_docker import ContainerLifecycleDockerClient",
+            source,
+        )
         self.assertIn("self._docker = ContainerLifecycleDockerClient(template)", source)
         self.assertLessEqual(source.count("run_docker("), 2)
         self.assertLessEqual(source.count("stop_and_remove_container("), 1)
+        self.assertEqual(source.count("class ContainerLifecycleDockerClient"), 0)
 
     def test_lifecycle_run_projects_telemetry_to_result_once(self) -> None:
         lifecycle = ContainerLifecycleRun(

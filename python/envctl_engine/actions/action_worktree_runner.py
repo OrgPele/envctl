@@ -175,7 +175,7 @@ class ActionWorktreeDeleteRunner:
             repo_root=self.runtime.config.base_dir,  # type: ignore[attr-defined]
             trees_root=self.runtime._trees_root_for_worktree(target_root),  # type: ignore[attr-defined]
             worktree_root=target_root,
-            process_runner=self.runtime.process_runner,  # type: ignore[attr-defined]
+            process_runner=resolve_process_runtime(getattr(self.runtime, "raw_runtime", self.runtime)),
             dry_run=dry_run,
         )
         if not bool(self.route.flags.get("interactive_command")):
