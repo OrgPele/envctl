@@ -19,9 +19,8 @@ from envctl_engine.ui.textual.compat import (
 from envctl_engine.ui.textual.list_row_styles import focus_selectable_list
 from . import config_wizard_components as component_policy
 from . import config_wizard_values as value_policy
-from .config_wizard_body_actions import ConfigWizardBodyActions
+from .config_wizard_action_bundle import ConfigWizardActionBundle
 from .config_wizard_components import ComponentRow, ConfigWizardComponentInteraction
-from .config_wizard_component_actions import ConfigWizardComponentActions
 from .config_wizard_fields import (
     _SERVICE_STARTUP_FIELDS,
     _STEP_HELP_TEXT,
@@ -32,8 +31,6 @@ from .config_wizard_fields import (
     _visible_directory_fields,
     _visible_port_fields,
 )
-from .config_wizard_flow_actions import ConfigWizardFlowActions
-from .config_wizard_focus_actions import ConfigWizardFocusActions
 from .config_wizard_form import ConfigWizardFormController
 from .config_wizard_hints import ConfigWizardHintResolver
 from .config_wizard_layout import CONFIG_WIZARD_APP_CSS, compose_config_wizard_layout
@@ -49,7 +46,6 @@ from .config_wizard_status import (
     resolve_config_wizard_status,
 )
 from .config_wizard_step_flow import should_show_service_startup_step, sync_wizard_steps
-from .config_wizard_suggestion_actions import ConfigWizardSuggestionActions
 from .config_wizard_suggestions import (
     build_config_wizard_suggestions,
     emit_detected_config_wizard_suggestions,
@@ -195,7 +191,7 @@ def build_config_wizard_app(
             return isinstance(focused, Input)
 
         def _focused_suggestion_field(self) -> str | None:
-            return self._suggestion_actions().focused_suggestion_field()
+            return self._action_bundle().suggestions().focused_suggestion_field()
 
         def _button_has_focus(self) -> bool:
             focused = self.focused
@@ -251,14 +247,37 @@ def build_config_wizard_app(
             self._focus_current_step()
 
         def _refresh_body(self) -> None:
-            self._body_actions().refresh_body()
+            self._action_bundle().body().refresh_body()
 
-        def _body_actions(self) -> ConfigWizardBodyActions:
-            return ConfigWizardBodyActions(
+        def _action_bundle(self) -> ConfigWizardActionBundle:
+            return ConfigWizardActionBundle(
+                app=self,
                 values=self.values,
+                component_interaction=self._component_interaction,
+                service_startup_fields=_SERVICE_STARTUP_FIELDS,
                 config_file_path=local_state.config_file_path,
                 source_label=source_label,
+                steps=lambda: self._steps,
+                step_index=lambda: self.step_index,
+                set_step_index=lambda value: setattr(self, "step_index", value),
+                set_suppress_list_selected_once=lambda value: setattr(self, "_suppress_list_selected_once", value),
+                set_save_result=lambda value: setattr(self, "_save_result", value),
                 current_step=self._current_step,
+                list_view=lambda: self.query_one("#config-list", ListView),
+                focused_widget=lambda: self.focused,
+                input_type=Input,
+                suggestions_by_field=self._suggestions_by_field,
+                field_name_from_input_id=_directory_field_name_from_input_id,
+                directory_label=self._directory_label,
+                refresh_all=self._refresh_all,
+                refresh_body=self._refresh_body,
+                refresh_status=self._refresh_status,
+                refresh_actions=self._refresh_actions,
+                sync_steps=self._sync_steps,
+                sync_startup_enable_flags=self._sync_startup_enable_flags,
+                refresh_directory_validation=self._refresh_directory_validation,
+                refresh_field_hint=self._refresh_field_hint,
+                emit=lambda event, **payload: _emit(emit, event, **payload),
                 set_display=lambda widget_id, display: setattr(self.query_one(f"#{widget_id}"), "display", display),
                 update_widget=lambda widget_id, text: self.query_one(f"#{widget_id}", Static).update(text),
                 render_choice_step=lambda *, selected, options: self._render_choice_step(
@@ -274,6 +293,23 @@ def build_config_wizard_app(
                 sync_directory_inputs=self._sync_directory_inputs,
                 sync_port_inputs=self._sync_port_inputs,
                 update_review=lambda text: self.query_one("#config-review", Static).update(text),
+                apply_directory_inputs=self._apply_directory_inputs,
+                apply_additional_service_inputs=self._apply_additional_service_inputs,
+                apply_port_inputs=self._apply_port_inputs,
+                validate_values=lambda *, values, require_directories, require_entrypoints: validate_managed_values(
+                    values,
+                    require_directories=require_directories,
+                    require_entrypoints=require_entrypoints,
+                ),
+                save_config=lambda: save_local_config_with_ignore_policy(
+                    local_state=local_state,
+                    values=self.values,
+                    update_global_ignores=True,
+                ),
+                exit_with_result=self.exit,
+                result_factory=lambda values, save_result: ConfigWizardResult(values=values, save_result=save_result),
+                focus_list=lambda list_view, index: focus_selectable_list(self, list_view, index),
+                focus_widget=lambda widget_id: self.query_one(f"#{widget_id}").focus(),
             )
 
         def _render_additional_services_step(self, list_view) -> None:
@@ -295,75 +331,6 @@ def build_config_wizard_app(
 
         def _component_rows(self) -> list[ComponentRow]:
             return self._component_interaction.rows()
-
-        def _component_actions(self) -> ConfigWizardComponentActions:
-            return ConfigWizardComponentActions(
-                app=self,
-                values=self.values,
-                component_interaction=self._component_interaction,
-                service_startup_fields=_SERVICE_STARTUP_FIELDS,
-                current_step=self._current_step,
-                list_view=lambda: self.query_one("#config-list", ListView),
-                focused_widget=lambda: self.focused,
-                sync_steps=self._sync_steps,
-                sync_startup_enable_flags=self._sync_startup_enable_flags,
-                refresh_body=self._refresh_body,
-                refresh_status=self._refresh_status,
-                refresh_actions=self._refresh_actions,
-            )
-
-        def _suggestion_actions(self) -> ConfigWizardSuggestionActions:
-            return ConfigWizardSuggestionActions(
-                values=self.values,
-                suggestions_by_field=self._suggestions_by_field,
-                input_type=Input,
-                focused_widget=lambda: self.focused,
-                field_name_from_input_id=_directory_field_name_from_input_id,
-                directory_label=self._directory_label,
-                refresh_directory_validation=self._refresh_directory_validation,
-                refresh_field_hint=self._refresh_field_hint,
-                refresh_status=self._refresh_status,
-                emit=lambda event, **payload: _emit(emit, event, **payload),
-            )
-
-        def _flow_actions(self) -> ConfigWizardFlowActions:
-            return ConfigWizardFlowActions(
-                values=self.values,
-                steps=lambda: self._steps,
-                step_index=lambda: self.step_index,
-                set_step_index=lambda value: setattr(self, "step_index", value),
-                set_suppress_list_selected_once=lambda value: setattr(self, "_suppress_list_selected_once", value),
-                set_save_result=lambda value: setattr(self, "_save_result", value),
-                current_step=self._current_step,
-                list_has_focus=lambda: self.query_one("#config-list", ListView).has_focus,
-                refresh_all=self._refresh_all,
-                refresh_status=self._refresh_status,
-                apply_directory_inputs=self._apply_directory_inputs,
-                apply_additional_service_inputs=self._apply_additional_service_inputs,
-                apply_port_inputs=self._apply_port_inputs,
-                validate_values=lambda *, values, require_directories, require_entrypoints: validate_managed_values(
-                    values,
-                    require_directories=require_directories,
-                    require_entrypoints=require_entrypoints,
-                ),
-                save_config=lambda: save_local_config_with_ignore_policy(
-                    local_state=local_state,
-                    values=self.values,
-                    update_global_ignores=True,
-                ),
-                exit_with_result=self.exit,
-                result_factory=lambda values, save_result: ConfigWizardResult(values=values, save_result=save_result),
-            )
-
-        def _focus_actions(self) -> ConfigWizardFocusActions:
-            return ConfigWizardFocusActions(
-                values=self.values,
-                current_step=self._current_step,
-                list_view=lambda: self.query_one("#config-list", ListView),
-                nearest_selectable_component_index=self._nearest_selectable_component_index,
-                focus_list=lambda list_view, index: focus_selectable_list(self, list_view, index),
-                focus_widget=lambda widget_id: self.query_one(f"#{widget_id}").focus(),
-            )
 
         def _render_components_step(self, list_view) -> None:
             rows = self._component_rows()
@@ -438,7 +405,7 @@ def build_config_wizard_app(
             self.refresh_bindings()
 
         def _focus_current_step(self) -> None:
-            self._focus_actions().focus_current_step()
+            self._action_bundle().focus().focus_current_step()
 
         def _field_value(self, field_name: str) -> int | str:
             return value_policy.wizard_field_value(self.values, field_name)
@@ -450,7 +417,7 @@ def build_config_wizard_app(
             )
 
         def _nearest_selectable_component_index(self, index: int, *, step: int) -> int:
-            return self._component_actions().nearest_selectable_component_index(index, step=step)
+            return self._action_bundle().component().nearest_selectable_component_index(index, step=step)
 
         def _directory_label(self, field_name: str) -> str:
             return self._form_controller.directory_label(field_name)
@@ -471,28 +438,28 @@ def build_config_wizard_app(
             return self._form_controller.first_directory_error(visible_fields=visible_fields)
 
         def action_cursor_up(self) -> None:
-            self._component_actions().cursor_up()
+            self._action_bundle().component().cursor_up()
 
         def action_cursor_down(self) -> None:
-            self._component_actions().cursor_down()
+            self._action_bundle().component().cursor_down()
 
         def _sync_focus_driven_selection(self) -> None:
-            self._component_actions().sync_focus_driven_selection()
+            self._action_bundle().component().sync_focus_driven_selection()
 
         def action_toggle_item(self) -> None:
-            self._component_actions().toggle_item()
+            self._action_bundle().component().toggle_item()
 
         def _toggle_service_startup_row(self) -> None:
-            self._component_actions().toggle_service_startup_row()
+            self._action_bundle().component().toggle_service_startup_row()
 
         def _toggle_components_row(self) -> None:
-            self._component_actions().toggle_components_row()
+            self._action_bundle().component().toggle_components_row()
 
         def _toggle_component_split(self) -> None:
-            self._component_actions().toggle_component_split()
+            self._action_bundle().component().toggle_component_split()
 
         def _component_split_available(self) -> bool:
-            return self._component_actions().component_split_available()
+            return self._action_bundle().component().component_split_available()
 
         def on_list_view_selected(self, event: ListView.Selected) -> None:
             if self._suppress_list_selected_once:
@@ -501,7 +468,7 @@ def build_config_wizard_app(
             step = self._current_step()
             if step not in {"default_mode", "components", "service_startup"}:
                 return
-            self._component_actions().list_view_selected(index=event.index)
+            self._action_bundle().component().list_view_selected(index=event.index)
 
         def action_focus_next(self) -> None:
             self.screen.focus_next()
@@ -512,7 +479,7 @@ def build_config_wizard_app(
             self._refresh_status()
 
         def action_cycle_command_suggestion(self) -> None:
-            self._suggestion_actions().cycle_command_suggestion()
+            self._action_bundle().suggestions().cycle_command_suggestion()
 
         def action_cancel(self) -> None:
             self.exit(None)
@@ -521,7 +488,7 @@ def build_config_wizard_app(
             if action == "toggle_component_split":
                 return True if self._component_split_available() else False
             if action == "cycle_command_suggestion":
-                return True if self._suggestion_actions().cycle_command_suggestion_available() else False
+                return True if self._action_bundle().suggestions().cycle_command_suggestion_available() else False
             return super().check_action(action, parameters)
 
         def action_go_back(self) -> None:
@@ -531,7 +498,7 @@ def build_config_wizard_app(
             self._toggle_component_split()
 
         def action_submit_or_next(self) -> None:
-            self._flow_actions().submit_or_next()
+            self._action_bundle().flow().submit_or_next()
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
             button_id = event.button.id or ""
@@ -545,10 +512,10 @@ def build_config_wizard_app(
                 self.action_submit_or_next()
 
         def _go_back(self) -> None:
-            self._flow_actions().go_back()
+            self._action_bundle().flow().go_back()
 
         def _advance(self) -> None:
-            self._flow_actions().advance()
+            self._action_bundle().flow().advance()
 
         def _apply_directory_inputs(self) -> bool:
             visible_fields = (
