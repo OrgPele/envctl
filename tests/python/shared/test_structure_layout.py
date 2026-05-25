@@ -2246,6 +2246,8 @@ class StructureLayoutTests(unittest.TestCase):
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "startup_orchestrator.py"
 
         self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        self.assertIn("class StartupRunReuseResolver", owner_text)
         self.assertIn(
             "from envctl_engine.startup.run_reuse_resolution import",
             facade.read_text(encoding="utf-8"),
