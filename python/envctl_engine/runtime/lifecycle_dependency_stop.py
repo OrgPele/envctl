@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.lifecycle_requirement_ports import component_port_values
 from envctl_engine.state.models import RunState
 
 
@@ -58,16 +59,7 @@ def release_requirement_component_ports(
     *,
     release_port_fn: Callable[[int], None],
 ) -> None:
-    ports: set[int] = set()
-    final = component.get("final")
-    if isinstance(final, int) and final > 0:
-        ports.add(final)
-    resources = component.get("resources")
-    if isinstance(resources, Mapping):
-        for value in resources.values():
-            if isinstance(value, int) and value > 0:
-                ports.add(value)
-    for port in sorted(ports):
+    for port in sorted(component_port_values(component)):
         release_port_fn(port)
 
 

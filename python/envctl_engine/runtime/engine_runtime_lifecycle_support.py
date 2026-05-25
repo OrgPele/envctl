@@ -6,13 +6,17 @@ from pathlib import Path
 from typing import Any, cast
 
 from envctl_engine.state.models import RequirementsResult, RunState
+from envctl_engine.runtime.lifecycle_requirement_ports import (
+    release_requirement_ports,
+    requirement_key_for_project,
+    requirement_port_values,
+)
 from envctl_engine.runtime.lifecycle_service_termination import (
     service_port,
     terminate_service_record,
     terminate_services_from_state,
     terminate_started_services,
 )
-from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.requirements.common import (
     build_container_name,
     container_exists as _container_exists,
@@ -36,40 +40,8 @@ __all__ = [
 ]
 
 
-def release_requirement_ports(runtime: Any, requirements: RequirementsResult) -> None:
-    for definition in dependency_definitions():
-        component = requirements.component(definition.id)
-        if not bool(component.get("enabled", False)):
-            continue
-        if bool(component.get("external")):
-            continue
-        port = component.get("final")
-        if isinstance(port, int) and port > 0:
-            runtime.port_planner.release(port)
-
-
-def requirement_key_for_project(state: RunState, project_name: str) -> str | None:
-    target = str(project_name).strip().lower()
-    if not target:
-        return None
-    for key in state.requirements:
-        if str(key).strip().lower() == target:
-            return key
-    return None
-
-
 def _collect_requirement_ports(requirements: RequirementsResult) -> set[int]:
-    ports: set[int] = set()
-    for definition in dependency_definitions():
-        component = requirements.component(definition.id)
-        if not bool(component.get("enabled", False)):
-            continue
-        if bool(component.get("external")):
-            continue
-        port = component.get("final")
-        if isinstance(port, int) and port > 0:
-            ports.add(port)
-    return ports
+    return requirement_port_values(requirements)
 
 
 def _prune_project_metadata(state: RunState, *, project_name: str) -> list[Path]:
