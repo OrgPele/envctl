@@ -20,11 +20,7 @@ from envctl_engine.planning.worktree_provenance import (
 from envctl_engine.planning.worktree_shared_artifacts import link_repo_local_shared_artifacts
 from envctl_engine.planning.worktree_setup_runtime_bridge import WorktreeSetupRuntimeBridge
 from envctl_engine.planning.worktree_spinner_support import worktree_spinner_update
-from envctl_engine.planning.worktree_sync_deletion import delete_feature_worktrees
-from envctl_engine.planning.worktree_sync_orchestration import (
-    sync_plan_worktrees_from_plan_counts,
-    sync_single_plan_worktree_target,
-)
+from envctl_engine.planning.worktree_sync_runtime_bridge import WorktreeSyncRuntimeBridge
 from envctl_engine.runtime.command_router import Route
 
 
@@ -55,6 +51,18 @@ class PlanningRuntimeBridge:
             link_repo_local_shared_artifacts=self.link_repo_local_shared_artifacts,
             prepare_worktree_code_intelligence=self.prepare_worktree_code_intelligence,
             write_worktree_provenance=self.write_worktree_provenance,
+        )
+
+    def sync_bridge(self) -> WorktreeSyncRuntimeBridge:
+        return WorktreeSyncRuntimeBridge(
+            runtime=self.runtime,
+            discover_tree_projects=self.discover_tree_projects,
+            delete_worktree_path=self.delete_worktree_path,
+            process_runtime_factory=self.process_runtime_factory,
+            render_planning_path=self.render_planning_path,
+            update_spinner=self.update_spinner,
+            output=self.output,
+            create_feature_worktrees_result=self.create_feature_worktrees_result,
         )
 
     def render_planning_path(
@@ -244,20 +252,12 @@ class PlanningRuntimeBridge:
         fresh_ai_launch: bool = False,
         launch_transport: str = "",
     ) -> PlanWorktreeSyncResult:
-        runtime = self.runtime
-        return sync_plan_worktrees_from_plan_counts(
+        return self.sync_bridge().sync_plan_worktrees_from_plan_counts(
             plan_counts=plan_counts,
             raw_projects=raw_projects,
             keep_plan=keep_plan,
             fresh_ai_launch=fresh_ai_launch,
             launch_transport=launch_transport,
-            ensure_trees_root=lambda: (runtime.config.base_dir / runtime.config.trees_dir_name).mkdir(
-                parents=True,
-                exist_ok=True,
-            ),
-            env=getattr(runtime, "env", {}),
-            emit=getattr(runtime, "_emit", None),
-            sync_single_plan_worktree_target=lambda **kwargs: self.sync_single_plan_worktree_target(**kwargs),
         )
 
     def sync_single_plan_worktree_target(
@@ -273,8 +273,7 @@ class PlanningRuntimeBridge:
         fresh_ai_launch: bool = False,
         launch_transport: str = "",
     ) -> PlanWorktreeSyncResult:
-        runtime = self.runtime
-        return sync_single_plan_worktree_target(
+        return self.sync_bridge().sync_single_plan_worktree_target(
             plan_file=plan_file,
             desired_raw=desired_raw,
             projects=projects,
@@ -284,22 +283,6 @@ class PlanningRuntimeBridge:
             enabled=enabled,
             active_spinner=active_spinner,
             op_id=op_id,
-            feature_project_candidates=runtime._feature_project_candidates,
-            create_feature_worktrees_result=lambda **kwargs: self.create_feature_worktrees_result(**kwargs),
-            discover_tree_projects=lambda: self.discover_tree_projects(
-                runtime.config.base_dir,
-                runtime.config.trees_dir_name,
-            ),
-            delete_feature_worktrees=runtime._delete_feature_worktrees,
-            cleanup_empty_feature_root=runtime._cleanup_empty_feature_root,
-            move_plan_to_done=runtime._move_plan_to_done,
-            render_planning_path=lambda *, plan_file, interactive_tty: self.render_planning_path(
-                absolute_path=runtime._planning_root() / plan_file,
-                display_text=plan_file,
-                interactive_tty=interactive_tty,
-            ),
-            update=lambda **kwargs: self.update_spinner(**kwargs),
-            output=self.output,
         )
 
     def create_feature_worktrees(self, *, feature: str, count: int, plan_file: str) -> str | None:
@@ -360,25 +343,10 @@ class PlanningRuntimeBridge:
         candidates: list[tuple[str, Path]],
         remove_count: int,
     ) -> str | None:
-        runtime = self.runtime
-        from envctl_engine.planning.worktree_provenance import active_fresh_ai_worktree_protection_reason
-
-        return delete_feature_worktrees(
+        return self.sync_bridge().delete_feature_worktrees(
             feature=feature,
             candidates=candidates,
             remove_count=remove_count,
-            project_sort_key_for_feature=runtime._project_sort_key_for_feature,
-            active_protection_reason=lambda *, name, root: active_fresh_ai_worktree_protection_reason(
-                runtime,
-                name=name,
-                root=root,
-            ),
-            blast_worktree_before_delete=getattr(runtime, "_blast_worktree_before_delete", None),
-            delete_worktree=self.delete_worktree_path,
-            repo_root=runtime.config.base_dir,
-            trees_root_for_worktree=runtime._trees_root_for_worktree,
-            process_runner=self.process_runtime_factory(runtime),
-            emit=runtime._emit,
         )
 
     def move_plan_to_done(self, plan_file: str) -> None:

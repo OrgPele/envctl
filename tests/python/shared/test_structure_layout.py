@@ -1417,6 +1417,9 @@ class StructureLayoutTests(unittest.TestCase):
         menu_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_menu_terminal_support.py"
         spinner_owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_spinner_support.py"
         runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
+        sync_runtime_bridge = (
+            REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_runtime_bridge.py"
+        )
         protocols = REPO_ROOT / "python" / "envctl_engine" / "planning" / "protocols.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
 
@@ -1424,11 +1427,13 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(menu_owner.is_file())
         self.assertTrue(spinner_owner.is_file())
         self.assertTrue(runtime_bridge.is_file())
+        self.assertTrue(sync_runtime_bridge.is_file())
         self.assertTrue(protocols.is_file())
         owner_text = owner.read_text(encoding="utf-8")
         menu_owner_text = menu_owner.read_text(encoding="utf-8")
         spinner_owner_text = spinner_owner.read_text(encoding="utf-8")
         runtime_bridge_text = runtime_bridge.read_text(encoding="utf-8")
+        sync_runtime_bridge_text = sync_runtime_bridge.read_text(encoding="utf-8")
         setup_coordinator_text = (
             REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_setup_coordinator.py"
         ).read_text(encoding="utf-8")
@@ -1446,10 +1451,12 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def worktree_spinner_update", spinner_owner_text)
         self.assertIn("def worktree_spinner_stop", spinner_owner_text)
         self.assertIn("class PlanningRuntimeBridge", runtime_bridge_text)
+        self.assertIn("class WorktreeSyncRuntimeBridge", sync_runtime_bridge_text)
         self.assertIn("def create_planning_runtime_bridge", runtime_bridge_text)
         self.assertIn("def create_single_worktree", runtime_bridge_text)
-        self.assertIn("def sync_plan_worktrees_from_plan_counts", runtime_bridge_text)
-        self.assertIn("def delete_feature_worktrees", runtime_bridge_text)
+        self.assertIn("def sync_bridge", runtime_bridge_text)
+        self.assertIn("def sync_plan_worktrees_from_plan_counts", sync_runtime_bridge_text)
+        self.assertIn("def delete_feature_worktrees", sync_runtime_bridge_text)
         self.assertNotIn("def _worktree_spinner_update", setup_coordinator_text)
         self.assertNotIn("def _spinner_update", sync_orchestration_text)
         facade_text = facade.read_text(encoding="utf-8")
