@@ -1308,6 +1308,15 @@ class StructureLayoutTests(unittest.TestCase):
             / "screens"
             / "config_wizard_flow_actions.py"
         )
+        focus_actions_owner = (
+            REPO_ROOT
+            / "python"
+            / "envctl_engine"
+            / "ui"
+            / "textual"
+            / "screens"
+            / "config_wizard_focus_actions.py"
+        )
 
         self.assertTrue(app_owner.is_file())
         self.assertTrue(component_owner.is_file())
@@ -1324,6 +1333,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(suggestion_owner.is_file())
         self.assertTrue(suggestion_actions_owner.is_file())
         self.assertTrue(flow_actions_owner.is_file())
+        self.assertTrue(focus_actions_owner.is_file())
         app_text = app_owner.read_text(encoding="utf-8")
         component_text = component_owner.read_text(encoding="utf-8")
         component_actions_text = component_actions_owner.read_text(encoding="utf-8")
@@ -1339,6 +1349,7 @@ class StructureLayoutTests(unittest.TestCase):
         suggestion_text = suggestion_owner.read_text(encoding="utf-8")
         suggestion_actions_text = suggestion_actions_owner.read_text(encoding="utf-8")
         flow_actions_text = flow_actions_owner.read_text(encoding="utf-8")
+        focus_actions_text = focus_actions_owner.read_text(encoding="utf-8")
         self.assertIn("class ConfigWizardResult", app_text)
         self.assertIn("def build_config_wizard_app", app_text)
         self.assertIn("class ConfigWizardApp", app_text)
@@ -1386,6 +1397,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class ConfigWizardFlowActions", flow_actions_text)
         self.assertIn("def submit_or_next", flow_actions_text)
         self.assertIn("def advance", flow_actions_text)
+        self.assertIn("class ConfigWizardFocusActions", focus_actions_text)
+        self.assertIn("def focus_current_step", focus_actions_text)
         screen_text = screen.read_text(encoding="utf-8")
         self.assertIn("from .config_wizard_app import ConfigWizardResult, _emit, build_config_wizard_app", screen_text)
         self.assertIn("from . import config_wizard_components as component_policy", app_text)
@@ -1403,6 +1416,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from .config_wizard_suggestion_actions import ConfigWizardSuggestionActions", app_text)
         self.assertIn("from .config_wizard_suggestions import", app_text)
         self.assertIn("from .config_wizard_flow_actions import ConfigWizardFlowActions", app_text)
+        self.assertIn("from .config_wizard_focus_actions import ConfigWizardFocusActions", app_text)
         self.assertLessEqual(len(screen_text.splitlines()), 90)
         self.assertLessEqual(len(app_text.splitlines()), 825)
 

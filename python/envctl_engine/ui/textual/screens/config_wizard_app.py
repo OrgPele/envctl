@@ -26,16 +26,14 @@ from .config_wizard_fields import (
     _SERVICE_STARTUP_FIELDS,
     _STEP_HELP_TEXT,
     _STEP_TITLES,
-    _additional_service_input_id,
     _directory_field_name_from_input_id,
-    _directory_input_id,
     _hydrate_wizard_values,
-    _port_input_id,
     _visible_command_fields,
     _visible_directory_fields,
     _visible_port_fields,
 )
 from .config_wizard_flow_actions import ConfigWizardFlowActions
+from .config_wizard_focus_actions import ConfigWizardFocusActions
 from .config_wizard_form import ConfigWizardFormController
 from .config_wizard_hints import ConfigWizardHintResolver
 from .config_wizard_layout import CONFIG_WIZARD_APP_CSS, compose_config_wizard_layout
@@ -425,6 +423,16 @@ def build_config_wizard_app(
                 result_factory=lambda values, save_result: ConfigWizardResult(values=values, save_result=save_result),
             )
 
+        def _focus_actions(self) -> ConfigWizardFocusActions:
+            return ConfigWizardFocusActions(
+                values=self.values,
+                current_step=self._current_step,
+                list_view=lambda: self.query_one("#config-list", ListView),
+                nearest_selectable_component_index=self._nearest_selectable_component_index,
+                focus_list=lambda list_view, index: focus_selectable_list(self, list_view, index),
+                focus_widget=lambda widget_id: self.query_one(f"#{widget_id}").focus(),
+            )
+
         def _render_components_step(self, list_view) -> None:
             rows = self._component_rows()
             selected_flags = self._component_interaction.selected_flags(rows)
@@ -498,34 +506,7 @@ def build_config_wizard_app(
             self.refresh_bindings()
 
         def _focus_current_step(self) -> None:
-            step = self._current_step()
-            if step in {"default_mode", "components", "service_startup"}:
-                list_view = self.query_one("#config-list", ListView)
-                if step == "components":
-                    list_view.index = self._nearest_selectable_component_index(list_view.index or 0, step=1)
-                focus_selectable_list(self, list_view, list_view.index)
-            elif step in {"directories", "commands"}:
-                visible_fields = (
-                    _visible_directory_fields(self.values)
-                    if step == "directories"
-                    else _visible_command_fields(self.values)
-                )
-                if visible_fields:
-                    self.query_one(f"#{_directory_input_id(visible_fields[0][0])}", Input).focus()
-                else:
-                    self.query_one("#btn-next", Button).focus()
-            elif step == "ports":
-                visible_fields = _visible_port_fields(self.values)
-                if visible_fields:
-                    self.query_one(f"#{_port_input_id(visible_fields[0][0])}", Input).focus()
-                else:
-                    self.query_one("#btn-next", Button).focus()
-            elif step == "additional_services":
-                self.query_one(f"#{_additional_service_input_id('slug')}", Input).focus()
-            elif step == "review":
-                self.query_one("#config-review-scroll", VerticalScroll).focus()
-            else:
-                self.query_one("#btn-next", Button).focus()
+            self._focus_actions().focus_current_step()
 
         def _field_value(self, field_name: str) -> int | str:
             return value_policy.wizard_field_value(self.values, field_name)
