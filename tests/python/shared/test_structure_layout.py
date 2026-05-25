@@ -1169,6 +1169,23 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertLessEqual(len(screen_text.splitlines()), 90)
         self.assertLessEqual(len(app_text.splitlines()), 1220)
 
+    def test_textual_selector_has_backend_policy_owner(self) -> None:
+        selector = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "selector"
+        support = selector / "support.py"
+        backend_policy = selector / "backend_policy.py"
+
+        self.assertTrue(support.is_file())
+        self.assertTrue(backend_policy.is_file())
+        support_text = support.read_text(encoding="utf-8")
+        backend_text = backend_policy.read_text(encoding="utf-8")
+        self.assertIn("class SelectorBackendDecision", backend_text)
+        self.assertIn("def selector_backend_decision", backend_text)
+        self.assertIn("def selector_impl", backend_text)
+        self.assertIn("def selector_driver_thread_snapshot", backend_text)
+        self.assertIn("from .backend_policy import", support_text)
+        self.assertIn("def _selector_backend_decision", support_text)
+        self.assertLessEqual(len(support_text.splitlines()), 800)
+
     def test_removed_dead_leaf_modules_are_absent(self) -> None:
         stale_modules = [
             "python/envctl_engine/test_output/coverage.py",

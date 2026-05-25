@@ -3,21 +3,53 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import os
-import re
 import sys
 import threading
 import time
-import traceback
 from typing import Any, Callable, Mapping, Sequence, cast
 
-from envctl_engine.ui.capabilities import (
-    prompt_toolkit_selector_enabled as _prompt_toolkit_selector_enabled_impl,
-    textual_importable as _textual_importable_impl,
-)
 from envctl_engine.ui.selector_model import (
     SelectorItem,
 )
 from envctl_engine.ui.terminal_session import can_interactive_tty, prompt_toolkit_available
+
+from . import backend_policy as _backend_policy
+from .backend_policy import (
+    deep_debug_enabled as _deep_debug_enabled,
+    emit_selector_debug as _emit_selector_debug,
+    emit_selector_event as _emit,
+    selector_disable_focus_reporting_enabled as _selector_disable_focus_reporting_enabled,
+    selector_driver_thread_snapshot as _selector_driver_thread_snapshot,
+    selector_driver_trace_enabled as _selector_driver_trace_enabled,
+    selector_id as _selector_id,
+    selector_impl as _selector_impl,
+    selector_key_trace_enabled as _selector_key_trace_enabled,
+    selector_key_trace_verbose_enabled as _selector_key_trace_verbose_enabled,
+    selector_prompt_toolkit_enabled as _prompt_toolkit_selector_enabled,
+    selector_textual_importable as _textual_importable,
+    selector_thread_stack_enabled as _selector_thread_stack_enabled,
+)
+
+__all__ = [
+    "_RowRef",
+    "_deep_debug_enabled",
+    "_emit",
+    "_emit_selector_debug",
+    "_guard_textual_nonblocking_read",
+    "_instrument_prompt_toolkit_posix_io",
+    "_instrument_textual_parser_keys",
+    "_prompt_toolkit_selector_enabled",
+    "_selector_backend_decision",
+    "_selector_disable_focus_reporting_enabled",
+    "_selector_driver_thread_snapshot",
+    "_selector_driver_trace_enabled",
+    "_selector_id",
+    "_selector_impl",
+    "_selector_key_trace_enabled",
+    "_selector_key_trace_verbose_enabled",
+    "_selector_thread_stack_enabled",
+    "_textual_importable",
+]
 
 
 @dataclass(slots=True)
@@ -27,174 +59,10 @@ class _RowRef:
     visible: bool = True
 
 
-def _emit(emit: Callable[..., None] | None, event: str, **payload: object) -> None:
-    if not callable(emit):
-        return
-    emit(event, component="ui.textual.selector", **payload)
-
-
-def _selector_id(prompt: str) -> str:
-    normalized = re.sub(r"[^a-z0-9]+", "_", str(prompt).strip().lower()).strip("_")
-    return normalized or "selector"
-
-
-def _selector_impl() -> str:
-    simple_menus = str(os.environ.get("ENVCTL_UI_SIMPLE_MENUS", "")).strip().lower()
-    if simple_menus in {"1", "true", "yes", "on"}:
-        return "planning_style"
-    if simple_menus in {"0", "false", "no", "off"}:
-        return "textual"
-    raw = str(os.environ.get("ENVCTL_UI_SELECTOR_IMPL", "")).strip().lower()
-    if raw in {"planning_style", "prompt_toolkit", "prompt-toolkit", "ptk"}:
-        return "planning_style"
-    if raw in {"textual", "textual_plan_style", "legacy"}:
-        return "textual"
-    return "textual"
-
-
-def _prompt_toolkit_selector_enabled(*, build_only: bool = False) -> bool:
-    if build_only:
-        return False
-    return _prompt_toolkit_selector_enabled_impl(os.environ)
-
-
-def _textual_importable() -> bool:
-    return _textual_importable_impl()
-
-
-def _deep_debug_enabled(emit: Callable[..., None] | None) -> bool:
-    runtime = getattr(emit, "__self__", None)
-    env = getattr(runtime, "env", None)
-    value = ""
-    if isinstance(env, Mapping):
-        value = str(env.get("ENVCTL_DEBUG_UI_MODE", "")).strip().lower()
-    if not value:
-        value = str(os.environ.get("ENVCTL_DEBUG_UI_MODE", "")).strip().lower()
-    return value == "deep"
-
-
-def _selector_key_trace_enabled(emit: Callable[..., None] | None) -> bool:
-    if not _deep_debug_enabled(emit):
-        return False
-    runtime = getattr(emit, "__self__", None)
-    env = getattr(runtime, "env", None)
-    value = ""
-    if isinstance(env, Mapping):
-        value = str(env.get("ENVCTL_DEBUG_SELECTOR_KEYS", "")).strip().lower()
-    if not value:
-        value = str(os.environ.get("ENVCTL_DEBUG_SELECTOR_KEYS", "")).strip().lower()
-    if value in {"0", "false", "no", "off"}:
-        return False
-    # Default in deep mode: collect lightweight key counters and emit one summary.
-    return True
-
-
-def _selector_key_trace_verbose_enabled(emit: Callable[..., None] | None) -> bool:
-    runtime = getattr(emit, "__self__", None)
-    env = getattr(runtime, "env", None)
-    value = ""
-    if isinstance(env, Mapping):
-        value = str(env.get("ENVCTL_DEBUG_SELECTOR_KEYS_VERBOSE", "")).strip().lower()
-    if not value:
-        value = str(os.environ.get("ENVCTL_DEBUG_SELECTOR_KEYS_VERBOSE", "")).strip().lower()
-    return value in {"1", "true", "yes", "on"}
-
-
-def _selector_driver_trace_enabled(emit: Callable[..., None] | None) -> bool:
-    deep_debug = _deep_debug_enabled(emit)
-    runtime = getattr(emit, "__self__", None)
-    env = getattr(runtime, "env", None)
-    value = ""
-    if isinstance(env, Mapping):
-        value = str(env.get("ENVCTL_DEBUG_SELECTOR_DRIVER_KEYS", "")).strip().lower()
-    if not value:
-        value = str(os.environ.get("ENVCTL_DEBUG_SELECTOR_DRIVER_KEYS", "")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off"}:
-        return False
-    # Default in deep mode so incident bundles include parser ingress evidence.
-    return deep_debug
-
-
-def _selector_thread_stack_enabled(emit: Callable[..., None] | None) -> bool:
-    if not _deep_debug_enabled(emit):
-        return False
-    runtime = getattr(emit, "__self__", None)
-    env = getattr(runtime, "env", None)
-    value = ""
-    if isinstance(env, Mapping):
-        value = str(env.get("ENVCTL_DEBUG_SELECTOR_THREAD_STACK", "")).strip().lower()
-    if not value:
-        value = str(os.environ.get("ENVCTL_DEBUG_SELECTOR_THREAD_STACK", "")).strip().lower()
-    return value in {"1", "true", "yes", "on"}
-
-
-def _selector_disable_focus_reporting_enabled(emit: Callable[..., None] | None) -> bool:
-    runtime = getattr(emit, "__self__", None)
-    env = getattr(runtime, "env", None)
-    value = ""
-    if isinstance(env, Mapping):
-        value = str(env.get("ENVCTL_UI_SELECTOR_FOCUS_REPORTING", "")).strip().lower()
-    if not value:
-        value = str(os.environ.get("ENVCTL_UI_SELECTOR_FOCUS_REPORTING", "")).strip().lower()
-    if value in {"1", "true", "yes", "on", "enable", "enabled"}:
-        return False
-    if value in {"0", "false", "no", "off", "disable", "disabled"}:
-        return True
-    # Default to disabling focus reports in selector screens to avoid spurious
-    # focus-out events swallowing subsequent keyboard interaction on some terminals.
-    return True
-
-
-def _selector_driver_thread_snapshot(app: object, *, include_stack: bool) -> dict[str, object]:
-    snapshot: dict[str, object] = {}
-    try:
-        driver = getattr(app, "_driver", None)
-    except Exception:
-        driver = None
-    if driver is None:
-        snapshot["driver_present"] = False
-        return snapshot
-    snapshot["driver_present"] = True
-    exit_event = getattr(driver, "exit_event", None)
-    is_set = getattr(exit_event, "is_set", None)
-    if callable(is_set):
-        try:
-            snapshot["driver_exit_event_set"] = bool(is_set())
-        except Exception:
-            snapshot["driver_exit_event_set"] = None
-    key_thread = getattr(driver, "_key_thread", None)
-    if key_thread is None:
-        snapshot["input_thread_present"] = False
-        return snapshot
-    snapshot["input_thread_present"] = True
-    snapshot["input_thread_name"] = str(getattr(key_thread, "name", "") or "")
-    snapshot["input_thread_ident"] = getattr(key_thread, "ident", None)
-    snapshot["input_thread_native_id"] = getattr(key_thread, "native_id", None)
-    snapshot["input_thread_daemon"] = bool(getattr(key_thread, "daemon", False))
-    is_alive = getattr(key_thread, "is_alive", None)
-    alive = bool(is_alive()) if callable(is_alive) else False
-    snapshot["input_thread_alive"] = alive
-    if not include_stack or not alive:
-        return snapshot
-    ident = getattr(key_thread, "ident", None)
-    if not isinstance(ident, int):
-        snapshot["input_thread_stack"] = []
-        return snapshot
-    try:
-        frame = sys._current_frames().get(ident)
-    except Exception:
-        frame = None
-    if frame is None:
-        snapshot["input_thread_stack"] = []
-        return snapshot
-    try:
-        extracted = traceback.extract_stack(frame, limit=8)
-        snapshot["input_thread_stack"] = [f"{entry.filename}:{entry.lineno}:{entry.name}" for entry in extracted]
-    except Exception as exc:
-        snapshot["input_thread_stack_error"] = type(exc).__name__
-    return snapshot
+def _selector_backend_decision(*, build_only: bool) -> tuple[bool, dict[str, object]]:
+    _backend_policy.can_interactive_tty = can_interactive_tty
+    _backend_policy.prompt_toolkit_available = prompt_toolkit_available
+    return _backend_policy.selector_backend_decision(build_only=build_only)
 
 
 @contextmanager
@@ -894,61 +762,3 @@ def _instrument_prompt_toolkit_posix_io(
             backend="prompt_toolkit",
             **_snapshot(),
         )
-
-
-def _selector_backend_decision(*, build_only: bool) -> tuple[bool, dict[str, object]]:
-    info: dict[str, object] = {"build_only": bool(build_only)}
-    can_tty = can_interactive_tty()
-    ptk_available = prompt_toolkit_available()
-    backend_pref = str(os.environ.get("ENVCTL_UI_SELECTOR_BACKEND", "")).strip().lower()
-    raw_ptk = str(os.environ.get("ENVCTL_UI_PROMPT_TOOLKIT", "")).strip().lower()
-    info["can_interactive_tty"] = bool(can_tty)
-    info["prompt_toolkit_available"] = bool(ptk_available)
-    info["env_selector_backend"] = backend_pref
-    info["env_ui_prompt_toolkit"] = raw_ptk
-
-    if build_only:
-        info["reason"] = "build_only"
-        info["backend"] = "textual"
-        return False, info
-    if backend_pref in {"textual", "tui"}:
-        info["reason"] = "env_forced_textual"
-        info["backend"] = "textual"
-        return False, info
-    if backend_pref in {"prompt_toolkit", "prompt-toolkit", "ptk"}:
-        enabled = can_tty and ptk_available
-        info["reason"] = "env_forced_prompt_toolkit"
-        info["backend"] = "prompt_toolkit" if enabled else "textual"
-        return enabled, info
-    if raw_ptk in {"1", "true", "yes", "on"}:
-        enabled = can_tty and ptk_available
-        info["reason"] = "env_prompt_toolkit_enabled"
-        info["backend"] = "prompt_toolkit" if enabled else "textual"
-        return enabled, info
-    if not can_tty:
-        info["reason"] = "non_tty"
-        info["backend"] = "textual"
-        return False, info
-    if raw_ptk in {"0", "false", "no", "off"}:
-        info["reason"] = "env_prompt_toolkit_disabled"
-        info["backend"] = "textual"
-        return False, info
-    if ptk_available:
-        info["reason"] = "default_prompt_toolkit"
-        info["backend"] = "prompt_toolkit"
-        return True, info
-    info["reason"] = "default_textual_prompt_toolkit_missing"
-    info["backend"] = "textual"
-    return False, info
-
-
-def _emit_selector_debug(
-    emit: Callable[..., None] | None,
-    *,
-    enabled: bool,
-    event: str,
-    **payload: object,
-) -> None:
-    if not enabled:
-        return
-    _emit(emit, event, **payload)
