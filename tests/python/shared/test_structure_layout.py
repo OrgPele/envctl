@@ -727,9 +727,25 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from envctl_engine.config.models import", facade_text)
         self.assertIn("from envctl_engine.config.command_defaults import", facade_text)
         self.assertIn("from envctl_engine.config.defaults import", facade_text)
+        self.assertIn("from envctl_engine.config.load_support import", facade_text)
         self.assertIn("from envctl_engine.config.service_parsing import", facade_text)
         self.assertIn("from envctl_engine.config.source_discovery import", facade_text)
-        self.assertLessEqual(len(facade_text.splitlines()), 685)
+        load_support = REPO_ROOT / "python" / "envctl_engine" / "config" / "load_support.py"
+        self.assertTrue(load_support.is_file())
+        load_support_text = load_support.read_text(encoding="utf-8")
+        self.assertIn("def _apply_dependency_env_template_inferences", load_support_text)
+        self.assertIn("def _startup_profile_from_resolved", load_support_text)
+        self.assertIn("def _runtime_scope_id", load_support_text)
+        self.assertIn("def _parse_runtime_truth_mode", load_support_text)
+        self.assertNotIn(
+            "dependency_ports: dict[str, dict[str, int]] = {}\n    dependency_ports: dict[str, dict[str, int]] = {}",
+            facade_text,
+        )
+        self.assertNotIn(
+            'mode: Literal["main", "trees"],\n    mode: Literal["main", "trees"],',
+            facade_text,
+        )
+        self.assertLessEqual(len(facade_text.splitlines()), 560)
 
     def test_prompt_install_support_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
