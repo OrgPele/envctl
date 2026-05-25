@@ -2,116 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
 
 from envctl_engine.planning.protocols import ProjectContextLike
+from envctl_engine.planning.worktree_spinner_support import WorktreeSpinnerLifecycle
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
-from envctl_engine.ui.spinner_service import SpinnerPolicy, emit_spinner_policy, resolve_spinner_policy
+from envctl_engine.ui.spinner_service import resolve_spinner_policy
 
 
 RawProject = tuple[str, Path]
-
-
-def _worktree_spinner_policy(*, env: Mapping[str, str], emit: Callable[..., None] | None, op_id: str) -> SpinnerPolicy:
-    policy = resolve_spinner_policy(env)
-    emit_spinner_policy(
-        emit,
-        policy,
-        context={"component": "worktree_planning", "op_id": op_id},
-    )
-    return policy
-
-
-def _worktree_spinner_update(
-    *,
-    emit: Callable[..., None] | None,
-    enabled: bool,
-    active_spinner: Any,
-    op_id: str,
-    message: str,
-) -> None:
-    if enabled:
-        active_spinner.update(message)
-    if emit is not None:
-        emit(
-            "ui.spinner.lifecycle",
-            component="worktree_planning",
-            op_id=op_id,
-            state="update",
-            message=message,
-        )
-
-
-def _worktree_spinner_start(
-    *,
-    emit: Callable[..., None] | None,
-    enabled: bool,
-    active_spinner: Any,
-    op_id: str,
-    message: str,
-) -> None:
-    if enabled:
-        active_spinner.start()
-    if emit is not None:
-        emit(
-            "ui.spinner.lifecycle",
-            component="worktree_planning",
-            op_id=op_id,
-            state="start",
-            message=message,
-        )
-
-
-def _worktree_spinner_finish(
-    *,
-    emit: Callable[..., None] | None,
-    enabled: bool,
-    active_spinner: Any,
-    op_id: str,
-    message: str,
-) -> None:
-    if enabled:
-        active_spinner.succeed(message)
-    if emit is not None:
-        emit(
-            "ui.spinner.lifecycle",
-            component="worktree_planning",
-            op_id=op_id,
-            state="success",
-            message=message,
-        )
-
-
-def _worktree_spinner_fail(
-    *,
-    emit: Callable[..., None] | None,
-    enabled: bool,
-    active_spinner: Any,
-    op_id: str,
-    message: str,
-) -> None:
-    if enabled:
-        active_spinner.fail(message)
-    if emit is not None:
-        emit(
-            "ui.spinner.lifecycle",
-            component="worktree_planning",
-            op_id=op_id,
-            state="fail",
-            message=message,
-        )
-
-
-def _worktree_spinner_stop(*, emit: Callable[..., None] | None, enabled: bool, op_id: str) -> None:
-    if emit is not None:
-        emit(
-            "ui.spinner.lifecycle",
-            component="worktree_planning",
-            op_id=op_id,
-            state="stop",
-            enabled=enabled,
-        )
 
 
 def apply_setup_worktree_selection(
@@ -156,7 +55,14 @@ def apply_setup_worktree_selection(
     selected_names: set[str] = set()
     setup_features: list[str] = []
     op_id = "worktree.setup"
-    policy = _worktree_spinner_policy(env=env, emit=emit, op_id=op_id)
+    spinner_lifecycle = WorktreeSpinnerLifecycle(
+        env=env,
+        emit=emit,
+        emit_when_disabled=True,
+        include_stop_enabled=True,
+        policy_resolver=resolve_spinner_policy,
+    )
+    policy = spinner_lifecycle.policy(op_id=op_id)
     enabled = bool(policy.enabled)
 
     with (
@@ -167,8 +73,7 @@ def apply_setup_worktree_selection(
             start_immediately=False,
         ) as active_spinner,
     ):
-        _worktree_spinner_start(
-            emit=emit,
+        spinner_lifecycle.start(
             enabled=enabled,
             active_spinner=active_spinner,
             op_id=op_id,
@@ -209,8 +114,7 @@ def apply_setup_worktree_selection(
                     include_tokens=include_list,
                 )
                 if missing:
-                    _worktree_spinner_update(
-                        emit=emit,
+                    spinner_lifecycle.update(
                         enabled=enabled,
                         active_spinner=active_spinner,
                         op_id=op_id,
@@ -219,8 +123,7 @@ def apply_setup_worktree_selection(
 
             refreshed_contexts = contexts_from_raw_projects(raw_projects)
             if not selected_names:
-                _worktree_spinner_finish(
-                    emit=emit,
+                spinner_lifecycle.finish(
                     enabled=enabled,
                     active_spinner=active_spinner,
                     op_id=op_id,
@@ -231,8 +134,7 @@ def apply_setup_worktree_selection(
             filtered = [context for context in refreshed_contexts if context.name.lower() in selected_lower]
             if not filtered:
                 raise RuntimeError("No worktrees selected to run.")
-            _worktree_spinner_finish(
-                emit=emit,
+            spinner_lifecycle.finish(
                 enabled=enabled,
                 active_spinner=active_spinner,
                 op_id=op_id,
@@ -240,8 +142,7 @@ def apply_setup_worktree_selection(
             )
             return filtered
         except Exception:
-            _worktree_spinner_fail(
-                emit=emit,
+            spinner_lifecycle.fail(
                 enabled=enabled,
                 active_spinner=active_spinner,
                 op_id=op_id,
@@ -249,4 +150,4 @@ def apply_setup_worktree_selection(
             )
             raise
         finally:
-            _worktree_spinner_stop(emit=emit, enabled=enabled, op_id=op_id)
+            spinner_lifecycle.stop(enabled=enabled, op_id=op_id)

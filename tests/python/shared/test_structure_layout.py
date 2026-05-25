@@ -1380,12 +1380,19 @@ class StructureLayoutTests(unittest.TestCase):
         menu_owner_text = menu_owner.read_text(encoding="utf-8")
         spinner_owner_text = spinner_owner.read_text(encoding="utf-8")
         runtime_bridge_text = runtime_bridge.read_text(encoding="utf-8")
+        setup_coordinator_text = (
+            REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_setup_coordinator.py"
+        ).read_text(encoding="utf-8")
+        sync_orchestration_text = (
+            REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_orchestration.py"
+        ).read_text(encoding="utf-8")
         self.assertIn("def preferred_tree_root_for_feature", owner_text)
         self.assertIn("def trees_root_for_worktree", owner_text)
         self.assertIn("def resolve_planning_selection_target", owner_text)
         self.assertIn("def setup_worktree_requested", owner_text)
         self.assertIn("def render_planning_selection_menu", menu_owner_text)
         self.assertIn("def planning_menu_apply_key", menu_owner_text)
+        self.assertIn("class WorktreeSpinnerLifecycle", spinner_owner_text)
         self.assertIn("def worktree_spinner_policy", spinner_owner_text)
         self.assertIn("def worktree_spinner_update", spinner_owner_text)
         self.assertIn("def worktree_spinner_stop", spinner_owner_text)
@@ -1393,6 +1400,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def create_single_worktree", runtime_bridge_text)
         self.assertIn("def sync_plan_worktrees_from_plan_counts", runtime_bridge_text)
         self.assertIn("def delete_feature_worktrees", runtime_bridge_text)
+        self.assertNotIn("def _worktree_spinner_update", setup_coordinator_text)
+        self.assertNotIn("def _spinner_update", sync_orchestration_text)
         facade_text = facade.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.planning.worktree_path_support import", facade_text)
         self.assertIn("from envctl_engine.planning.worktree_menu_terminal_support import", facade_text)
