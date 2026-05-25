@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,42 @@ CombinedExclusionsFn = Callable[..., tuple[str, ...]]
 PreviousSessionNamesFn = Callable[..., tuple[str, ...]]
 SleepFn = Callable[[float], None]
 MonotonicFn = Callable[[], float]
+
+
+@dataclass(frozen=True, slots=True)
+class OmxAttachTargetFinder:
+    runtime: Any
+    repo_root: Path
+    worktree: CreatedPlanWorktree
+    attach_via: str
+    omx_session_records_for_worktree: Callable[..., list[_OmxSessionRecord]]
+    attach_target_from_omx_record: AttachTargetFromRecordFn
+    attach_target_from_pane_fallback: AttachTargetFromPaneFallbackFn
+    previous_session_id: str = ""
+    previous_session_ids: tuple[str, ...] = ()
+    excluded_session_names: tuple[str, ...] = ()
+
+    def discover(self) -> PlanAgentAttachTarget | None:
+        for record in self.omx_session_records_for_worktree(self.runtime, self.worktree):
+            attach_target = self.attach_target_from_omx_record(
+                self.runtime,
+                repo_root=self.repo_root,
+                worktree=self.worktree,
+                record=record,
+                attach_via=self.attach_via,
+                previous_session_id=self.previous_session_id,
+                previous_session_ids=self.previous_session_ids,
+                excluded_session_names=self.excluded_session_names,
+            )
+            if attach_target is not None:
+                return attach_target
+        return self.attach_target_from_pane_fallback(
+            self.runtime,
+            repo_root=self.repo_root,
+            worktree=self.worktree,
+            attach_via=self.attach_via,
+            excluded_session_names=self.excluded_session_names,
+        )
 
 
 def omx_session_state_path_for_root(omx_root: Path) -> Path:
@@ -407,22 +444,15 @@ def find_existing_omx_attach_target(
 ) -> PlanAgentAttachTarget | None:
     attach_via = "attach-session"
     for worktree in created_worktrees:
-        for record in omx_session_records_for_worktree_fn(runtime, worktree):
-            attach_target = attach_target_from_omx_record_fn(
-                runtime,
-                repo_root=repo_root,
-                worktree=worktree,
-                record=record,
-                attach_via=attach_via,
-            )
-            if attach_target is not None:
-                return attach_target
-        attach_target = attach_target_from_pane_fallback_fn(
-            runtime,
+        attach_target = OmxAttachTargetFinder(
+            runtime=runtime,
             repo_root=repo_root,
             worktree=worktree,
             attach_via=attach_via,
-        )
+            omx_session_records_for_worktree=omx_session_records_for_worktree_fn,
+            attach_target_from_omx_record=attach_target_from_omx_record_fn,
+            attach_target_from_pane_fallback=attach_target_from_pane_fallback_fn,
+        ).discover()
         if attach_target is not None:
             return attach_target
     return None
@@ -458,35 +488,22 @@ def wait_for_omx_attach_target(
         ),
         previous_tmux_session_names,
     )
-
-    def _discover_attach_target() -> PlanAgentAttachTarget | None:
-        for record in omx_session_records_for_worktree_fn(runtime, worktree):
-            attach_target = attach_target_from_omx_record_fn(
-                runtime,
-                repo_root=repo_root,
-                worktree=worktree,
-                record=record,
-                attach_via=attach_via,
-                previous_session_id=previous,
-                previous_session_ids=previous_session_ids,
-                excluded_session_names=excluded_session_names,
-            )
-            if attach_target is not None:
-                return attach_target
-        attach_target = attach_target_from_pane_fallback_fn(
-            runtime,
-            repo_root=repo_root,
-            worktree=worktree,
-            attach_via=attach_via,
-            excluded_session_names=excluded_session_names,
-        )
-        if attach_target is not None:
-            return attach_target
-        return None
+    finder = OmxAttachTargetFinder(
+        runtime=runtime,
+        repo_root=repo_root,
+        worktree=worktree,
+        attach_via=attach_via,
+        omx_session_records_for_worktree=omx_session_records_for_worktree_fn,
+        attach_target_from_omx_record=attach_target_from_omx_record_fn,
+        attach_target_from_pane_fallback=attach_target_from_pane_fallback_fn,
+        previous_session_id=previous,
+        previous_session_ids=previous_session_ids,
+        excluded_session_names=excluded_session_names,
+    )
 
     while monotonic_fn() < deadline:
-        attach_target = _discover_attach_target()
+        attach_target = finder.discover()
         if attach_target is not None:
             return attach_target
         sleep_fn(session_ready_poll_interval_seconds)
-    return _discover_attach_target()
+    return finder.discover()

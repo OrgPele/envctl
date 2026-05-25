@@ -338,6 +338,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "validate_plan_agent_attach_target",
             },
             "omx_attach_support.py": {
+                "OmxAttachTargetFinder",
                 "attach_discovery_diagnostics",
                 "attach_target_from_omx_record",
                 "attach_target_from_omx_tmux_pane_fallback",
