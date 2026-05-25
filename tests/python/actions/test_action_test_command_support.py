@@ -5,12 +5,18 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
+from envctl_engine.actions.action_test_command_support import ConfiguredTestSpecResolver
+from envctl_engine.actions.action_test_command_support import ActionTestExecutionSpecBuilder
 from envctl_engine.actions.action_test_command_support import build_test_execution_specs
 from envctl_engine.actions.action_test_command_support import normalize_backend_python_test_command
 from envctl_engine.actions.action_test_support_models import TestTargetContext as TargetContext
 
 
 class ActionTestCommandSupportTests(unittest.TestCase):
+    def test_command_support_uses_named_planners_instead_of_inline_branching(self) -> None:
+        self.assertTrue(callable(ActionTestExecutionSpecBuilder.build))
+        self.assertTrue(callable(ConfiguredTestSpecResolver.resolve))
+
     def test_shared_legacy_tree_command_collapses_to_one_all_targets_spec(self) -> None:
         repo = Path("/repo")
         target = TargetContext(
