@@ -40,6 +40,7 @@ _BOOLEAN_FLAG_TOKENS = (
     "--headless",
     "--batch",
     "--json",
+    "--human",
     "--stdin-json",
     "--non-interactive",
     "--no-interactive",

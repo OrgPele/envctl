@@ -202,6 +202,8 @@ class EngineRuntimeCommandParityHelpTests(EngineRuntimeCommandParityTestCase):
         self.assertIn("predicts merge conflicts", output)
         self.assertIn("conflicting files, messages, and resolution steps", output)
         self.assertIn("failing_checks and pending_checks", output)
+        self.assertIn("JSON is the default", output)
+        self.assertIn("--human", output)
 
     def test_workflow_command_help_explains_when_headless_is_optional(self) -> None:
         runtime = self._runtime()

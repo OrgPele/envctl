@@ -47,7 +47,7 @@ def existing_merge_conflict_report(git_root: Path, *, branch: str, git_output: G
         "resolution_steps": [
             "Open each conflicting file and resolve conflict markers.",
             "git add <resolved-file>",
-            "rerun envctl ship --project <name> --json",
+            "rerun envctl ship --project <name>",
         ],
         "messages": ["The worktree already has unresolved merge conflicts."],
     }
@@ -107,7 +107,7 @@ def predicted_merge_conflict_report(
                 f"git merge {base_ref}",
                 "Resolve each file listed in merge_conflicts.conflicting_files.",
                 "git add <resolved-file>",
-                "rerun envctl ship --project <name> --json",
+                "rerun envctl ship --project <name>",
             ],
             "messages": [line for line in completed.stdout.splitlines() if line.strip().startswith("CONFLICT")],
         }

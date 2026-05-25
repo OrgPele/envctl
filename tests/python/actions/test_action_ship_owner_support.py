@@ -332,7 +332,9 @@ def test_ship_payload_and_result_output_keep_json_contract(tmp_path: Path, capsy
     assert printed["checks_error"] == ""
     assert printed["checks_timeout_seconds"] == 0.0
     assert printed["protected_local_artifacts_skipped"] == [".envctl-state/code-intelligence.json"]
+    assert parse_ship_json_output(_Context("Main", tmp_path, tmp_path, {})) is True
     assert parse_ship_json_output(_Context("Main", tmp_path, tmp_path, {"ENVCTL_ACTION_JSON": "true"})) is True
+    assert parse_ship_json_output(_Context("Main", tmp_path, tmp_path, {"ENVCTL_ACTION_HUMAN": "true"})) is False
 
 
 def test_ship_result_human_output_includes_pr_creation_state(tmp_path: Path, capsys: Any) -> None:

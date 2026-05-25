@@ -459,9 +459,10 @@ Commit defaults:
 generated worktree or project, run it without `--project`; use `--project
 <name>` only when shipping from another checkout. `ship` commits, pushes,
 creates a PR when none exists, reuses or updates the existing PR otherwise, predicts merge conflicts, waits for GitHub PR checks
-until they pass, fail, time out, or report no check contexts, and returns the structured result including
+until they pass, fail, time out, or report no check contexts, and returns the structured JSON result by default including
 the PR URL, `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`,
-`failing_checks`, `pending_checks`, and `checks_error`. The check wait defaults can be tuned with
+`failing_checks`, `pending_checks`, and `checks_error`. `--json` remains accepted as a compatibility no-op;
+use `--human` only when compact terminal output is preferred. The check wait defaults can be tuned with
 `ENVCTL_SHIP_CHECK_TIMEOUT_SECONDS` and
 `ENVCTL_SHIP_CHECK_POLL_INTERVAL_SECONDS`.
 

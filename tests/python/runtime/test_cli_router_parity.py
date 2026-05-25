@@ -231,6 +231,12 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertEqual(route.flags.get("commit_message"), "ship it")
         self.assertTrue(route.flags.get("json"))
 
+        route = parse_route(["ship", "--project", "feature-a-1", "-m", "ship it", "--human"], env={})
+        self.assertEqual(route.command, "ship")
+        self.assertEqual(route.projects, ["feature-a-1"])
+        self.assertEqual(route.flags.get("commit_message"), "ship it")
+        self.assertTrue(route.flags.get("human"))
+
         route = parse_route(["ship", "--project", "feature-a-1", "--json"], env={})
         self.assertEqual(route.command, "ship")
         self.assertEqual(route.projects, ["feature-a-1"])

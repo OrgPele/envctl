@@ -91,7 +91,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
     "ship": CommandHelpTopic(
         command="ship",
         summary="commit, push, create/update PR, and report GitHub checks for the current or selected target",
-        usage=("envctl ship [--project <name>] [-m <text>] [--json]",),
+        usage=("envctl ship [--project <name>] [-m <text>] [--human]",),
         what_it_does=(
             "when run inside a generated worktree, infers that worktree without requiring --project",
             "owns the normal AI handoff flow instead of requiring separate commit, push, or PR commands",
@@ -102,15 +102,18 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "waits for GitHub PR checks and returns passed, failed, pending-timeout, no-checks-reported, "
             "or gh-unavailable status "
             "with failing_checks and pending_checks",
+            "prints the structured envctl.ship.v1 JSON payload by default; --json is accepted as a compatibility no-op",
         ),
         flags=(
             "--project <name>        ship one worktree/project",
             "-m <text>              use explicit commit message text for the commit phase",
-            "--json                  print the envctl.ship.v1 payload",
+            "--json                  compatibility no-op; JSON is the default",
+            "--human                 print compact terminal output instead of JSON",
         ),
         examples=(
-            "envctl ship -m 'Ship focused fix' --json",
-            "envctl ship --project feature-a-1 -m 'Ship feature' --json",
+            "envctl ship -m 'Ship focused fix'",
+            "envctl ship --project feature-a-1 -m 'Ship feature'",
+            "envctl ship -m 'Ship focused fix' --human",
         ),
         aliases=("--ship",),
         related=("test-focused", "commit", "pr"),

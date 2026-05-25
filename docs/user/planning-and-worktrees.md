@@ -252,7 +252,7 @@ including exact commands, confidence, reasons, changed files, and full-gate
 guidance. For final handoff from inside the generated worktree, use:
 
 ```bash
-envctl ship -m "Ship focused implementation" --json
+envctl ship -m "Ship focused implementation"
 ```
 
 Run bare `envctl ship` from inside the current generated worktree/project
@@ -265,7 +265,8 @@ message ledger only when inline text is not practical. Envctl-local artifacts su
 pushes, creates a PR when none exists, reuses or updates the existing PR otherwise, predicts merge conflicts, waits for GitHub
 checks until they pass, fail, time out, or report no check contexts, and returns the PR URL plus
 `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`, `failing_checks`,
-`pending_checks`, and `checks_error` in a structured payload. Because `ship` owns the wait/poll loop, agents should not
+`pending_checks`, and `checks_error` in a structured JSON payload by default. `--json` is accepted
+as a compatibility no-op and `--human` prints compact terminal output. Because `ship` owns the wait/poll loop, agents should not
 run separate `git`, `gh`, PR, or check-monitoring commands unless `ship` is
 unavailable or reports a recoverable issue. To avoid idling the main
 implementation lane, agents can run `ship` in a background/subagent lane and

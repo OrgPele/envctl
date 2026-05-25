@@ -151,8 +151,11 @@ def print_ship_result(payload: Mapping[str, object], *, json_output: bool, ok: b
 
 
 def parse_ship_json_output(context: Any) -> bool:
-    raw = str(getattr(context, "env", {}).get("ENVCTL_ACTION_JSON", "")).strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+    env = getattr(context, "env", {})
+    human = str(env.get("ENVCTL_ACTION_HUMAN", "")).strip().lower()
+    if human in {"1", "true", "yes", "on"}:
+        return False
+    return True
 
 
 __all__ = [

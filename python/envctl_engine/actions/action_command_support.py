@@ -60,7 +60,12 @@ def build_action_extra_env(route: Route) -> dict[str, str]:
         extra["ENVCTL_COMMIT_MESSAGE_FILE"] = str(route.flags["commit_message_file"])
     if isinstance(route.flags.get("analyze_mode"), str):
         extra["ENVCTL_ANALYZE_MODE"] = str(route.flags["analyze_mode"])
-    if bool(route.flags.get("json")):
+    if route.command == "ship":
+        if bool(route.flags.get("human")):
+            extra["ENVCTL_ACTION_HUMAN"] = "true"
+        else:
+            extra["ENVCTL_ACTION_JSON"] = "true"
+    elif bool(route.flags.get("json")):
         extra["ENVCTL_ACTION_JSON"] = "true"
     service_types = service_types_from_route_services(route)
     if service_types == {"backend"}:

@@ -24,6 +24,7 @@ def boolean_flag_name(token: str) -> str:
         "--headless": "batch",
         "--batch": "batch",
         "--json": "json",
+        "--human": "human",
         "--stdin-json": "stdin_json",
         "--non-interactive": "batch",
         "--no-interactive": "batch",
