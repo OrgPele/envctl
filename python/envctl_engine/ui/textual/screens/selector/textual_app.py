@@ -17,6 +17,10 @@ from envctl_engine.ui.textual.screens.selector.textual_app_chrome import (
 from envctl_engine.ui.textual.screens.selector.textual_app_lifecycle import (
     apply_selector_mount,
 )
+from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
+    SelectorKeyTelemetry,
+    SelectorStatusPresenter,
+)
 from envctl_engine.ui.textual.screens.selector.support import (
     _RowRef,
     _emit,
@@ -78,19 +82,10 @@ def create_selector_app(
             self._render_lock = asyncio.Lock()
             self._last_focus_widget_id = "selector-list"
             self._explicit_cancel = False
-            self._nav_event_counter = 0
-            self._last_nav_key = ""
-            self._edge_hint = ""
-            self._handled_key_counts: dict[str, int] = {}
-            self._raw_key_counts: dict[str, int] = {}
+            self._key_telemetry = SelectorKeyTelemetry(enabled=key_trace_enabled)
             self._allow_filter_focus = False
-            self._event_key_counts: dict[str, int] = {}
             self._key_snapshot_timer: object | None = None
-            self._last_nav_change_ns = time.monotonic_ns()
-            self._idle_snapshot_bucket = -1
-            self._last_driver_read_calls = -1
-            self._driver_idle_snapshot_bucket = -1
-            self._status_error_message = ""
+            self._status_presenter = SelectorStatusPresenter()
             self._status_error_timer: object | None = None
             self._suppress_list_selected_once = False
 
@@ -212,7 +207,8 @@ def create_selector_app(
             selected = sum(1 for row in self._rows if row.visible and row.selected)
             if selected:
                 self._clear_status_error()
-            focus_text = "focus: -"
+            focused_view_index: int | None = None
+            focused_label: str | None = None
             focused_view_index = self._list().index
             if (
                 focused_view_index is not None
@@ -222,24 +218,28 @@ def create_selector_app(
                 focused_model_index = self._controller.index_map[focused_view_index]
                 self._last_focused_model_index = focused_model_index
                 focused_row = self._rows[focused_model_index]
-                focus_text = (
-                    f"focus: {focused_view_index + 1}/{len(self._controller.index_map)} {focused_row.item.label}"
-                )
-            status = f"{selected} selected • {visible} visible • {len(self._rows)} total • {focus_text}"
-            if deep_debug and self._nav_event_counter > 0:
-                status += f" • key#{self._nav_event_counter}:{self._last_nav_key}"
-                if self._edge_hint:
-                    status += f" • {self._edge_hint}"
-            if self._status_error_message:
-                status = self._status_error_message
+                focused_label = focused_row.item.label
+            else:
+                focused_view_index = None
+            status = self._status_presenter.status_text(
+                visible_count=visible,
+                selected_count=selected,
+                total_count=len(self._rows),
+                focused_view_index=focused_view_index,
+                focused_label=focused_label,
+                focusable_count=len(self._controller.index_map),
+                deep_debug=deep_debug,
+                nav_event_counter=self._key_telemetry.nav_event_counter,
+                last_nav_key=self._key_telemetry.last_nav_key,
+                edge_hint=self._key_telemetry.edge_hint,
+            )
             status_widget = self._status()
-            status_widget.set_class(bool(self._status_error_message), "selector-status-error")
+            status_widget.set_class(self._status_presenter.has_error, "selector-status-error")
             status_widget.update(status)
 
         def _clear_status_error(self) -> None:
-            if not self._status_error_message:
+            if not self._status_presenter.clear_error():
                 return
-            self._status_error_message = ""
             timer = self._status_error_timer
             if timer is not None:
                 try:
@@ -262,12 +262,12 @@ def create_selector_app(
             self._status_error_timer = self.set_timer(status_error_timeout_seconds, self._clear_status_error)
 
         def _touch_status_error_timeout(self) -> None:
-            if not self._status_error_message:
+            if not self._status_presenter.has_error:
                 return
             self._schedule_status_error_clear()
 
         def _show_status_error(self, message: str) -> None:
-            self._status_error_message = message.strip()
+            self._status_presenter.show_error(message)
             self._schedule_status_error_clear()
             self._sync_status()
 
@@ -286,13 +286,11 @@ def create_selector_app(
                 if action == "down":
                     target_index = self._controller.cursor_down(list_index_before)
                     apply_selectable_list_index(self._list(), target_index)
-                    self._nav_event_counter += 1
-                    self._last_nav_key = "down"
+                    self._key_telemetry.mark_navigation("down")
                 elif action == "up":
                     target_index = self._controller.cursor_up(list_index_before)
                     apply_selectable_list_index(self._list(), target_index)
-                    self._nav_event_counter += 1
-                    self._last_nav_key = "up"
+                    self._key_telemetry.mark_navigation("up")
                 elif action == "submit":
                     submit_requested = True
                     continue
@@ -307,8 +305,6 @@ def create_selector_app(
                         if row.selected != selected:
                             row.selected = selected
                             selection_changed = True
-                self._last_nav_change_ns = time.monotonic_ns()
-                self._idle_snapshot_bucket = -1
             self._sync_status()
             if selection_changed:
                 self.call_after_refresh(lambda: asyncio.create_task(self._render_rows()))
@@ -409,14 +405,12 @@ def create_selector_app(
             list_index_before: int | None,
             handled: bool,
         ) -> None:
-            if key_trace_enabled:
-                self._handled_key_counts[key] = self._handled_key_counts.get(key, 0) + 1
+            self._key_telemetry.record_handled_key(key)
             if not key_trace_enabled or not key_trace_verbose:
                 return
-            _emit_selector_debug(
-                emit,
-                enabled=deep_debug,
-                event="ui.selector.key",
+            self._key_telemetry.emit_verbose_key(
+                emit=emit,
+                deep_debug=deep_debug,
                 selector_id=selector_id,
                 key=key,
                 focused_widget_id=focus_before,
@@ -438,12 +432,10 @@ def create_selector_app(
             if focused_model_index is not None:
                 self._last_user_model_index = focused_model_index
             await self._sync_single_select_focus_selection(reason="nav_up")
-            self._nav_event_counter += 1
-            self._last_nav_change_ns = time.monotonic_ns()
-            self._idle_snapshot_bucket = -1
-            self._last_nav_key = "up"
-            self._edge_hint = (
-                "top boundary" if list_index_before is not None and list_index_after == list_index_before == 0 else ""
+            at_top_edge = list_index_before is not None and list_index_after == list_index_before == 0
+            self._key_telemetry.mark_navigation(
+                "up",
+                edge_hint="top boundary" if at_top_edge else "",
             )
             self._sync_status()
             self._emit_key_debug(
@@ -466,19 +458,18 @@ def create_selector_app(
             if focused_model_index is not None:
                 self._last_user_model_index = focused_model_index
             await self._sync_single_select_focus_selection(reason="nav_down")
-            self._nav_event_counter += 1
-            self._last_nav_change_ns = time.monotonic_ns()
-            self._idle_snapshot_bucket = -1
-            self._last_nav_key = "down"
             max_view_index = len(self._controller.index_map) - 1
-            self._edge_hint = (
-                "bottom boundary"
-                if (
-                    list_index_before is not None
-                    and max_view_index >= 0
-                    and list_index_after == list_index_before == max_view_index
+            self._key_telemetry.mark_navigation(
+                "down",
+                edge_hint=(
+                    "bottom boundary"
+                    if (
+                        list_index_before is not None
+                        and max_view_index >= 0
+                        and list_index_after == list_index_before == max_view_index
+                    )
+                    else ""
                 )
-                else ""
             )
             self._sync_status()
             self._emit_key_debug(
@@ -651,20 +642,18 @@ def create_selector_app(
                 widget = getattr(widget, "parent", None)
 
         async def on_key(self, event: Key) -> None:
-            if key_trace_enabled:
-                self._raw_key_counts[event.key] = self._raw_key_counts.get(event.key, 0) + 1
-                if key_trace_verbose:
-                    _emit_selector_debug(
-                        emit,
-                        enabled=deep_debug,
-                        event="ui.selector.key.raw",
-                        selector_id=selector_id,
-                        key=event.key,
-                        focused_widget_id=self._focused_widget_id(),
-                        list_index_before=self._list().index,
-                        list_index_after=self._list().index,
-                        handled=False,
-                    )
+            if self._key_telemetry.record_raw_key(event.key) and key_trace_verbose:
+                _emit_selector_debug(
+                    emit,
+                    enabled=deep_debug,
+                    event="ui.selector.key.raw",
+                    selector_id=selector_id,
+                    key=event.key,
+                    focused_widget_id=self._focused_widget_id(),
+                    list_index_before=self._list().index,
+                    list_index_after=self._list().index,
+                    handled=False,
+                )
             focused_id = self._focused_widget_id()
             filter_focused = focused_id == "selector-filter"
             if event.key == "tab":
@@ -750,7 +739,7 @@ def create_selector_app(
                 return
             if key_trace_enabled and isinstance(event, Key):
                 key = str(event.key)
-                self._event_key_counts[key] = self._event_key_counts.get(key, 0) + 1
+                self._key_telemetry.record_event_key(key)
                 if key_trace_verbose:
                     _emit_selector_debug(
                         emit,
@@ -794,28 +783,16 @@ def create_selector_app(
                 except Exception:
                     pass
                 self._key_snapshot_timer = None
-            if key_trace_enabled:
-                self._emit_key_snapshot()
-            if key_trace_enabled:
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.key.summary",
-                    selector_id=selector_id,
-                    event_counts=dict(self._event_key_counts),
-                    handled_counts=dict(self._handled_key_counts),
-                    raw_counts=dict(self._raw_key_counts),
-                )
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.key.driver.thread.final",
-                    selector_id=selector_id,
-                    **_selector_driver_thread_snapshot(
-                        self.app,
-                        include_stack=thread_stack_enabled,
-                    ),
-                )
+            self._emit_key_snapshot()
+            self._key_telemetry.emit_summary(
+                emit=emit,
+                deep_debug=deep_debug,
+                selector_id=selector_id,
+                thread_snapshot=lambda: _selector_driver_thread_snapshot(
+                    self.app,
+                    include_stack=thread_stack_enabled,
+                ),
+            )
             _emit(emit, "ui.screen.exit", screen="selector", prompt=prompt)
             _emit_selector_debug(
                 emit,
@@ -855,84 +832,19 @@ def create_selector_app(
                 list_index = self._list().index
             except Exception:
                 list_index = None
-            _emit_selector_debug(
-                emit,
-                enabled=deep_debug,
-                event="ui.selector.key.snapshot",
+            self._key_telemetry.emit_snapshot(
+                emit=emit,
+                deep_debug=deep_debug,
                 selector_id=selector_id,
                 focused_widget_id=focused_widget_id,
                 list_index=list_index,
-                nav_event_counter=self._nav_event_counter,
-                event_counts=dict(self._event_key_counts),
-                raw_counts=dict(self._raw_key_counts),
-                handled_counts=dict(self._handled_key_counts),
-            )
-            if self._nav_event_counter > 0:
-                idle_ns = max(0, now_ns - int(self._last_nav_change_ns))
-                idle_ms = int(idle_ns / 1_000_000)
-                # Emit periodic stall evidence when selector had activity then goes idle.
-                if idle_ms >= 2000:
-                    bucket = idle_ms // 2000
-                    if bucket != self._idle_snapshot_bucket:
-                        self._idle_snapshot_bucket = bucket
-                        _emit_selector_debug(
-                            emit,
-                            enabled=deep_debug,
-                            event="ui.selector.key.idle_after_activity",
-                            selector_id=selector_id,
-                            idle_ms=idle_ms,
-                            focused_widget_id=focused_widget_id,
-                            list_index=list_index,
-                            nav_event_counter=self._nav_event_counter,
-                            event_counts=dict(self._event_key_counts),
-                            raw_counts=dict(self._raw_key_counts),
-                            handled_counts=dict(self._handled_key_counts),
-                        )
-            probe = driver_probe
-            if probe is not None:
-                snapshot = probe()
-                thread_snapshot = _selector_driver_thread_snapshot(
+                driver_snapshot=driver_probe,
+                thread_snapshot=lambda: _selector_driver_thread_snapshot(
                     self.app,
                     include_stack=thread_stack_enabled,
-                )
-                merged_snapshot = dict(snapshot)
-                merged_snapshot.update(thread_snapshot)
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.key.driver.snapshot",
-                    selector_id=selector_id,
-                    **merged_snapshot,
-                )
-                read_calls = merged_snapshot.get("read_calls")
-                if isinstance(read_calls, int):
-                    if read_calls != self._last_driver_read_calls:
-                        self._last_driver_read_calls = read_calls
-                        self._driver_idle_snapshot_bucket = -1
-                    elif self._nav_event_counter > 0:
-                        idle_ns = max(0, now_ns - int(self._last_nav_change_ns))
-                        idle_ms = int(idle_ns / 1_000_000)
-                        if idle_ms >= 2000:
-                            bucket = idle_ms // 2000
-                            if bucket != self._driver_idle_snapshot_bucket:
-                                self._driver_idle_snapshot_bucket = bucket
-                                _emit_selector_debug(
-                                    emit,
-                                    enabled=deep_debug,
-                                    event="ui.selector.key.driver.idle_after_activity",
-                                    selector_id=selector_id,
-                                    idle_ms=idle_ms,
-                                    focused_widget_id=focused_widget_id,
-                                    list_index=list_index,
-                                    nav_event_counter=self._nav_event_counter,
-                                    read_calls=read_calls,
-                                    read_bytes=merged_snapshot.get("read_bytes"),
-                                    key_events_total=merged_snapshot.get("key_events_total"),
-                                    non_key_messages=merged_snapshot.get("non_key_messages"),
-                                    input_thread_alive=merged_snapshot.get("input_thread_alive"),
-                                    input_thread_stack=(
-                                        merged_snapshot.get("input_thread_stack") if thread_stack_enabled else None
-                                    ),
-                                )
+                ),
+                include_thread_stack=thread_stack_enabled,
+                now_ns=now_ns,
+            )
 
     return SelectorApp()
