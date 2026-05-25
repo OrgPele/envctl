@@ -22,7 +22,6 @@ from . import config_wizard_components as component_policy
 from . import config_wizard_values as value_policy
 from .config_wizard_components import ComponentRow
 from .config_wizard_fields import (
-    CONFIG_ROW_STYLES_CSS,
     _ADDITIONAL_SERVICE_FIELDS,
     _COMMAND_FIELDS,
     _COMPONENT_FIELDS,
@@ -39,7 +38,6 @@ from .config_wizard_fields import (
     _directory_hint_id,
     _directory_input_id,
     _field_label_id,
-    _field_placeholder,
     _hydrate_wizard_values,
     _port_input_id,
     _visible_command_fields,
@@ -47,6 +45,7 @@ from .config_wizard_fields import (
     _visible_port_fields,
 )
 from .config_wizard_hints import ConfigWizardHintResolver
+from .config_wizard_layout import CONFIG_WIZARD_APP_CSS, compose_config_wizard_layout
 from .config_wizard_list_rendering import (
     render_additional_services_list,
     render_choice_list,
@@ -106,116 +105,7 @@ def build_config_wizard_app(
             Binding("tab", "focus_next", "Next"),
             Binding("shift+tab", "focus_previous", "Prev"),
         ]
-        CSS = (
-            """
-        Screen {
-            align: center middle;
-        }
-        #config-shell {
-            width: 94%;
-            max-width: 140;
-            height: 94%;
-            border: round $accent;
-            padding: 1 2;
-        }
-        #config-title {
-            text-style: bold;
-            margin-bottom: 1;
-        }
-        #config-source {
-            color: $text-muted;
-            margin-bottom: 1;
-        }
-        #config-step-title {
-            text-style: bold;
-        }
-        #config-step-help {
-            color: $text-muted;
-            margin-bottom: 1;
-        }
-        #config-body {
-            height: 1fr;
-            border: round $surface;
-            padding: 0 1;
-        }
-        #config-list {
-            height: 1fr;
-            border: tall $surface;
-        }
-        .config-section-header {
-            margin-top: 1;
-            padding: 0 1;
-            background: transparent;
-            border-left: none;
-        }
-        .config-section-header Label {
-            color: $accent;
-            text-style: bold;
-        }
-        .config-section-header.-highlight {
-            background: transparent;
-            border-left: none;
-        }
-        #config-ports {
-            height: 1fr;
-            overflow: auto;
-        }
-        #config-additional-services {
-            height: 1fr;
-            overflow: auto;
-        }
-        #config-directories {
-            height: 1fr;
-            overflow: auto;
-        }
-        #config-empty {
-            color: $text-muted;
-        }
-        .directory-field {
-            margin-bottom: 1;
-        }
-        .directory-field.directory-invalid {
-            background: $error 10%;
-            border: tall $error;
-        }
-        .directory-error {
-            color: $text-muted;
-            margin-top: -1;
-            margin-bottom: 1;
-        }
-        .directory-hint {
-            color: $text-muted;
-            margin-top: -1;
-            margin-bottom: 1;
-        }
-        .directory-error-visible {
-            color: $error;
-        }
-        .port-field {
-            margin-bottom: 1;
-        }
-        .additional-service-field {
-            margin-bottom: 1;
-        }
-        #config-review-scroll {
-            height: 1fr;
-            overflow: auto;
-        }
-        #config-review {
-            height: auto;
-        }
-        #config-status {
-            margin-top: 1;
-            color: $text-muted;
-        }
-        #config-actions {
-            margin-top: 1;
-            align-horizontal: right;
-            height: auto;
-        }
-        """
-            + CONFIG_ROW_STYLES_CSS
-        )
+        CSS = CONFIG_WIZARD_APP_CSS
 
         def __init__(self) -> None:
             super().__init__()
@@ -253,54 +143,19 @@ def build_config_wizard_app(
             )
 
         def compose(self) -> ComposeResult:
-            with Vertical(id="config-shell"):
-                yield Static("envctl Run Configuration", id="config-title")
-                yield Static("", id="config-source")
-                yield Static("", id="config-step-title")
-                yield Static("", id="config-step-help")
-                with Vertical(id="config-body"):
-                    yield Static("", id="config-welcome")
-                    yield ListView(id="config-list")
-                    yield Static("", id="config-empty")
-                    with VerticalScroll(id="config-directories"):
-                        for field_name, label in (*_DIRECTORY_FIELDS, *_COMMAND_FIELDS):
-                            yield Label(label, id=_field_label_id("directory", field_name))
-                            yield Input(
-                                value=str(self._field_value(field_name)),
-                                id=_directory_input_id(field_name),
-                                placeholder=_field_placeholder(field_name),
-                                classes="directory-field",
-                            )
-                            yield Static("", id=_directory_hint_id(field_name), classes="directory-hint")
-                            yield Static("", id=_directory_error_id(field_name), classes="directory-error")
-                    with VerticalScroll(id="config-ports"):
-                        for field_name, label in _PORT_FIELDS:
-                            yield Label(label, id=_field_label_id("port", field_name))
-                            yield Input(
-                                value=str(self._field_value(field_name)),
-                                id=_port_input_id(field_name),
-                                classes="port-field",
-                            )
-                    with VerticalScroll(id="config-additional-services"):
-                        for field_name, label in _ADDITIONAL_SERVICE_FIELDS:
-                            yield Label(label, id=_field_label_id("additional-service", field_name))
-                            yield Input(
-                                value=_additional_service_field_value(
-                                    self.values.additional_services[0] if self.values.additional_services else None,
-                                    field_name,
-                                ),
-                                id=_additional_service_input_id(field_name),
-                                placeholder=_field_placeholder(f"additional_service_{field_name}"),
-                                classes="additional-service-field",
-                            )
-                    with VerticalScroll(id="config-review-scroll"):
-                        yield Static("", id="config-review")
-                yield Static("", id="config-status")
-                with Horizontal(id="config-actions"):
-                    yield Button("Cancel", id="btn-cancel")
-                    yield Button("Back", id="btn-back")
-                    yield Button("Next", variant="success", id="btn-next")
-                yield Footer()
+            yield from compose_config_wizard_layout(
+                values=self.values,
+                field_value=self._field_value,
+                horizontal_cls=Horizontal,
+                vertical_cls=Vertical,
+                vertical_scroll_cls=VerticalScroll,
+                button_cls=Button,
+                footer_cls=Footer,
+                input_cls=Input,
+                label_cls=Label,
+                list_view_cls=ListView,
+                static_cls=Static,
+            )
 
         def on_mount(self) -> None:
             _emit(emit, "ui.screen.enter", screen="config_wizard", source=local_state.config_source)

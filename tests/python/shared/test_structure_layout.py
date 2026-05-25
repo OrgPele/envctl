@@ -1156,6 +1156,7 @@ class StructureLayoutTests(unittest.TestCase):
         hint_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_hints.py"
         value_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_values.py"
         status_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_status.py"
+        layout_owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_layout.py"
         list_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "config_wizard_list_rendering.py"
         )
@@ -1170,6 +1171,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(hint_owner.is_file())
         self.assertTrue(value_owner.is_file())
         self.assertTrue(status_owner.is_file())
+        self.assertTrue(layout_owner.is_file())
         self.assertTrue(list_owner.is_file())
         self.assertTrue(step_owner.is_file())
         self.assertTrue(suggestion_owner.is_file())
@@ -1179,6 +1181,7 @@ class StructureLayoutTests(unittest.TestCase):
         hint_text = hint_owner.read_text(encoding="utf-8")
         value_text = value_owner.read_text(encoding="utf-8")
         status_text = status_owner.read_text(encoding="utf-8")
+        layout_text = layout_owner.read_text(encoding="utf-8")
         list_text = list_owner.read_text(encoding="utf-8")
         step_text = step_owner.read_text(encoding="utf-8")
         suggestion_text = suggestion_owner.read_text(encoding="utf-8")
@@ -1200,6 +1203,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def apply_text_field_values", value_text)
         self.assertIn("def apply_port_field_values", value_text)
         self.assertIn("def status_for_valid_config_step", status_text)
+        self.assertIn("CONFIG_WIZARD_APP_CSS", layout_text)
+        self.assertIn("def compose_config_wizard_layout", layout_text)
         self.assertIn("def render_components_list", list_text)
         self.assertIn("def sync_wizard_steps", step_text)
         self.assertIn("def build_config_wizard_suggestions", suggestion_text)
@@ -1212,12 +1217,13 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("from .config_wizard_fields import", screen_text)
         self.assertIn("from .config_wizard_fields import", app_text)
         self.assertIn("from .config_wizard_hints import", app_text)
+        self.assertIn("from .config_wizard_layout import", app_text)
         self.assertIn("from .config_wizard_status import", app_text)
         self.assertIn("from .config_wizard_list_rendering import", app_text)
         self.assertIn("from .config_wizard_step_flow import", app_text)
         self.assertIn("from .config_wizard_suggestions import", app_text)
         self.assertLessEqual(len(screen_text.splitlines()), 90)
-        self.assertLessEqual(len(app_text.splitlines()), 1140)
+        self.assertLessEqual(len(app_text.splitlines()), 1000)
 
     def test_textual_selector_has_backend_policy_owner(self) -> None:
         selector = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "selector"
