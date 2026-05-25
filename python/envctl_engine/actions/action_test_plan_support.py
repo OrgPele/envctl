@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, ClassVar, Mapping
+from typing import Any, Callable, ClassVar, Mapping, cast
 
 from envctl_engine.actions.action_command_support import service_types_from_route_services
 from envctl_engine.actions.action_failed_rerun_support import build_failed_test_execution_specs_from_state
@@ -13,6 +13,52 @@ from envctl_engine.actions.action_test_support import is_backend_only_selection
 from envctl_engine.actions.test_plan_action import run_test_plan_action
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool, parse_int
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeSplitCommandAdapter:
+    runtime: Any
+
+    def __call__(self, command_raw: str, replacements: Mapping[str, str]) -> list[str]:
+        return self.runtime.split_command(command_raw, replacements=replacements)
+
+
+@dataclass(frozen=True, slots=True)
+class OrchestratorTestPlanDependencies:
+    orchestrator: object
+
+    @property
+    def runtime(self) -> Any:
+        return getattr(self.orchestrator, "runtime")
+
+    @property
+    def split_command(self) -> RuntimeSplitCommandAdapter:
+        return RuntimeSplitCommandAdapter(self.runtime)
+
+    def action_replacements(self, *args: object, **kwargs: object) -> dict[str, str]:
+        builder = cast(Callable[..., dict[str, str]], getattr(self.orchestrator, "action_replacements"))
+        return builder(*args, **kwargs)
+
+    def failed_specs(self, *, route: Route, target_contexts: list[TestTargetContext]) -> list[TestExecutionSpec]:
+        return build_failed_test_execution_specs_for_orchestrator(
+            self.orchestrator,
+            route=route,
+            target_contexts=target_contexts,
+        )
+
+    def additional_service_specs(
+        self,
+        *,
+        route: Route,
+        targets: list[object],
+        target_contexts: list[TestTargetContext],
+    ) -> list[TestExecutionSpec]:
+        return additional_service_test_execution_specs_for_orchestrator(
+            self.orchestrator,
+            route=route,
+            targets=targets,
+            target_contexts=target_contexts,
+        )
 
 
 def run_test_plan_action_for_targets(orchestrator: object, route: Route, targets: list[object]) -> int:
@@ -46,7 +92,8 @@ def build_test_execution_specs_for_orchestrator(
     run_all: bool,
     untested: bool,
 ) -> list[TestExecutionSpec]:
-    runtime = getattr(orchestrator, "runtime")
+    dependencies = OrchestratorTestPlanDependencies(orchestrator)
+    runtime = dependencies.runtime
     return build_test_execution_specs_for_route(
         route=route,
         targets=targets,
@@ -57,16 +104,10 @@ def build_test_execution_specs_for_orchestrator(
         untested=untested,
         env=runtime.env,
         config=runtime.config,
-        action_replacements_builder=orchestrator.action_replacements,
-        split_command=lambda command_raw, replacements: runtime.split_command(command_raw, replacements=replacements),
-        failed_spec_builder=lambda **kwargs: build_failed_test_execution_specs_for_orchestrator(
-            orchestrator,
-            **kwargs,
-        ),
-        additional_service_spec_builder=lambda **kwargs: additional_service_test_execution_specs_for_orchestrator(
-            orchestrator,
-            **kwargs,
-        ),
+        action_replacements_builder=dependencies.action_replacements,
+        split_command=dependencies.split_command,
+        failed_spec_builder=dependencies.failed_specs,
+        additional_service_spec_builder=dependencies.additional_service_specs,
         is_legacy_tree_test_script=is_legacy_tree_test_script,
     )
 
@@ -79,16 +120,14 @@ def additional_service_test_execution_specs_for_orchestrator(
     target_contexts: list[TestTargetContext],
 ) -> list[TestExecutionSpec]:
     runtime = getattr(orchestrator, "runtime")
+    split_command = RuntimeSplitCommandAdapter(runtime)
     return additional_service_test_execution_specs(
         route=route,
         targets=targets,
         target_contexts=target_contexts,
         config=runtime.config,
-        split_command=lambda raw_command, replacements: runtime.split_command(
-            raw_command,
-            replacements=replacements,
-        ),
-        action_replacements_builder=orchestrator.action_replacements,
+        split_command=split_command,
+        action_replacements_builder=cast(Callable[..., dict[str, str]], getattr(orchestrator, "action_replacements")),
     )
 
 
@@ -119,7 +158,7 @@ def build_failed_test_execution_specs_for_orchestrator(
         shared_raw_command=shared_raw,
         backend_raw_command=backend_raw,
         frontend_raw_command=frontend_raw,
-        emit_status=orchestrator._emit_status,
+        emit_status=cast(Callable[[str], None], getattr(orchestrator, "_emit_status")),
     )
 
 
@@ -163,7 +202,7 @@ class TestExecutionPlanner:
             frontend_test_path=self._frontend_test_path(),
             run_all=self.run_all,
             untested=self.untested,
-            split_command=lambda command_raw, replacements: self.split_command(command_raw, dict(replacements)),
+            split_command=self._split_command_for_test_support,
             replacements_for_target=self._replacements_for_target,
             is_legacy_tree_test_script=self.is_legacy_tree_test_script,
         )
@@ -183,6 +222,9 @@ class TestExecutionPlanner:
 
     def _replacements_for_target(self, target: object | None) -> dict[str, str]:
         return self.action_replacements_builder(self.targets, target=target)
+
+    def _split_command_for_test_support(self, command_raw: str, replacements: Mapping[str, str]) -> list[str]:
+        return self.split_command(command_raw, dict(replacements))
 
 
 def build_test_execution_specs_for_route(

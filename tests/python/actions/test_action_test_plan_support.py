@@ -5,6 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import unittest
 
+from envctl_engine.actions import action_test_plan_support
+from envctl_engine.actions.action_test_plan_support import OrchestratorTestPlanDependencies
+from envctl_engine.actions.action_test_plan_support import RuntimeSplitCommandAdapter
 from envctl_engine.actions.action_test_plan_support import TestExecutionPlanner
 from envctl_engine.actions.action_test_plan_support import build_test_execution_specs_for_route
 from envctl_engine.actions.action_test_plan_support import command_start_status
@@ -21,6 +24,15 @@ from envctl_engine.runtime.command_router import parse_route
 
 
 class ActionTestPlanSupportTests(unittest.TestCase):
+    def test_orchestrator_test_plan_wiring_uses_named_dependency_adapters(self) -> None:
+        source = Path(action_test_plan_support.__file__).read_text(encoding="utf-8")
+
+        self.assertIn("class OrchestratorTestPlanDependencies", source)
+        self.assertIn("class RuntimeSplitCommandAdapter", source)
+        self.assertNotIn("split_command=lambda", source)
+        self.assertTrue(callable(OrchestratorTestPlanDependencies.failed_specs))
+        self.assertTrue(callable(RuntimeSplitCommandAdapter.__call__))
+
     def test_status_rendering_matches_action_command_surface(self) -> None:
         targets = [SimpleNamespace(name="api"), SimpleNamespace(name="web")]
 
