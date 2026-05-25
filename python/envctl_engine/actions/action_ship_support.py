@@ -46,8 +46,7 @@ class ShipWorkflowState:
 
 
 @dataclass(slots=True)
-class ShipWorkflowRunner:
-    context: Any
+class ShipWorkflowDependencies:
     resolve_git_root: Callable[[Path, Path], Path]
     git_available: bool
     git_output: GitOutput
@@ -61,6 +60,12 @@ class ShipWorkflowRunner:
     partition_envctl_protected_paths: Callable[[str], Any]
     ordered_unique_paths: Callable[..., list[str]]
     github_pr_checks: GithubPrChecks | None = None
+
+
+@dataclass(slots=True)
+class ShipWorkflowRunner:
+    context: Any
+    dependencies: ShipWorkflowDependencies
 
     def run(self) -> int:
         state = self._new_state()
@@ -80,18 +85,18 @@ class ShipWorkflowRunner:
 
     def _new_state(self) -> ShipWorkflowState:
         return ShipWorkflowState(
-            git_root=self.resolve_git_root(self.context.project_root, self.context.repo_root),
+            git_root=self.dependencies.resolve_git_root(self.context.project_root, self.context.repo_root),
             json_output=parse_ship_json_output(self.context),
             started=time.monotonic(),
         )
 
     def _reject_unavailable_git(self, state: ShipWorkflowState) -> int | None:
-        if self.git_available:
+        if self.dependencies.git_available:
             return None
         return self._finish(state, status="git_unavailable", ok=False)
 
     def _resolve_branch(self, state: ShipWorkflowState) -> int | None:
-        state.branch = self.git_output(state.git_root, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+        state.branch = self.dependencies.git_output(state.git_root, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
         if state.branch and state.branch != "HEAD":
             return None
         state.branch = state.branch or "HEAD"
@@ -101,7 +106,7 @@ class ShipWorkflowRunner:
         existing_conflicts = existing_merge_conflict_report(
             state.git_root,
             branch=state.branch,
-            git_output=self.git_output,
+            git_output=self.dependencies.git_output,
         )
         if existing_conflicts.get("state") != "conflicts":
             return None
@@ -114,22 +119,22 @@ class ShipWorkflowRunner:
         )
 
     def _run_commit_phase(self, state: ShipWorkflowState) -> int | None:
-        state.before_sha = self.git_output(state.git_root, ["rev-parse", "HEAD"]).strip()
+        state.before_sha = self.dependencies.git_output(state.git_root, ["rev-parse", "HEAD"]).strip()
         state.protected_paths = ship_protected_paths(
             state.git_root,
-            git_output=self.git_output,
-            partition_envctl_protected_paths=self.partition_envctl_protected_paths,
-            ordered_unique_paths=self.ordered_unique_paths,
+            git_output=self.dependencies.git_output,
+            partition_envctl_protected_paths=self.dependencies.partition_envctl_protected_paths,
+            ordered_unique_paths=self.dependencies.ordered_unique_paths,
         )
-        state.pre_commit_dirty = self.probe_dirty_worktree(
+        state.pre_commit_dirty = self.dependencies.probe_dirty_worktree(
             self.context.project_root,
             self.context.repo_root,
             project_name=self.context.project_name,
         ).dirty
-        state.pr_url = self.existing_pr_url(state.git_root, state.branch)
+        state.pr_url = self.dependencies.existing_pr_url(state.git_root, state.branch)
 
-        commit_code = self.run_commit_action(self.context)
-        state.after_sha = self.git_output(state.git_root, ["rev-parse", "HEAD"]).strip()
+        commit_code = self.dependencies.run_commit_action(self.context)
+        state.after_sha = self.dependencies.git_output(state.git_root, ["rev-parse", "HEAD"]).strip()
         state.committed = bool(state.after_sha and state.before_sha and state.after_sha != state.before_sha) or bool(
             state.pre_commit_dirty and commit_code == 0
         )
@@ -143,11 +148,11 @@ class ShipWorkflowRunner:
             state.step_statuses.append("pr_exists")
             return None
 
-        pr_code = self.run_pr_action(self.context)
+        pr_code = self.dependencies.run_pr_action(self.context)
         if pr_code != 0:
             return self._finish(state, status="pr_failed", ok=False, commit_sha=state.after_sha)
 
-        state.pr_url = self.existing_pr_url(state.git_root, state.branch)
+        state.pr_url = self.dependencies.existing_pr_url(state.git_root, state.branch)
         state.pr_created = bool(state.pr_url)
         state.step_statuses.append("pr_created" if state.pr_created else "pr_unresolved")
         return None
@@ -157,10 +162,10 @@ class ShipWorkflowRunner:
             self.context,
             state.git_root,
             branch=state.branch,
-            resolve_base_branch=self.resolve_base_branch,
-            resolve_base_ref=self.resolve_base_ref,
-            run_git=self.run_git,
-            git_output=self.git_output,
+            resolve_base_branch=self.dependencies.resolve_base_branch,
+            resolve_base_ref=self.dependencies.resolve_base_ref,
+            run_git=self.dependencies.run_git,
+            git_output=self.dependencies.git_output,
         )
         if state.merge_conflicts.get("state") != "conflicts":
             return None
@@ -178,7 +183,7 @@ class ShipWorkflowRunner:
         )
 
     def _run_checks_phase(self, state: ShipWorkflowState) -> int:
-        checks_fn = self.github_pr_checks or globals()["github_pr_checks"]
+        checks_fn = self.dependencies.github_pr_checks or globals()["github_pr_checks"]
         checks = checks_fn(state.git_root, branch=state.branch, pr_url=state.pr_url)
         status = str(checks.get("state") or ("pr_created" if state.pr_created else "pr_exists"))
         if status:
@@ -246,19 +251,21 @@ def run_ship_workflow(
 ) -> int:
     return ShipWorkflowRunner(
         context=context,
-        resolve_git_root=resolve_git_root,
-        git_available=git_available,
-        git_output=git_output,
-        run_git=run_git,
-        resolve_base_branch=resolve_base_branch,
-        resolve_base_ref=resolve_base_ref,
-        run_commit_action=run_commit_action,
-        run_pr_action=run_pr_action,
-        probe_dirty_worktree=probe_dirty_worktree,
-        existing_pr_url=existing_pr_url,
-        partition_envctl_protected_paths=partition_envctl_protected_paths,
-        ordered_unique_paths=ordered_unique_paths,
-        github_pr_checks=github_pr_checks,
+        dependencies=ShipWorkflowDependencies(
+            resolve_git_root=resolve_git_root,
+            git_available=git_available,
+            git_output=git_output,
+            run_git=run_git,
+            resolve_base_branch=resolve_base_branch,
+            resolve_base_ref=resolve_base_ref,
+            run_commit_action=run_commit_action,
+            run_pr_action=run_pr_action,
+            probe_dirty_worktree=probe_dirty_worktree,
+            existing_pr_url=existing_pr_url,
+            partition_envctl_protected_paths=partition_envctl_protected_paths,
+            ordered_unique_paths=ordered_unique_paths,
+            github_pr_checks=github_pr_checks,
+        ),
     ).run()
 
 
@@ -271,6 +278,7 @@ __all__ = [
     "ResolveBaseBranch",
     "ResolveBaseRef",
     "RunGit",
+    "ShipWorkflowDependencies",
     "ShipWorkflowRunner",
     "ShipWorkflowState",
     "_parse_json_output",

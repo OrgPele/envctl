@@ -34,6 +34,32 @@ class ActionShipSupportTests(unittest.TestCase):
         ):
             self.assertTrue(hasattr(runner_cls, phase), phase)
 
+    def test_ship_workflow_dependencies_group_injected_collaborators(self) -> None:
+        dependencies_cls = getattr(ship_support, "ShipWorkflowDependencies", None)
+        self.assertIsNotNone(dependencies_cls)
+        field_names = set(getattr(dependencies_cls, "__dataclass_fields__", {}))
+        self.assertEqual(
+            field_names,
+            {
+                "resolve_git_root",
+                "git_available",
+                "git_output",
+                "run_git",
+                "resolve_base_branch",
+                "resolve_base_ref",
+                "run_commit_action",
+                "run_pr_action",
+                "probe_dirty_worktree",
+                "existing_pr_url",
+                "partition_envctl_protected_paths",
+                "ordered_unique_paths",
+                "github_pr_checks",
+            },
+        )
+
+        runner_fields = set(getattr(ship_support.ShipWorkflowRunner, "__dataclass_fields__", {}))
+        self.assertEqual(runner_fields, {"context", "dependencies"})
+
     def test_run_ship_workflow_reuses_existing_pr_and_reports_failed_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"

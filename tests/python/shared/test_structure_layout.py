@@ -370,6 +370,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def existing_pr_url", git_state_text)
         ship_text = ship_owner.read_text(encoding="utf-8")
         self.assertIn("class ShipWorkflowRunner", ship_text)
+        self.assertIn("class ShipWorkflowDependencies", ship_text)
         self.assertIn("class ShipWorkflowState", ship_text)
         self.assertIn("def run_ship_workflow", ship_text)
         self.assertIn("def _run_commit_phase", ship_text)
