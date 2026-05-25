@@ -70,6 +70,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "workflow.py",
             "workflow_build.py",
             "workflow_prompt_support.py",
+            "workflow_runtime_addresses.py",
             "workflow_queue_support.py",
             "workflow_review_support.py",
         }
@@ -216,7 +217,15 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "_workflow_step_prompt_text",
                 "_resolve_preset_submission_text",
                 "_shape_prompt_text",
+            },
+            "workflow_runtime_addresses.py": {
+                "RuntimeAddressPromptBuilder",
+                "_append_runtime_addresses_for_preset",
+                "_dependency_address_lines",
                 "_runtime_addresses_prompt_section",
+                "_service_address_lines",
+                "_state_project_matches_worktree",
+                "_state_service_matches_worktree",
             },
             "workflow.py": {
                 "_codex_goal_text_for_worktree",
