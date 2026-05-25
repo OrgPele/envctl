@@ -4,7 +4,6 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 import inspect
 from pathlib import Path
-import sys
 import time
 from typing import Any, Callable, ClassVar, Sequence
 
@@ -17,9 +16,8 @@ from envctl_engine.actions.action_test_runner_progress import (
 )
 from envctl_engine.actions.action_test_suite_event_support import TestSuiteEventEmitter
 from envctl_engine.actions.action_test_suite_outcome_support import TestSuiteOutcomeRecorder
+from envctl_engine.actions.action_test_suite_presentation import TestSuitePresenter, render_command as render_command
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.test_output.symbols import format_duration
-from envctl_engine.ui.path_links import render_path_for_terminal
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,10 +103,6 @@ def execute_test_suites(
     return executor.run()
 
 
-def render_command(command: list[str]) -> str:
-    return " ".join(str(part) for part in command)
-
-
 class _TestSuiteExecutor:
     def __init__(
         self,
@@ -157,6 +151,18 @@ class _TestSuiteExecutor:
         )
         self.events = TestSuiteEventEmitter(runtime=self.runtime, total=len(self.execution_specs))
         self.outcomes = TestSuiteOutcomeRecorder(failed_only=self.failed_only)
+        self.presenter = TestSuitePresenter(
+            orchestrator=orchestrator,
+            execution_specs=self.execution_specs,
+            failed_only=self.failed_only,
+            interactive_command=self.interactive_command,
+            parallel=plan.parallel,
+            multi_project=plan.multi_project,
+            use_suite_spinner_group=use_suite_spinner_group,
+            progress_tracker=self.progress_tracker,
+            suite_spinner_group=self.suite_spinner_group,
+            events=self.events,
+        )
         self.interrupt_registry = TestSuiteInterruptRegistry(
             runtime=self.runtime,
             emit_status=orchestrator._emit_status,
@@ -182,7 +188,7 @@ class _TestSuiteExecutor:
                 parallel_workers=self.plan.parallel_workers,
                 futures_module=self.futures_module,
                 run_spec=self.run_spec,
-                failure_label=self._failure_label,
+                failure_label=self.presenter.failure_label,
                 cancel_interrupted=self._cleanup_interrupted_parallel_suites,
                 shutdown_executor=self._shutdown_executor,
             ).run()
@@ -196,7 +202,7 @@ class _TestSuiteExecutor:
         resolved_source = execution.resolved_source
         project_name = execution.project_name
         suite_label = self.orchestrator._suite_display_name(spec.source, failed_only=self.failed_only)
-        self._announce_suite_start(execution, suite_label=suite_label, resolved_source=resolved_source)
+        self.presenter.announce_suite_start(execution, suite_label=suite_label, resolved_source=resolved_source)
 
         if self.use_suite_spinner_group:
             self.suite_spinner_group.mark_running(execution)
@@ -245,9 +251,9 @@ class _TestSuiteExecutor:
             ),
         )
         parsed = runner.last_result
-        self._emit_suite_summary(execution, parsed)
+        self.presenter.emit_suite_summary(execution, parsed)
         duration_ms = round((time.monotonic() - started_at) * 1000.0, 1)
-        self._print_interactive_suite_finish(
+        self.presenter.print_interactive_suite_finish(
             execution,
             suite_label=suite_label,
             completed=completed,
@@ -257,7 +263,7 @@ class _TestSuiteExecutor:
         self.outcomes.record(execution, command=command, completed=completed, parsed=parsed, duration_ms=duration_ms)
         self.events.emit_finish(execution, command=command, completed=completed, duration_ms=duration_ms)
         self.interrupt_registry.clear_by_index(int(index))
-        self._mark_finished(execution, completed=completed, parsed=parsed, duration_ms=duration_ms)
+        self.presenter.mark_finished(execution, completed=completed, parsed=parsed, duration_ms=duration_ms)
 
         if completed.returncode != 0:
             error = _summarize_failure_output(
@@ -267,45 +273,6 @@ class _TestSuiteExecutor:
             )
             return 1, error
         return 0, ""
-
-    def _failure_label(self, execution: Any) -> str:
-        return f"{execution.project_name}:{execution.spec.source} [{execution.index}/{len(self.execution_specs)}]"
-
-    def _announce_suite_start(self, execution: Any, *, suite_label: str, resolved_source: str) -> None:
-        index = execution.index
-        spec = execution.spec
-        project_name = execution.project_name
-        status = self.orchestrator._test_execution_status(
-            spec.command,
-            args=execution.args,
-            source=resolved_source,
-            cwd=spec.cwd,
-        )
-        if self.plan.multi_project:
-            status = f"{project_name}: {status}"
-        status += f" [{index}/{len(self.execution_specs)}]" if len(self.execution_specs) > 1 else ""
-        if not self.use_suite_spinner_group:
-            self.orchestrator._emit_status(status)
-        if self.interactive_command:
-            started_label = f"{project_name} / {suite_label}" if self.plan.multi_project else suite_label
-            if not self.use_suite_spinner_group:
-                index_text = self.orchestrator._colorize(f"[{index}/{len(self.execution_specs)}]", fg="yellow")
-                suite_text = self.orchestrator._colorize(started_label, fg="cyan", bold=True)
-                state_text = self.orchestrator._colorize("started", fg="blue")
-                print(f"  - {index_text} {suite_text} {state_text}")
-                command_text = self.orchestrator._colorize(
-                    render_command([*spec.command, *execution.args]), fg="gray"
-                )
-                cwd_text = self.orchestrator._colorize(
-                    render_path_for_terminal(
-                        str(Path(spec.cwd).resolve()),
-                        env=getattr(self.orchestrator.runtime, "env", {}),
-                        stream=sys.stdout,
-                    ),
-                    fg="gray",
-                )
-                print(f"      command: {command_text}")
-                print(f"      cwd: {cwd_text}")
 
     def _build_runner(self, execution: Any, *, render_output: bool) -> Any:
         def emit_test_event(event_name: str, data: dict[str, Any]) -> None:
@@ -349,69 +316,6 @@ class _TestSuiteExecutor:
                 execution, int(pid)
             )
         return run_test_kwargs
-
-    def _emit_suite_summary(self, execution: Any, parsed: Any) -> None:
-        if parsed is None:
-            return
-        counts_detected = bool(getattr(parsed, "counts_detected", False))
-        if not (self.interactive_command and self.plan.parallel and self.plan.multi_project):
-            if counts_detected:
-                self.orchestrator._emit_status(
-                    f"{execution.project_name} / {execution.spec.source} summary: "
-                    f"{parsed.passed} passed, {parsed.failed} failed, {parsed.skipped} skipped"
-                )
-            else:
-                self.orchestrator._emit_status(
-                    f"{execution.project_name} / {execution.spec.source} summary: no parsed test counts"
-                )
-        self.events.emit_summary(execution, parsed=parsed)
-
-    def _print_interactive_suite_finish(
-        self,
-        execution: Any,
-        *,
-        suite_label: str,
-        completed: Any,
-        parsed: Any,
-        duration_ms: float,
-    ) -> None:
-        if not (self.interactive_command and not self.use_suite_spinner_group):
-            return
-        suite_status = "passed" if completed.returncode == 0 else "failed"
-        finished_label = f"{execution.project_name} / {suite_label}" if self.plan.multi_project else suite_label
-        counts_suffix = ""
-        counts_detected = bool(getattr(parsed, "counts_detected", False)) if parsed is not None else False
-        if parsed is not None and counts_detected:
-            counts_suffix = f" • {parsed.passed} passed, {parsed.failed} failed, {parsed.skipped} skipped"
-        icon = (
-            self.orchestrator._colorize("✓", fg="green", bold=True)
-            if completed.returncode == 0
-            else self.orchestrator._colorize("✗", fg="red", bold=True)
-        )
-        index_text = self.orchestrator._colorize(f"[{execution.index}/{len(self.execution_specs)}]", fg="yellow")
-        suite_text = self.orchestrator._colorize(finished_label, fg="cyan", bold=True)
-        status_text = self.orchestrator._colorize(
-            suite_status,
-            fg=("green" if completed.returncode == 0 else "red"),
-            bold=True,
-        )
-        print(
-            f"  - {icon} {index_text} {suite_text} {status_text} "
-            f"({format_duration(duration_ms / 1000.0)}){counts_suffix}"
-        )
-        if completed.returncode == 0 and parsed is not None and not counts_detected:
-            print("      note: test command completed, but envctl could not extract test counts from the output.")
-
-    def _mark_finished(self, execution: Any, *, completed: Any, parsed: Any, duration_ms: float) -> None:
-        if self.use_suite_spinner_group:
-            self.suite_spinner_group.mark_finished(
-                execution,
-                success=completed.returncode == 0,
-                duration_text=format_duration(max(duration_ms / 1000.0, 0.0)),
-                parsed=parsed,
-            )
-        else:
-            self.progress_tracker.mark_finished(execution, success=completed.returncode == 0)
 
     def _cancel_queued_parallel_suites(self, *, executor: Any | None, future_map: dict[Any, Any]) -> int:
         queued_cancelled = 0
