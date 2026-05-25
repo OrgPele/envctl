@@ -12,6 +12,8 @@ from envctl_engine.planning.plan_agent.models import (
 )
 from envctl_engine.planning.plan_agent.workflow_queue_interaction import (
     CodexQueueMessageInteractor,
+    Clock,
+    Sleeper,
     wait_until_codex_queue_ready,
 )
 from envctl_engine.planning.plan_agent.workflow_bootstrap_commands import CliBootstrapCommandTyper
@@ -202,9 +204,17 @@ def wait_for_codex_queue_ready(
     workspace_id: str,
     surface_id: str,
     read_surface_screen_fn: ReadSurfaceScreenFn,
+    monotonic: Clock | None = None,
+    sleep: Sleeper | None = None,
 ) -> bool:
+    wait_kwargs: dict[str, Any] = {}
+    if monotonic is not None:
+        wait_kwargs["monotonic"] = monotonic
+    if sleep is not None:
+        wait_kwargs["sleep"] = sleep
     return wait_until_codex_queue_ready(
         read_screen=lambda: read_surface_screen_fn(runtime, workspace_id=workspace_id, surface_id=surface_id),
+        **wait_kwargs,
     )
 
 
@@ -217,7 +227,14 @@ def queue_codex_message(
     require_text_match: bool = True,
     read_surface_screen_fn: ReadSurfaceScreenFn,
     send_surface_key_fn: SendSurfaceKeyFn,
+    monotonic: Clock | None = None,
+    sleep: Sleeper | None = None,
 ) -> bool:
+    interactor_kwargs: dict[str, Any] = {}
+    if monotonic is not None:
+        interactor_kwargs["monotonic"] = monotonic
+    if sleep is not None:
+        interactor_kwargs["sleep"] = sleep
     return CodexQueueMessageInteractor(
         read_screen=lambda: read_surface_screen_fn(runtime, workspace_id=workspace_id, surface_id=surface_id),
         send_key=lambda key: send_surface_key_fn(
@@ -228,4 +245,5 @@ def queue_codex_message(
             emit_failure_event=False,
         ),
         prompt_picker_enabled=True,
+        **interactor_kwargs,
     ).queue_message(text, require_text_match=require_text_match)
