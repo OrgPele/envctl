@@ -238,11 +238,15 @@ class StructureLayoutTests(unittest.TestCase):
         models_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_models.py"
         path_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_frontend_paths.py"
         classification_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_classification.py"
+        command_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_command_discovery.py"
+        bootstrap_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test_bootstrap.py"
         discovery = REPO_ROOT / "python" / "envctl_engine" / "actions" / "actions_test.py"
 
         self.assertTrue(models_owner.is_file())
         self.assertTrue(path_owner.is_file())
         self.assertTrue(classification_owner.is_file())
+        self.assertTrue(command_owner.is_file())
+        self.assertTrue(bootstrap_owner.is_file())
         self.assertIn("class TestCommandSpec", models_owner.read_text(encoding="utf-8"))
         self.assertIn("class TestPathSuggestion", models_owner.read_text(encoding="utf-8"))
         path_text = path_owner.read_text(encoding="utf-8")
@@ -251,11 +255,19 @@ class StructureLayoutTests(unittest.TestCase):
         classification_text = classification_owner.read_text(encoding="utf-8")
         self.assertIn("def classify_test_command_source", classification_text)
         self.assertIn("def build_test_args", classification_text)
+        command_text = command_owner.read_text(encoding="utf-8")
+        self.assertIn("def test_command_suggestions", command_text)
+        self.assertIn("def default_test_commands", command_text)
+        bootstrap_text = bootstrap_owner.read_text(encoding="utf-8")
+        self.assertIn("def ensure_repo_local_test_prereqs", bootstrap_text)
+        self.assertIn("def bootstrap_python_executable", bootstrap_text)
         discovery_text = discovery.read_text(encoding="utf-8")
         self.assertIn("actions_test_models", discovery_text)
         self.assertIn("actions_test_frontend_paths", discovery_text)
         self.assertIn("actions_test_classification", discovery_text)
-        self.assertLessEqual(len(discovery_text.splitlines()), 540)
+        self.assertIn("actions_test_command_discovery", discovery_text)
+        self.assertIn("actions_test_bootstrap", discovery_text)
+        self.assertLessEqual(len(discovery_text.splitlines()), 260)
 
     def test_action_test_planning_uses_explicit_planner_objects(self) -> None:
         plan_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_plan_support.py"
