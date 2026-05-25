@@ -114,6 +114,97 @@ class ConfiguredTestSpecResolver:
 
 
 @dataclass(frozen=True, slots=True)
+class SharedTestCommandPlanner:
+    raw_command: str
+    target_contexts: Sequence[TestTargetContext]
+    repo_root: Path
+    include_backend: bool
+    include_frontend: bool
+    frontend_test_path: str | None
+    run_all: bool
+    untested: bool
+    split_command: Callable[[str, Mapping[str, str]], list[str]]
+    replacements_for_target: Callable[[object | None], Mapping[str, str]]
+    is_legacy_tree_test_script: Callable[[list[str]], bool]
+
+    def build(self) -> list[TestExecutionSpec]:
+        execution_specs: list[TestExecutionSpec] = []
+        parsed_command: list[str] | None = None
+        for target in self.target_contexts:
+            command, cwd = self._command_for_target(target)
+            if parsed_command is None:
+                parsed_command = command
+            if self.is_legacy_tree_test_script(command):
+                parsed_command = command
+                break
+            execution_specs.append(self._target_execution_spec(target=target, command=command, cwd=cwd))
+
+        parsed_command = parsed_command or self._command_without_target()
+        if not self.is_legacy_tree_test_script(parsed_command):
+            return execution_specs
+        return [self._legacy_all_targets_spec(parsed_command)]
+
+    def _command_for_target(self, target: TestTargetContext) -> tuple[list[str], Path]:
+        command = self.split_command(self.raw_command, self.replacements_for_target(target.target_obj))
+        cwd = target.project_root
+        if self._frontend_package_command(command):
+            cwd = configured_test_command_cwd(target.project_root, include_frontend=True)
+            command = self._append_frontend_path(command, project_root=target.project_root, command_cwd=cwd)
+        return command, cwd
+
+    def _command_without_target(self) -> list[str]:
+        command = self.split_command(self.raw_command, self.replacements_for_target(None))
+        if self._frontend_package_command(command):
+            command = self._append_frontend_path(command, project_root=self.repo_root, command_cwd=self.repo_root)
+        return command
+
+    def _frontend_package_command(self, command: list[str]) -> bool:
+        return self.include_frontend and not self.include_backend and is_package_test_command(command)
+
+    def _append_frontend_path(self, command: list[str], *, project_root: Path, command_cwd: Path) -> list[str]:
+        return append_frontend_test_path(
+            command,
+            self.frontend_test_path,
+            project_root=project_root,
+            command_cwd=command_cwd,
+        )
+
+    def _target_execution_spec(
+        self,
+        *,
+        target: TestTargetContext,
+        command: list[str],
+        cwd: Path,
+    ) -> TestExecutionSpec:
+        source = classify_test_command_source(
+            command,
+            include_backend=self.include_backend,
+            include_frontend=self.include_frontend,
+        )
+        return TestExecutionSpec(
+            index=0,
+            spec=TestCommandSpec(command=command, cwd=cwd, source=source),
+            args=[],
+            resolved_source=source,
+            project_name=target.project_name,
+            project_root=target.project_root,
+            target_obj=target.target_obj,
+        )
+
+    def _legacy_all_targets_spec(self, command: list[str]) -> TestExecutionSpec:
+        project_names = [target.project_name for target in self.target_contexts]
+        return TestExecutionSpec(
+            index=0,
+            spec=TestCommandSpec(command=command, cwd=self.repo_root, source="configured"),
+            args=build_test_args(project_names, run_all=self.run_all, untested=self.untested),
+            resolved_source="configured",
+            project_name="all-targets",
+            project_root=self.repo_root,
+            target_obj=None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ActionTestExecutionSpecBuilder:
     shared_raw_command: str | None
     backend_raw_command: str | None
@@ -132,76 +223,24 @@ class ActionTestExecutionSpecBuilder:
 
     def build(self) -> list[TestExecutionSpec]:
         if self.shared_raw_command is not None:
-            return _renumber_execution_specs(self._shared_command_specs())
+            return _renumber_execution_specs(self._shared_command_planner().build())
         return _renumber_execution_specs(self._per_target_command_specs())
 
-    def _shared_command_specs(self) -> list[TestExecutionSpec]:
-        execution_specs: list[TestExecutionSpec] = []
-        parsed_command: list[str] | None = None
-        for target in self.target_contexts:
-            command, cwd = self._shared_command_for_target(target)
-            if parsed_command is None:
-                parsed_command = command
-            if self.is_legacy_tree_test_script(command):
-                parsed_command = command
-                break
-            classified_source = classify_test_command_source(
-                command,
-                include_backend=self.include_backend,
-                include_frontend=self.include_frontend,
-            )
-            execution_specs.append(
-                TestExecutionSpec(
-                    index=0,
-                    spec=TestCommandSpec(command=command, cwd=cwd, source=classified_source),
-                    args=[],
-                    resolved_source=classified_source,
-                    project_name=target.project_name,
-                    project_root=target.project_root,
-                    target_obj=target.target_obj,
-                )
-            )
-        parsed_command = parsed_command or self._shared_command_without_target()
-        if not self.is_legacy_tree_test_script(parsed_command):
-            return execution_specs
-        project_names = [target.project_name for target in self.target_contexts]
-        return [
-            TestExecutionSpec(
-                index=0,
-                spec=TestCommandSpec(command=parsed_command, cwd=self.repo_root, source="configured"),
-                args=build_test_args(project_names, run_all=self.run_all, untested=self.untested),
-                resolved_source="configured",
-                project_name="all-targets",
-                project_root=self.repo_root,
-                target_obj=None,
-            )
-        ]
-
-    def _shared_command_for_target(self, target: TestTargetContext) -> tuple[list[str], Path]:
+    def _shared_command_planner(self) -> SharedTestCommandPlanner:
         assert self.shared_raw_command is not None
-        command = self.split_command(self.shared_raw_command, self.replacements_for_target(target.target_obj))
-        cwd = target.project_root
-        if self.include_frontend and not self.include_backend and is_package_test_command(command):
-            cwd = configured_test_command_cwd(target.project_root, include_frontend=True)
-            command = append_frontend_test_path(
-                command,
-                self.frontend_test_path,
-                project_root=target.project_root,
-                command_cwd=cwd,
-            )
-        return command, cwd
-
-    def _shared_command_without_target(self) -> list[str]:
-        assert self.shared_raw_command is not None
-        command = self.split_command(self.shared_raw_command, self.replacements_for_target(None))
-        if self.include_frontend and not self.include_backend and is_package_test_command(command):
-            command = append_frontend_test_path(
-                command,
-                self.frontend_test_path,
-                project_root=self.repo_root,
-                command_cwd=self.repo_root,
-            )
-        return command
+        return SharedTestCommandPlanner(
+            raw_command=self.shared_raw_command,
+            target_contexts=self.target_contexts,
+            repo_root=self.repo_root,
+            include_backend=self.include_backend,
+            include_frontend=self.include_frontend,
+            frontend_test_path=self.frontend_test_path,
+            run_all=self.run_all,
+            untested=self.untested,
+            split_command=self.split_command,
+            replacements_for_target=self.replacements_for_target,
+            is_legacy_tree_test_script=self.is_legacy_tree_test_script,
+        )
 
     def _per_target_command_specs(self) -> list[TestExecutionSpec]:
         execution_specs: list[TestExecutionSpec] = []

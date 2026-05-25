@@ -250,6 +250,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("class TestTargetContext", models_text)
         self.assertIn("class TestExecutionSpec", models_text)
         command_text = command_owner.read_text(encoding="utf-8")
+        self.assertIn("class SharedTestCommandPlanner", command_text)
         self.assertIn("def build_test_execution_specs", command_text)
         self.assertIn("def configured_or_default_test_spec", command_text)
         failed_spec_text = failed_spec_owner.read_text(encoding="utf-8")
