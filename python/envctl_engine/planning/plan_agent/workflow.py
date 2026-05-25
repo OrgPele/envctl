@@ -1,30 +1,175 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-import json
-import re
-import shlex
-from pathlib import Path
+# ruff: noqa: F401
 from typing import Any
 
-from envctl_engine.planning import planning_feature_name
-
-from envctl_engine.planning.plan_agent.constants import *
 from envctl_engine.planning.plan_agent.constants import (
+    _AI_CLI_SHELL_FAILURE_MARKERS,
+    _ANSI_ESCAPE_RE,
+    _BROWSER_E2E_FOLLOWUP_TEMPLATE,
+    _CLI_READY_DELAY_SECONDS_BY_CLI,
+    _CLI_READY_POLL_INTERVAL_SECONDS,
+    _CODEX_BYPASS_FLAGS,
+    _CODEX_LOADING_MARKERS,
+    _CODEX_QUEUE_CONFIRMED_MARKERS,
+    _CODEX_QUEUE_MAX_TAB_ATTEMPTS,
+    _CODEX_QUEUE_READY_HINT,
+    _CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS,
+    _CODEX_QUEUE_READY_TIMEOUT_SECONDS,
+    _CODEX_READY_MARKERS,
+    _CODEX_READY_PROMPT_RE,
+    _DEFAULT_CLI_READY_DELAY_SECONDS,
     _DEFAULT_PRESET,
+    _DEFAULT_SHELL,
     _DONE_PLANNING_ROOT,
+    _FINALIZATION_INSTRUCTION_TEMPLATE,
+    _FIRST_CYCLE_COMPLETION_TEMPLATE,
+    _INTERMEDIATE_CYCLE_COMPLETION_TEMPLATE,
+    _LOW_SIGNAL_TAB_TITLE_WORDS,
+    _OMX_SESSION_READY_POLL_INTERVAL_SECONDS,
+    _OMX_SESSION_READY_TIMEOUT_SECONDS,
+    _OMX_SESSION_STATE_RELATIVE_PATH,
+    _OMX_SPAWN_OUTPUT_EXCERPT_CHARS,
+    _OMX_TMUX_EXTENDED_KEYS_RELATIVE_PATH,
+    _OMX_TMUX_LOCK_STALE_SECONDS,
     _OMX_WORKFLOW_KEYWORDS,
+    _OPENCODE_LOADING_MARKERS,
+    _OPENCODE_READY_MARKERS,
+    _OPENCODE_READY_PROMPT_RE,
+    _PLAN_AGENT_CODEX_CYCLE_CAP,
+    _PLAN_AGENT_TAB_TITLE_MAX_LEN,
+    _PLAN_AGENT_WORKFLOW_CODEX_CYCLES,
     _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT,
     _PLANNING_ROOT,
+    _PR_REVIEW_COMMENTS_FOLLOWUP_TEMPLATE,
+    _PROMPT_PRE_SUBMIT_DELAY_SECONDS,
+    _PROMPT_SHAPING_COMMAND_TOKEN_RE,
+    _PROMPT_SUBMIT_READY_DELAY_SECONDS,
+    _PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS,
+    _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS,
+    _PROMPT_TEMPLATE_PACKAGE,
+    _READ_SCREEN_LINE_COUNT,
+    _REVIEW_WORKTREE_PRESET,
+    _SUPPORTED_PLAN_AGENT_CLIS,
+    _SURFACE_READY_DELAY_SECONDS,
+    _TMUX_WINDOW_READY_POLL_INTERVAL_SECONDS,
+    _TMUX_WINDOW_READY_TIMEOUT_SECONDS,
     _WORKTREE_PROVENANCE_PATH,
 )
-from envctl_engine.planning.plan_agent.models import *
-from envctl_engine.planning.plan_agent.models import _PlanAgentWorkflow
-from envctl_engine.planning.plan_agent.config import *
-from envctl_engine.planning.plan_agent.terminal_screen import *
-from envctl_engine.planning.plan_agent.workflow_build import *
-from envctl_engine.planning.plan_agent.workflow_prompt_support import *
-from envctl_engine.runtime.runtime_context import RuntimeContext
+from envctl_engine.planning.plan_agent.config import (
+    PlanAgentLaunchPolicy,
+    _cli_ready_delay_seconds,
+    _cmux_transport_explicitly_requested,
+    _codex_tui_queue_workflow_supported,
+    _command_executable,
+    _default_plan_agent_cli_command,
+    _default_plan_agent_surface_transport,
+    _guidance_attach_command,
+    _launch_policy,
+    _missing_launch_commands,
+    _parse_codex_cycles,
+    _resolve_available_plan_agent_surface_transport,
+    _route_requests_ulw,
+    _ulw_route_supported,
+    _uses_direct_submission,
+    _workflow_mode_for_launch_config,
+    cli_ready_delay_seconds,
+    codex_tui_queue_workflow_supported,
+    command_executable,
+    default_plan_agent_cli_command,
+    default_plan_agent_surface_transport,
+    guidance_attach_command,
+    missing_launch_commands,
+    normalize_plan_agent_surface_transport,
+    parse_codex_cycles,
+    plan_agent_launch_prereq_commands,
+    resolve_plan_agent_launch_config,
+    uses_direct_submission,
+    workflow_mode_for_launch_config,
+)
+from envctl_engine.planning.plan_agent.models import (
+    AgentTerminalLaunchResult,
+    AiCliReadyResult,
+    CreatedPlanWorktree,
+    PlanAgentAttachTarget,
+    PlanAgentAttachValidation,
+    PlanAgentLaunchConfig,
+    PlanAgentLaunchOutcome,
+    PlanAgentLaunchResult,
+    PlanSelectionResult,
+    PlanWorktreeSyncResult,
+    ReviewAgentLaunchReadiness,
+    _OmxSessionRecord,
+    _OmxSpawnProcessRecord,
+    _PlanAgentWorkflow,
+    _PlanAgentWorkflowStep,
+    _QueueFailure,
+    _WorkspaceLaunchTarget,
+)
+from envctl_engine.planning.plan_agent.terminal_screen import (
+    _CODEX_GOAL_ACTIVE_MARKERS,
+    _codex_goal_screen_looks_active,
+    _codex_queue_message_needs_tab,
+    _codex_queue_screen_confirms_queued,
+    _codex_queue_screen_looks_ready,
+    _codex_queue_text_is_visible,
+    _format_ai_cli_ready_failure,
+    _normalized_screen_text,
+    _post_submit_screen_looks_accepted,
+    _prompt_picker_screen_looks_ready,
+    _prompt_submit_screen_looks_ready,
+    _screen_excerpt,
+    _screen_looks_active,
+    _screen_looks_ready,
+    _screen_tail_text,
+    _strip_ansi_sequences,
+)
+from envctl_engine.planning.plan_agent.workflow_build import (
+    PlanAgentWorkflowBuilder,
+    _browser_e2e_instruction_text,
+    _build_plan_agent_workflow,
+    _finalization_instruction_text,
+    _first_cycle_completion_instruction_text,
+    _intermediate_cycle_completion_instruction_text,
+    _load_plan_agent_followup_prompt,
+    _pr_review_comments_instruction_text,
+    _slash_command,
+    _tab_title_for_worktree,
+)
+from envctl_engine.planning.plan_agent.workflow_prompt_support import (
+    _append_runtime_addresses_for_preset,
+    _component_port,
+    _dependency_address,
+    _dependency_address_lines,
+    _dependency_label,
+    _int_or_none,
+    _latest_runtime_state,
+    _original_plan_file_path,
+    _original_task_source_prompt_section,
+    _resolve_preset_submission_text,
+    _runtime_addresses_prompt_section,
+    _service_address_lines,
+    _shape_prompt_text,
+    _shape_queue_message_text,
+    _state_project_matches_worktree,
+    _state_service_matches_worktree,
+    _workflow_step_prompt_text,
+    optional_state_repository,
+    resolve_codex_direct_prompt_body,
+    resolve_opencode_direct_prompt_body,
+)
+from envctl_engine.planning.plan_agent.workflow_review_support import (
+    _active_plan_selector_for_path,
+    _cli_display_path,
+    _feature_name_from_project_name,
+    _infer_plan_file_from_feature,
+    _plan_matches_for_feature,
+    _recorded_plan_file_from_worktree,
+    _resolve_recorded_plan_file,
+    _review_original_plan_path,
+    _review_prompt_arguments,
+    resolve_plan_agent_launch_command,
+)
 
 
 def _surface_respawn_command(launch_config: PlanAgentLaunchConfig, worktree: CreatedPlanWorktree) -> str:
@@ -86,140 +231,6 @@ def _emit_codex_goal_event(
     if reason is not None:
         payload["reason"] = reason
     runtime._emit(event, **payload)
-
-
-def _review_prompt_arguments(
-    *,
-    project_name: str,
-    project_root: Path,
-    review_bundle_path: Path | None,
-    original_plan_path: Path | None,
-) -> str:
-    parts = [f'Project: {project_name}']
-    if review_bundle_path is not None:
-        parts.append(f'Review bundle: "{review_bundle_path}"')
-    parts.append(f'Worktree directory: "{project_root}"')
-    if original_plan_path is not None:
-        parts.append(f'Original plan file: "{original_plan_path}"')
-    return "\n".join(str(part).strip() for part in parts if str(part).strip())
-
-
-def _review_original_plan_path(project_name: str, project_root: Path, *, repo_root: Path) -> Path | None:
-    recorded_plan = _recorded_plan_file_from_worktree(project_root)
-    resolved = _resolve_recorded_plan_file(Path(repo_root), recorded_plan)
-    if resolved is not None:
-        return resolved
-    if recorded_plan:
-        return None
-    return _infer_plan_file_from_feature(Path(repo_root), feature_name=_feature_name_from_project_name(project_name))
-
-
-def _recorded_plan_file_from_worktree(project_root: Path) -> str:
-    provenance_path = Path(project_root) / _WORKTREE_PROVENANCE_PATH
-    try:
-        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ""
-    if not isinstance(provenance, dict):
-        return ""
-    return str(provenance.get("plan_file", "")).strip()
-
-
-def _resolve_recorded_plan_file(repo_root: Path, recorded_plan: str) -> Path | None:
-    normalized_plan = str(recorded_plan or "").strip()
-    if not normalized_plan:
-        return None
-    normalized = Path(normalized_plan.replace("\\", "/").lstrip("./"))
-    for root in (_PLANNING_ROOT, _DONE_PLANNING_ROOT):
-        candidate = repo_root / root / normalized
-        if candidate.is_file():
-            return candidate.resolve()
-    return None
-
-
-def _feature_name_from_project_name(project_name: str) -> str:
-    normalized = str(project_name).strip()
-    return re.sub(r"-\d+$", "", normalized)
-
-
-def _infer_plan_file_from_feature(repo_root: Path, *, feature_name: str) -> Path | None:
-    normalized_feature = str(feature_name).strip()
-    if not normalized_feature:
-        return None
-    active_matches = _plan_matches_for_feature(repo_root / _PLANNING_ROOT, feature_name=normalized_feature)
-    if len(active_matches) == 1:
-        return active_matches[0]
-    if active_matches:
-        return None
-    archived_matches = _plan_matches_for_feature(repo_root / _DONE_PLANNING_ROOT, feature_name=normalized_feature)
-    if len(archived_matches) == 1:
-        return archived_matches[0]
-    return None
-
-
-def _plan_matches_for_feature(planning_root: Path, *, feature_name: str) -> list[Path]:
-    if not planning_root.is_dir():
-        return []
-    matches: list[Path] = []
-    for candidate in sorted(planning_root.glob("*/*.md")):
-        if candidate.name == "README.md":
-            continue
-        relative = candidate.relative_to(planning_root)
-        if planning_feature_name(str(relative).replace("\\", "/")) != feature_name:
-            continue
-        matches.append(candidate.resolve())
-    return matches
-
-
-def _active_plan_selector_for_path(*, repo_root: Path, plan_path: Path) -> str | None:
-    planning_root = repo_root / _PLANNING_ROOT
-    try:
-        selector = str(plan_path.relative_to(planning_root)).replace("\\", "/")
-    except ValueError:
-        return None
-    selector = selector.strip()
-    if not selector:
-        return None
-    return selector
-
-
-def resolve_plan_agent_launch_command(
-    *,
-    project_name: str,
-    project_root: Path,
-    repo_root: Path,
-    envctl_executable: str = "envctl",
-) -> str | None:
-    plan_path = _review_original_plan_path(project_name, project_root, repo_root=repo_root)
-    selector = (
-        _active_plan_selector_for_path(repo_root=repo_root, plan_path=plan_path)
-        if plan_path is not None
-        else None
-    )
-    if not selector and _recorded_plan_file_from_worktree(project_root):
-        return None
-    if not selector:
-        selector = f"{_feature_name_from_project_name(project_name)}.md"
-    return " ".join(
-        (
-            shlex.quote(envctl_executable),
-            "--repo",
-            shlex.quote(_cli_display_path(repo_root)),
-            "--plan",
-            shlex.quote(selector),
-            "--tmux",
-            "--opencode",
-            "--headless",
-            "--new-session",
-        )
-    )
-
-
-def _cli_display_path(path: Path) -> str:
-    raw = str(path)
-    if raw.startswith("/private/var/"):
-        return raw.removeprefix("/private")
-    return raw
 
 
 __all__ = tuple(name for name in globals() if not name.startswith("__"))

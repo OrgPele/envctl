@@ -70,6 +70,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "workflow_build.py",
             "workflow_prompt_support.py",
             "workflow_queue_support.py",
+            "workflow_review_support.py",
         }
         actual = {path.name for path in PLAN_AGENT_ROOT.glob("*.py")}
         self.assertTrue(expected.issubset(actual))
@@ -219,6 +220,17 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             },
             "workflow_queue_support.py": {
                 "run_codex_workflow_queue",
+            },
+            "workflow_review_support.py": {
+                "_active_plan_selector_for_path",
+                "_feature_name_from_project_name",
+                "_infer_plan_file_from_feature",
+                "_plan_matches_for_feature",
+                "_recorded_plan_file_from_worktree",
+                "_resolve_recorded_plan_file",
+                "_review_original_plan_path",
+                "_review_prompt_arguments",
+                "resolve_plan_agent_launch_command",
             },
             "terminal_screen.py": {
                 "_screen_looks_ready",
@@ -422,6 +434,18 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             text = (PLAN_AGENT_ROOT / filename).read_text(encoding="utf-8")
             self.assertNotIn("Extracted in later mechanical waves", text)
             self.assertNotIn("Constants stay in launch", text)
+
+    def test_workflow_facade_uses_explicit_compatibility_imports(self) -> None:
+        path = PLAN_AGENT_ROOT / "workflow.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        wildcard_imports = [
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+            if alias.name == "*"
+        ]
+        self.assertEqual([], wildcard_imports)
 
 
 if __name__ == "__main__":
