@@ -10,6 +10,10 @@ from envctl_engine.runtime.lifecycle_dependency_stop import (
     requirements_have_enabled_components,
     select_dependency_components_for_stop,
 )
+from envctl_engine.runtime.lifecycle_service_stop_selection import (
+    select_services_for_stop,
+    service_matches_runtime_scope,
+)
 from envctl_engine.runtime.lifecycle_stopped_metadata import (
     has_dashboard_stopped_services,
     project_name_from_stopped_service,
@@ -27,7 +31,6 @@ from envctl_engine.shared.protocols import PortAllocator, ProcessRuntime, StateR
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
-from envctl_engine.shared.services import service_matches_selector
 from envctl_engine.ui.selection_support import (
     interactive_selection_allowed,
     project_names_from_state,
@@ -192,60 +195,19 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
         return project_root_from_stopped_service(service, service_type=service_type)
 
     def _select_services_for_stop(self, state: RunState, route: Route) -> set[str]:
-        if route.command != "stop":
-            return set(state.services.keys())
-        if bool(route.flags.get("all")):
-            return set(state.services.keys())
-
-        runtime_scope = route.flags.get("runtime_scope")
-        if runtime_scope in {"backend", "frontend"}:
-            return {
-                name
-                for name, service in state.services.items()
-                if self._service_matches_runtime_scope(name, service, str(runtime_scope))
-            }
-        if runtime_scope in {"fullstack", "entire-system"}:
-            return set(state.services.keys())
-        if runtime_scope == "dependencies":
-            return set()
-
-        selected: set[str] = set()
-        has_selectors = False
-        services_flag = route.flags.get("services")
-        if isinstance(services_flag, list):
-            has_selectors = has_selectors or bool(services_flag)
-            for raw in services_flag:
-                target = str(raw).strip().lower()
-                if not target:
-                    continue
-                for name, service in state.services.items():
-                    if name.lower() == target or service_matches_selector(service, target):
-                        selected.add(name)
-
-        project_names = {name.lower() for name in route.projects}
         selectors_from_passthrough = getattr(self.runtime, "_selectors_from_passthrough", None)
-        if callable(selectors_from_passthrough):
-            project_names.update(selectors_from_passthrough(route.passthrough_args))
-        has_selectors = has_selectors or bool(project_names)
-        if project_names:
-            for name in state.services:
-                project = self.runtime._project_name_from_service(name).lower()  # type: ignore[attr-defined]
-                if project and project in project_names:
-                    selected.add(name)
-
-        if not selected and has_selectors:
-            return set()
-        if not selected and self._select_dependency_components_for_stop(state, route):
-            return set()
-        if not selected:
-            selection = self._interactive_stop_selection(route, state)
-            if selection is not None:
-                if selection.cancelled:
-                    return set()
-                selected = self._services_from_selection(selection, state)
-        if not selected:
-            return set(state.services.keys())
-        return selected
+        return select_services_for_stop(
+            state,
+            route,
+            project_name_from_service_fn=lambda service_name: self.runtime._project_name_from_service(  # type: ignore[attr-defined]
+                service_name
+            ),
+            selectors_from_passthrough_fn=(
+                selectors_from_passthrough if callable(selectors_from_passthrough) else lambda _args: set()
+            ),
+            interactive_stop_selection_fn=self._interactive_stop_selection,
+            services_from_selection_fn=self._services_from_selection,
+        )
 
     def _execute_stop_dependencies(self, route: Route, state: RunState) -> int:
         def operation() -> int:
@@ -315,11 +277,7 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
 
     @staticmethod
     def _service_matches_runtime_scope(name: str, service: object, runtime_scope: str) -> bool:
-        service_type = str(getattr(service, "type", "") or "").strip().lower()
-        if service_type == runtime_scope:
-            return True
-        lowered_name = str(name).strip().lower()
-        return lowered_name.endswith(f" {runtime_scope}")
+        return service_matches_runtime_scope(name, service, runtime_scope)
 
     def _interactive_stop_selection(self, route: Route, state: RunState) -> TargetSelection | None:
         if not self._interactive_selection_allowed(route):
