@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +59,9 @@ class DashboardCommandMixin:
         return command_support.repo_root_for_project(project_root)
 
     def _dispatch_kill_session(self, runtime_any: Any) -> None:
-        command_support.dispatch_kill_session(runtime_any, selector_fn=_run_selector_with_impl)
+        owner_module = sys.modules.get(type(self).__module__)
+        selector_fn = getattr(owner_module, "_run_selector_with_impl", _run_selector_with_impl)
+        command_support.dispatch_kill_session(runtime_any, selector_fn=selector_fn)
 
     @staticmethod
     def _recover_single_letter_command_from_escape_fragment(raw: str) -> str:

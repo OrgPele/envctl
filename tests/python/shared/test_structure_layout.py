@@ -1259,12 +1259,12 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_worktree_creation_flow_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_creation_flow.py"
-        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_creation_flow import",
-            facade.read_text(encoding="utf-8"),
+            runtime_bridge.read_text(encoding="utf-8"),
         )
 
     def test_worktree_plan_selection_has_owned_module(self) -> None:
@@ -1280,35 +1280,35 @@ class StructureLayoutTests(unittest.TestCase):
     def test_worktree_plan_project_selection_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_plan_project_selection.py"
         protocols = REPO_ROOT / "python" / "envctl_engine" / "planning" / "protocols.py"
-        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
         self.assertTrue(protocols.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_plan_project_selection import",
-            facade.read_text(encoding="utf-8"),
+            runtime_bridge.read_text(encoding="utf-8"),
         )
         self.assertIn("from envctl_engine.planning.protocols import ProjectContextLike", owner.read_text(encoding="utf-8"))
         self.assertNotIn("class ProjectContextLike(Protocol)", owner.read_text(encoding="utf-8"))
 
     def test_worktree_prompt_selection_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_prompt_selection.py"
-        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_prompt_selection import",
-            facade.read_text(encoding="utf-8"),
+            runtime_bridge.read_text(encoding="utf-8"),
         )
 
     def test_worktree_planning_menu_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_planning_menu.py"
-        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_planning_menu import",
-            facade.read_text(encoding="utf-8"),
+            runtime_bridge.read_text(encoding="utf-8"),
         )
 
     def test_worktree_setup_entries_has_owned_module(self) -> None:
@@ -1324,35 +1324,35 @@ class StructureLayoutTests(unittest.TestCase):
     def test_worktree_setup_coordinator_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_setup_coordinator.py"
         protocols = REPO_ROOT / "python" / "envctl_engine" / "planning" / "protocols.py"
-        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
         self.assertTrue(protocols.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_setup_coordinator import",
-            facade.read_text(encoding="utf-8"),
+            runtime_bridge.read_text(encoding="utf-8"),
         )
         self.assertIn("from envctl_engine.planning.protocols import ProjectContextLike", owner.read_text(encoding="utf-8"))
         self.assertNotIn("class ProjectContextLike(Protocol)", owner.read_text(encoding="utf-8"))
 
     def test_worktree_sync_deletion_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_deletion.py"
-        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_sync_deletion import",
-            facade.read_text(encoding="utf-8"),
+            runtime_bridge.read_text(encoding="utf-8"),
         )
 
     def test_worktree_sync_orchestration_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_sync_orchestration.py"
-        facade = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_domain.py"
+        runtime_bridge = REPO_ROOT / "python" / "envctl_engine" / "planning" / "worktree_runtime_bridge.py"
 
         self.assertTrue(owner.is_file())
         self.assertIn(
             "from envctl_engine.planning.worktree_sync_orchestration import",
-            facade.read_text(encoding="utf-8"),
+            runtime_bridge.read_text(encoding="utf-8"),
         )
 
     def test_worktree_identity_has_owned_module(self) -> None:
