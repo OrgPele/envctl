@@ -29,6 +29,7 @@ from .backend_policy import (
     selector_textual_importable as _textual_importable,
     selector_thread_stack_enabled as _selector_thread_stack_enabled,
 )
+from .io_probe import SelectorIoProbe
 
 __all__ = [
     "_RowRef",
@@ -279,75 +280,9 @@ def _instrument_textual_parser_keys(
     }
     stats_lock = threading.Lock()
 
-    def _fd_value(item: object) -> int | None:
-        if isinstance(item, int):
-            return item
-        fileno = getattr(item, "fileno", None)
-        if not callable(fileno):
-            return None
-        try:
-            value = fileno()
-        except Exception:
-            return None
-        return value if isinstance(value, int) else None
-
-    def _safe_fileno(stream: object) -> int | None:
-        fileno = getattr(stream, "fileno", None)
-        if not callable(fileno):
-            return None
-        try:
-            value = fileno()
-        except Exception:
-            return None
-        return value if isinstance(value, int) and value >= 0 else None
-
-    def _termios_snapshot(fd: int | None) -> dict[str, object]:
-        if not isinstance(fd, int) or fd < 0:
-            return {}
-        state: dict[str, object] = {"fd": int(fd)}
-        try:
-            import termios
-
-            attrs = termios.tcgetattr(fd)
-            lflag = int(attrs[3])
-            state.update(
-                {
-                    "lflag": lflag,
-                    "canonical": bool(lflag & int(termios.ICANON)),
-                    "echo": bool(lflag & int(termios.ECHO)),
-                    "isig": bool(lflag & int(termios.ISIG)),
-                }
-            )
-        except Exception as exc:
-            state["termios_error"] = type(exc).__name__
-        return state
-
-    def _pending_bytes_snapshot(fd: int | None) -> int | None:
-        if not isinstance(fd, int) or fd < 0:
-            return None
-        try:
-            import array
-            import fcntl
-            import termios
-
-            request = int(getattr(termios, "FIONREAD"))
-            value = array.array("i", [0])
-            fcntl.ioctl(fd, request, value, True)
-            pending = int(value[0])
-            return pending if pending >= 0 else 0
-        except Exception:
-            return None
-
-    def _tty_name(fd: int | None) -> str:
-        if not isinstance(fd, int) or fd < 0:
-            return ""
-        try:
-            return str(os.ttyname(fd))
-        except Exception:
-            return ""
-
-    stdin_fd = _safe_fileno(sys.stdin)
-    stdout_fd = _safe_fileno(sys.stdout)
+    io_probe = SelectorIoProbe()
+    stdin_fd = io_probe.safe_fileno(sys.stdin)
+    stdout_fd = io_probe.safe_fileno(sys.stdout)
 
     _emit_selector_debug(
         emit,
@@ -361,7 +296,7 @@ def _instrument_textual_parser_keys(
         stdout_fd=stdout_fd,
         stdin_tty=bool(getattr(sys.stdin, "isatty", lambda: False)()),
         stdout_tty=bool(getattr(sys.stdout, "isatty", lambda: False)()),
-        stdin_tty_name=_tty_name(stdin_fd),
+        stdin_tty_name=io_probe.tty_name(stdin_fd),
         term=str(os.environ.get("TERM", "")),
         colorterm=str(os.environ.get("COLORTERM", "")),
         term_program=str(os.environ.get("TERM_PROGRAM", "")),
@@ -369,8 +304,8 @@ def _instrument_textual_parser_keys(
         term_session_id=str(os.environ.get("TERM_SESSION_ID", "")),
         vscode_pid=str(os.environ.get("VSCODE_PID", "")),
         textual_parent_pid=str(os.environ.get("TEXTUAL_PID", "")),
-        stdin_termios=_termios_snapshot(stdin_fd),
-        stdout_termios=_termios_snapshot(stdout_fd),
+        stdin_termios=io_probe.termios_snapshot(stdin_fd),
+        stdout_termios=io_probe.termios_snapshot(stdout_fd),
     )
 
     class _InstrumentedXTermParser(original_parser):
@@ -419,7 +354,7 @@ def _instrument_textual_parser_keys(
                         mapping = get_map()
                         if isinstance(mapping, Mapping):
                             for fd_raw in mapping.keys():
-                                fd_val = _fd_value(fd_raw)
+                                fd_val = io_probe.fd_value(fd_raw)
                                 if fd_val is None and isinstance(fd_raw, int):
                                     fd_val = fd_raw
                                 if fd_val is None:
@@ -443,10 +378,10 @@ def _instrument_textual_parser_keys(
             if isinstance(ready_fd_counts, dict):
                 try:
                     for item in list(ready_r):
-                        fd_val = _fd_value(item)
+                        fd_val = io_probe.fd_value(item)
                         if fd_val is None:
                             key_obj = item[0] if isinstance(item, tuple) and item else None
-                            fd_val = _fd_value(key_obj)
+                            fd_val = io_probe.fd_value(key_obj)
                         if fd_val is None:
                             key_obj = item[0] if isinstance(item, tuple) and item else None
                             fd_raw = getattr(key_obj, "fd", None)
@@ -488,7 +423,7 @@ def _instrument_textual_parser_keys(
             if isinstance(fd_termios_initial, dict):
                 fd_int = int(fd)
                 if fd_int not in fd_termios_initial:
-                    fd_termios_initial[fd_int] = _termios_snapshot(fd_int)
+                    fd_termios_initial[fd_int] = io_probe.termios_snapshot(fd_int)
         return chunk
 
     setattr(linux_driver_mod, "XTermParser", _InstrumentedXTermParser)
@@ -546,16 +481,16 @@ def _instrument_textual_parser_keys(
         read_fd_termios_current: dict[str, dict[str, object]] = {}
         for fd_raw in read_fd_counts:
             fd_int = int(fd_raw)
-            read_fd_termios_current[str(fd_int)] = _termios_snapshot(fd_int)
+            read_fd_termios_current[str(fd_int)] = io_probe.termios_snapshot(fd_int)
         snapshot["read_fd_termios_current"] = read_fd_termios_current
-        snapshot["stdin_termios_current"] = _termios_snapshot(stdin_fd)
-        snapshot["stdout_termios_current"] = _termios_snapshot(stdout_fd)
-        snapshot["stdin_pending_bytes"] = _pending_bytes_snapshot(stdin_fd)
-        snapshot["stdout_pending_bytes"] = _pending_bytes_snapshot(stdout_fd)
+        snapshot["stdin_termios_current"] = io_probe.termios_snapshot(stdin_fd)
+        snapshot["stdout_termios_current"] = io_probe.termios_snapshot(stdout_fd)
+        snapshot["stdin_pending_bytes"] = io_probe.pending_bytes_snapshot(stdin_fd)
+        snapshot["stdout_pending_bytes"] = io_probe.pending_bytes_snapshot(stdout_fd)
         read_fd_pending_bytes: dict[str, int] = {}
         for fd_raw in read_fd_counts:
             fd_int = int(fd_raw)
-            pending = _pending_bytes_snapshot(fd_int)
+            pending = io_probe.pending_bytes_snapshot(fd_int)
             if isinstance(pending, int):
                 read_fd_pending_bytes[str(fd_int)] = pending
         snapshot["read_fd_pending_bytes"] = read_fd_pending_bytes
@@ -630,33 +565,7 @@ def _instrument_prompt_toolkit_posix_io(
     original_select = getattr(posix_utils.select, "select", None)
     original_read = getattr(posix_utils.os, "read", None)
 
-    def _fd_value(item: object) -> int | None:
-        if isinstance(item, int):
-            return item
-        fileno = getattr(item, "fileno", None)
-        if callable(fileno):
-            try:
-                fd = fileno()
-                if isinstance(fd, int):
-                    return fd
-            except Exception:
-                return None
-        return None
-
-    def _snapshot_termios(fd: int) -> dict[str, object]:
-        try:
-            import termios
-
-            attrs = termios.tcgetattr(fd)
-            lflag = int(attrs[3])
-            return {
-                "lflag": lflag,
-                "canonical": bool(lflag & int(termios.ICANON)),
-                "echo": bool(lflag & int(termios.ECHO)),
-                "isig": bool(lflag & int(termios.ISIG)),
-            }
-        except Exception:
-            return {"termios_error": True}
+    io_probe = SelectorIoProbe()
 
     def _instrumented_select(rlist, wlist, xlist, timeout=None):  # noqa: ANN001,ANN202
         if not callable(original_select):
@@ -665,12 +574,12 @@ def _instrument_prompt_toolkit_posix_io(
         fd_counts = cast(dict[int, int], stats["select_fd_counts"])
         fd_termios = cast(dict[int, dict[str, object]], stats["select_fd_termios"])
         for item in list(rlist) if rlist is not None else []:
-            fd_val = _fd_value(item)
+            fd_val = io_probe.fd_value(item)
             if fd_val is None:
                 continue
             fd_counts[fd_val] = int(fd_counts.get(fd_val, 0)) + 1
             if fd_val not in fd_termios:
-                fd_termios[fd_val] = _snapshot_termios(fd_val)
+                fd_termios[fd_val] = io_probe.prompt_toolkit_termios_snapshot(fd_val)
         try:
             ready = original_select(rlist, wlist, xlist, timeout)
         except Exception:
@@ -679,7 +588,7 @@ def _instrument_prompt_toolkit_posix_io(
         ready_r = ready[0] if isinstance(ready, tuple) and len(ready) >= 1 else []
         ready_fd_counts = cast(dict[int, int], stats["select_ready_fd_counts"])
         for item in list(ready_r):
-            fd_val = _fd_value(item)
+            fd_val = io_probe.fd_value(item)
             if fd_val is None:
                 continue
             ready_fd_counts[fd_val] = int(ready_fd_counts.get(fd_val, 0)) + 1

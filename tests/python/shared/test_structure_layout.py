@@ -1240,26 +1240,33 @@ class StructureLayoutTests(unittest.TestCase):
     def test_textual_selector_has_backend_policy_owner(self) -> None:
         selector = REPO_ROOT / "python" / "envctl_engine" / "ui" / "textual" / "screens" / "selector"
         support = selector / "support.py"
+        io_probe = selector / "io_probe.py"
         backend_policy = selector / "backend_policy.py"
         textual_app = selector / "textual_app.py"
         selection_state = selector / "selection_state.py"
         app_runtime = selector / "textual_app_runtime.py"
 
         self.assertTrue(support.is_file())
+        self.assertTrue(io_probe.is_file())
         self.assertTrue(backend_policy.is_file())
         self.assertTrue(textual_app.is_file())
         self.assertTrue(selection_state.is_file())
         self.assertTrue(app_runtime.is_file())
         support_text = support.read_text(encoding="utf-8")
+        io_probe_text = io_probe.read_text(encoding="utf-8")
         backend_text = backend_policy.read_text(encoding="utf-8")
         app_text = textual_app.read_text(encoding="utf-8")
         selection_text = selection_state.read_text(encoding="utf-8")
         runtime_text = app_runtime.read_text(encoding="utf-8")
+        self.assertIn("class SelectorIoProbe", io_probe_text)
+        self.assertIn("def termios_snapshot", io_probe_text)
+        self.assertIn("def pending_bytes_snapshot", io_probe_text)
         self.assertIn("class SelectorBackendDecision", backend_text)
         self.assertIn("def selector_backend_decision", backend_text)
         self.assertIn("def selector_impl", backend_text)
         self.assertIn("def selector_driver_thread_snapshot", backend_text)
         self.assertIn("from .backend_policy import", support_text)
+        self.assertIn("from .io_probe import SelectorIoProbe", support_text)
         self.assertIn("def _selector_backend_decision", support_text)
         self.assertIn("def build_selector_rows", selection_text)
         self.assertIn("def toggle_selector_model_index", selection_text)
@@ -1270,7 +1277,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def emit_snapshot", runtime_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector import selection_state", app_text)
         self.assertIn("from envctl_engine.ui.textual.screens.selector.textual_app_runtime import", app_text)
-        self.assertLessEqual(len(support_text.splitlines()), 800)
+        self.assertLessEqual(len(support_text.splitlines()), 720)
         self.assertLessEqual(len(app_text.splitlines()), 850)
 
     def test_removed_dead_leaf_modules_are_absent(self) -> None:
