@@ -7,10 +7,7 @@ from typing import Any, cast
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_startup_support import evaluate_run_reuse, mark_run_reused
-from envctl_engine.runtime.runtime_context import resolve_state_repository
-from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.startup.finalization import (
-    build_planning_dashboard_state,
     headless_plan_output_only,
     maybe_attach_plan_agent_terminal,
     print_headless_plan_session_summary,
@@ -23,6 +20,7 @@ from envctl_engine.startup.run_reuse_decision import (
     run_reuse_debug_orch_groups,
 )
 from envctl_engine.startup.run_reuse_fresh_start import replace_existing_project_services_for_fresh_start_with_defaults
+from envctl_engine.startup.run_reuse_resume import StartupRunReuseResumeHandler
 from envctl_engine.startup.session import StartupSession
 from envctl_engine.startup.session_lifecycle import announce_session_identifiers, emit_startup_phase
 from envctl_engine.startup.service_bootstrap_domain import configured_service_types_for_mode
@@ -238,20 +236,11 @@ class StartupRunReuseResolver:
         candidate_state: Any,
         reuse_started: float,
     ) -> int | None:
-        return _resume_matching_run(
-            runtime=self.runtime,
-            session=self.session,
-            route=self.route,
-            runtime_mode=self.runtime_mode,
+        return self._resume_handler(
             decision=decision,
             candidate_state=candidate_state,
             reuse_started=reuse_started,
-            announce_session_identifiers=self.announce_session_identifiers,
-            emit_phase=self.emit_phase,
-            headless_plan_output_only=self.headless_plan_output_only,
-            maybe_attach_plan_agent_terminal=self.maybe_attach_plan_agent_terminal,
-            replace_existing_project_services_for_fresh_start=self.replace_existing_project_services_for_fresh_start,
-        )
+        ).resume_matching_run()
 
     def _resume_dashboard_run(
         self,
@@ -260,7 +249,20 @@ class StartupRunReuseResolver:
         candidate_state: Any,
         reuse_started: float,
     ) -> int | None:
-        return _resume_dashboard_run(
+        return self._resume_handler(
+            decision=decision,
+            candidate_state=candidate_state,
+            reuse_started=reuse_started,
+        ).resume_dashboard_run()
+
+    def _resume_handler(
+        self,
+        *,
+        decision: RunReuseDecision,
+        candidate_state: Any,
+        reuse_started: float,
+    ) -> StartupRunReuseResumeHandler:
+        return StartupRunReuseResumeHandler(
             runtime=self.runtime,
             session=self.session,
             route=self.route,
@@ -275,6 +277,7 @@ class StartupRunReuseResolver:
             print_headless_plan_session_summary=self.print_headless_plan_session_summary,
             print_plan_dry_run_preview=self.print_plan_dry_run_preview,
             configured_service_types_for_mode=self.configured_service_types_for_mode,
+            replace_existing_project_services_for_fresh_start=self.replace_existing_project_services_for_fresh_start,
             print_fn=self.print_fn,
         )
 
@@ -410,180 +413,3 @@ def partial_prepare_dashboard_stopped_restore(runtime: Any) -> Callable[..., boo
         *args,
         **kwargs,
     )
-
-
-def _resume_matching_run(
-    *,
-    runtime: Any,
-    session: StartupSession,
-    route: Route,
-    runtime_mode: str,
-    decision: RunReuseDecision,
-    candidate_state: Any,
-    reuse_started: float,
-    announce_session_identifiers: Callable[[StartupSession], None],
-    emit_phase: Callable[..., None],
-    headless_plan_output_only: Callable[[StartupSession], bool],
-    maybe_attach_plan_agent_terminal: Callable[[StartupSession], int | None],
-    replace_existing_project_services_for_fresh_start: Callable[..., None],
-) -> int | None:
-    previous_run_id = session.run_id
-    previous_identifiers_announced = session.identifiers_announced
-    session.run_id = candidate_state.run_id
-    announce_session_identifiers(session)
-    emit_phase(
-        session,
-        "auto_resume_evaluate",
-        reuse_started,
-        status="resume",
-        match_mode="exact" if decision.decision_kind == "resume_exact" else "subset",
-        state_project_count=len(decision.state_projects),
-        selected_project_count=len(session.selected_contexts),
-    )
-    runtime._emit(
-        "state.auto_resume",
-        run_id=candidate_state.run_id,
-        mode=runtime_mode,
-        command=route.command,
-        match_mode="exact" if decision.decision_kind == "resume_exact" else "subset",
-        selected_projects=[project["name"] for project in decision.selected_projects],
-    )
-    runtime._emit(
-        "state.run_reuse.applied",
-        run_id=candidate_state.run_id,
-        mode=runtime_mode,
-        command=route.command,
-        decision_kind=decision.decision_kind,
-        reason=decision.reason,
-    )
-    attach_plan_agent_after_resume = (
-        route.command == "plan"
-        and not headless_plan_output_only(session)
-        and session.plan_agent_attach_target is not None
-    )
-    resume_flags = {
-        **route.flags,
-        "_resume_source_command": route.command,
-        "_run_reuse_reason": decision.decision_kind,
-    }
-    if attach_plan_agent_after_resume:
-        resume_flags["batch"] = True
-    resume_route = Route(
-        command="resume",
-        mode=runtime_mode,
-        raw_args=route.raw_args,
-        passthrough_args=route.passthrough_args,
-        projects=route.projects,
-        flags=resume_flags,
-    )
-    resume_code = runtime._resume(resume_route)
-    if int(resume_code) == 0:
-        if attach_plan_agent_after_resume:
-            attach_code = maybe_attach_plan_agent_terminal(session)
-            if attach_code is not None:
-                return attach_code
-        return 0
-    session.run_id = previous_run_id
-    session.identifiers_announced = previous_identifiers_announced
-    runtime._emit(
-        "state.auto_resume.skipped",
-        reason="resume_failed",
-        resume_code=int(resume_code),
-        state_projects=[project["name"] for project in decision.state_projects],
-        selected_projects=[project["name"] for project in decision.selected_projects],
-        mode=runtime_mode,
-        command=route.command,
-    )
-    runtime._emit(
-        "state.run_reuse.skipped",
-        run_id=candidate_state.run_id,
-        reason="resume_failed",
-        resume_code=int(resume_code),
-        mode=runtime_mode,
-        command=route.command,
-    )
-    replace_existing_project_services_for_fresh_start(
-        session,
-        candidate_state=candidate_state,
-        reason=decision.reason,
-    )
-    return None
-
-
-def _resume_dashboard_run(
-    *,
-    runtime: Any,
-    session: StartupSession,
-    route: Route,
-    runtime_mode: str,
-    decision: RunReuseDecision,
-    candidate_state: Any,
-    reuse_started: float,
-    announce_session_identifiers: Callable[[StartupSession], None],
-    emit_phase: Callable[..., None],
-    headless_plan_output_only: Callable[[StartupSession], bool],
-    maybe_attach_plan_agent_terminal: Callable[[StartupSession], int | None],
-    print_headless_plan_session_summary: Callable[[StartupSession], None],
-    print_plan_dry_run_preview: Callable[[StartupSession], None],
-    configured_service_types_for_mode: Callable[[str], list[str]],
-    print_fn: Callable[[str], None],
-) -> int | None:
-    session.run_id = candidate_state.run_id
-    announce_session_identifiers(session)
-    candidate_state.metadata = build_planning_dashboard_state(
-        runtime,
-        route=route,
-        runtime_mode=session.runtime_mode,
-        run_id=candidate_state.run_id,
-        project_contexts=session.selected_contexts,
-        configured_service_types=configured_service_types_for_mode(session.runtime_mode),
-        base_metadata=mark_run_reused(candidate_state.metadata, reason="resume_dashboard_exact"),
-    ).metadata
-    resolve_state_repository(runtime).save_resume_state(
-        state=candidate_state,
-        emit=runtime._emit,
-        runtime_map_builder=cast(Callable[[object], dict[str, object]], build_runtime_map),
-    )
-    emit_phase(
-        session,
-        "auto_resume_evaluate",
-        reuse_started,
-        status="dashboard_resume",
-        match_mode="exact",
-        state_project_count=len(decision.state_projects),
-        selected_project_count=len(session.selected_contexts),
-    )
-    runtime._emit(
-        "state.run_reuse.applied",
-        run_id=candidate_state.run_id,
-        mode=runtime_mode,
-        command=route.command,
-        decision_kind=decision.decision_kind,
-        reason=decision.reason,
-    )
-    runtime._emit(
-        "state.dashboard_resume",
-        run_id=candidate_state.run_id,
-        mode=runtime_mode,
-        command=route.command,
-    )
-    if headless_plan_output_only(session):
-        print_headless_plan_session_summary(session)
-        return 0
-    enter_interactive_dashboard = runtime._should_enter_post_start_interactive(route)
-    if route.command == "plan":
-        print_plan_dry_run_preview(session)
-        print_fn(
-            "Planning mode complete; skipping service startup because "
-            f"envctl runs are disabled for {session.runtime_mode}."
-        )
-        attach_code = maybe_attach_plan_agent_terminal(session)
-        if attach_code is not None:
-            return attach_code
-    elif not enter_interactive_dashboard:
-        print_fn(
-            f"envctl runs are disabled for {session.runtime_mode}; " "opening dashboard without starting services."
-        )
-    if enter_interactive_dashboard:
-        return runtime._run_interactive_dashboard_loop(candidate_state)
-    return 0

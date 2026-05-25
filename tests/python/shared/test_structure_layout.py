@@ -2243,11 +2243,19 @@ class StructureLayoutTests(unittest.TestCase):
 
     def test_startup_run_reuse_resolution_has_owned_module(self) -> None:
         owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "run_reuse_resolution.py"
+        resume_owner = REPO_ROOT / "python" / "envctl_engine" / "startup" / "run_reuse_resume.py"
         facade = REPO_ROOT / "python" / "envctl_engine" / "startup" / "startup_orchestrator.py"
 
         self.assertTrue(owner.is_file())
+        self.assertTrue(resume_owner.is_file())
         owner_text = owner.read_text(encoding="utf-8")
+        resume_owner_text = resume_owner.read_text(encoding="utf-8")
         self.assertIn("class StartupRunReuseResolver", owner_text)
+        self.assertIn("class StartupRunReuseResumeHandler", resume_owner_text)
+        self.assertIn(
+            "from envctl_engine.startup.run_reuse_resume import",
+            owner_text,
+        )
         self.assertIn(
             "from envctl_engine.startup.run_reuse_resolution import",
             facade.read_text(encoding="utf-8"),

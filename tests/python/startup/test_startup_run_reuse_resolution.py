@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import unittest
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.startup.run_reuse_resume import StartupRunReuseResumeHandler
 from envctl_engine.startup.run_reuse_resolution import (
     StartupRunReuseResolver,
     resolve_startup_run_reuse,
@@ -52,6 +53,10 @@ class _RuntimeStub:
 class StartupRunReuseResolutionTests(unittest.TestCase):
     def test_run_reuse_resolution_uses_named_resolver_owner(self) -> None:
         self.assertTrue(callable(StartupRunReuseResolver.resolve))
+
+    def test_run_reuse_resume_uses_named_resume_handler_owner(self) -> None:
+        self.assertTrue(callable(StartupRunReuseResumeHandler.resume_matching_run))
+        self.assertTrue(callable(StartupRunReuseResumeHandler.resume_dashboard_run))
 
     def test_planning_prs_branch_runs_pr_action_after_reuse_evaluation_and_skips_startup(self) -> None:
         route = Route(command="plan", mode="trees", raw_args=[], passthrough_args=[], projects=[], flags={"planning_prs": True})
