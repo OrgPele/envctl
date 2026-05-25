@@ -4,6 +4,7 @@ import time
 import unittest
 
 from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
+    SelectorEventController,
     SelectorFocusController,
     SelectorKeyTelemetry,
     SelectorStatusController,
@@ -158,6 +159,44 @@ class SelectorFocusControllerTests(unittest.TestCase):
         self.assertEqual(events[0][1]["to_widget_id"], "selector-list")
         self.assertEqual(events[1][1]["from_widget_id"], "selector-list")
         self.assertEqual(events[1][1]["to_widget_id"], "btn-run")
+
+
+class SelectorEventControllerTests(unittest.TestCase):
+    def test_submit_cancel_and_exit_events_keep_public_and_debug_payloads_together(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        controller = SelectorEventController(
+            emit=lambda event, **payload: events.append((event, payload)),
+            deep_debug=True,
+            selector_id="restart",
+            prompt="Restart services",
+            option_count=4,
+            multi=True,
+        )
+
+        controller.submit_blocked(cause="enter")
+        controller.submit_confirmed(selected_count=2, cause="button_run")
+        controller.cancel(cause="escape")
+        controller.exit()
+
+        event_names = [event for event, _payload in events]
+        self.assertEqual(
+            event_names,
+            [
+                "ui.selection.confirm",
+                "ui.selector.submit",
+                "ui.selection.confirm",
+                "ui.selector.submit",
+                "ui.selection.cancel",
+                "ui.selector.submit",
+                "ui.screen.exit",
+                "ui.selector.lifecycle",
+            ],
+        )
+        self.assertEqual(events[0][1]["blocked"], True)
+        self.assertEqual(events[1][1]["blocked"], True)
+        self.assertEqual(events[3][1]["selected_count"], 2)
+        self.assertEqual(events[5][1]["cancelled"], True)
+        self.assertEqual(events[7][1]["phase"], "exit")
 
 
 class SelectorKeyTelemetryTests(unittest.TestCase):

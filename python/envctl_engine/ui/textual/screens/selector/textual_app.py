@@ -18,6 +18,7 @@ from envctl_engine.ui.textual.screens.selector.textual_app_lifecycle import (
     apply_selector_mount,
 )
 from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
+    SelectorEventController,
     SelectorFocusController,
     SelectorKeyTelemetry,
     SelectorStatusController,
@@ -32,7 +33,6 @@ from envctl_engine.ui.textual.screens.selector.textual_key_policy import (
 from envctl_engine.ui.textual.screens.selector.support import (
     _RowRef,
     _emit,
-    _emit_selector_debug,
     _selector_driver_thread_snapshot,
 )
 
@@ -93,6 +93,14 @@ def create_selector_app(
                 deep_debug=deep_debug,
                 selector_id=selector_id,
                 initial_widget_id="selector-list",
+            )
+            self._event_controller = SelectorEventController(
+                emit=emit,
+                deep_debug=deep_debug,
+                selector_id=selector_id,
+                prompt=prompt,
+                option_count=len(options),
+                multi=multi,
             )
             self._explicit_cancel = False
             self._key_telemetry = SelectorKeyTelemetry(enabled=key_trace_enabled)
@@ -506,57 +514,14 @@ def create_selector_app(
             )
             if not values:
                 self._show_status_error("No items were selected. Press Space or click to select at least one.")
-                _emit(
-                    emit,
-                    "ui.selection.confirm",
-                    prompt=prompt,
-                    multi=multi,
-                    selected_count=0,
-                    blocked=True,
-                )
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.submit",
-                    selector_id=selector_id,
-                    selected_count=0,
-                    blocked=True,
-                    cancelled=False,
-                    cause=cause,
-                )
+                self._event_controller.submit_blocked(cause=cause)
                 return
-            _emit(
-                emit,
-                "ui.selection.confirm",
-                prompt=prompt,
-                multi=multi,
-                selected_count=len(values),
-            )
-            _emit_selector_debug(
-                emit,
-                enabled=deep_debug,
-                event="ui.selector.submit",
-                selector_id=selector_id,
-                selected_count=len(values),
-                blocked=False,
-                cancelled=False,
-                cause=cause,
-            )
+            self._event_controller.submit_confirmed(selected_count=len(values), cause=cause)
             self.exit(values)
 
         def action_cancel(self, *, cause: str = "cancel_key") -> None:
             self._explicit_cancel = True
-            _emit(emit, "ui.selection.cancel", prompt=prompt, multi=multi)
-            _emit_selector_debug(
-                emit,
-                enabled=deep_debug,
-                event="ui.selector.submit",
-                selector_id=selector_id,
-                selected_count=0,
-                blocked=False,
-                cancelled=True,
-                cause=cause,
-            )
+            self._event_controller.cancel(cause=cause)
             self.exit(None)
 
         async def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -757,18 +722,7 @@ def create_selector_app(
                     include_stack=thread_stack_enabled,
                 ),
             )
-            _emit(emit, "ui.screen.exit", screen="selector", prompt=prompt)
-            _emit_selector_debug(
-                emit,
-                enabled=deep_debug,
-                event="ui.selector.lifecycle",
-                selector_id=selector_id,
-                prompt=prompt,
-                option_count=len(options),
-                multi=multi,
-                phase="exit",
-                ts_mono_ns=time.monotonic_ns(),
-            )
+            self._event_controller.exit()
 
         @property
         def explicit_cancel(self) -> bool:

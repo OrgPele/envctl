@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
-from envctl_engine.ui.textual.screens.selector.support import _emit_selector_debug
+from envctl_engine.ui.textual.screens.selector.support import _emit, _emit_selector_debug
 
 TimerHandle = object
 TimerFactory = Callable[[float, Callable[[], None]], TimerHandle]
@@ -190,6 +190,83 @@ class SelectorFocusController:
             reason=reason,
             from_widget_id=previous,
             to_widget_id=current_widget_id,
+        )
+
+
+class SelectorEventController:
+    def __init__(
+        self,
+        *,
+        emit: EmitEvent | None,
+        deep_debug: bool,
+        selector_id: str,
+        prompt: str,
+        option_count: int,
+        multi: bool,
+    ) -> None:
+        self._emit = emit
+        self._deep_debug = deep_debug
+        self._selector_id = selector_id
+        self._prompt = prompt
+        self._option_count = option_count
+        self._multi = multi
+
+    def submit_blocked(self, *, cause: str) -> None:
+        _emit(
+            self._emit,
+            "ui.selection.confirm",
+            prompt=self._prompt,
+            multi=self._multi,
+            selected_count=0,
+            blocked=True,
+        )
+        self._emit_submit_debug(selected_count=0, blocked=True, cancelled=False, cause=cause)
+
+    def submit_confirmed(self, *, selected_count: int, cause: str) -> None:
+        _emit(
+            self._emit,
+            "ui.selection.confirm",
+            prompt=self._prompt,
+            multi=self._multi,
+            selected_count=selected_count,
+        )
+        self._emit_submit_debug(selected_count=selected_count, blocked=False, cancelled=False, cause=cause)
+
+    def cancel(self, *, cause: str) -> None:
+        _emit(self._emit, "ui.selection.cancel", prompt=self._prompt, multi=self._multi)
+        self._emit_submit_debug(selected_count=0, blocked=False, cancelled=True, cause=cause)
+
+    def exit(self) -> None:
+        _emit(self._emit, "ui.screen.exit", screen="selector", prompt=self._prompt)
+        _emit_selector_debug(
+            self._emit,
+            enabled=self._deep_debug,
+            event="ui.selector.lifecycle",
+            selector_id=self._selector_id,
+            prompt=self._prompt,
+            option_count=self._option_count,
+            multi=self._multi,
+            phase="exit",
+            ts_mono_ns=time.monotonic_ns(),
+        )
+
+    def _emit_submit_debug(
+        self,
+        *,
+        selected_count: int,
+        blocked: bool,
+        cancelled: bool,
+        cause: str,
+    ) -> None:
+        _emit_selector_debug(
+            self._emit,
+            enabled=self._deep_debug,
+            event="ui.selector.submit",
+            selector_id=self._selector_id,
+            selected_count=selected_count,
+            blocked=blocked,
+            cancelled=cancelled,
+            cause=cause,
         )
 
 
