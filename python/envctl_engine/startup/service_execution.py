@@ -1,21 +1,19 @@
 from __future__ import annotations
 
 import concurrent.futures
-import os
-from pathlib import Path
 import time
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_process_runtime
 from envctl_engine.startup.startup_selection_support import _restart_service_types_for_project
-from envctl_engine.runtime.service_manager import ServiceStartDescriptor
 from envctl_engine.runtime.runtime_context import resolve_port_allocator
 from envctl_engine.shared.parsing import parse_int
+from envctl_engine.startup.service_attach_execution import ServiceAttachRunner
 from envctl_engine.startup.service_execution_policy import (
     _project_backend_cors_origin,
     additional_service_enabled_for_context,
     backend_listener_expected_for_mode,
-    ordered_service_layers,
+    ordered_service_layers as ordered_service_layers,
     resolve_command_env_builder,
     service_attach_parallel_enabled,
     service_prep_parallel_enabled,
@@ -313,302 +311,6 @@ def start_project_services(
             listener_expected=service.expect_listener,
         )
 
-    def reserve_next(port: int) -> int:
-        return port_allocator.reserve_next(port, owner=f"{context.name}:services")
-
-    def start_process(
-        command: list[str],
-        *,
-        cwd: str,
-        env: dict[str, str],
-        log_path: Path | str,
-    ) -> object:
-        start_background = getattr(process_runtime, "start_background", None)
-        if callable(start_background):
-            return start_background(
-                command,
-                cwd=cwd,
-                env=env,
-                stdout_path=log_path,
-                stderr_path=log_path,
-            )
-        return process_runtime.start(
-            command,
-            cwd=cwd,
-            env=env,
-            stdout_path=log_path,
-            stderr_path=log_path,
-        )
-
-    def start_backend(port: int) -> tuple[bool, str | None, int | None]:
-        remaining = rt._conflict_remaining.get("backend", 0)
-        if remaining > 0:
-            rt._conflict_remaining["backend"] = remaining - 1
-            rt._emit("service.start", project=context.name, service="backend", port=port, retry=True)
-            return False, "bind: address already in use", None
-        command_resolve_started = time.monotonic()
-        command, _resolved_source = rt._service_start_command_resolved(
-            service_name="backend",
-            project_root=context.root,
-            port=port,
-        )
-        rt._emit(
-            "service.attach.phase",
-            project=context.name,
-            service="backend",
-            phase="command_resolution",
-            duration_ms=round((time.monotonic() - command_resolve_started) * 1000.0, 2),
-        )
-        launch_started = time.monotonic()
-        process = start_process(
-            command,
-            cwd=str(prepared_launches["backend"].cwd),
-            env=command_env_builder(port=port, extra=backend_env_extra),
-            log_path=prepared_launches["backend"].log_path,
-        )
-        rt._emit(
-            "service.attach.phase",
-            project=context.name,
-            service="backend",
-            phase="process_launch",
-            duration_ms=round((time.monotonic() - launch_started) * 1000.0, 2),
-        )
-        rt._emit("service.start", project=context.name, service="backend", port=port, retry=False)
-        return True, None, getattr(process, "pid", os.getpid())
-
-    def start_frontend(port: int) -> tuple[bool, str | None, int | None]:
-        remaining = rt._conflict_remaining.get("frontend", 0)
-        if remaining > 0:
-            rt._conflict_remaining["frontend"] = remaining - 1
-            rt._emit("service.start", project=context.name, service="frontend", port=port, retry=True)
-            return False, "bind: address already in use", None
-        launch_port = port + rebound_delta if rebound_delta > 0 else port
-        if rebound_delta > 0:
-            launch_port = port_allocator.reserve_next(
-                launch_port,
-                owner=f"{context.name}:services:frontend-launch",
-            )
-        command_resolve_started = time.monotonic()
-        command, _resolved_source = rt._service_start_command_resolved(
-            service_name="frontend",
-            project_root=context.root,
-            port=launch_port,
-        )
-        rt._emit(
-            "service.attach.phase",
-            project=context.name,
-            service="frontend",
-            phase="command_resolution",
-            duration_ms=round((time.monotonic() - command_resolve_started) * 1000.0, 2),
-        )
-        launch_started = time.monotonic()
-        process = start_process(
-            command,
-            cwd=str(prepared_launches["frontend"].cwd),
-            env=command_env_builder(port=launch_port, extra=frontend_env_extra),
-            log_path=prepared_launches["frontend"].log_path,
-        )
-        rt._emit(
-            "service.attach.phase",
-            project=context.name,
-            service="frontend",
-            phase="process_launch",
-            duration_ms=round((time.monotonic() - launch_started) * 1000.0, 2),
-        )
-        rt._emit("service.start", project=context.name, service="frontend", port=port, retry=False)
-        return True, None, getattr(process, "pid", os.getpid() + 1)
-
-    def start_additional_service(service_name: str, port: int) -> tuple[bool, str | None, int | None]:
-        remaining = rt._conflict_remaining.get(service_name, 0)
-        if remaining > 0:
-            rt._conflict_remaining[service_name] = remaining - 1
-            rt._emit("service.start", project=context.name, service=service_name, port=port, retry=True)
-            return False, "bind: address already in use", None
-        launch = prepared_launches[service_name]
-        service = rt.config.app_service_by_name(service_name)
-        if service is None:
-            return False, f"unknown additional service {service_name}", None
-        command_resolve_started = time.monotonic()
-        command = rt._split_command(
-            service.start_cmd,
-            port=port,
-            replacements={
-                "project_root": str(context.root),
-                "service_dir": str(launch.cwd),
-                "service_name": service_name,
-            },
-            cwd=launch.cwd,
-        )
-        rt._emit(
-            "service.attach.phase",
-            project=context.name,
-            service=service_name,
-            phase="command_resolution",
-            duration_ms=round((time.monotonic() - command_resolve_started) * 1000.0, 2),
-        )
-        process = start_process(
-            command,
-            cwd=str(launch.cwd),
-            env=command_env_builder(port=port, extra=launch.env),
-            log_path=launch.log_path,
-        )
-        rt._emit("service.start", project=context.name, service=service_name, port=port, retry=False)
-        return True, None, getattr(process, "pid", os.getpid())
-
-    backend_actual_override = parse_int(rt.env.get("ENVCTL_TEST_BACKEND_ACTUAL_PORT"), 0)
-    frontend_actual_override = parse_int(rt.env.get("ENVCTL_TEST_FRONTEND_ACTUAL_PORT"), 0)
-
-    def detect_backend_actual(pid: int | None, requested: int) -> int | None:
-        if not backend_listener_expected:
-            rt._emit(
-                "service.bind.skipped",
-                project=context.name,
-                service="backend",
-                reason="listener_not_expected",
-            )
-            return None
-        rt._emit("service.bind.requested", project=context.name, service="backend", requested_port=requested)
-        detect_started = time.monotonic()
-        if backend_actual_override > 0:
-            actual = backend_actual_override
-        else:
-            detected = rt._detect_service_actual_port(
-                pid=pid,
-                requested_port=requested,
-                service_name="backend",
-                log_path=backend_log_path,
-            )
-            if detected is not None:
-                actual = detected
-                if actual != requested:
-                    rt._emit("port.rebound", project=context.name, service="backend", port=actual)
-            elif rt._listener_truth_enforced():
-                detail = rt._service_listener_failure_detail(log_path=backend_log_path, pid=pid)
-                error_suffix = f" ({detail})" if detail else ""
-                rt._emit(
-                    "service.failure",
-                    project=context.name,
-                    service="backend",
-                    failure_class="listener_not_detected",
-                    requested_port=requested,
-                    detail=detail,
-                )
-                raise RuntimeError(
-                    f"backend listener not detected for {context.name} on port {requested}{error_suffix}"
-                )
-            else:
-                rt._emit(
-                    "service.failure",
-                    project=context.name,
-                    service="backend",
-                    failure_class="listener_unverified",
-                    requested_port=requested,
-                )
-                actual = requested
-        rt._emit("service.bind.actual", project=context.name, service="backend", actual_port=actual)
-        rt._emit(
-            "service.attach.phase",
-            project=context.name,
-            service="backend",
-            phase="actual_port_detection",
-            duration_ms=round((time.monotonic() - detect_started) * 1000.0, 2),
-        )
-        return actual
-
-    def detect_frontend_actual(pid: int | None, requested: int) -> int | None:
-        rt._emit("service.bind.requested", project=context.name, service="frontend", requested_port=requested)
-        detect_started = time.monotonic()
-        if frontend_actual_override > 0:
-            actual = frontend_actual_override
-        else:
-            probe_port = requested + rebound_delta if rebound_delta > 0 else requested
-            detected = rt._detect_service_actual_port(
-                pid=pid,
-                requested_port=probe_port,
-                service_name="frontend",
-                log_path=frontend_log_path,
-            )
-            if detected is None and probe_port != requested:
-                detected = rt._detect_service_actual_port(
-                    pid=pid,
-                    requested_port=requested,
-                    service_name="frontend",
-                    log_path=frontend_log_path,
-                )
-            if detected is not None:
-                actual = detected
-                if actual != requested:
-                    rt._emit("port.rebound", project=context.name, service="frontend", port=actual)
-            elif rt._listener_truth_enforced():
-                detail = rt._service_listener_failure_detail(log_path=frontend_log_path, pid=pid)
-                error_suffix = f" ({detail})" if detail else ""
-                rt._emit(
-                    "service.failure",
-                    project=context.name,
-                    service="frontend",
-                    failure_class="listener_not_detected",
-                    requested_port=requested,
-                    detail=detail,
-                )
-                raise RuntimeError(
-                    f"frontend listener not detected for {context.name} on port {probe_port}{error_suffix}"
-                )
-            else:
-                rt._emit(
-                    "service.failure",
-                    project=context.name,
-                    service="frontend",
-                    failure_class="listener_unverified",
-                    requested_port=requested,
-                )
-                actual = probe_port
-        rt._emit("service.bind.actual", project=context.name, service="frontend", actual_port=actual)
-        rt._emit(
-            "service.attach.phase",
-            project=context.name,
-            service="frontend",
-            phase="actual_port_detection",
-            duration_ms=round((time.monotonic() - detect_started) * 1000.0, 2),
-        )
-        return actual
-
-    def detect_additional_actual(service_name: str, pid: int | None, requested: int) -> int | None:
-        launch = prepared_launches[service_name]
-        if not launch.listener_expected:
-            rt._emit(
-                "service.bind.skipped",
-                project=context.name,
-                service=service_name,
-                reason="listener_not_expected",
-            )
-            return None
-        rt._emit("service.bind.requested", project=context.name, service=service_name, requested_port=requested)
-        detected = rt._detect_service_actual_port(
-            pid=pid,
-            requested_port=requested,
-            service_name=service_name,
-            log_path=launch.log_path,
-        )
-        if detected is not None:
-            if detected != requested:
-                rt._emit("port.rebound", project=context.name, service=service_name, port=detected)
-            rt._emit("service.bind.actual", project=context.name, service=service_name, actual_port=detected)
-            return detected
-        if rt._listener_truth_enforced():
-            detail = rt._service_listener_failure_detail(log_path=launch.log_path, pid=pid)
-            error_suffix = f" ({detail})" if detail else ""
-            raise RuntimeError(
-                f"{service_name} listener not detected for {context.name} on port {requested}{error_suffix}"
-            )
-        rt._emit(
-            "service.failure",
-            project=context.name,
-            service=service_name,
-            failure_class="listener_unverified",
-            requested_port=requested,
-        )
-        return requested
-
     on_service_retry = make_service_retry_emitter(runtime=rt, project_name=context.name)
 
     rt._emit(
@@ -626,84 +328,27 @@ def start_project_services(
         )
 
     attach_started = time.monotonic()
-    descriptors: list[ServiceStartDescriptor] = []
-    if "backend" in selected_service_types:
-        descriptors.append(
-            ServiceStartDescriptor(
-                service_type="backend",
-                cwd=str(backend_cwd),
-                requested_port=backend_plan.final,
-                start=start_backend,
-                detect_actual=detect_backend_actual,
-                listener_expected=backend_listener_expected,
-                log_path=backend_log_path,
-            )
-        )
-    if "frontend" in selected_service_types:
-        descriptors.append(
-            ServiceStartDescriptor(
-                service_type="frontend",
-                cwd=str(frontend_cwd),
-                requested_port=frontend_plan.final,
-                start=start_frontend,
-                detect_actual=detect_frontend_actual,
-                listener_expected=True,
-                log_path=frontend_log_path,
-            )
-        )
-    for service in sorted(additional_services, key=lambda item: (item.start_order, item.name)):
-        launch = prepared_launches[service.name]
-        descriptors.append(
-            ServiceStartDescriptor(
-                service_type=service.name,
-                cwd=str(launch.cwd),
-                requested_port=launch.requested_port,
-                start=lambda port, service_name=service.name: start_additional_service(service_name, port),
-                detect_actual=lambda pid, requested, service_name=service.name: detect_additional_actual(
-                    service_name, pid, requested
-                ),
-                listener_expected=service.expect_listener,
-                critical=service.critical,
-                log_path=launch.log_path,
-                public_url=launch.env.get(f"ENVCTL_SOURCE_SERVICE_{service.env_suffix}_PUBLIC_URL"),
-                health_url=launch.env.get(f"ENVCTL_SOURCE_SERVICE_{service.env_suffix}_HEALTH_URL"),
-            )
-        )
-    generic_attach = getattr(rt.services, "start_services_with_attach", None)
-    if callable(generic_attach):
-        descriptor_by_type = {descriptor.service_type: descriptor for descriptor in descriptors}
-        records = {}
-        for layer in ordered_service_layers(
-            [descriptor.service_type for descriptor in descriptors],
-            tuple(additional_services),
-        ):
-            layer_records = generic_attach(
-                project=context.name,
-                descriptors=tuple(descriptor_by_type[name] for name in layer),
-                reserve_next=reserve_next,
-                on_retry=on_service_retry,
-                parallel_start=attach_parallel and len(layer) > 1,
-            )
-            records.update(layer_records)
-    elif selected_service_types <= {"backend", "frontend"}:
-        records = rt.services.start_project_with_attach(
-            project=context.name,
-            backend_port=backend_plan.final,
-            frontend_port=frontend_plan.final,
-            backend_cwd=str(backend_cwd),
-            frontend_cwd=str(frontend_cwd),
-            start_backend=start_backend,
-            start_frontend=start_frontend,
-            reserve_next=reserve_next,
-            detect_backend_actual=detect_backend_actual,
-            detect_frontend_actual=detect_frontend_actual,
-            backend_listener_expected=backend_listener_expected,
-            frontend_listener_expected=True,
-            on_retry=on_service_retry,
-            parallel_start=attach_parallel,
-        )
-    else:
-        raise RuntimeError("Service manager does not support additional app services")
+    records = ServiceAttachRunner(
+        runtime=rt,
+        process_runtime=process_runtime,
+        port_allocator=port_allocator,
+        project_name=context.name,
+        project_root=context.root,
+        backend_plan=backend_plan,
+        frontend_plan=frontend_plan,
+        backend_cwd=backend_cwd,
+        frontend_cwd=frontend_cwd,
+        backend_log_path=backend_log_path,
+        frontend_log_path=frontend_log_path,
+        backend_env_extra=backend_env_extra,
+        frontend_env_extra=frontend_env_extra,
+        command_env_builder=command_env_builder,
+        prepared_launches=prepared_launches,
+        selected_service_types=selected_service_types,
+        additional_services=tuple(additional_services),
+        backend_listener_expected=backend_listener_expected,
+        rebound_delta=rebound_delta,
+    ).start(attach_parallel=attach_parallel, on_service_retry=on_service_retry)
 
     attach_duration_ms = round((time.monotonic() - attach_started) * 1000.0, 2)
     total_duration_ms = round((time.monotonic() - service_started) * 1000.0, 2)
