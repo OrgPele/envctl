@@ -24,6 +24,7 @@ from envctl_engine.planning.plan_agent.config import *
 from envctl_engine.planning.plan_agent.terminal_screen import *
 from envctl_engine.planning.plan_agent.workflow_build import *
 from envctl_engine.planning.plan_agent.workflow_prompt_support import *
+from envctl_engine.runtime.runtime_context import RuntimeContext
 
 
 def _surface_respawn_command(launch_config: PlanAgentLaunchConfig, worktree: CreatedPlanWorktree) -> str:

@@ -71,10 +71,19 @@ class _SpinnerContext:
 class ActionWorktreeRunnerTests(unittest.TestCase):
     def test_worktree_runner_uses_named_owners_for_target_resolution_and_delete_execution(self) -> None:
         source = Path(action_worktree_runner.__file__).read_text(encoding="utf-8")
+        target_resolution_source = (
+            REPO_ROOT / "python/envctl_engine/actions/action_worktree_target_resolution.py"
+        ).read_text(encoding="utf-8")
+        self_destruct_source = (
+            REPO_ROOT / "python/envctl_engine/actions/action_worktree_self_destruct.py"
+        ).read_text(encoding="utf-8")
 
-        self.assertIn("class CurrentWorktreeTargetResolver", source)
         self.assertIn("class ActionWorktreeDeleteRunner", source)
         self.assertIn("return ActionWorktreeDeleteRunner(", source)
+        self.assertIn("class CurrentWorktreeTargetResolver", target_resolution_source)
+        self.assertIn("def main_repo_root_for_worktree", target_resolution_source)
+        self.assertIn("def run_self_destruct_worktree_action", self_destruct_source)
+        self.assertIn("def spawn_self_destruct_helper", self_destruct_source)
         self.assertTrue(callable(ActionWorktreeDeleteRunner.execute))
         self.assertTrue(callable(CurrentWorktreeTargetResolver.resolve))
 
