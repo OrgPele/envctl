@@ -1097,8 +1097,22 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def build_dashboard_snapshot_model", snapshot_text)
         rendering_text = rendering.read_text(encoding="utf-8")
         self.assertIn("from envctl_engine.ui.dashboard import service_rendering", rendering_text)
-        self.assertIn("from envctl_engine.ui.dashboard.snapshot_support import", rendering_text)
         self.assertLessEqual(len(rendering_text.splitlines()), 745)
+
+    def test_dashboard_rendering_has_snapshot_printer_owner(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "snapshot_rendering.py"
+        rendering = REPO_ROOT / "python" / "envctl_engine" / "ui" / "dashboard" / "rendering.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        self.assertIn("class DashboardSnapshotPrinter", owner_text)
+        self.assertIn("class DashboardSnapshotRenderHooks", owner_text)
+        self.assertIn("def print_snapshot", owner_text)
+        self.assertIn("from envctl_engine.ui.dashboard.snapshot_support import build_dashboard_snapshot_model", owner_text)
+        rendering_text = rendering.read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.ui.dashboard import snapshot_rendering", rendering_text)
+        self.assertIn("DashboardSnapshotRenderHooks", rendering_text)
+        self.assertLessEqual(len(rendering_text.splitlines()), 540)
 
     def test_bats_harness_is_absent(self) -> None:
         self.assertFalse((REPO_ROOT / "tests" / "bats").exists())
