@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-24T22:52:53+00:00",
+  "generated_at": "2026-05-25T09:48:12+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -430,10 +430,12 @@
       "user_visible": true,
       "shell_source_of_truth": [],
       "python_source_of_truth": [
+        "python/envctl_engine/runtime/lifecycle_worktree_cleanup.py",
         "python/envctl_engine/runtime/engine_runtime_lifecycle_support.py",
         "python/envctl_engine/actions/action_worktree_runner.py"
       ],
       "evidence_tests": [
+        "tests/python/runtime/test_lifecycle_worktree_cleanup.py",
         "tests/python/runtime/test_engine_runtime_lifecycle_support.py",
         "tests/python/actions/test_action_worktree_runner.py"
       ],
@@ -442,8 +444,9 @@
       "command": "blast-worktree",
       "current_behavior": "Python blast-worktree deletes trees and cleans most scoped resources, but full cleanup symmetry still relies on shell behavior as the oracle.",
       "missing_python_behavior": "Close any remaining tree-scoped cleanup gaps for processes, dependency containers, and legacy-named resources, then prove parity through focused lifecycle tests.",
-      "python_owner_module": "python/envctl_engine/runtime/engine_runtime_lifecycle_support.py",
+      "python_owner_module": "python/envctl_engine/runtime/lifecycle_worktree_cleanup.py",
       "proposed_tests": [
+        "tests/python/runtime/test_lifecycle_worktree_cleanup.py",
         "tests/python/runtime/test_engine_runtime_lifecycle_support.py",
         "tests/python/actions/test_action_worktree_runner.py"
       ],
