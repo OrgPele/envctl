@@ -10,14 +10,16 @@ def _tests_workflow() -> str:
     return (REPO_ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
 
 
-def test_tests_workflow_uses_setup_uv_cache_without_stickydisk() -> None:
+def test_tests_workflow_uses_uv_without_third_party_setup_actions() -> None:
     workflow = _tests_workflow()
 
     assert "useblacksmith/stickydisk" not in workflow
+    assert "astral-sh/setup-uv" not in workflow
     assert "blacksmith-" not in workflow
     assert "runs-on: ubuntu-24.04" in workflow
-    assert "enable-cache: true" in workflow
-    assert "cache-dependency-glob: uv.lock" in workflow
+    assert "path: /home/runner/.cache/uv" in workflow
+    assert "envctl-uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}" in workflow
+    assert "python -m pip install --upgrade uv" in workflow
     assert "UV_CACHE_DIR: /home/runner/.cache/uv" in workflow
 
 
