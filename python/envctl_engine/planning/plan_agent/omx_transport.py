@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-import time
+import time as _time
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -46,6 +46,16 @@ from envctl_engine.planning.plan_agent.tmux_session import (
     _tmux_active_pane_id,
     _tmux_display_message_succeeds,
 )
+
+
+class _TimeProxy:
+    gmtime = staticmethod(_time.gmtime)
+    monotonic = staticmethod(_time.monotonic)
+    sleep = staticmethod(_time.sleep)
+    strftime = staticmethod(_time.strftime)
+
+
+time = _TimeProxy()
 
 _cleanup_stale_omx_tmux_locks = omx_lock_support.cleanup_stale_omx_tmux_locks
 _cleanup_stale_omx_tmux_locks_under_root = omx_lock_support.cleanup_stale_omx_tmux_locks_under_root
