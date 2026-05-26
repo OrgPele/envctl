@@ -256,6 +256,8 @@ def emit_plan_agent_launch_state(runtime: Any, session: StartupSession, launch_r
     session_name = str(getattr(attach_target, "session_name", "")).strip() if attach_target is not None else ""
     launched_worktrees: list[str] = []
     failed_worktrees: list[str] = []
+    launched_surface_ids: list[str] = []
+    launched_workspace_ids: list[str] = []
     for outcome in tuple(getattr(launch_result, "outcomes", ()) or ()):
         status = str(getattr(outcome, "status", "")).strip().lower()
         worktree_name = str(getattr(outcome, "worktree_name", "")).strip()
@@ -263,14 +265,26 @@ def emit_plan_agent_launch_state(runtime: Any, session: StartupSession, launch_r
             launched_worktrees.append(worktree_name)
         elif status == "failed" and worktree_name:
             failed_worktrees.append(worktree_name)
+        if status == "launched":
+            surface_id = str(getattr(outcome, "surface_id", "") or "").strip()
+            workspace_id = str(getattr(outcome, "workspace_id", "") or "").strip()
+            if surface_id and surface_id not in launched_surface_ids:
+                launched_surface_ids.append(surface_id)
+            if workspace_id and workspace_id not in launched_workspace_ids:
+                launched_workspace_ids.append(workspace_id)
+    route = session.effective_route
+    route_transport = "omx" if bool(route.flags.get("omx")) else ("tmux" if bool(route.flags.get("tmux")) else "cmux")
     runtime._emit(
         "startup.plan_agent_launch_state",
         command=session.effective_route.command,
         mode=session.runtime_mode,
+        route_transport=route_transport,
         status=str(getattr(launch_result, "status", "")).strip(),
         reason=str(getattr(launch_result, "reason", "")).strip(),
         launched_worktrees=launched_worktrees,
         failed_worktrees=failed_worktrees,
+        launched_surface_ids=launched_surface_ids,
+        launched_workspace_ids=launched_workspace_ids,
         session_name=session_name or None,
         implementation_session_running=session.plan_agent_session_started,
     )

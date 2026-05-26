@@ -68,6 +68,7 @@ class PlanAgentLaunchOutcome:
     surface_id: str | None
     status: str
     reason: str | None = None
+    workspace_id: str | None = None
 
 
 @dataclass(slots=True)
