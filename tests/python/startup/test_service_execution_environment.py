@@ -12,6 +12,7 @@ from envctl_engine.startup.service_execution_environment import (
     make_service_dependency_emitter,
     make_service_retry_emitter,
     project_env_for_service,
+    project_service_log_path,
     project_service_log_paths,
     resolve_service_workdirs,
 )
@@ -34,9 +35,18 @@ class ServiceExecutionEnvironmentTests(unittest.TestCase):
 
         paths = project_service_log_paths(runtime=runtime, run_id="run-1", project_name="Feature / A")
 
-        self.assertEqual(paths.safe_project_name, "Feature___A")
-        self.assertEqual(paths.backend_log_path, "/runs/run-1/Feature___A_backend.txt")
-        self.assertEqual(paths.frontend_log_path, "/runs/run-1/Feature___A_frontend.txt")
+        self.assertEqual(paths.safe_project_name, "Feature_A")
+        self.assertEqual(paths.backend_log_path, "/runs/run-1/Feature_A_backend.txt")
+        self.assertEqual(paths.frontend_log_path, "/runs/run-1/Feature_A_frontend.txt")
+
+    def test_project_service_log_path_sanitizes_project_and_service_name(self) -> None:
+        path = project_service_log_path(
+            run_logs_dir=Path("/runs/run-1"),
+            project_name="Feature / A",
+            service_name="voice/runtime v2",
+        )
+
+        self.assertEqual(path, "/runs/run-1/Feature_A_voice_runtime_v2.txt")
 
     def test_project_env_for_service_preserves_legacy_builders_without_service_name(self) -> None:
         calls: list[tuple[str | None, object]] = []

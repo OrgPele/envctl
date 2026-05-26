@@ -27,6 +27,7 @@ from envctl_engine.startup.service_execution_environment import (
     make_service_dependency_emitter,
     make_service_retry_emitter,
     project_env_for_service as _project_env_for_service,
+    project_service_log_path,
     project_service_log_paths,
     resolve_service_workdirs,
 )
@@ -76,7 +77,6 @@ def start_project_services(
 
     log_paths = project_service_log_paths(runtime=rt, run_id=run_id, project_name=context.name)
     run_logs_dir = log_paths.run_logs_dir
-    safe_project_name = log_paths.safe_project_name
     backend_log_path = log_paths.backend_log_path
     frontend_log_path = log_paths.frontend_log_path
     project_env_internal = resolve_project_service_env(rt, context, requirements=requirements, route=route)
@@ -319,7 +319,11 @@ def start_project_services(
         prepared_launches[service.name] = PreparedServiceLaunch(
             service_name=service.name,
             cwd=service_cwd,
-            log_path=str(run_logs_dir / f"{safe_project_name}_{service.name.replace('-', '_')}.txt"),
+            log_path=project_service_log_path(
+                run_logs_dir=run_logs_dir,
+                project_name=context.name,
+                service_name=service.name,
+            ),
             requested_port=launch_port,
             env=command_env_builder(port=launch_port, extra=service_env_extra),
             command_source="configured",

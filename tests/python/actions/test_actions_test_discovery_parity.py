@@ -93,6 +93,21 @@ class ActionsTestDiscoveryParityTests(_ActionsParityTestCase):
                 msg=fake_runner.run_calls,
             )
 
+    def test_default_test_command_discovers_backend_tests_from_root_python_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "pyproject.toml").write_text(
+                "[tool.poetry]\nname='backend'\nversion='1.0.0'\n",
+                encoding="utf-8",
+            )
+
+            with patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"):
+                command = default_test_command(repo)
+
+        self.assertEqual(command, ["/usr/bin/python3", "-m", "pytest", str(repo / "backend" / "tests")])
+
     def test_default_test_command_prefers_backend_pytest_over_root_unittest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

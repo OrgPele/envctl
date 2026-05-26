@@ -7,8 +7,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 
+from envctl_engine.shared.artifact_names import safe_artifact_stem
 from envctl_engine.state.models import RunState
 from envctl_engine.state import dump_state, load_legacy_shell_state, load_state, load_state_from_pointer, state_to_dict
 
@@ -20,9 +21,9 @@ class StateRepositoryPaths:
 
 
 class RuntimeStateRepository:
-    COMPAT_READ_WRITE = "compat_read_write"
-    COMPAT_READ_ONLY = "compat_read_only"
-    SCOPED_ONLY = "scoped_only"
+    COMPAT_READ_WRITE: str = "compat_read_write"
+    COMPAT_READ_ONLY: str = "compat_read_only"
+    SCOPED_ONLY: str = "scoped_only"
 
     def __init__(
         self,
@@ -33,11 +34,11 @@ class RuntimeStateRepository:
         runtime_scope_id: str,
         compat_mode: str,
     ) -> None:
-        self.runtime_root = runtime_root
-        self.runtime_legacy_root = runtime_legacy_root
-        self.runtime_dir = runtime_dir
-        self.runtime_scope_id = runtime_scope_id
-        self.compat_mode = (
+        self.runtime_root: Path = runtime_root
+        self.runtime_legacy_root: Path = runtime_legacy_root
+        self.runtime_dir: Path = runtime_dir
+        self.runtime_scope_id: str = runtime_scope_id
+        self.compat_mode: str = (
             compat_mode
             if compat_mode
             in {
@@ -270,8 +271,8 @@ class RuntimeStateRepository:
 
         if self.compat_mode == self.COMPAT_READ_WRITE:
             self.runtime_legacy_root.mkdir(parents=True, exist_ok=True)
-            (self.runtime_legacy_root / "run_state.json").write_text(run_state_text, encoding="utf-8")
-            (self.runtime_legacy_root / "runtime_map.json").write_text(runtime_map_text, encoding="utf-8")
+            self._write_text(self.runtime_legacy_root / "run_state.json", run_state_text)
+            self._write_text(self.runtime_legacy_root / "runtime_map.json", runtime_map_text)
             self._write_mode_pointers(
                 root=self.runtime_legacy_root,
                 run_state_path=run_state_path,
@@ -327,7 +328,7 @@ class RuntimeStateRepository:
         dump_state(state, str(run_state_path))
         run_state_text = run_state_path.read_text(encoding="utf-8")
         self.run_state_path().parent.mkdir(parents=True, exist_ok=True)
-        self.run_state_path().write_text(run_state_text, encoding="utf-8")
+        self._write_text(self.run_state_path(), run_state_text)
         emit("state.save", run_id=state.run_id, path=str(run_state_path))
         emit("state.fingerprint.after_save", run_id=state.run_id, state_fingerprint=self._state_fingerprint(state))
         return run_state_text
@@ -367,8 +368,12 @@ class RuntimeStateRepository:
     def _write_run_and_current_artifact(*, run_path: Path, current_path: Path, text: str) -> None:
         run_path.parent.mkdir(parents=True, exist_ok=True)
         current_path.parent.mkdir(parents=True, exist_ok=True)
-        run_path.write_text(text, encoding="utf-8")
-        current_path.write_text(text, encoding="utf-8")
+        RuntimeStateRepository._write_text(run_path, text)
+        RuntimeStateRepository._write_text(current_path, text)
+
+    @staticmethod
+    def _write_text(path: Path, text: str) -> None:
+        _ = path.write_text(text, encoding="utf-8")
 
     def purge(self, *, aggressive: bool = False) -> None:
         scoped_paths = (
@@ -436,8 +441,9 @@ class RuntimeStateRepository:
     def _context_ports_payload(self, context: object) -> dict[str, object]:
         ports = getattr(context, "ports", {})
         payload_ports: dict[str, object] = {}
-        if isinstance(ports, dict):
-            for key, plan in ports.items():
+        if isinstance(ports, Mapping):
+            ports_by_name = cast(Mapping[object, object], ports)
+            for key, plan in ports_by_name.items():
                 payload_ports[str(key)] = {
                     "requested": getattr(plan, "requested", None),
                     "assigned": getattr(plan, "assigned", None),
@@ -472,11 +478,11 @@ class RuntimeStateRepository:
         contexts: list[object],
     ) -> None:
         self.runtime_legacy_root.mkdir(parents=True, exist_ok=True)
-        (self.runtime_legacy_root / "run_state.json").write_text(run_state_text, encoding="utf-8")
-        (self.runtime_legacy_root / "runtime_map.json").write_text(runtime_map_text, encoding="utf-8")
-        (self.runtime_legacy_root / "ports_manifest.json").write_text(ports_manifest_text, encoding="utf-8")
-        (self.runtime_legacy_root / "error_report.json").write_text(error_report_text, encoding="utf-8")
-        (self.runtime_legacy_root / "events.jsonl").write_text(events_text, encoding="utf-8")
+        self._write_text(self.runtime_legacy_root / "run_state.json", run_state_text)
+        self._write_text(self.runtime_legacy_root / "runtime_map.json", runtime_map_text)
+        self._write_text(self.runtime_legacy_root / "ports_manifest.json", ports_manifest_text)
+        self._write_text(self.runtime_legacy_root / "error_report.json", error_report_text)
+        self._write_text(self.runtime_legacy_root / "events.jsonl", events_text)
         self._write_mode_pointers(
             root=self.runtime_legacy_root,
             run_state_path=run_state_path,
@@ -546,21 +552,28 @@ class RuntimeStateRepository:
     ) -> None:
         root.mkdir(parents=True, exist_ok=True)
         pointer_text = str(run_state_path) + "\n"
-        (root / ".last_state").write_text(pointer_text, encoding="utf-8")
+        self._write_text(root / ".last_state", pointer_text)
         existing_tree_pointers = sorted(root.glob(".last_state.trees.*"))
         if mode == "main":
-            (root / ".last_state.main").write_text(pointer_text, encoding="utf-8")
+            self._write_text(root / ".last_state.main", pointer_text)
             return
 
         expected_tree_pointer_names: set[str] = set()
         for project_name in project_names:
-            normalized_project = str(project_name).strip()
-            if not normalized_project or normalized_project.lower() == "main":
+            pointer_name = self._tree_pointer_name(project_name)
+            if pointer_name is None:
                 continue
-            pointer_name = f".last_state.trees.{normalized_project}"
             expected_tree_pointer_names.add(pointer_name)
-            (root / pointer_name).write_text(pointer_text, encoding="utf-8")
+            self._write_text(root / pointer_name, pointer_text)
 
         for pointer in existing_tree_pointers:
             if pointer.name not in expected_tree_pointer_names:
                 pointer.unlink(missing_ok=True)
+
+    @staticmethod
+    def _tree_pointer_name(project_name: str) -> str | None:
+        normalized_project = str(project_name).strip()
+        if not normalized_project or normalized_project.lower() == "main":
+            return None
+        pointer_suffix = safe_artifact_stem(normalized_project, fallback="project")
+        return f".last_state.trees.{pointer_suffix}"

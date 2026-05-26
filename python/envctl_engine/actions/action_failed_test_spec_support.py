@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Callable
 
 from envctl_engine.actions.actions_test import TestCommandSpec, normalize_frontend_test_path
+from envctl_engine.actions.actions_test_python_discovery import backend_python_roots
 from envctl_engine.actions.action_test_command_support import normalize_backend_python_test_command
 from envctl_engine.actions.action_test_manifest_support import FailedTestManifest, FailedTestManifestEntry
 from envctl_engine.actions.action_test_manifest_support import resolve_unittest_test_identifier_for_project
 from envctl_engine.actions.action_test_support_models import TestExecutionSpec, TestTargetContext
-from envctl_engine.shared.node_tooling import detect_package_manager, detect_python_bin
+from envctl_engine.shared.node_tooling import PythonBinDetector, detect_package_manager, detect_python_bin
 
 
 def build_failed_test_execution_specs(
@@ -55,7 +57,7 @@ def failed_rerun_spec_for_entry(
     project_root: Path,
     repo_root: Path,
     target_obj: object | None,
-    detect_python_bin_fn: Callable[..., str | None] = detect_python_bin,
+    detect_python_bin_fn: PythonBinDetector = detect_python_bin,
     detect_package_manager_fn: Callable[[Path], str | None] = detect_package_manager,
     normalize_backend_command_fn: Callable[[Sequence[str], Path], list[str]] = normalize_backend_python_test_command,
 ) -> TestExecutionSpec | str | None:
@@ -102,13 +104,13 @@ def _python_failed_rerun_spec(
     project_root: Path,
     repo_root: Path,
     target_obj: object | None,
-    detect_python_bin_fn: Callable[..., str | None],
+    detect_python_bin_fn: PythonBinDetector,
     normalize_backend_command_fn: Callable[[Sequence[str], Path], list[str]],
 ) -> TestExecutionSpec | str | None:
     if not entry.failed_tests:
         return None
     source = entry.source
-    python_roots = (project_root / "backend", project_root, repo_root) if source == "backend_pytest" else (
+    python_roots = (*backend_python_roots(project_root), repo_root) if source == "backend_pytest" else (
         project_root,
         repo_root,
     )
@@ -139,7 +141,7 @@ def _unittest_failed_rerun_spec(
     project_root: Path,
     repo_root: Path,
     target_obj: object | None,
-    detect_python_bin_fn: Callable[..., str | None],
+    detect_python_bin_fn: PythonBinDetector,
 ) -> TestExecutionSpec | str | None:
     failed_tests = [
         normalized
