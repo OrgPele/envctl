@@ -8,7 +8,12 @@ from types import SimpleNamespace
 import unittest
 
 from envctl_engine.actions.action_target_support import ActionCommandResolution
-from envctl_engine.actions.project_action_execution_support import run_project_action
+from envctl_engine.actions.project_action_execution_support import (
+    ProjectActionRunner,
+    ProjectActionRunnerConfig,
+    ProjectActionRunnerDependencies,
+    run_project_action,
+)
 from envctl_engine.runtime.command_router import parse_route
 
 
@@ -27,6 +32,42 @@ class _Runner:
 
 
 class ProjectActionExecutionSupportTests(unittest.TestCase):
+    def test_runner_accepts_grouped_config_and_dependencies(self) -> None:
+        route = parse_route(["review", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        target = SimpleNamespace(name="feature-a-1", root="/repo/trees/feature-a/1")
+        captured: dict[str, object] = {}
+
+        def execute_targeted_action_fn(**kwargs: object) -> int:
+            captured.update(kwargs)
+            return 41
+
+        runner = ProjectActionRunner(
+            config=ProjectActionRunnerConfig(
+                runtime=SimpleNamespace(env={}, process_runner=_Runner()),
+                route=route,
+                targets=[target],
+                command_name="review",
+                env_key="ENVCTL_ACTION_ANALYZE_CMD",
+                default_command=["review-tool"],
+                default_cwd=Path("/repo"),
+                default_append_project_path=False,
+                extra_env={},
+            ),
+            dependencies=ProjectActionRunnerDependencies(
+                action_replacements_builder=lambda _targets, target: {"project": target.name},
+                action_env_builder=lambda *_args, **_kwargs: {},
+                emit_status=lambda _message: None,
+                success_handler=lambda *_args, **_kwargs: None,
+                failure_handler=lambda *_args, **_kwargs: None,
+                stdout_is_live_terminal=lambda: False,
+                execute_targeted_action_fn=execute_targeted_action_fn,
+            ),
+        )
+
+        self.assertEqual(runner.run(), 41)
+        self.assertEqual(captured["command_name"], "review")
+        self.assertTrue(callable(captured["resolve_command"]))
+
     def test_missing_command_reports_configuration_gap(self) -> None:
         route = parse_route(["review"], env={"ENVCTL_DEFAULT_MODE": "main"})
         runtime = SimpleNamespace(env={})

@@ -7,7 +7,13 @@ from envctl_engine.actions.project_action_env_support import (
     migrate_action_env,
     test_action_extra_env,
 )
-from envctl_engine.actions.project_action_execution_support import ProjectActionRunner, run_project_action
+from envctl_engine.actions.project_action_execution_support import (
+    ProjectActionRunner,
+    ProjectActionRunnerConfig,
+    ProjectActionRunnerDependencies,
+    project_action_runner_parts,
+    run_project_action,
+)
 from envctl_engine.actions.project_action_report_support import (
     build_project_action_failure_handler,
     build_project_action_success_handler,
@@ -28,6 +34,9 @@ __all__ = [
     "test_action_extra_env",
     "migrate_action_env",
     "ProjectActionRunner",
+    "ProjectActionRunnerConfig",
+    "ProjectActionRunnerDependencies",
+    "project_action_runner_parts",
     "run_project_action",
     "build_project_action_success_handler",
     "build_project_action_failure_handler",

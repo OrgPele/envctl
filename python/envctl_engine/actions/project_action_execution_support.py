@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import inspect
 from pathlib import Path
 import subprocess
@@ -11,49 +12,70 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_process_runtime
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectActionRunnerConfig:
+    runtime: Any
+    route: Route
+    targets: list[object]
+    command_name: str
+    env_key: str
+    default_command: list[str] | None
+    default_cwd: Path
+    default_append_project_path: bool
+    extra_env: Mapping[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectActionRunnerDependencies:
+    action_replacements_builder: Callable[..., dict[str, str]]
+    action_env_builder: Callable[..., dict[str, str]]
+    emit_status: Callable[[str], None]
+    success_handler: Callable[..., object] | None
+    failure_handler: Callable[..., object] | None
+    stdout_is_live_terminal: Callable[[], bool]
+    execute_targeted_action_fn: Callable[..., int]
+
+
 class ProjectActionRunner:
     def __init__(
         self,
         *,
-        runtime: Any,
-        route: Route,
-        targets: list[object],
-        command_name: str,
-        env_key: str,
-        default_command: list[str] | None,
-        default_cwd: Path,
-        default_append_project_path: bool,
-        extra_env: Mapping[str, str],
-        action_replacements_builder: Callable[..., dict[str, str]],
-        action_env_builder: Callable[..., dict[str, str]],
-        emit_status: Callable[[str], None],
-        success_handler: Callable[..., object] | None,
-        failure_handler: Callable[..., object] | None,
-        stdout_is_live_terminal: Callable[[], bool],
-        execute_targeted_action_fn: Callable[..., int],
+        config: ProjectActionRunnerConfig | None = None,
+        dependencies: ProjectActionRunnerDependencies | None = None,
+        **legacy_kwargs: Any,
     ) -> None:
-        self.runtime = runtime
-        self.route = route
-        self.targets = targets
-        self.command_name = command_name
-        self.env_key = env_key
-        self.default_command = default_command
-        self.default_cwd = default_cwd
-        self.default_append_project_path = default_append_project_path
-        self.extra_env = extra_env
-        self.action_replacements_builder = action_replacements_builder
-        self.action_env_builder = action_env_builder
-        self.emit_status = emit_status
-        self.success_handler = success_handler
-        self.failure_handler = failure_handler
-        self.stdout_is_live_terminal = stdout_is_live_terminal
-        self.execute_targeted_action_fn = execute_targeted_action_fn
+        if config is None and dependencies is None:
+            config, dependencies = project_action_runner_parts(**legacy_kwargs)
+        elif legacy_kwargs:
+            unexpected = ", ".join(sorted(legacy_kwargs))
+            raise TypeError(f"unexpected legacy runner arguments with grouped config: {unexpected}")
+        elif config is None or dependencies is None:
+            raise TypeError("ProjectActionRunner requires both config and dependencies")
 
-        self.raw_command = runtime.env.get(env_key)
-        self.interactive_command = bool(route.flags.get("interactive_command"))
+        self.config = config
+        self.dependencies = dependencies
+        self.runtime = config.runtime
+        self.route = config.route
+        self.targets = config.targets
+        self.command_name = config.command_name
+        self.env_key = config.env_key
+        self.default_command = config.default_command
+        self.default_cwd = config.default_cwd
+        self.default_append_project_path = config.default_append_project_path
+        self.extra_env = config.extra_env
+        self.action_replacements_builder = dependencies.action_replacements_builder
+        self.action_env_builder = dependencies.action_env_builder
+        self.emit_status = dependencies.emit_status
+        self.success_handler = dependencies.success_handler
+        self.failure_handler = dependencies.failure_handler
+        self.stdout_is_live_terminal = dependencies.stdout_is_live_terminal
+        self.execute_targeted_action_fn = dependencies.execute_targeted_action_fn
+
+        self.raw_command = config.runtime.env.get(config.env_key)
+        self.interactive_command = bool(config.route.flags.get("interactive_command"))
         self.process_runtime: Any | None = None
         self.stream_action_output = False
-        self.command_extra_env = dict(extra_env)
+        self.command_extra_env = dict(config.extra_env)
 
     def run(self) -> int:
         if self.raw_command is None and self.default_command is None:
@@ -186,6 +208,49 @@ def _callable_accepts_keyword(callback: Callable[..., object], keyword: str) -> 
     )
 
 
+def project_action_runner_parts(
+    *,
+    runtime: Any,
+    route: Route,
+    targets: list[object],
+    command_name: str,
+    env_key: str,
+    default_command: list[str] | None,
+    default_cwd: Path,
+    default_append_project_path: bool,
+    extra_env: Mapping[str, str],
+    action_replacements_builder: Callable[..., dict[str, str]],
+    action_env_builder: Callable[..., dict[str, str]],
+    emit_status: Callable[[str], None],
+    success_handler: Callable[..., object] | None,
+    failure_handler: Callable[..., object] | None,
+    stdout_is_live_terminal: Callable[[], bool],
+    execute_targeted_action_fn: Callable[..., int],
+) -> tuple[ProjectActionRunnerConfig, ProjectActionRunnerDependencies]:
+    return (
+        ProjectActionRunnerConfig(
+            runtime=runtime,
+            route=route,
+            targets=targets,
+            command_name=command_name,
+            env_key=env_key,
+            default_command=default_command,
+            default_cwd=default_cwd,
+            default_append_project_path=default_append_project_path,
+            extra_env=extra_env,
+        ),
+        ProjectActionRunnerDependencies(
+            action_replacements_builder=action_replacements_builder,
+            action_env_builder=action_env_builder,
+            emit_status=emit_status,
+            success_handler=success_handler,
+            failure_handler=failure_handler,
+            stdout_is_live_terminal=stdout_is_live_terminal,
+            execute_targeted_action_fn=execute_targeted_action_fn,
+        ),
+    )
+
+
 def run_project_action(
     *,
     runtime: Any,
@@ -205,7 +270,7 @@ def run_project_action(
     stdout_is_live_terminal: Callable[[], bool],
     execute_targeted_action_fn: Callable[..., int],
 ) -> int:
-    return ProjectActionRunner(
+    config, dependencies = project_action_runner_parts(
         runtime=runtime,
         route=route,
         targets=targets,
@@ -222,4 +287,8 @@ def run_project_action(
         failure_handler=failure_handler,
         stdout_is_live_terminal=stdout_is_live_terminal,
         execute_targeted_action_fn=execute_targeted_action_fn,
+    )
+    return ProjectActionRunner(
+        config=config,
+        dependencies=dependencies,
     ).run()
