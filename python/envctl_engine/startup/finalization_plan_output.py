@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shlex
 from collections.abc import Callable
+from typing import TextIO, cast
 
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
 from envctl_engine.shared.services import service_display_name
@@ -39,6 +40,41 @@ def print_plan_dry_run_preview(
         print_fn(line)
 
 
+def import_dry_run_preview_lines(runtime: StartupRuntime, session: StartupSession) -> list[str]:
+    route = session.effective_route
+    if route.command != "import" or not bool(route.flags.get("dry_run")):
+        return []
+    planning_orchestrator = getattr(runtime, "planning_worktree_orchestrator", None)
+    preview_getter = getattr(planning_orchestrator, "last_import_dry_run_result", None)
+    preview = preview_getter() if callable(preview_getter) else None
+    lines = ["Dry run: no worktrees, git state, services, or AI sessions were modified."]
+    if preview is None:
+        for context in session.selected_contexts:
+            lines.append(f"{context.name}: action=preview path={context.root}")
+        return lines
+    ref = getattr(preview, "ref", None)
+    worktree = getattr(preview, "worktree", None)
+    name = str(getattr(worktree, "name", "") or "").strip()
+    path = getattr(worktree, "root", "")
+    action = str(getattr(preview, "action", "") or "preview").strip()
+    remote_ref = str(getattr(ref, "remote_ref", "") or "").strip()
+    local_branch = str(getattr(ref, "local_branch", "") or "").strip()
+    lines.append(
+        f"{name}: action={action} remote_ref={remote_ref} local_branch={local_branch} project={name} path={path}"
+    )
+    return lines
+
+
+def print_import_dry_run_preview(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    *,
+    print_fn: Callable[[str], None],
+) -> None:
+    for line in import_dry_run_preview_lines(runtime, session):
+        print_fn(line)
+
+
 def resolve_plan_dry_run(
     runtime: StartupRuntime,
     session: StartupSession,
@@ -49,6 +85,19 @@ def resolve_plan_dry_run(
     if route.command != "plan" or not bool(route.flags.get("dry_run")):
         return None
     print_plan_dry_run_preview(runtime, session, print_fn=print_fn)
+    return 0
+
+
+def resolve_import_dry_run(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    *,
+    print_fn: Callable[[str], None],
+) -> int | None:
+    route = session.effective_route
+    if route.command != "import" or not bool(route.flags.get("dry_run")):
+        return None
+    print_import_dry_run_preview(runtime, session, print_fn=print_fn)
     return 0
 
 
@@ -259,6 +308,6 @@ def format_degraded_handoff_text_for_terminal(
         text,
         paths=local_paths_in_text(text),
         env=runtime.env,
-        stream=stream,
+        stream=cast(TextIO | None, stream),
         interactive_tty=(True if link_mode == "on" else None),
     )

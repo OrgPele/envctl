@@ -19,7 +19,8 @@ from envctl_engine.startup.finalization import (
     headless_plan_output_only,
     headless_plan_session_summary_lines,
     maybe_attach_plan_agent_terminal,
-    plan_dry_run_preview_lines,
+        import_dry_run_preview_lines,
+        plan_dry_run_preview_lines,
     plan_agent_degraded_handoff_text,
     plan_session_summary_lines,
     print_headless_plan_session_summary,
@@ -662,6 +663,36 @@ class StartupFinalizationTests(unittest.TestCase):
         print_plan_dry_run_preview(SimpleNamespace(), session, print_fn=lines.append)
 
         self.assertEqual(lines, [])
+
+    def test_import_dry_run_preview_lines_render_branch_mapping(self) -> None:
+        route = parse_route(["--import", "origin/feature/foo", "--dry-run"], env={})
+        session = StartupSession(
+            requested_route=route,
+            effective_route=route,
+            requested_command="import",
+            runtime_mode="trees",
+            run_id="run-import-dry-run",
+            selected_contexts=[SimpleNamespace(name="imported-feature-foo", root=Path("/repo/trees/imported/feature-foo"))],
+        )
+        ref = SimpleNamespace(remote_ref="origin/feature/foo", local_branch="feature/foo")
+        preview = SimpleNamespace(ref=ref, worktree=session.selected_contexts[0], action="would create")
+        runtime = SimpleNamespace(
+            planning_worktree_orchestrator=SimpleNamespace(last_import_dry_run_result=lambda: preview)
+        )
+
+        lines = import_dry_run_preview_lines(runtime, session)
+
+        self.assertEqual(
+            lines,
+            [
+                "Dry run: no worktrees, git state, services, or AI sessions were modified.",
+                (
+                    "imported-feature-foo: action=would create "
+                    "remote_ref=origin/feature/foo local_branch=feature/foo "
+                    "project=imported-feature-foo path=/repo/trees/imported/feature-foo"
+                ),
+            ],
+        )
 
     def test_restart_port_rebound_summary_lines_deduplicate_port_changes(self) -> None:
         route = parse_route(["restart"], env={})

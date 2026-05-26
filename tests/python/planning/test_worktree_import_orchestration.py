@@ -8,7 +8,10 @@ from envctl_engine.config import load_config
 import pytest
 
 from envctl_engine.planning.worktree_import_commands import WorktreeImportError
-from envctl_engine.planning.worktree_import_orchestration import import_remote_branch_worktree
+from envctl_engine.planning.worktree_import_orchestration import (
+    dry_run_import_remote_branch_worktree,
+    import_remote_branch_worktree,
+)
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
 
 
@@ -146,3 +149,56 @@ def test_import_remote_branch_worktree_fails_on_diverged_local_branch(tmp_path: 
 
     with pytest.raises(WorktreeImportError, match="dirty or diverged"):
         import_remote_branch_worktree(runtime, "feature/import-me")
+
+
+def test_import_remote_branch_worktree_dry_run_previews_create_without_mutating(tmp_path: Path) -> None:
+    repo, _origin = _repo_with_remote_branch(tmp_path)
+    runtime = _runtime(repo, tmp_path / "runtime")
+    remote_ref = repo / ".git" / "refs" / "remotes" / "origin" / "feature" / "import-me"
+    before_remote_ref = remote_ref.read_text(encoding="utf-8") if remote_ref.exists() else ""
+
+    result = dry_run_import_remote_branch_worktree(runtime, "origin/feature/import-me")
+
+    worktree = repo / "trees" / "imported" / "feature-import-me"
+    assert result.action == "would create"
+    assert result.worktree.name == "imported-feature-import-me"
+    assert result.worktree.root == worktree.resolve()
+    assert not worktree.exists()
+    assert not (worktree / ".envctl-state" / "worktree-provenance.json").exists()
+    assert (remote_ref.read_text(encoding="utf-8") if remote_ref.exists() else "") == before_remote_ref
+
+
+def test_import_remote_branch_worktree_dry_run_previews_existing_local_branch(tmp_path: Path) -> None:
+    repo, _origin = _repo_with_remote_branch(tmp_path)
+    _git(repo, "branch", "feature/import-me", "origin/feature/import-me")
+    runtime = _runtime(repo, tmp_path / "runtime")
+
+    result = dry_run_import_remote_branch_worktree(runtime, "feature/import-me")
+
+    assert result.action == "would use existing local branch"
+    assert result.worktree.root == (repo / "trees" / "imported" / "feature-import-me").resolve()
+    assert not result.worktree.root.exists()
+
+
+def test_import_remote_branch_worktree_dry_run_previews_existing_worktree(tmp_path: Path) -> None:
+    repo, _origin = _repo_with_remote_branch(tmp_path)
+    runtime = _runtime(repo, tmp_path / "runtime")
+    first = import_remote_branch_worktree(runtime, "feature/import-me")
+
+    result = dry_run_import_remote_branch_worktree(runtime, "refs/remotes/origin/feature/import-me")
+
+    assert result.action == "would reuse existing worktree"
+    assert result.worktree.root == first.worktree.root
+
+
+def test_import_remote_branch_worktree_dry_run_fails_for_wrong_branch_target(tmp_path: Path) -> None:
+    repo, _origin = _repo_with_remote_branch(tmp_path)
+    _git(repo, "checkout", "-b", "feature/other")
+    _git(repo, "checkout", "main")
+    target = repo / "trees" / "imported" / "feature-import-me"
+    target.parent.mkdir(parents=True)
+    _git(repo, "worktree", "add", str(target), "feature/other")
+    runtime = _runtime(repo, tmp_path / "runtime")
+
+    with pytest.raises(WorktreeImportError, match="does not match requested branch"):
+        dry_run_import_remote_branch_worktree(runtime, "feature/import-me")

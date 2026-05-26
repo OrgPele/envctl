@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import time
 import sys
+import time
 from collections.abc import Callable
+from typing import cast
 
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
 from envctl_engine.runtime.command_router import Route
@@ -10,14 +11,17 @@ from envctl_engine.startup.finalization_plan_output import (
     format_degraded_handoff_text_for_terminal,
     headless_plan_output_only,
     headless_plan_session_summary_lines,
+    import_dry_run_preview_lines,
     maybe_attach_plan_agent_terminal,
     plan_agent_degraded_handoff_text,
     plan_dry_run_preview_lines,
+    print_import_dry_run_preview,
     plan_session_summary_lines,
     print_headless_plan_session_summary,
     print_plan_dry_run_preview,
     print_restart_port_rebound_summary,
     render_plan_agent_degraded_handoff_for_terminal,
+    resolve_import_dry_run,
     resolve_plan_dry_run,
     restart_port_rebound_summary_lines,
 )
@@ -33,7 +37,7 @@ from envctl_engine.startup.finalization_run_state import (
     build_planning_dashboard_state as build_planning_dashboard_state,
 )
 from envctl_engine.startup.requirements_execution import requirements_timing_enabled, startup_breakdown_enabled
-from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
+from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
 from envctl_engine.startup.session_lifecycle import emit_startup_phase, ensure_run_id
 from envctl_engine.startup.startup_execution_support import print_startup_summary
@@ -46,14 +50,17 @@ __all__ = [
     "format_degraded_handoff_text_for_terminal",
     "headless_plan_output_only",
     "headless_plan_session_summary_lines",
+    "import_dry_run_preview_lines",
     "maybe_attach_plan_agent_terminal",
     "plan_agent_degraded_handoff_text",
     "plan_dry_run_preview_lines",
+    "print_import_dry_run_preview",
     "plan_session_summary_lines",
     "print_headless_plan_session_summary",
     "print_plan_dry_run_preview",
     "print_restart_port_rebound_summary",
     "render_plan_agent_degraded_handoff_for_terminal",
+    "resolve_import_dry_run",
     "resolve_plan_dry_run",
     "restart_port_rebound_summary_lines",
 ]
@@ -182,7 +189,11 @@ def finalize_successful_startup_with_runtime(
     validate_plan_agent_handoff: Callable[..., None],
     print_fn: Callable[[str], None] = print,
 ) -> int:
-    orchestrator_like = type("_StartupFinalizationRuntimeFacade", (), {"runtime": runtime})()
+    orchestrator_like = cast(
+        StartupOrchestratorLike,
+        cast(object, type("_StartupFinalizationRuntimeFacade", (), {"runtime": runtime})()),
+    )
+    attach_terminal = cast(Callable[[StartupRuntime, object], int], attach_plan_agent_terminal)
     return finalize_successful_startup(
         runtime=runtime,
         session=session,
@@ -212,7 +223,7 @@ def finalize_successful_startup_with_runtime(
             runtime=runtime,
             session=session,
             validate_plan_agent_handoff=validate_plan_agent_handoff,
-            attach_plan_agent_terminal=attach_plan_agent_terminal,
+            attach_plan_agent_terminal=attach_terminal,
             print_headless_plan_session_summary=lambda session, *, attach_target: (
                 print_headless_plan_session_summary(
                     session,
@@ -238,6 +249,7 @@ def finalize_plan_agent_degraded_handoff_with_runtime(
     validate_plan_agent_handoff: Callable[..., None],
     print_fn: Callable[[str], None] = print,
 ) -> int:
+    attach_terminal = cast(Callable[[StartupRuntime, object], int], attach_plan_agent_terminal)
     return finalize_plan_agent_degraded_handoff(
         runtime=runtime,
         session=session,
@@ -256,7 +268,7 @@ def finalize_plan_agent_degraded_handoff_with_runtime(
             runtime=runtime,
             session=session,
             validate_plan_agent_handoff=validate_plan_agent_handoff,
-            attach_plan_agent_terminal=attach_plan_agent_terminal,
+            attach_plan_agent_terminal=attach_terminal,
             print_headless_plan_session_summary=lambda session, *, attach_target: (
                 print_headless_plan_session_summary(
                     session,

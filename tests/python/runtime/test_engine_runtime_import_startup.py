@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import redirect_stdout
+from io import StringIO
 import subprocess
 import tempfile
 from pathlib import Path
@@ -103,3 +105,43 @@ class EngineRuntimeImportStartupTests(_EngineRuntimeRealStartupTestCase):
             assert launched == [
                 ("imported-feature-import-launch", (repo / "trees" / "imported" / "feature-import-launch").resolve())
             ]
+
+    def test_import_dry_run_previews_without_mutating_or_launching(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            repo = _repo_with_remote_branch(tmp)
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    tmp / "runtime",
+                    extra={
+                        "TREES_STARTUP_ENABLE": "false",
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_WORKTREE_CODE_INTELLIGENCE": "off",
+                    },
+                ),
+                env={"CMUX_WORKSPACE_ID": "workspace:4"},
+            )
+            output = StringIO()
+
+            with (
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals") as launch,
+                redirect_stdout(output),
+            ):
+                code = engine.dispatch(
+                    parse_route(
+                        ["--import", "feature/import-launch", "--dry-run", "--cmux", "--headless", "--no-infra"],
+                        env={},
+                    )
+                )
+
+            assert code == 0
+            launch.assert_not_called()
+            worktree = repo / "trees" / "imported" / "feature-import-launch"
+            assert not worktree.exists()
+            preview = output.getvalue()
+            assert "Dry run: no worktrees, git state, services, or AI sessions were modified." in preview
+            assert "remote_ref=origin/feature/import-launch" in preview
+            assert "local_branch=feature/import-launch" in preview
+            assert "project=imported-feature-import-launch" in preview
+            assert "action=would create" in preview

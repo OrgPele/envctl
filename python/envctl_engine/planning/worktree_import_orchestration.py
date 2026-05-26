@@ -28,21 +28,27 @@ def select_import_project(runtime: Any, route: object, project_contexts: list[An
     del project_contexts
     branch_arg = _import_branch_arg(route)
     try:
-        result = import_remote_branch_worktree(runtime, branch_arg)
+        if bool(getattr(route, "flags", {}).get("dry_run")):
+            result = dry_run_import_remote_branch_worktree(runtime, branch_arg)
+        else:
+            result = import_remote_branch_worktree(runtime, branch_arg)
     except (ValueError, WorktreeImportError) as exc:
         raise RuntimeError(str(exc)) from exc
 
-    print(
-        "Imported remote branch "
-        f"{result.ref.remote_ref} -> {result.ref.local_branch} at {result.worktree.root}"
-        f" ({result.action})."
-    )
+    if not bool(getattr(route, "flags", {}).get("dry_run")):
+        print(
+            "Imported remote branch "
+            f"{result.ref.remote_ref} -> {result.ref.local_branch} at {result.worktree.root}"
+            f" ({result.action})."
+        )
     planning_orchestrator = getattr(runtime, "planning_worktree_orchestrator", None)
     if planning_orchestrator is not None:
+        if bool(getattr(route, "flags", {}).get("dry_run")):
+            planning_orchestrator._last_import_dry_run_result = result
         planning_orchestrator._last_plan_selection_result = PlanSelectionResult(
             raw_projects=[(result.worktree.name, result.worktree.root)],
             selected_contexts=[],
-            created_worktrees=(result.worktree,),
+            created_worktrees=() if bool(getattr(route, "flags", {}).get("dry_run")) else (result.worktree,),
         )
     return runtime._contexts_from_raw_projects([(result.worktree.name, result.worktree.root)])
 
@@ -100,6 +106,55 @@ def import_remote_branch_worktree(runtime: Any, raw_branch: str) -> ImportWorktr
     _emit(
         emit,
         "worktree.import.finish",
+        branch=ref.branch,
+        remote=ref.remote,
+        remote_ref=ref.remote_ref,
+        local_branch=ref.local_branch,
+        worktree_root=str(target),
+        action=action,
+    )
+    return ImportWorktreeResult(ref=ref, worktree=worktree, action=action)
+
+
+def dry_run_import_remote_branch_worktree(runtime: Any, raw_branch: str) -> ImportWorktreeResult:
+    ref = normalize_import_branch_ref(raw_branch)
+    repo_root = runtime.config.base_dir
+    target = repo_root / runtime.config.trees_dir_name / "imported" / ref.slug
+    env = runtime._command_env(port=0)
+    emit = getattr(runtime, "_emit", None)
+
+    _emit(
+        emit,
+        "worktree.import.dry_run.normalized",
+        branch=ref.branch,
+        remote=ref.remote,
+        remote_ref=ref.remote_ref,
+        local_branch=ref.local_branch,
+    )
+    existing_worktree = _existing_worktree_for_branch(runtime, ref=ref, repo_root=repo_root, env=env)
+    if existing_worktree is not None:
+        target = existing_worktree
+        action = "would reuse existing worktree"
+    elif target.exists():
+        _verify_target_branch(runtime, target=target, ref=ref, env=env)
+        action = "would reuse existing target"
+    else:
+        branch_exists = run_import_command(
+            branch_exists_command(repo_root=repo_root, ref=ref),
+            cwd=repo_root,
+            env=env,
+            run=runtime.process_runner.run,
+            timeout=30.0,
+        )
+        action = (
+            "would use existing local branch"
+            if getattr(branch_exists, "returncode", 1) == 0
+            else "would create"
+        )
+    worktree = CreatedPlanWorktree(name=ref.project_name, root=target.resolve(), plan_file="")
+    _emit(
+        emit,
+        "worktree.import.dry_run.finish",
         branch=ref.branch,
         remote=ref.remote,
         remote_ref=ref.remote_ref,
@@ -200,7 +255,7 @@ def _verify_target_branch(runtime: Any, *, target: Path, ref: ImportedBranchRef,
     branch = str(getattr(result, "stdout", "")).strip()
     if getattr(result, "returncode", 1) != 0 or branch != ref.local_branch:
         raise WorktreeImportError(
-            f"Import target already exists but is not on {ref.local_branch}: {target}."
+            f"Import target already exists but does not match requested branch {ref.local_branch}: {target}."
         )
 
 

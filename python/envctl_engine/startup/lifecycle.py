@@ -16,6 +16,7 @@ from envctl_engine.startup.finalization import (
     finalize_successful_startup_with_runtime,
     headless_plan_output_only,
     render_final_failure_status,
+    resolve_import_dry_run,
     render_project_startup_warnings_for_route,
     resolve_plan_dry_run,
 )
@@ -136,6 +137,7 @@ def _pre_start_phases(
             emit_snapshot=partial(emit_startup_plan_handoff_snapshot, runtime),
         ),
         partial(resolve_plan_dry_run, runtime, print_fn=print),
+        partial(resolve_import_dry_run, runtime, print_fn=print),
         lambda _: prepare_and_launch_plan_agent_worktrees(
             runtime,
             session,
