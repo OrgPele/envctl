@@ -692,6 +692,127 @@ class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
             self.assertIn("missing_service_start_command", out.getvalue())
             self.assertEqual(fake_runner.start_background_calls, [])
 
+    def test_entire_system_plan_continues_when_no_local_app_system_is_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 0)
+            self.assertIn("No local app system is configured for feature-a-1", rendered)
+            self.assertIn("--entire-system was honored, but there was nothing configured to start", rendered)
+            self.assertNotIn("missing_service_start_command", rendered)
+            self.assertNotIn("local app startup failed", rendered)
+            self.assertEqual(fake_runner.start_background_calls, [])
+            self.assertTrue(
+                any(
+                    event.get("event") == "service.attach.skipped"
+                    and event.get("reason") == "no_system_configured"
+                    and event.get("requested_scope") == "entire-system"
+                    for event in engine.events
+                )
+            )
+
+    def test_entire_system_plan_ignores_inherited_source_envctl_without_local_app_system(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "# >>> envctl managed startup config >>>",
+                        "ENVCTL_DEFAULT_MODE=trees",
+                        "BACKEND_DIR=.",
+                        "FRONTEND_DIR=",
+                        "# <<< envctl managed startup config <<<",
+                        "",
+                        "# >>> envctl backend launch env >>>",
+                        "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}",
+                        "# <<< envctl backend launch env <<<",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 0)
+            self.assertIn("No local app system is configured for feature-a-1", rendered)
+            self.assertNotIn("missing_service_start_command", rendered)
+            self.assertEqual(fake_runner.start_background_calls, [])
+
+    def test_entire_system_keeps_explicit_service_enablement_actionable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "TREES_BACKEND_ENABLE": "true",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 1)
+            self.assertIn("missing_service_start_command", rendered)
+            self.assertNotIn("No local app system is configured", rendered)
+            self.assertEqual(fake_runner.start_background_calls, [])
+
     def test_runtime_env_overrides_forward_docker_and_setup_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

@@ -177,6 +177,12 @@ Seed commands run from the selected project root when envctl can infer it from a
 
 Additional app services are long-running application processes owned by the repo, not managed infrastructure dependencies. They are enabled through `.envctl` and participate in normal startup, state, runtime-map, logs, health, dashboard, and `envctl test --service <slug>` flows.
 
+Built-in backend/frontend startup defaults are not by themselves an explicit local-system configuration. Envctl treats a
+repo as having a local app system when backend/frontend commands, directories, enable keys, service dependency-env
+sections, supported autodetectable app layouts, or additional services are configured. With plan-agent `--entire-system`
+launches, a repo that has none of those signals continues without app services and reports that no local app system is
+configured.
+
 Example HTTP sidecar plus non-listener worker:
 
 ```dotenv
