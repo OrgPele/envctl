@@ -108,8 +108,8 @@ def run_test_action(
 
     if failures:
         fallback_failures: list[str] = []
-        for item in sorted(suite_outcomes, key=lambda value: int(value.get("index", 0))):
-            if int(item.get("returncode", 0) or 0) == 0:
+        for item in sorted(suite_outcomes, key=lambda value: _outcome_int(value.get("index"))):
+            if _outcome_int(item.get("returncode")) == 0:
                 continue
             project_name = str(item.get("project_name", "")).strip()
             if project_name and _failed_summary_artifact_available(
@@ -118,7 +118,7 @@ def run_test_action(
             ):
                 continue
             suite = str(item.get("suite", "suite"))
-            index = int(item.get("index", 0) or 0)
+            index = _outcome_int(item.get("index"))
             detail = str(item.get("failure_summary", "") or "").strip() or "unknown test failure"
             fallback_failures.append(f"{project_name}:{suite} [{index}/{len(execution_specs)}]: {detail}")
         message = "; ".join(fallback_failures or failures)
@@ -135,3 +135,18 @@ def run_test_action(
     else:
         print(f"Executed test action for {len(targets)} target(s).")
     return 0
+
+
+def _outcome_int(value: object, *, default: int = 0) -> int:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float | str | bytes | bytearray):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default

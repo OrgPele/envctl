@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from envctl_engine.actions import action_ship_checks
+from envctl_engine.actions import action_ship_check_queries
 from envctl_engine.actions.action_ship_checks import normalize_github_pr_checks as normalize_checks_from_owner
 from envctl_engine.actions.action_ship_check_results import (
     normalize_github_pr_checks as normalize_checks_from_result_owner,
@@ -42,11 +43,7 @@ def test_existing_merge_conflict_report_includes_unmerged_stage_entries(tmp_path
         if args == ["diff", "--name-only", "--diff-filter=U"]:
             return "python/app.py\n"
         if args == ["ls-files", "-u"]:
-            return (
-                "100644 aaaaa 1\tpython/app.py\n"
-                "100644 bbbbb 2\tpython/app.py\n"
-                "100644 ccccc 3\tpython/app.py\n"
-            )
+            return "100644 aaaaa 1\tpython/app.py\n100644 bbbbb 2\tpython/app.py\n100644 ccccc 3\tpython/app.py\n"
         raise AssertionError(args)
 
     report = existing_merge_conflict_report(tmp_path, branch="feature", git_output=git_output)
@@ -79,12 +76,7 @@ def test_predicted_merge_conflict_report_parses_merge_tree_conflicts(tmp_path: P
         return subprocess.CompletedProcess(
             args=args,
             returncode=1,
-            stdout=(
-                "tree-sha\n"
-                "python/app.py\n"
-                "\n"
-                "CONFLICT (content): Merge conflict in python/app.py\n"
-            ),
+            stdout=("tree-sha\npython/app.py\n\nCONFLICT (content): Merge conflict in python/app.py\n"),
             stderr="",
         )
 
@@ -347,14 +339,10 @@ def test_github_pr_checks_emits_progress_every_progress_interval_while_pending(
     )
 
     assert checks["state"] == "checks_passed"
-    assert updates == [
-        "ship: GitHub checks still running after 10s (pending=1, passed=0, failed=0, timeout=120s)"
-    ]
+    assert updates == ["ship: GitHub checks still running after 10s (pending=1, passed=0, failed=0, timeout=120s)"]
 
 
-def test_github_pr_checks_ignores_non_test_checks_after_target_tests_pass(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_github_pr_checks_ignores_non_test_checks_after_target_tests_pass(tmp_path: Path, monkeypatch: Any) -> None:
     clock = {"now": 0.0}
     outputs = [
         {
@@ -426,9 +414,47 @@ def test_github_pr_checks_ignores_malformed_check_items(tmp_path: Path, monkeypa
     assert checks["passed_checks"] == [{"name": "pytest", "workflow": "Tests", "state": "SUCCESS"}]
 
 
-def test_github_pr_checks_can_detect_success_before_next_progress_heartbeat(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_github_pr_check_query_ignores_malformed_failing_check_payloads(tmp_path: Path, monkeypatch: Any) -> None:
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=json.dumps(
+                [
+                    {"name": "pytest", "workflow": "Tests", "state": "FAILURE"},
+                ]
+            ),
+            stderr="",
+        )
+
+    def fake_normalize(_checks: object, *, duration_seconds: float) -> dict[str, object]:
+        return {
+            "state": "checks_failed",
+            "duration_seconds": duration_seconds,
+            "failing_checks": [
+                "unexpected-check-item",
+                {"name": "pytest", "workflow": "Tests", "state": "FAILURE"},
+            ],
+            "passed_checks": [],
+            "pending_checks": [],
+        }
+
+    monkeypatch.setattr(action_ship_check_queries, "normalize_github_pr_checks", fake_normalize)
+
+    checks = action_ship_check_queries.query_github_pr_checks(
+        tmp_path,
+        gh_path="/usr/bin/gh",
+        branch="feature/demo",
+        started=0.0,
+        run_command=fake_run,
+        monotonic=lambda: 0.25,
+    )
+
+    assert checks["state"] == "checks_failed"
+    assert checks["failing_checks"] == [{"name": "pytest", "workflow": "Tests", "state": "FAILURE"}]
+
+
+def test_github_pr_checks_can_detect_success_before_next_progress_heartbeat(tmp_path: Path, monkeypatch: Any) -> None:
     clock = {"now": 0.0}
     updates: list[str] = []
     outputs = [
@@ -471,9 +497,7 @@ def test_github_pr_checks_can_detect_success_before_next_progress_heartbeat(
     assert updates == []
 
 
-def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(tmp_path: Path, monkeypatch: Any) -> None:
     calls: list[list[str]] = []
     outputs = [
         {
@@ -559,7 +583,9 @@ def test_github_pr_checks_returns_failed_check_without_waiting_for_timeout(tmp_p
         return subprocess.CompletedProcess(
             args=args,
             returncode=0,
-            stdout=json.dumps([{"name": "pytest", "workflow": "Tests", "state": "FAILURE", "link": "https://ci.test/1"}]),
+            stdout=json.dumps(
+                [{"name": "pytest", "workflow": "Tests", "state": "FAILURE", "link": "https://ci.test/1"}]
+            ),
             stderr="",
         )
 
@@ -756,8 +782,7 @@ def test_github_pr_checks_retries_failed_check_logs_until_github_makes_them_avai
             "state": "FAILURE",
             "link": "https://github.com/acme/repo/actions/runs/12345/job/67890",
             "failure_excerpt": (
-                "================= FAILURES =================\n"
-                "FAILED tests/test_demo.py::test_demo - AssertionError"
+                "================= FAILURES =================\nFAILED tests/test_demo.py::test_demo - AssertionError"
             ),
             "failure_excerpt_truncated": False,
         }
