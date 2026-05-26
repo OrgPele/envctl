@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import time
 
+from envctl_engine.runtime.command_resolution import service_start_command_available
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_process_runtime
 from envctl_engine.startup.startup_selection_support import _restart_service_types_for_project
@@ -190,6 +191,29 @@ def start_project_services(
             mode=effective_mode,
             reason="all_services_disabled",
         )
+        return {}
+    if _plan_agent_default_services_have_no_local_system(
+        rt,
+        context=context,
+        selected_service_types=selected_service_types,
+        route=route,
+        backend_port=backend_plan.final,
+        frontend_port=frontend_plan.final,
+    ):
+        message = (
+            f"No local app system is configured for {context.name}; "
+            "running without local services."
+        )
+        rt._emit(
+            "service.attach.skipped",
+            project=context.name,
+            mode=effective_mode,
+            reason="no_local_app_system_configured",
+            selected_service_types=sorted(selected_service_types),
+        )
+        record_warning = getattr(rt, "_record_project_startup_warning", None)
+        if callable(record_warning):
+            record_warning(context.name, message)
         return {}
 
     service_started = time.monotonic()
@@ -841,3 +865,35 @@ def start_project_services(
     )
     _ = backend_command_source, frontend_command_source, launched_runtimes
     return records
+
+
+def _plan_agent_default_services_have_no_local_system(
+    rt: object,
+    *,
+    context: ProjectContextLike,
+    selected_service_types: set[str],
+    route: Route | None,
+    backend_port: int,
+    frontend_port: int,
+) -> bool:
+    if route is None or route.command != "plan":
+        return False
+    if selected_service_types != {"backend", "frontend"}:
+        return False
+    if bool(route.flags.get("launch_backend") is False or route.flags.get("launch_frontend") is False):
+        return False
+    config = getattr(rt, "config", None)
+    config_raw = getattr(config, "raw", {}) if config is not None else {}
+    env = getattr(rt, "env", {})
+    command_exists = getattr(rt, "_command_exists", None)
+    return not any(
+        service_start_command_available(
+            service_name=service_name,
+            project_root=context.root,
+            port=port,
+            env=env,
+            config_raw=config_raw,
+            command_exists=command_exists if callable(command_exists) else None,
+        )
+        for service_name, port in (("backend", backend_port), ("frontend", frontend_port))
+    )

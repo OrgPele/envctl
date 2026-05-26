@@ -1,7 +1,5 @@
 # Envctl Entire-System No-System Noop
 
-## Goal
-
 When a user runs an AI plan-agent launch with `--entire-system` in a repository
 that has no local app system configured, envctl should say that no local system
 is configured and continue with the AI session only. It should not render this
@@ -9,9 +7,7 @@ as "local app startup failed" when the only selected app services are
 backend/frontend defaults with no explicit command and no autodetectable repo
 layout.
 
-## Verification
-
-Run the original launch shape:
+Verification:
 
 ```bash
 envctl --plan broken/envctl-entire-system-no-system-noop --cmux --preset implement_task --entire-system --headless --new-session

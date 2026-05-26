@@ -141,6 +141,30 @@ def resolve_service_start_command(
     )
 
 
+def service_start_command_available(
+    *,
+    service_name: str,
+    project_root: Path,
+    port: int,
+    env: Mapping[str, str],
+    config_raw: Mapping[str, str],
+    command_exists: CommandExists | None = None,
+) -> bool:
+    env_key = f"ENVCTL_{service_name.upper()}_START_CMD"
+    if _override_value(env_key, env=env, config_raw=config_raw) is not None:
+        return True
+    exists = command_exists or _default_command_exists
+    return (
+        _autodetect_service_command(
+            service_name=service_name,
+            project_root=project_root,
+            port=port,
+            command_exists=exists,
+        )
+        is not None
+    )
+
+
 def _autodetect_service_command(
     *,
     service_name: str,

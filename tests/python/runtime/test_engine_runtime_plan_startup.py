@@ -402,6 +402,76 @@ class EngineRuntimePlanStartupTests(_EngineRuntimeRealStartupTestCase):
                 ],
             )
 
+    def test_ai_plan_entire_system_no_app_system_skips_local_services(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "MAIN_POSTGRES_ENABLE": "false",
+                        "MAIN_REDIS_ENABLE": "false",
+                        "MAIN_SUPABASE_ENABLE": "false",
+                        "MAIN_N8N_ENABLE": "false",
+                        "TREES_POSTGRES_ENABLE": "false",
+                        "TREES_REDIS_ENABLE": "false",
+                        "TREES_SUPABASE_ENABLE": "false",
+                        "TREES_N8N_ENABLE": "false",
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    },
+                    include_commands=False,
+                ),
+                env={"ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "repo implementation"},
+            )
+            fake_runner = _FakeProcessRunner()
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            launch_result = PlanAgentLaunchResult(
+                status="launched",
+                reason="launched",
+                outcomes=(
+                    PlanAgentLaunchOutcome(
+                        worktree_name="feature-a-1",
+                        worktree_root=worktree,
+                        surface_id="surface-1",
+                        status="launched",
+                    ),
+                ),
+            )
+
+            out = StringIO()
+            with (
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", return_value=launch_result),
+                redirect_stdout(out),
+            ):
+                code = engine.dispatch(
+                    parse_route(["--plan", "feature-a", "--cmux", "--entire-system", "--headless"], env={})
+                )
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("No local app system is configured", rendered)
+            self.assertIn("running without local services", rendered)
+            self.assertNotIn("missing_service_start_command", rendered)
+            self.assertNotIn("Implementation session is running, but local app startup failed.", rendered)
+            self.assertEqual(fake_runner.start_background_calls, [])
+            state = engine._try_load_existing_state(mode="trees")
+            self.assertIsNotNone(state)
+            assert state is not None
+            self.assertFalse(state.metadata.get("local_startup_failed", False))
+            self.assertEqual(state.services, {})
+            launch_events = [
+                event for event in engine.events if event.get("event") == "startup.plan_agent_launch_state"
+            ]
+            self.assertTrue(launch_events)
+            self.assertEqual(launch_events[-1].get("status"), "launched")
+            self.assertEqual(launch_events[-1].get("launched_worktrees"), ["feature-a-1"])
+
     def test_omx_headless_plan_agent_handoff_persists_degraded_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -534,4 +604,3 @@ class EngineRuntimePlanStartupTests(_EngineRuntimeRealStartupTestCase):
             self.assertIn("plan_selector_exit", checkpoints)
             self.assertIn("startup_branch_enter", checkpoints)
             self.assertIn("before_dashboard_entry", checkpoints)
-
