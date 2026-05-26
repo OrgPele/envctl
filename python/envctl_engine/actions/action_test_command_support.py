@@ -114,38 +114,64 @@ class ConfiguredTestSpecResolver:
 
 
 @dataclass(frozen=True, slots=True)
-class SharedTestCommandPlanner:
-    raw_command: str
+class ActionTestCommandSources:
+    shared_raw_command: str | None
+    backend_raw_command: str | None
+    frontend_raw_command: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ActionTestCommandTargetScope:
     target_contexts: Sequence[TestTargetContext]
     repo_root: Path
+
+
+@dataclass(frozen=True, slots=True)
+class ActionTestCommandPlanningScope:
     include_backend: bool
     include_frontend: bool
     frontend_test_path: str | None
     run_all: bool
     untested: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ActionTestCommandDependencies:
     split_command: Callable[[str, Mapping[str, str]], list[str]]
     replacements_for_target: Callable[[object | None], Mapping[str, str]]
     is_legacy_tree_test_script: Callable[[list[str]], bool]
+    configured_or_default_spec: Callable[..., TestCommandSpec | None]
+
+
+@dataclass(frozen=True, slots=True)
+class SharedTestCommandPlanner:
+    raw_command: str
+    target_scope: ActionTestCommandTargetScope
+    planning_scope: ActionTestCommandPlanningScope
+    dependencies: ActionTestCommandDependencies
 
     def build(self) -> list[TestExecutionSpec]:
         execution_specs: list[TestExecutionSpec] = []
         parsed_command: list[str] | None = None
-        for target in self.target_contexts:
+        for target in self.target_scope.target_contexts:
             command, cwd = self._command_for_target(target)
             if parsed_command is None:
                 parsed_command = command
-            if self.is_legacy_tree_test_script(command):
+            if self.dependencies.is_legacy_tree_test_script(command):
                 parsed_command = command
                 break
             execution_specs.append(self._target_execution_spec(target=target, command=command, cwd=cwd))
 
         parsed_command = parsed_command or self._command_without_target()
-        if not self.is_legacy_tree_test_script(parsed_command):
+        if not self.dependencies.is_legacy_tree_test_script(parsed_command):
             return execution_specs
         return [self._legacy_all_targets_spec(parsed_command)]
 
     def _command_for_target(self, target: TestTargetContext) -> tuple[list[str], Path]:
-        command = self.split_command(self.raw_command, self.replacements_for_target(target.target_obj))
+        command = self.dependencies.split_command(
+            self.raw_command,
+            self.dependencies.replacements_for_target(target.target_obj),
+        )
         cwd = target.project_root
         if self._frontend_package_command(command):
             cwd = configured_test_command_cwd(target.project_root, include_frontend=True)
@@ -153,18 +179,29 @@ class SharedTestCommandPlanner:
         return command, cwd
 
     def _command_without_target(self) -> list[str]:
-        command = self.split_command(self.raw_command, self.replacements_for_target(None))
+        command = self.dependencies.split_command(
+            self.raw_command,
+            self.dependencies.replacements_for_target(None),
+        )
         if self._frontend_package_command(command):
-            command = self._append_frontend_path(command, project_root=self.repo_root, command_cwd=self.repo_root)
+            command = self._append_frontend_path(
+                command,
+                project_root=self.target_scope.repo_root,
+                command_cwd=self.target_scope.repo_root,
+            )
         return command
 
     def _frontend_package_command(self, command: list[str]) -> bool:
-        return self.include_frontend and not self.include_backend and is_package_test_command(command)
+        return (
+            self.planning_scope.include_frontend
+            and not self.planning_scope.include_backend
+            and is_package_test_command(command)
+        )
 
     def _append_frontend_path(self, command: list[str], *, project_root: Path, command_cwd: Path) -> list[str]:
         return append_frontend_test_path(
             command,
-            self.frontend_test_path,
+            self.planning_scope.frontend_test_path,
             project_root=project_root,
             command_cwd=command_cwd,
         )
@@ -178,8 +215,8 @@ class SharedTestCommandPlanner:
     ) -> TestExecutionSpec:
         source = classify_test_command_source(
             command,
-            include_backend=self.include_backend,
-            include_frontend=self.include_frontend,
+            include_backend=self.planning_scope.include_backend,
+            include_frontend=self.planning_scope.include_frontend,
         )
         return TestExecutionSpec(
             index=0,
@@ -192,59 +229,46 @@ class SharedTestCommandPlanner:
         )
 
     def _legacy_all_targets_spec(self, command: list[str]) -> TestExecutionSpec:
-        project_names = [target.project_name for target in self.target_contexts]
+        project_names = [target.project_name for target in self.target_scope.target_contexts]
         return TestExecutionSpec(
             index=0,
-            spec=TestCommandSpec(command=command, cwd=self.repo_root, source="configured"),
-            args=build_test_args(project_names, run_all=self.run_all, untested=self.untested),
+            spec=TestCommandSpec(command=command, cwd=self.target_scope.repo_root, source="configured"),
+            args=build_test_args(
+                project_names,
+                run_all=self.planning_scope.run_all,
+                untested=self.planning_scope.untested,
+            ),
             resolved_source="configured",
             project_name="all-targets",
-            project_root=self.repo_root,
+            project_root=self.target_scope.repo_root,
             target_obj=None,
         )
 
 
 @dataclass(frozen=True, slots=True)
 class ActionTestExecutionSpecBuilder:
-    shared_raw_command: str | None
-    backend_raw_command: str | None
-    frontend_raw_command: str | None
-    target_contexts: Sequence[TestTargetContext]
-    repo_root: Path
-    include_backend: bool
-    include_frontend: bool
-    frontend_test_path: str | None
-    run_all: bool
-    untested: bool
-    split_command: Callable[[str, Mapping[str, str]], list[str]]
-    replacements_for_target: Callable[[object | None], Mapping[str, str]]
-    is_legacy_tree_test_script: Callable[[list[str]], bool]
-    configured_or_default_spec: Callable[..., TestCommandSpec | None]
+    commands: ActionTestCommandSources
+    target_scope: ActionTestCommandTargetScope
+    planning_scope: ActionTestCommandPlanningScope
+    dependencies: ActionTestCommandDependencies
 
     def build(self) -> list[TestExecutionSpec]:
-        if self.shared_raw_command is not None:
+        if self.commands.shared_raw_command is not None:
             return _renumber_execution_specs(self._shared_command_planner().build())
         return _renumber_execution_specs(self._per_target_command_specs())
 
     def _shared_command_planner(self) -> SharedTestCommandPlanner:
-        assert self.shared_raw_command is not None
+        assert self.commands.shared_raw_command is not None
         return SharedTestCommandPlanner(
-            raw_command=self.shared_raw_command,
-            target_contexts=self.target_contexts,
-            repo_root=self.repo_root,
-            include_backend=self.include_backend,
-            include_frontend=self.include_frontend,
-            frontend_test_path=self.frontend_test_path,
-            run_all=self.run_all,
-            untested=self.untested,
-            split_command=self.split_command,
-            replacements_for_target=self.replacements_for_target,
-            is_legacy_tree_test_script=self.is_legacy_tree_test_script,
+            raw_command=self.commands.shared_raw_command,
+            target_scope=self.target_scope,
+            planning_scope=self.planning_scope,
+            dependencies=self.dependencies,
         )
 
     def _per_target_command_specs(self) -> list[TestExecutionSpec]:
         execution_specs: list[TestExecutionSpec] = []
-        for target in self.target_contexts:
+        for target in self.target_scope.target_contexts:
             for spec in self._specs_for_target(target):
                 execution_specs.append(
                     TestExecutionSpec(
@@ -261,29 +285,29 @@ class ActionTestExecutionSpecBuilder:
 
     def _specs_for_target(self, target: TestTargetContext) -> list[TestCommandSpec]:
         target_specs: list[TestCommandSpec] = []
-        if self.include_backend:
-            backend_spec = self.configured_or_default_spec(
-                raw_command=self.backend_raw_command,
+        if self.planning_scope.include_backend:
+            backend_spec = self.dependencies.configured_or_default_spec(
+                raw_command=self.commands.backend_raw_command,
                 target=target,
-                repo_root=self.repo_root,
+                repo_root=self.target_scope.repo_root,
                 include_backend=True,
                 include_frontend=False,
                 frontend_test_path=None,
-                split_command=self.split_command,
-                replacements_for_target=self.replacements_for_target,
+                split_command=self.dependencies.split_command,
+                replacements_for_target=self.dependencies.replacements_for_target,
             )
             if backend_spec is not None:
                 target_specs.append(backend_spec)
-        if self.include_frontend:
-            frontend_spec = self.configured_or_default_spec(
-                raw_command=self.frontend_raw_command,
+        if self.planning_scope.include_frontend:
+            frontend_spec = self.dependencies.configured_or_default_spec(
+                raw_command=self.commands.frontend_raw_command,
                 target=target,
-                repo_root=self.repo_root,
+                repo_root=self.target_scope.repo_root,
                 include_backend=False,
                 include_frontend=True,
-                frontend_test_path=self.frontend_test_path,
-                split_command=self.split_command,
-                replacements_for_target=self.replacements_for_target,
+                frontend_test_path=self.planning_scope.frontend_test_path,
+                split_command=self.dependencies.split_command,
+                replacements_for_target=self.dependencies.replacements_for_target,
             )
             if frontend_spec is not None:
                 target_specs.append(frontend_spec)
@@ -329,20 +353,25 @@ def build_test_execution_specs(
 ) -> list[TestExecutionSpec]:
     configured_or_default = configured_or_default_spec_fn or configured_or_default_test_spec
     return ActionTestExecutionSpecBuilder(
-        shared_raw_command=shared_raw_command,
-        backend_raw_command=backend_raw_command,
-        frontend_raw_command=frontend_raw_command,
-        target_contexts=target_contexts,
-        repo_root=repo_root,
-        include_backend=include_backend,
-        include_frontend=include_frontend,
-        frontend_test_path=frontend_test_path,
-        run_all=run_all,
-        untested=untested,
-        split_command=split_command,
-        replacements_for_target=replacements_for_target,
-        is_legacy_tree_test_script=is_legacy_tree_test_script,
-        configured_or_default_spec=configured_or_default,
+        commands=ActionTestCommandSources(
+            shared_raw_command=shared_raw_command,
+            backend_raw_command=backend_raw_command,
+            frontend_raw_command=frontend_raw_command,
+        ),
+        target_scope=ActionTestCommandTargetScope(target_contexts=target_contexts, repo_root=repo_root),
+        planning_scope=ActionTestCommandPlanningScope(
+            include_backend=include_backend,
+            include_frontend=include_frontend,
+            frontend_test_path=frontend_test_path,
+            run_all=run_all,
+            untested=untested,
+        ),
+        dependencies=ActionTestCommandDependencies(
+            split_command=split_command,
+            replacements_for_target=replacements_for_target,
+            is_legacy_tree_test_script=is_legacy_tree_test_script,
+            configured_or_default_spec=configured_or_default,
+        ),
     ).build()
 
 
