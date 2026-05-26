@@ -74,7 +74,7 @@ def build_test_execution_specs(
     untested: bool,
     split_command: Callable[[str, Mapping[str, str]], list[str]],
     replacements_for_target: Callable[[object | None], Mapping[str, str]],
-    is_legacy_tree_test_script: Callable[[list[str]], bool],
+    is_legacy_tree_test_script: Callable[[Sequence[str]], bool],
 ) -> list[TestExecutionSpec]:
     return _build_test_execution_specs(
         shared_raw_command=shared_raw_command,

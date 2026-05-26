@@ -66,6 +66,8 @@ class ConfiguredTestSpecResolver:
         configured_test_command_cwd_fn: Callable[[Path], Path] | None,
     ) -> TestCommandSpec:
         command = self.split_command(raw_command, self.replacements_for_target(target.target_obj))
+        cwd_resolver = configured_test_command_cwd_fn or ConfiguredTestCommandCwdResolver(include_frontend)
+        command_cwd = cwd_resolver(target.project_root)
         source = "configured_frontend" if include_frontend else "configured_backend"
         if include_backend:
             if is_pytest_command(command):
@@ -78,13 +80,12 @@ class ConfiguredTestSpecResolver:
                 command,
                 self.frontend_test_path,
                 project_root=target.project_root,
-                command_cwd=configured_test_command_cwd(target.project_root, include_frontend=True),
+                command_cwd=command_cwd,
             )
             source = "frontend_package_test"
-        cwd_resolver = configured_test_command_cwd_fn or ConfiguredTestCommandCwdResolver(include_frontend)
         return TestCommandSpec(
             command=command,
-            cwd=cwd_resolver(target.project_root),
+            cwd=command_cwd,
             source=source,
         )
 
@@ -139,7 +140,7 @@ class ActionTestCommandPlanningScope:
 class ActionTestCommandDependencies:
     split_command: Callable[[str, Mapping[str, str]], list[str]]
     replacements_for_target: Callable[[object | None], Mapping[str, str]]
-    is_legacy_tree_test_script: Callable[[list[str]], bool]
+    is_legacy_tree_test_script: Callable[[Sequence[str]], bool]
     configured_or_default_spec: Callable[..., TestCommandSpec | None]
 
 
@@ -348,7 +349,7 @@ def build_test_execution_specs(
     untested: bool,
     split_command: Callable[[str, Mapping[str, str]], list[str]],
     replacements_for_target: Callable[[object | None], Mapping[str, str]],
-    is_legacy_tree_test_script: Callable[[list[str]], bool],
+    is_legacy_tree_test_script: Callable[[Sequence[str]], bool],
     configured_or_default_spec_fn: Callable[..., TestCommandSpec | None] | None = None,
 ) -> list[TestExecutionSpec]:
     configured_or_default = configured_or_default_spec_fn or configured_or_default_test_spec
@@ -410,6 +411,14 @@ def configured_test_command_cwd(project_root: Path, *, include_frontend: bool) -
     if include_frontend and (project_root / "frontend" / "package.json").is_file():
         return project_root / "frontend"
     return project_root
+
+
+def is_legacy_tree_test_script(command: Sequence[str]) -> bool:
+    return (
+        len(command) >= 2
+        and Path(command[0]).name == "bash"
+        and Path(command[1]).name == "test-all-trees.sh"
+    )
 
 
 def normalize_backend_python_test_command(
