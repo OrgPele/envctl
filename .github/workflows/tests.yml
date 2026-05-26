@@ -12,7 +12,7 @@ name: Tests
 # double the runs. Post-merge work on `main` is handled by `release.yml`.
 #
 # Jobs run in parallel:
-#   - pytest:   the slow lane (~33s on 4 vCPU)
+#   - pytest:   the slow lane
 #   - package:  python -m build + release shipability gate
 #   - lint:     ruff (non-blocking until main is green)
 #
@@ -47,7 +47,7 @@ concurrency:
 jobs:
   pytest:
     name: pytest
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -93,7 +93,7 @@ jobs:
 
   package:
     name: build & shipability
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -120,7 +120,7 @@ jobs:
 
   lint:
     name: ruff
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     # Lint is advisory until main is green. Failures still appear in the PR
     # checks so contributors see signal, but they do not block the gate.
     continue-on-error: true
