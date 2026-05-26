@@ -92,7 +92,7 @@ def _has_explicit_local_system_signal(
     explicit_keys = {str(key).strip().upper() for key in getattr(config, "explicit_keys", ()) if str(key).strip()}
     explicit_keys.update(str(key).strip().upper() for key in env if str(key).strip())
     normalized_mode = str(mode).strip().lower() or "main"
-    mode_prefix = normalized_mode.upper()
+    mode_prefixes = {normalized_mode.upper(), "MAIN", "TREES"}
 
     if "ENVCTL_ADDITIONAL_SERVICES" in explicit_keys:
         return True
@@ -104,9 +104,10 @@ def _has_explicit_local_system_signal(
         signal_keys = {
             f"ENVCTL_{service_prefix}_START_CMD",
             f"{service_prefix}_DIR",
-            f"{mode_prefix}_STARTUP_ENABLE",
-            f"{mode_prefix}_{service_prefix}_ENABLE",
         }
+        for mode_prefix in mode_prefixes:
+            signal_keys.add(f"{mode_prefix}_STARTUP_ENABLE")
+            signal_keys.add(f"{mode_prefix}_{service_prefix}_ENABLE")
         if explicit_keys.intersection(signal_keys):
             return True
         if _service_dependency_env_section_present(config, mode=normalized_mode, service_name=service_name):
@@ -121,11 +122,16 @@ def _service_dependency_env_section_present(config: Any, *, mode: str, service_n
         return True
     if bool(getattr(config, f"{normalized_mode}_{service}_dependency_env_section_present", False)):
         return True
+    for mode_name in ("main", "trees"):
+        if bool(getattr(config, f"{mode_name}_{service}_dependency_env_section_present", False)):
+            return True
     service_sections = getattr(config, "service_dependency_env_section_present", {}) or {}
     if bool(service_sections.get(service)):
         return True
     mode_service_sections = getattr(config, "mode_service_dependency_env_section_present", {}) or {}
-    return bool(mode_service_sections.get((normalized_mode, service)))
+    if bool(mode_service_sections.get((normalized_mode, service))):
+        return True
+    return any(bool(mode_service_sections.get((mode_name, service))) for mode_name in ("main", "trees"))
 
 
 def _service_autodetects(

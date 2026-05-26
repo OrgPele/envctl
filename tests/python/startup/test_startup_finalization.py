@@ -33,6 +33,7 @@ from envctl_engine.startup.finalization import (
 )
 from envctl_engine.startup.finalization_failure import StartupFailureFinalizer
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
+from envctl_engine.startup.no_system_config import no_local_app_system_message
 from envctl_engine.startup.session import LocalStartupFailure, StartupSession
 from envctl_engine.state.models import RunState
 
@@ -794,6 +795,27 @@ class StartupFinalizationTests(unittest.TestCase):
 
         self.assertEqual(checked_routes, [route])
         self.assertEqual(emitted, [("ui.status", {"message": "first warning"})])
+
+    def test_no_system_warning_renders_without_degraded_handoff_failure_text(self) -> None:
+        emitted: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(env={}, _emit=lambda event, **payload: emitted.append((event, payload)))
+        context = SimpleNamespace(name="feature-a-1")
+        warning = no_local_app_system_message()
+
+        render_project_startup_warnings(
+            runtime,
+            context=context,
+            warnings=[warning],
+            suppress_progress=True,
+            project_spinner_group=None,
+        )
+
+        self.assertEqual(emitted, [("ui.status", {"message": warning})])
+        rendered = str(emitted[0][1]["message"])
+        self.assertIn("no local app system is configured", rendered)
+        self.assertIn("--entire-system was honored", rendered)
+        self.assertNotIn("local app startup failed", rendered)
+        self.assertNotIn("missing_service_start_command", rendered)
 
 
 if __name__ == "__main__":

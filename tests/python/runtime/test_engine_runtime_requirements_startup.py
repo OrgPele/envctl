@@ -21,6 +21,43 @@ from tests.python.runtime.engine_runtime_real_startup_test_support import (
 
 
 class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
+    def _dispatch_entire_system_plan(
+        self,
+        *,
+        repo: Path,
+        runtime: Path,
+        config_values: dict[str, str] | None = None,
+        command_exists: Any | None = None,
+    ) -> tuple[int, str, PythonEngineRuntime, _FakeProcessRunner]:
+        config_payload = {
+            "RUN_REPO_ROOT": str(repo),
+            "RUN_SH_RUNTIME_DIR": str(runtime),
+        }
+        if config_values:
+            config_payload.update(config_values)
+        config = load_config(config_payload)
+        engine = PythonEngineRuntime(config, env={})
+        if command_exists is not None:
+            engine._command_exists = command_exists  # type: ignore[attr-defined]
+        engine.port_planner.availability_checker = lambda _port: True
+        fake_runner = _FakeProcessRunner()
+        fake_runner.wait_for_port_result = True
+        fake_runner.wait_for_pid_port_result = True
+        engine.process_runner = fake_runner  # type: ignore[attr-defined]
+        route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+        out = StringIO()
+        with redirect_stdout(out):
+            code = engine.dispatch(route)
+
+        return code, out.getvalue(), engine, fake_runner
+
+    def _prepare_feature_worktree(self, repo: Path) -> Path:
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        root = repo / "trees" / "feature-a" / "1"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
     def test_startup_uses_process_runner_for_requirements_and_services(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -733,6 +770,229 @@ class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
             self.assertIn("missing_service_start_command", rendered)
             self.assertNotIn("no local app system is configured", rendered)
             self.assertEqual(fake_runner.start_background_calls, [])
+
+    def test_explicit_main_mode_startup_keys_keep_tree_plan_failure_actionable(self) -> None:
+        explicit_signals = [
+            "MAIN_STARTUP_ENABLE",
+            "MAIN_BACKEND_ENABLE",
+            "MAIN_FRONTEND_ENABLE",
+        ]
+        for key in explicit_signals:
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as tmpdir:
+                repo = Path(tmpdir) / "repo"
+                runtime = Path(tmpdir) / "runtime"
+                self._prepare_feature_worktree(repo)
+
+                code, rendered, _engine, fake_runner = self._dispatch_entire_system_plan(
+                    repo=repo,
+                    runtime=runtime,
+                    config_values={key: "true"},
+                )
+
+                self.assertEqual(code, 1)
+                self.assertIn("missing_service_start_command", rendered)
+                self.assertNotIn("no local app system is configured", rendered)
+                self.assertEqual(fake_runner.start_background_calls, [])
+
+    def test_explicit_tree_mode_startup_keys_keep_missing_command_failure_actionable(self) -> None:
+        explicit_signals = [
+            "TREES_STARTUP_ENABLE",
+            "TREES_BACKEND_ENABLE",
+            "TREES_FRONTEND_ENABLE",
+        ]
+        for key in explicit_signals:
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as tmpdir:
+                repo = Path(tmpdir) / "repo"
+                runtime = Path(tmpdir) / "runtime"
+                self._prepare_feature_worktree(repo)
+
+                code, rendered, _engine, fake_runner = self._dispatch_entire_system_plan(
+                    repo=repo,
+                    runtime=runtime,
+                    config_values={key: "true"},
+                )
+
+                self.assertEqual(code, 1)
+                self.assertIn("missing_service_start_command", rendered)
+                self.assertNotIn("no local app system is configured", rendered)
+                self.assertEqual(fake_runner.start_background_calls, [])
+
+    def test_explicit_service_commands_and_dirs_keep_missing_peer_failure_actionable(self) -> None:
+        explicit_signals = [
+            {"ENVCTL_BACKEND_START_CMD": "python -m backend --port {port}"},
+            {"ENVCTL_FRONTEND_START_CMD": "npm run dev -- --port {port}"},
+            {"BACKEND_DIR": "api"},
+            {"FRONTEND_DIR": "web"},
+        ]
+        for config_values in explicit_signals:
+            with self.subTest(config_values=config_values), tempfile.TemporaryDirectory() as tmpdir:
+                repo = Path(tmpdir) / "repo"
+                runtime = Path(tmpdir) / "runtime"
+                self._prepare_feature_worktree(repo)
+
+                code, rendered, _engine, _fake_runner = self._dispatch_entire_system_plan(
+                    repo=repo,
+                    runtime=runtime,
+                    config_values=config_values,
+                    command_exists=lambda _command: True,
+                )
+
+                self.assertEqual(code, 1)
+                self.assertIn("missing_service_start_command", rendered)
+                self.assertNotIn("no local app system is configured", rendered)
+
+    def test_dependency_env_sections_keep_missing_command_failure_actionable(self) -> None:
+        section_cases = {
+            "backend": [
+                "# >>> envctl backend launch env >>>",
+                "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}",
+                "# <<< envctl backend launch env <<<",
+            ],
+            "frontend": [
+                "# >>> envctl frontend launch env >>>",
+                "VITE_API_BASE_URL=${ENVCTL_SOURCE_BACKEND_URL}",
+                "# <<< envctl frontend launch env <<<",
+            ],
+            "main backend": [
+                "# >>> envctl main backend launch env >>>",
+                "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}",
+                "# <<< envctl main backend launch env <<<",
+            ],
+            "trees frontend": [
+                "# >>> envctl trees frontend launch env >>>",
+                "VITE_API_BASE_URL=${ENVCTL_SOURCE_BACKEND_URL}",
+                "# <<< envctl trees frontend launch env <<<",
+            ],
+        }
+        for label, lines in section_cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmpdir:
+                repo = Path(tmpdir) / "repo"
+                runtime = Path(tmpdir) / "runtime"
+                self._prepare_feature_worktree(repo)
+                (repo / ".envctl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+                code, rendered, _engine, fake_runner = self._dispatch_entire_system_plan(
+                    repo=repo,
+                    runtime=runtime,
+                )
+
+                self.assertEqual(code, 1)
+                self.assertIn("missing_service_start_command", rendered)
+                self.assertNotIn("no local app system is configured", rendered)
+                self.assertEqual(fake_runner.start_background_calls, [])
+
+    def test_additional_service_configuration_prevents_no_system_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = self._prepare_feature_worktree(repo)
+            (worktree_root / "worker").mkdir()
+
+            code, rendered, _engine, _fake_runner = self._dispatch_entire_system_plan(
+                repo=repo,
+                runtime=runtime,
+                config_values={
+                    "ENVCTL_ADDITIONAL_SERVICES": "worker",
+                    "ENVCTL_SERVICE_WORKER_DIR": "worker",
+                    "ENVCTL_SERVICE_WORKER_START_CMD": "python -m app.worker",
+                    "ENVCTL_SERVICE_WORKER_EXPECT_LISTENER": "false",
+                },
+                command_exists=lambda _command: True,
+            )
+
+            self.assertEqual(code, 1)
+            self.assertIn("missing_service_start_command", rendered)
+            self.assertNotIn("no local app system is configured", rendered)
+
+    def test_invalid_additional_service_configuration_stays_actionable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            self._prepare_feature_worktree(repo)
+
+            code, rendered, _engine, fake_runner = self._dispatch_entire_system_plan(
+                repo=repo,
+                runtime=runtime,
+                config_values={"ENVCTL_ADDITIONAL_SERVICES": "worker"},
+            )
+
+            self.assertEqual(code, 1)
+            self.assertIn("missing_service_start_command", rendered)
+            self.assertNotIn("no local app system is configured", rendered)
+            self.assertEqual(fake_runner.start_background_calls, [])
+
+    def test_autodetectable_backend_layout_keeps_missing_frontend_failure_actionable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = self._prepare_feature_worktree(repo)
+            backend = worktree_root / "backend"
+            (backend / "app").mkdir(parents=True)
+            (backend / "pyproject.toml").write_text(
+                "\n".join(
+                    [
+                        "[project]",
+                        "name='demo'",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (backend / "app" / "main.py").write_text(
+                "from fastapi import FastAPI\napp = FastAPI()\n",
+                encoding="utf-8",
+            )
+
+            code, rendered, _engine, _fake_runner = self._dispatch_entire_system_plan(
+                repo=repo,
+                runtime=runtime,
+                command_exists=lambda _command: True,
+            )
+
+            self.assertEqual(code, 1)
+            self.assertIn("missing_service_start_command", rendered)
+            self.assertNotIn("no local app system is configured", rendered)
+
+    def test_autodetectable_backend_and_frontend_layouts_start_services(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree_root = self._prepare_feature_worktree(repo)
+            backend = worktree_root / "backend"
+            (backend / "app").mkdir(parents=True)
+            (backend / "pyproject.toml").write_text(
+                "\n".join(
+                    [
+                        "[project]",
+                        "name='demo'",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (backend / "app" / "main.py").write_text(
+                "from fastapi import FastAPI\napp = FastAPI()\n",
+                encoding="utf-8",
+            )
+            frontend = worktree_root / "frontend"
+            frontend.mkdir()
+            (frontend / "package.json").write_text(
+                json.dumps({"scripts": {"dev": "vite --host 127.0.0.1"}}),
+                encoding="utf-8",
+            )
+            (frontend / "bun.lockb").write_text("", encoding="utf-8")
+
+            code, rendered, _engine, fake_runner = self._dispatch_entire_system_plan(
+                repo=repo,
+                runtime=runtime,
+                command_exists=lambda _command: True,
+            )
+
+            self.assertEqual(code, 0)
+            self.assertNotIn("no local app system is configured", rendered)
+            started_cwds = {Path(cwd).name for _cmd, cwd in fake_runner.start_background_calls}
+            self.assertIn("backend", started_cwds)
+            self.assertIn("frontend", started_cwds)
 
     def test_runtime_env_overrides_forward_docker_and_setup_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
