@@ -457,6 +457,9 @@ class StructureLayoutTests(unittest.TestCase):
         ship_contract_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_contract.py"
         ship_conflicts_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_conflicts.py"
         ship_checks_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_checks.py"
+        ship_check_results_owner = (
+            REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_check_results.py"
+        )
         ship_failure_logs_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_ship_failure_logs.py"
         )
@@ -480,6 +483,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(ship_contract_owner.is_file())
         self.assertTrue(ship_conflicts_owner.is_file())
         self.assertTrue(ship_checks_owner.is_file())
+        self.assertTrue(ship_check_results_owner.is_file())
         self.assertTrue(ship_failure_logs_owner.is_file())
         self.assertTrue(workflow_factory_owner.is_file())
         self.assertTrue(workflow_owner.is_file())
@@ -525,11 +529,14 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def ship_payload", ship_contract_owner.read_text(encoding="utf-8"))
         self.assertIn("def print_ship_result", ship_contract_owner.read_text(encoding="utf-8"))
         self.assertIn("def predicted_merge_conflict_report", ship_conflicts_owner.read_text(encoding="utf-8"))
-        self.assertIn("def normalize_github_pr_checks", ship_checks_owner.read_text(encoding="utf-8"))
+        ship_checks_text = ship_checks_owner.read_text(encoding="utf-8")
+        self.assertIn("def normalize_github_pr_checks", ship_check_results_owner.read_text(encoding="utf-8"))
+        self.assertIn("def target_status_checks", ship_check_results_owner.read_text(encoding="utf-8"))
+        self.assertIn("action_ship_check_results", ship_checks_text)
         ship_failure_logs_text = ship_failure_logs_owner.read_text(encoding="utf-8")
         self.assertIn("def failed_checks_with_log_excerpts", ship_failure_logs_text)
         self.assertIn("def failure_log_excerpt", ship_failure_logs_text)
-        self.assertIn("action_ship_failure_logs", ship_checks_owner.read_text(encoding="utf-8"))
+        self.assertIn("action_ship_failure_logs", ship_checks_text)
         self.assertLessEqual(len(ship_text.splitlines()), 320)
         workflow_text = workflow_owner.read_text(encoding="utf-8")
         workflow_factory_text = workflow_factory_owner.read_text(encoding="utf-8")
