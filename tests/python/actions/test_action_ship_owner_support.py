@@ -225,6 +225,23 @@ def test_github_pr_checks_default_polling_is_more_responsive_than_progress_heart
     assert action_ship_checks.DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS == 10.0
 
 
+def test_ship_check_timing_uses_explicit_values_before_env_and_clamps_minimums(monkeypatch: Any) -> None:
+    monkeypatch.setenv("ENVCTL_SHIP_CHECK_TIMEOUT_SECONDS", "90")
+    monkeypatch.setenv("ENVCTL_SHIP_CHECK_POLL_INTERVAL_SECONDS", "0.01")
+    monkeypatch.setenv("ENVCTL_SHIP_CHECK_PROGRESS_INTERVAL_SECONDS", "bad")
+    monkeypatch.setenv("ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS", "-2")
+
+    timing = action_ship_checks.ShipCheckTiming.from_inputs(
+        timeout_seconds=12.5,
+        progress_interval_seconds=2.5,
+    )
+
+    assert timing.timeout_seconds == 12.5
+    assert timing.poll_interval_seconds == 0.1
+    assert timing.progress_interval_seconds == 2.5
+    assert timing.no_checks_grace_seconds == 0.0
+
+
 def test_github_pr_checks_reports_no_checks_after_ten_second_grace_for_expected_head(
     tmp_path: Path, monkeypatch: Any
 ) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 import shutil
 import subprocess
@@ -31,6 +32,50 @@ DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS = 10.0
 DEFAULT_NO_CHECKS_GRACE_SECONDS = 10.0
 
 
+@dataclass(frozen=True, slots=True)
+class ShipCheckTiming:
+    timeout_seconds: float = DEFAULT_CHECK_TIMEOUT_SECONDS
+    poll_interval_seconds: float = DEFAULT_CHECK_POLL_INTERVAL_SECONDS
+    progress_interval_seconds: float = DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS
+    no_checks_grace_seconds: float = DEFAULT_NO_CHECKS_GRACE_SECONDS
+
+    @classmethod
+    def from_inputs(
+        cls,
+        *,
+        timeout_seconds: float | None = None,
+        poll_interval_seconds: float | None = None,
+        progress_interval_seconds: float | None = None,
+        no_checks_grace_seconds: float | None = None,
+    ) -> ShipCheckTiming:
+        return cls(
+            timeout_seconds=_resolved_timing_value(
+                explicit=timeout_seconds,
+                env_name="ENVCTL_SHIP_CHECK_TIMEOUT_SECONDS",
+                default=DEFAULT_CHECK_TIMEOUT_SECONDS,
+                minimum=0.0,
+            ),
+            poll_interval_seconds=_resolved_timing_value(
+                explicit=poll_interval_seconds,
+                env_name="ENVCTL_SHIP_CHECK_POLL_INTERVAL_SECONDS",
+                default=DEFAULT_CHECK_POLL_INTERVAL_SECONDS,
+                minimum=0.1,
+            ),
+            progress_interval_seconds=_resolved_timing_value(
+                explicit=progress_interval_seconds,
+                env_name="ENVCTL_SHIP_CHECK_PROGRESS_INTERVAL_SECONDS",
+                default=DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS,
+                minimum=0.1,
+            ),
+            no_checks_grace_seconds=_resolved_timing_value(
+                explicit=no_checks_grace_seconds,
+                env_name="ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS",
+                default=DEFAULT_NO_CHECKS_GRACE_SECONDS,
+                minimum=0.0,
+            ),
+        )
+
+
 def github_pr_checks(
     git_root: Path,
     *,
@@ -53,29 +98,13 @@ def github_pr_checks(
             "duration_seconds": 0.0,
         }
     started = time.monotonic()
-    timeout = timeout_seconds if timeout_seconds is not None else _float_env("ENVCTL_SHIP_CHECK_TIMEOUT_SECONDS")
-    poll_interval = (
-        poll_interval_seconds
-        if poll_interval_seconds is not None
-        else _float_env("ENVCTL_SHIP_CHECK_POLL_INTERVAL_SECONDS")
+    timing = ShipCheckTiming.from_inputs(
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+        progress_interval_seconds=progress_interval_seconds,
+        no_checks_grace_seconds=no_checks_grace_seconds,
     )
-    progress_interval = (
-        progress_interval_seconds
-        if progress_interval_seconds is not None
-        else _float_env("ENVCTL_SHIP_CHECK_PROGRESS_INTERVAL_SECONDS")
-    )
-    timeout = DEFAULT_CHECK_TIMEOUT_SECONDS if timeout is None else max(timeout, 0.0)
-    poll_interval = DEFAULT_CHECK_POLL_INTERVAL_SECONDS if poll_interval is None else max(poll_interval, 0.1)
-    progress_interval = (
-        DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS if progress_interval is None else max(progress_interval, 0.1)
-    )
-    no_checks_grace = (
-        no_checks_grace_seconds
-        if no_checks_grace_seconds is not None
-        else _float_env("ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS")
-    )
-    no_checks_grace = DEFAULT_NO_CHECKS_GRACE_SECONDS if no_checks_grace is None else max(no_checks_grace, 0.0)
-    next_progress_at = progress_interval
+    next_progress_at = timing.progress_interval_seconds
 
     while True:
         result = (
@@ -86,7 +115,7 @@ def github_pr_checks(
                 pr_url=pr_url,
                 expected_head_sha=expected_head_sha,
                 started=started,
-                no_checks_grace_seconds=no_checks_grace,
+                no_checks_grace_seconds=timing.no_checks_grace_seconds,
             )
             if expected_head_sha
             else _query_github_pr_checks(git_root, gh_path=gh_path, branch=branch, started=started)
@@ -95,24 +124,30 @@ def github_pr_checks(
             return result
         elapsed = time.monotonic() - started
         if progress_callback is not None and elapsed >= next_progress_at:
-            progress_callback(_check_progress_message(result, elapsed_seconds=elapsed, timeout_seconds=timeout))
+            progress_callback(
+                _check_progress_message(
+                    result,
+                    elapsed_seconds=elapsed,
+                    timeout_seconds=timing.timeout_seconds,
+                )
+            )
             while next_progress_at <= elapsed:
-                next_progress_at += progress_interval
-        if elapsed >= timeout:
+                next_progress_at += timing.progress_interval_seconds
+        if elapsed >= timing.timeout_seconds:
             if result.get("state") == "checks_failed":
                 return {
                     **result,
                     "duration_seconds": round(elapsed, 3),
-                    "timeout_seconds": timeout,
+                    "timeout_seconds": timing.timeout_seconds,
                     "failure_log_timeout": _failed_check_logs_are_retryable(result),
                 }
             return {
                 **result,
                 "state": "checks_pending_timeout",
                 "duration_seconds": round(elapsed, 3),
-                "timeout_seconds": timeout,
+                "timeout_seconds": timing.timeout_seconds,
             }
-        time.sleep(min(poll_interval, max(timeout - elapsed, 0.1)))
+        time.sleep(min(timing.poll_interval_seconds, max(timing.timeout_seconds - elapsed, 0.1)))
 
 
 def _ship_check_result_is_terminal(result: Mapping[str, object]) -> bool:
@@ -326,6 +361,11 @@ def _query_github_pr_checks(
     return normalized
 
 
+def _resolved_timing_value(*, explicit: float | None, env_name: str, default: float, minimum: float) -> float:
+    value = explicit if explicit is not None else _float_env(env_name)
+    return default if value is None else max(value, minimum)
+
+
 def _float_env(name: str) -> float | None:
     raw = os.environ.get(name, "").strip()
     if not raw:
@@ -346,6 +386,7 @@ __all__ = [
     "DEFAULT_NO_CHECKS_GRACE_SECONDS",
     "FAILING_CHECK_STATES",
     "PASSING_CHECK_STATES",
+    "ShipCheckTiming",
     "TERMINAL_SHIP_CHECK_STATES",
     "failed_checks_with_log_excerpts",
     "failure_log_excerpt",
