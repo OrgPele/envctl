@@ -14,7 +14,7 @@ def matches_blast_container(*, image: str, name: str) -> bool:
 
 
 class BlastDockerCleanupSupport:
-    runtime: Any
+    runtime: Any = cast(Any, None)
 
     def blast_all_docker_cleanup(self, *, route: Route | None) -> int:
         owner = cast(Any, self)

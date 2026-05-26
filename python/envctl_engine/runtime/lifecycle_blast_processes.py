@@ -77,7 +77,7 @@ def looks_like_docker_process(command_text: str) -> bool:
 
 
 class BlastProcessCleanupSupport:
-    runtime: Any
+    runtime: Any = cast(Any, None)
 
     @staticmethod
     def blast_all_process_patterns() -> tuple[str, ...]:

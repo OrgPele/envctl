@@ -226,8 +226,11 @@ def blast_worktree_before_delete(
         if callable(fingerprint_path_fn):
             try:
                 fingerprint_path = fingerprint_path_fn(normalized_project)
-                if isinstance(fingerprint_path, str | os.PathLike):
-                    artifact_paths.add(Path(fingerprint_path))
+                filesystem_path = (
+                    os.fspath(fingerprint_path) if isinstance(fingerprint_path, os.PathLike) else fingerprint_path
+                )
+                if isinstance(filesystem_path, str):
+                    artifact_paths.add(Path(filesystem_path))
             except Exception:
                 pass
         cleanup.cleanup_artifact_paths(

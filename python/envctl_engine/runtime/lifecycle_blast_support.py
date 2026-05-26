@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from typing import Any, cast
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.lifecycle_blast_docker import BlastDockerCleanupSupport
@@ -97,7 +98,7 @@ class LifecycleBlastCleanupSupport(
         timeout: float | None = None,
     ) -> tuple[int, str, str]:
         rt = self.runtime
-        process_runtime = self._process_runtime(rt)
+        process_runtime = cast(Any, self)._process_runtime(rt)
         try:
             completed = process_runtime.run(  # type: ignore[attr-defined]
                 cmd,
