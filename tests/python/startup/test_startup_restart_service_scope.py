@@ -133,7 +133,9 @@ class StartupRestartServiceScopeTests(StartupSpinnerIntegrationTestCase):
             self.assertEqual(run_state.services["Main Frontend"].pid, 22222)
             self.assertIn("Main", run_state.requirements)
             merge_events = [
-                event for event in engine.events if event.get("event") == "runtime.state.merge_preserved_services"
+                event
+                for event in cast(Any, engine).events
+                if event.get("event") == "runtime.state.merge_preserved_services"
             ]
             self.assertEqual(len(merge_events), 1)
             self.assertEqual(merge_events[0]["preserved_services"], ["Main Frontend"])

@@ -233,12 +233,13 @@ class EngineRuntimeStateTruthTests(unittest.TestCase):
 
         issues = reconcile_project_requirement_truth(runtime, "Main", requirements, project_root=Path("/tmp/repo"))
 
+        supabase = requirements.component("supabase")
         self.assertEqual(issues, [])
-        self.assertEqual(requirements.supabase["final"], 5574)
-        self.assertEqual(requirements.supabase["resources"]["primary"], 5574)
-        self.assertEqual(requirements.supabase["resources"]["db"], 5574)
-        self.assertEqual(requirements.supabase["resources"]["api"], 54463)
-        self.assertEqual(requirements.supabase["runtime_status"], "healthy")
+        self.assertEqual(supabase["final"], 5574)
+        self.assertEqual(supabase["resources"]["primary"], 5574)
+        self.assertEqual(supabase["resources"]["db"], 5574)
+        self.assertEqual(supabase["resources"]["api"], 54463)
+        self.assertEqual(supabase["runtime_status"], "healthy")
 
     def test_requirement_truth_issues_reconciles_when_runtime_status_missing(self) -> None:
         runtime = SimpleNamespace(
