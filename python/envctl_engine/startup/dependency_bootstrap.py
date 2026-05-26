@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.service_bootstrap_domain import _pyproject_uses_poetry
+from envctl_engine.startup.service_execution_environment import project_env_for_service
+from envctl_engine.startup.service_execution_policy import resolve_project_service_env
 from envctl_engine.state.models import RequirementsResult
 
 
@@ -56,15 +58,15 @@ def prepare_project_dependencies(
     frontend_log_path = str(run_logs_dir / f"{safe_project_name}_frontend.txt")
     dependency_route = _dependency_bootstrap_route(route)
     project_requirements = requirements or RequirementsResult(project=str(context.name), health="dependency_bootstrap")
-    project_env_internal = _project_env_internal(
+    project_env_internal = resolve_project_service_env(
         runtime,
         context=context,
         requirements=project_requirements,
         route=route,
     )
-    frontend_project_env_base = _project_env(
+    frontend_project_env_base = project_env_for_service(
         runtime,
-        context=context,
+        context,
         requirements=project_requirements,
         route=route,
         service_name="frontend",
@@ -191,40 +193,6 @@ def _frontend_plan(runtime: Any, frontend_cwd: Path) -> PreparedFrontendRuntime:
     if manager is None:
         return PreparedFrontendRuntime(manager="none", reason="missing_package_manager")
     return PreparedFrontendRuntime(manager=manager, reason="dev_script")
-
-
-def _project_env_internal(
-    runtime: Any,
-    *,
-    context: Any,
-    requirements: RequirementsResult,
-    route: Route | None,
-) -> dict[str, str]:
-    builder = getattr(runtime, "_project_service_env_internal", None)
-    if callable(builder):
-        return cast(dict[str, str], builder(context, requirements=requirements, route=route))
-    return runtime._project_service_env(context, requirements=requirements, route=route)
-
-
-def _project_env(
-    runtime: Any,
-    *,
-    context: Any,
-    requirements: RequirementsResult,
-    route: Route | None,
-    service_name: str,
-) -> dict[str, str]:
-    try:
-        return runtime._project_service_env(
-            context,
-            requirements=requirements,
-            route=route,
-            service_name=service_name,
-        )
-    except TypeError as exc:
-        if "service_name" not in str(exc):
-            raise
-        return runtime._project_service_env(context, requirements=requirements, route=route)
 
 
 def _context_backend_port(context: Any) -> int:
