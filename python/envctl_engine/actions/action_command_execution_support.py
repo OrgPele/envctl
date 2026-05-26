@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, cast
 
 from envctl_engine.runtime.command_router import Route
 
@@ -18,12 +19,23 @@ _ACTION_HANDLER_NAMES = {
 }
 
 
+class ActionSpinner(Protocol):
+    def start(self) -> None: ...
+
+    def succeed(self, message: str) -> None: ...
+
+    def fail(self, message: str) -> None: ...
+
+
+ActionHandler = Callable[[Route, list[object]], int]
+
+
 @dataclass(slots=True)
 class ActionCommandExecutionDependencies:
-    spinner_factory: Callable[..., object]
+    spinner_factory: Callable[..., AbstractContextManager[ActionSpinner]]
     resolve_spinner_policy: Callable[[dict[str, str]], object]
     emit_spinner_policy: Callable[..., None]
-    use_spinner_policy: Callable[..., object]
+    use_spinner_policy: Callable[..., AbstractContextManager[object]]
 
 
 @dataclass(slots=True)
@@ -69,14 +81,14 @@ class ActionCommandExecutor:
             return code
         return None
 
-    def _handler(self) -> Callable[[Route, list[object]], int] | None:
+    def _handler(self) -> ActionHandler | None:
         handler_name = _ACTION_HANDLER_NAMES.get(self.route.command)
         if handler_name is None:
             return None
         handler = getattr(self.orchestrator, handler_name, None)
-        return handler if callable(handler) else None
+        return cast(ActionHandler, handler) if callable(handler) else None
 
-    def _execute_targeted_handler(self, handler: Callable[[Route, list[object]], int], targets: list[object]) -> int:
+    def _execute_targeted_handler(self, handler: ActionHandler, targets: list[object]) -> int:
         spinner_policy = self.dependencies.resolve_spinner_policy(getattr(self.runtime, "env", {}))
         op_id = f"action.{self.route.command}"
         start_status = self.orchestrator._command_start_status(self.route.command, targets)
@@ -129,13 +141,19 @@ class ActionCommandExecutor:
             reason="interactive_command_spinner_suppressed",
         )
 
-    def _start_spinner(self, active_spinner: object, *, enabled: bool, op_id: str, message: str) -> None:
+    def _start_spinner(self, active_spinner: ActionSpinner, *, enabled: bool, op_id: str, message: str) -> None:
         if not enabled:
             return
         active_spinner.start()
         self._emit_spinner_lifecycle(op_id=op_id, state="start", message=message)
 
-    def _install_spinner_bridge(self, active_spinner: object, *, enabled: bool, op_id: str) -> Callable[[], None]:
+    def _install_spinner_bridge(
+        self,
+        active_spinner: ActionSpinner,
+        *,
+        enabled: bool,
+        op_id: str,
+    ) -> Callable[[], None]:
         if not enabled:
             return self.orchestrator._noop_restore
         return self.orchestrator._install_action_spinner_status_bridge(
@@ -144,7 +162,7 @@ class ActionCommandExecutor:
             active_spinner=active_spinner,
         )
 
-    def _fail_interrupted(self, active_spinner: object, *, enabled: bool, op_id: str) -> None:
+    def _fail_interrupted(self, active_spinner: ActionSpinner, *, enabled: bool, op_id: str) -> None:
         if not enabled:
             return
         interrupted = f"{self.route.command} interrupted"
@@ -152,7 +170,7 @@ class ActionCommandExecutor:
         self._emit_spinner_lifecycle(op_id=op_id, state="fail", message=interrupted)
         self._emit_spinner_lifecycle(op_id=op_id, state="stop")
 
-    def _finish_spinner(self, active_spinner: object, *, enabled: bool, op_id: str, code: int) -> None:
+    def _finish_spinner(self, active_spinner: ActionSpinner, *, enabled: bool, op_id: str, code: int) -> None:
         if not enabled:
             return
         if code == 0:
@@ -190,10 +208,10 @@ def execute_action_command(
     orchestrator: Any,
     route: Route,
     *,
-    spinner_factory: Callable[..., object],
+    spinner_factory: Callable[..., AbstractContextManager[ActionSpinner]],
     resolve_spinner_policy_fn: Callable[[dict[str, str]], object],
     emit_spinner_policy_fn: Callable[..., None],
-    use_spinner_policy_fn: Callable[..., object],
+    use_spinner_policy_fn: Callable[..., AbstractContextManager[object]],
 ) -> int:
     dependencies = ActionCommandExecutionDependencies(
         spinner_factory=spinner_factory,
