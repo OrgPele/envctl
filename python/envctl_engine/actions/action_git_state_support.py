@@ -104,11 +104,6 @@ def existing_pr_url(
     return listed.stdout.strip()
 
 
-def sanitize_label(value: str) -> str:
-    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
-    return cleaned.strip("_") or "project"
-
-
 def run_git(
     git_root: Path,
     args: list[str],

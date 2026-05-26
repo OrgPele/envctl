@@ -4,10 +4,12 @@ import os
 from pathlib import Path
 from typing import Callable
 
-from envctl_engine.actions import action_review_plan_support as review_plan_support
+from envctl_engine.actions import action_review_base_support as review_base_support
+from envctl_engine.actions import action_review_original_plan_support as review_original_plan_support
 from envctl_engine.actions.action_review_context import ReviewActionContext
 from envctl_engine.actions.action_review_artifact_support import write_markdown_lines
 from envctl_engine.actions.action_review_output_support import print_review_completion
+from envctl_engine.shared.artifact_names import safe_artifact_stem
 
 
 def run_review_workflow(
@@ -17,8 +19,8 @@ def run_review_workflow(
     git_available: bool,
     git_output_fn: Callable[[Path, list[str]], str],
     resolve_analyze_mode_fn: Callable[[ReviewActionContext], str],
-    resolve_original_plan_fn: Callable[[ReviewActionContext], review_plan_support.OriginalPlanResolution],
-    resolve_review_base_fn: Callable[[ReviewActionContext, Path], review_plan_support.ReviewBaseResolution],
+    resolve_original_plan_fn: Callable[[ReviewActionContext], review_original_plan_support.OriginalPlanResolution],
+    resolve_review_base_fn: Callable[[ReviewActionContext, Path], review_base_support.ReviewBaseResolution],
     analysis_iterations_fn: Callable[[ReviewActionContext, str], list[str]],
     run_analyze_helper_fn: Callable[
         [
@@ -27,17 +29,16 @@ def run_review_workflow(
             list[str],
             str,
             str,
-            review_plan_support.ReviewBaseResolution | None,
-            review_plan_support.OriginalPlanResolution,
+            review_base_support.ReviewBaseResolution | None,
+            review_original_plan_support.OriginalPlanResolution,
         ],
         int,
     ],
     tree_diffs_output_path_fn: Callable[[ReviewActionContext, str, str], Path],
     original_plan_markdown_lines_fn: Callable[
-        [review_plan_support.OriginalPlanResolution],
+        [review_original_plan_support.OriginalPlanResolution],
         list[str],
     ],
-    sanitize_label_fn: Callable[[str], str],
 ) -> int:
     git_root = resolve_git_root_fn(context.project_root, context.repo_root)
     if not git_available:
@@ -47,11 +48,11 @@ def run_review_workflow(
     mode = resolve_analyze_mode_fn(context)
     scope = str(context.env.get("ENVCTL_ANALYZE_SCOPE", "all")).strip().lower() or "all"
     original_plan = resolve_original_plan_fn(context)
-    review_base: review_plan_support.ReviewBaseResolution | None = None
+    review_base: review_base_support.ReviewBaseResolution | None = None
     if mode == "single" or str(context.env.get("ENVCTL_REVIEW_BASE", "")).strip():
         try:
             review_base = resolve_review_base_fn(context, git_root)
-        except review_plan_support.ReviewBaseResolutionError as exc:
+        except review_base_support.ReviewBaseResolutionError as exc:
             print(str(exc))
             return 1
 
@@ -79,7 +80,6 @@ def run_review_workflow(
             git_output_fn=git_output_fn,
             tree_diffs_output_path_fn=tree_diffs_output_path_fn,
             original_plan_markdown_lines_fn=original_plan_markdown_lines_fn,
-            sanitize_label_fn=sanitize_label_fn,
         )
 
     return _write_based_review_summary(
@@ -92,7 +92,6 @@ def run_review_workflow(
         git_output_fn=git_output_fn,
         tree_diffs_output_path_fn=tree_diffs_output_path_fn,
         original_plan_markdown_lines_fn=original_plan_markdown_lines_fn,
-        sanitize_label_fn=sanitize_label_fn,
     )
 
 
@@ -102,18 +101,17 @@ def _write_unbased_review_summary(
     git_root: Path,
     mode: str,
     scope: str,
-    original_plan: review_plan_support.OriginalPlanResolution,
+    original_plan: review_original_plan_support.OriginalPlanResolution,
     git_output_fn: Callable[[Path, list[str]], str],
     tree_diffs_output_path_fn: Callable[[ReviewActionContext, str, str], Path],
-    original_plan_markdown_lines_fn: Callable[[review_plan_support.OriginalPlanResolution], list[str]],
-    sanitize_label_fn: Callable[[str], str],
+    original_plan_markdown_lines_fn: Callable[[review_original_plan_support.OriginalPlanResolution], list[str]],
 ) -> int:
     diff_stat = git_output_fn(git_root, ["diff", "--stat"]).strip()
     status = git_output_fn(git_root, ["status", "--porcelain"]).strip()
     output_path = tree_diffs_output_path_fn(
         context,
         "review",
-        f"review_{sanitize_label_fn(context.project_name)}_{mode}",
+        f"review_{safe_artifact_stem(context.project_name, fallback='project')}_{mode}",
     )
     write_markdown_lines(
         output_path,
@@ -142,12 +140,11 @@ def _write_based_review_summary(
     git_root: Path,
     mode: str,
     scope: str,
-    review_base: review_plan_support.ReviewBaseResolution,
-    original_plan: review_plan_support.OriginalPlanResolution,
+    review_base: review_base_support.ReviewBaseResolution,
+    original_plan: review_original_plan_support.OriginalPlanResolution,
     git_output_fn: Callable[[Path, list[str]], str],
     tree_diffs_output_path_fn: Callable[[ReviewActionContext, str, str], Path],
-    original_plan_markdown_lines_fn: Callable[[review_plan_support.OriginalPlanResolution], list[str]],
-    sanitize_label_fn: Callable[[str], str],
+    original_plan_markdown_lines_fn: Callable[[review_original_plan_support.OriginalPlanResolution], list[str]],
 ) -> int:
     diff_left = review_base.merge_base or review_base.base_ref
     diff_stat = git_output_fn(git_root, ["diff", "--find-renames", "--stat", diff_left]).strip()
@@ -157,7 +154,7 @@ def _write_based_review_summary(
     output_path = tree_diffs_output_path_fn(
         context,
         "review",
-        f"review_{sanitize_label_fn(context.project_name)}_{mode}",
+        f"review_{safe_artifact_stem(context.project_name, fallback='project')}_{mode}",
     )
     write_markdown_lines(
         output_path,

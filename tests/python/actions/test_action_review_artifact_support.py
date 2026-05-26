@@ -47,14 +47,8 @@ class ActionReviewArtifactSupportTests(unittest.TestCase):
             main_context = SimpleNamespace(project_root=repo_root, project_name="Main")
             feature_context = SimpleNamespace(project_root=repo_root, project_name="feature/x")
 
-            self.assertEqual(tree_changelog_path(main_context, sanitize_label_fn=lambda value: value), main_changelog)
-            self.assertEqual(
-                tree_changelog_path(
-                    feature_context,
-                    sanitize_label_fn=lambda value: value.replace("/", "_"),
-                ),
-                feature_changelog,
-            )
+            self.assertEqual(tree_changelog_path(main_context), main_changelog)
+            self.assertEqual(tree_changelog_path(feature_context), feature_changelog)
 
     def test_tree_changelog_path_skips_blank_changelogs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -64,7 +58,7 @@ class ActionReviewArtifactSupportTests(unittest.TestCase):
             (changelog_dir / "feature_changelog.md").write_text("\n", encoding="utf-8")
             context = SimpleNamespace(project_root=repo_root, project_name="feature")
 
-            self.assertIsNone(tree_changelog_path(context, sanitize_label_fn=lambda value: value))
+            self.assertIsNone(tree_changelog_path(context))
 
     def test_summary_output_path_creates_sanitized_timestamped_artifact_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -75,13 +69,22 @@ class ActionReviewArtifactSupportTests(unittest.TestCase):
                 "review",
                 "report",
                 label="feature/a",
-                sanitize_label_fn=lambda value: value.replace("/", "_"),
             )
 
             self.assertEqual(path.parent, repo_root / "review")
             self.assertTrue(path.name.startswith("report_feature_a_"))
             self.assertTrue(path.name.endswith(".md"))
             self.assertTrue(path.parent.is_dir())
+
+    def test_summary_output_path_sanitizes_prefix_and_label_segments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+
+            path = summary_output_path(repo_root, "review", "../report", label="../feature/a")
+
+            self.assertEqual(path.parent, repo_root / "review")
+            self.assertTrue(path.name.startswith("report_feature_a_"))
+            self.assertNotIn("..", path.parts)
 
 
 if __name__ == "__main__":

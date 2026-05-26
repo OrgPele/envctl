@@ -67,7 +67,6 @@ class ActionReviewIterationSupportTests(unittest.TestCase):
                     merge_base="merge-base",
                 ),
                 original_plan=original_plan_support.OriginalPlanResolution(path=plan, source="provenance"),
-                sanitize_label_fn=lambda value: value.replace("/", "_"),
                 run_process_fn=fake_run,
             )
 
@@ -77,6 +76,23 @@ class ActionReviewIterationSupportTests(unittest.TestCase):
             self.assertFalse((output_dir / "prompt.md").exists())
             self.assertIn("## Original plan file", (output_dir / "all.md").read_text(encoding="utf-8"))
             self.assertIn("## Original plan resolution", (output_dir / "summary.md").read_text(encoding="utf-8"))
+
+    def test_tree_diffs_output_path_sanitizes_prefix_and_label_segments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tree_diffs_root = Path(tmpdir) / "tree-diffs"
+            context = SimpleNamespace(
+                repo_root=Path(tmpdir) / "repo",
+                project_root=Path(tmpdir) / "repo",
+                project_name="Main",
+                env={"ENVCTL_ACTION_TREE_DIFFS_ROOT": str(tree_diffs_root)},
+                interactive=False,
+            )
+
+            path = support.tree_diffs_output_path(context, "review", "../diff", label="../feature/a")
+
+            self.assertEqual(path.parent, tree_diffs_root / "review")
+            self.assertTrue(path.name.startswith("diff_feature_a_"))
+            self.assertNotIn("..", path.parts)
 
 
 if __name__ == "__main__":

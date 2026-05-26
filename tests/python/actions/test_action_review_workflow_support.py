@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-from envctl_engine.actions import action_review_plan_support as review_plan_support
+from envctl_engine.actions import action_review_base_support as review_base_support
+from envctl_engine.actions import action_review_original_plan_support as review_original_plan_support
 from envctl_engine.actions import action_review_workflow_support as support
 
 
@@ -42,11 +43,11 @@ class ActionReviewWorkflowSupportTests(unittest.TestCase):
                 git_available=True,
                 git_output_fn=git_output,
                 resolve_analyze_mode_fn=lambda _context: "single",
-                resolve_original_plan_fn=lambda _context: review_plan_support.OriginalPlanResolution(
+                resolve_original_plan_fn=lambda _context: review_original_plan_support.OriginalPlanResolution(
                     path=None,
                     source="unresolved",
                 ),
-                resolve_review_base_fn=lambda _context, _git_root: review_plan_support.ReviewBaseResolution(
+                resolve_review_base_fn=lambda _context, _git_root: review_base_support.ReviewBaseResolution(
                     base_branch="main",
                     base_ref="origin/main",
                     source="default_branch",
@@ -60,7 +61,6 @@ class ActionReviewWorkflowSupportTests(unittest.TestCase):
                     "(unresolved)",
                     "",
                 ],
-                sanitize_label_fn=lambda value: value,
             )
 
             self.assertEqual(code, 0)
@@ -88,18 +88,17 @@ class ActionReviewWorkflowSupportTests(unittest.TestCase):
                 git_available=True,
                 git_output_fn=lambda _git_root, _args: "",
                 resolve_analyze_mode_fn=lambda _context: "single",
-                resolve_original_plan_fn=lambda _context: review_plan_support.OriginalPlanResolution(
+                resolve_original_plan_fn=lambda _context: review_original_plan_support.OriginalPlanResolution(
                     path=None,
                     source="not_applicable",
                 ),
                 resolve_review_base_fn=lambda _context, _git_root: (_ for _ in ()).throw(
-                    review_plan_support.ReviewBaseResolutionError("bad base")
+                    review_base_support.ReviewBaseResolutionError("bad base")
                 ),
                 analysis_iterations_fn=lambda _context, _mode: [],
                 run_analyze_helper_fn=lambda *_args: self.fail("helper should not run"),
                 tree_diffs_output_path_fn=lambda *_args: self.fail("summary should not be written"),
                 original_plan_markdown_lines_fn=lambda _resolution: [],
-                sanitize_label_fn=lambda value: value,
             )
 
             self.assertEqual(code, 1)
