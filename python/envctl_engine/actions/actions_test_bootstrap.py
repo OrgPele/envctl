@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import sys
-import tomllib
 from typing import Callable
+
+from envctl_engine.shared.python_project_metadata import pyproject_project_name
 
 
 def ensure_repo_local_test_prereqs(
@@ -44,16 +45,7 @@ def emit_bootstrap_status(emit_status: Callable[[str], None] | None, message: st
 def is_envctl_repo(project_root: Path) -> bool:
     pyproject = project_root / "pyproject.toml"
     package_root = project_root / "python" / "envctl_engine"
-    if not pyproject.is_file() or not package_root.is_dir():
-        return False
-    try:
-        payload = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
-        return False
-    project = payload.get("project")
-    if not isinstance(project, dict):
-        return False
-    return str(project.get("name", "")).strip() == "envctl"
+    return package_root.is_dir() and pyproject_project_name(pyproject) == "envctl"
 
 
 def repo_local_test_python_ready(
@@ -89,8 +81,12 @@ def bootstrap_python_executable(
         if candidate:
             return candidate
     raise RuntimeError(
-        "Unable to bootstrap repo-local envctl test prerequisites: no Python interpreter was found. "
-        "Run uv sync --extra dev --python 3.12."
+        " ".join(
+            (
+                "Unable to bootstrap repo-local envctl test prerequisites: no Python interpreter was found.",
+                "Run uv sync --extra dev --python 3.12.",
+            )
+        )
     )
 
 
@@ -116,8 +112,5 @@ def run_bootstrap_command(
     ]
     detail = output_lines[0] if output_lines else f"exit {getattr(result, 'returncode', 1)}"
     rendered = " ".join(str(part) for part in command)
-    raise RuntimeError(
-        "Failed to bootstrap repo-local envctl test prerequisites "
-        f"with `{rendered}`: {detail}\n"
-        "Run uv sync --extra dev --python 3.12"
-    )
+    failure = " ".join(("Failed to bootstrap repo-local envctl test prerequisites", f"with `{rendered}`: {detail}"))
+    raise RuntimeError("\n".join((failure, "Run uv sync --extra dev --python 3.12")))

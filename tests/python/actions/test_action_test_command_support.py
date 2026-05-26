@@ -185,6 +185,5 @@ class ActionTestCommandSupportTests(unittest.TestCase):
 
         self.assertEqual(command, ["poetry", "--project", str(backend), "run", "python", "-m", "pytest"])
 
-
 if __name__ == "__main__":
     unittest.main()

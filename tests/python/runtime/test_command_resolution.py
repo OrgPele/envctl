@@ -155,6 +155,33 @@ class CommandResolutionTests(unittest.TestCase):
             self.assertEqual(result.command[:5], ["poetry", "run", "python", "-m", "uvicorn"])
             self.assertIn("8000", result.command)
 
+    def test_configured_backend_generic_python_uses_venv_for_pdm_project_even_when_poetry_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            backend = root / "backend"
+            backend.mkdir(parents=True, exist_ok=True)
+            (backend / "pyproject.toml").write_text("[tool.pdm]\nname='demo'\n", encoding="utf-8")
+            (backend / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            backend_python = backend / ".venv" / "bin" / "python"
+            backend_python.write_text("", encoding="utf-8")
+
+            result = resolve_service_start_command(
+                service_name="backend",
+                project_root=root,
+                port=8000,
+                env={},
+                config_raw={
+                    "BACKEND_DIR": "backend",
+                    "ENVCTL_BACKEND_START_CMD": "python -m uvicorn app.main:app --host 127.0.0.1 --port {port}",
+                },
+                command_exists=lambda exe: exe == "poetry",
+            )
+
+            self.assertEqual(result.source, "configured")
+            self.assertEqual(Path(result.command[0]).resolve(), backend_python.resolve())
+            self.assertEqual(result.command[1:4], ["-m", "uvicorn", "app.main:app"])
+            self.assertIn("8000", result.command)
+
     def test_configured_backend_command_rejects_missing_backend_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -5,11 +5,23 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
+from envctl_engine.startup.dependency_bootstrap import _backend_plan, prepare_project_dependencies
 from envctl_engine.state.models import RequirementsResult
 
 
 class DependencyBootstrapTests(unittest.TestCase):
+    def test_backend_plan_does_not_treat_pdm_project_as_poetry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backend = Path(tmpdir) / "backend"
+            backend.mkdir()
+            (backend / "pyproject.toml").write_text("[tool.pdm]\nname='demo'\n", encoding="utf-8")
+
+            plan = _backend_plan(command_exists=lambda name: name == "poetry", backend_cwd=backend)
+
+        self.assertEqual(plan.manager, "none")
+        self.assertEqual(plan.runner_prefix, ())
+        self.assertEqual(plan.reason, "pyproject_without_available_poetry")
+
     def test_prepare_project_dependencies_normalizes_empty_internal_project_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -21,6 +33,7 @@ class DependencyBootstrapTests(unittest.TestCase):
             runtime = SimpleNamespace(
                 config=SimpleNamespace(backend_dir_name="backend", frontend_dir_name="frontend"),
                 _run_dir_path=lambda run_id: root / ".runs" / run_id,
+                _command_exists=lambda _command: False,
                 _project_service_env_internal=lambda context, requirements, route: None,
                 _project_service_env=lambda context, requirements, route, service_name=None: {
                     "SERVICE": service_name or "default"

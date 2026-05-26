@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
-from typing import Callable, Mapping, Sequence
 
 from envctl_engine.actions.actions_test import (
     TestCommandSpec,
@@ -18,6 +18,7 @@ from envctl_engine.actions.actions_test import (
 from envctl_engine.actions.action_target_support import action_target_identities
 from envctl_engine.actions.action_test_support_models import TestExecutionSpec, TestTargetContext
 from envctl_engine.shared.node_tooling import detect_python_bin
+from envctl_engine.shared.python_project_metadata import pyproject_uses_poetry
 
 
 @dataclass(frozen=True, slots=True)
@@ -436,21 +437,13 @@ def normalize_backend_python_test_command(
     backend_root = project_root / "backend"
     pyproject = backend_root / "pyproject.toml"
     uses_poetry = pyproject_uses_poetry_fn or pyproject_uses_poetry
-    if pyproject.is_file() and uses_poetry(pyproject) and which_fn("poetry"):
+    if uses_poetry(pyproject) and which_fn("poetry"):
         return ["poetry", "--project", str(backend_root), "run", "python", *rendered[1:]]
 
     python_exe = detect_python_bin_fn(backend_root, project_root)
     if python_exe and "/" in python_exe:
         return [python_exe, *rendered[1:]]
     return rendered
-
-
-def pyproject_uses_poetry(pyproject: Path) -> bool:
-    try:
-        text = pyproject.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    return "[tool.poetry]" in text or "[tool.pdm]" in text
 
 
 def _renumber_execution_specs(execution_specs: list[TestExecutionSpec]) -> list[TestExecutionSpec]:

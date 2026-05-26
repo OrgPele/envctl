@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 import re
-import tomllib
-from typing import Callable, Mapping, Literal
+from typing import Literal, cast
+
+from envctl_engine.shared.python_project_metadata import pyproject_project_table_from_payload, read_pyproject
 
 RUNTIME_DEPENDENCY_MODULES: tuple[str, ...] = (
     "prompt_toolkit",
@@ -96,8 +98,12 @@ def runtime_dependency_failure_message(
     if context == "source_checkout":
         requirements_path = source_checkout_requirements_path(env)
         lines.append(
-            "This source-checkout invocation needs the envctl runtime dependencies installed into the active "
-            "interpreter."
+            " ".join(
+                (
+                    "This source-checkout invocation needs the envctl runtime dependencies installed",
+                    "into the active interpreter.",
+                )
+            )
         )
         if requirements_path is None:
             lines.append("Install them with: python -m pip install -r python/requirements.txt")
@@ -140,14 +146,20 @@ def _normalized_requirements_manifest(path: Path) -> list[str]:
 
 
 def _normalized_pyproject_dependencies(path: Path) -> list[str]:
-    payload = tomllib.loads(path.read_text(encoding="utf-8"))
-    project = payload.get("project")
-    if not isinstance(project, dict):
+    payload = read_pyproject(path)
+    project = pyproject_project_table_from_payload(payload)
+    if project is None:
         raise ValueError(f"Missing [project] table in {path}")
-    dependencies = project.get("dependencies")
-    if not isinstance(dependencies, list):
+    dependencies_raw = project.get("dependencies")
+    if not isinstance(dependencies_raw, list):
         raise ValueError(f"Missing project.dependencies in {path}")
-    return [_normalize_requirement(str(item)) for item in dependencies]
+    dependencies = cast("list[object]", dependencies_raw)
+    normalized: list[str] = []
+    for item in dependencies:
+        if not isinstance(item, str):
+            raise ValueError(f"project.dependencies entries must be strings in {path}")
+        normalized.append(_normalize_requirement(item))
+    return normalized
 
 
 def _normalize_requirement(raw_requirement: str) -> str:
