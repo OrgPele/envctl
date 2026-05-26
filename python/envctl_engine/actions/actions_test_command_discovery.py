@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, ClassVar
+from typing import ClassVar
 
 from envctl_engine.actions.actions_test_frontend_paths import (
     _frontend_dir_name_from_package_root,
@@ -32,7 +32,7 @@ from envctl_engine.actions.actions_test_suggestions import (
     command_text as command_text,
     test_command_suggestion as test_command_suggestion,
 )
-from envctl_engine.shared.node_tooling import detect_python_bin
+from envctl_engine.shared.node_tooling import PythonBinDetector, detect_python_bin
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +43,7 @@ class TestCommandDiscovery:
     include_backend: bool = True
     include_frontend: bool = True
     frontend_test_path: str | None = None
-    detect_python_bin_fn: Callable[[Path, Path], str | None] = detect_python_bin
+    detect_python_bin_fn: PythonBinDetector = detect_python_bin
 
     def default_command(self) -> list[str] | None:
         commands = self.default_commands()
@@ -257,7 +257,7 @@ class TestCommandDiscovery:
 def default_test_command(
     base_dir: Path,
     *,
-    detect_python_bin_fn: Callable[[Path, Path], str | None] = detect_python_bin,
+    detect_python_bin_fn: PythonBinDetector = detect_python_bin,
 ) -> list[str] | None:
     return TestCommandDiscovery(base_dir, detect_python_bin_fn=detect_python_bin_fn).default_command()
 
@@ -265,7 +265,7 @@ def default_test_command(
 def suggest_action_test_command(
     base_dir: Path,
     *,
-    detect_python_bin_fn: Callable[[Path, Path], str | None] = detect_python_bin,
+    detect_python_bin_fn: PythonBinDetector = detect_python_bin,
 ) -> str | None:
     return TestCommandDiscovery(base_dir, detect_python_bin_fn=detect_python_bin_fn).suggest_action_command()
 
@@ -273,7 +273,7 @@ def suggest_action_test_command(
 def suggest_backend_test_command(
     base_dir: Path,
     *,
-    detect_python_bin_fn: Callable[[Path, Path], str | None] = detect_python_bin,
+    detect_python_bin_fn: PythonBinDetector = detect_python_bin,
 ) -> str | None:
     return TestCommandDiscovery(base_dir, detect_python_bin_fn=detect_python_bin_fn).suggest_backend_command()
 
@@ -292,7 +292,7 @@ def test_command_suggestions(
     include_backend: bool = True,
     include_frontend: bool = True,
     frontend_test_path: str | None = None,
-    detect_python_bin_fn: Callable[[Path, Path], str | None] = detect_python_bin,
+    detect_python_bin_fn: PythonBinDetector = detect_python_bin,
 ) -> list[TestCommandSuggestion]:
     return TestCommandDiscovery(
         base_dir,
@@ -313,7 +313,7 @@ def default_test_commands(
     include_backend: bool = True,
     include_frontend: bool = True,
     frontend_test_path: str | None = None,
-    detect_python_bin_fn: Callable[[Path, Path], str | None] = detect_python_bin,
+    detect_python_bin_fn: PythonBinDetector = detect_python_bin,
 ) -> list[TestCommandSpec]:
     return TestCommandDiscovery(
         base_dir,

@@ -185,5 +185,56 @@ class ActionTestCommandSupportTests(unittest.TestCase):
 
         self.assertEqual(command, ["poetry", "--project", str(backend), "run", "python", "-m", "pytest"])
 
+    def test_backend_python_normalization_uses_root_poetry_project_without_backend_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            (project_root / "pyproject.toml").write_text("[tool.poetry]\nname = 'backend'\n", encoding="utf-8")
+
+            command = normalize_backend_python_test_command(
+                ["python", "-m", "pytest"],
+                project_root,
+                pyproject_uses_poetry_fn=lambda path: path == project_root / "pyproject.toml",
+                which_fn=lambda name: f"/usr/bin/{name}" if name == "poetry" else None,
+                detect_python_bin_fn=lambda *_roots: "python3.12",
+            )
+
+        self.assertEqual(command, ["poetry", "--project", str(project_root), "run", "python", "-m", "pytest"])
+
+    def test_backend_python_normalization_uses_root_poetry_project_when_backend_dir_is_plain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            backend = project_root / "backend"
+            backend.mkdir(parents=True, exist_ok=True)
+            (project_root / "pyproject.toml").write_text("[tool.poetry]\nname = 'backend'\n", encoding="utf-8")
+
+            command = normalize_backend_python_test_command(
+                ["python", "-m", "pytest"],
+                project_root,
+                pyproject_uses_poetry_fn=lambda path: path == project_root / "pyproject.toml",
+                which_fn=lambda name: f"/usr/bin/{name}" if name == "poetry" else None,
+                detect_python_bin_fn=lambda *_roots: "python3.12",
+            )
+
+        self.assertEqual(command, ["poetry", "--project", str(project_root), "run", "python", "-m", "pytest"])
+
+    def test_backend_python_normalization_does_not_cross_backend_project_boundary_for_poetry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir) / "repo"
+            backend = project_root / "backend"
+            backend.mkdir(parents=True, exist_ok=True)
+            (project_root / "pyproject.toml").write_text("[tool.poetry]\nname = 'repo'\n", encoding="utf-8")
+            (backend / "pyproject.toml").write_text("[project]\nname = 'backend'\n", encoding="utf-8")
+
+            command = normalize_backend_python_test_command(
+                ["python", "-m", "pytest"],
+                project_root,
+                pyproject_uses_poetry_fn=lambda path: path == project_root / "pyproject.toml",
+                which_fn=lambda name: f"/usr/bin/{name}" if name == "poetry" else None,
+                detect_python_bin_fn=lambda *_roots: None,
+            )
+
+        self.assertEqual(command, ["python", "-m", "pytest"])
+
 if __name__ == "__main__":
     unittest.main()

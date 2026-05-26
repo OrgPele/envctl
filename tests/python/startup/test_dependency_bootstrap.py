@@ -58,6 +58,40 @@ class DependencyBootstrapTests(unittest.TestCase):
         self.assertTrue(result.prepared)
         self.assertEqual(prepared_backend_envs, [{}])
 
+    def test_prepare_project_dependencies_uses_shared_safe_log_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            backend = root / "backend"
+            backend.mkdir()
+            (backend / "requirements.txt").write_text("requests\n", encoding="utf-8")
+            prepared_backend_log_paths: list[str] = []
+
+            runtime = SimpleNamespace(
+                config=SimpleNamespace(backend_dir_name="backend", frontend_dir_name="frontend"),
+                _run_dir_path=lambda run_id: root / ".runs" / run_id,
+                _command_exists=lambda _command: False,
+                _project_service_env_internal=lambda context, requirements, route: {},
+                _project_service_env=lambda context, requirements, route, service_name=None: {},
+                _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
+                _resolve_frontend_env_file=lambda context, frontend_cwd: None,
+                _prepare_backend_runtime=lambda **kwargs: prepared_backend_log_paths.append(
+                    kwargs["backend_log_path"]
+                ),
+                _prepare_frontend_runtime=lambda **kwargs: None,
+            )
+            context = SimpleNamespace(name="Feature / A", root=root, ports={})
+
+            result = prepare_project_dependencies(
+                runtime,
+                context=context,
+                route=None,
+                run_id="run-1",
+                requirements=RequirementsResult(project="Feature / A", health="ok"),
+            )
+
+        self.assertTrue(result.prepared)
+        self.assertEqual(prepared_backend_log_paths, [str(root / ".runs" / "run-1" / "Feature_A_backend.txt")])
+
 
 if __name__ == "__main__":
     unittest.main()

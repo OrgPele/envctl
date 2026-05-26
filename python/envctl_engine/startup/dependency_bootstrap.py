@@ -7,7 +7,7 @@ from typing import Protocol, cast
 
 from envctl_engine.runtime.command_models import Route
 from envctl_engine.shared.python_project_metadata import pyproject_uses_poetry
-from envctl_engine.startup.service_execution_environment import project_env_for_service
+from envctl_engine.startup.service_execution_environment import project_env_for_service, project_service_log_paths
 from envctl_engine.startup.service_execution_policy import resolve_project_service_env
 from envctl_engine.state.models import RequirementsResult
 
@@ -142,10 +142,9 @@ def prepare_project_dependencies(
         context_root=Path(context.root),
         configured_name=str(getattr(services.config, "frontend_dir_name", "frontend")),
     )
-    run_logs_dir = services.run_dir_path(run_id)
-    safe_project_name = str(context.name).replace("/", "_").replace(" ", "_")
-    backend_log_path = str(run_logs_dir / f"{safe_project_name}_backend.txt")
-    frontend_log_path = str(run_logs_dir / f"{safe_project_name}_frontend.txt")
+    log_paths = project_service_log_paths(runtime=runtime, run_id=run_id, project_name=context.name)
+    backend_log_path = log_paths.backend_log_path
+    frontend_log_path = log_paths.frontend_log_path
     dependency_route = _dependency_bootstrap_route(route)
     project_requirements = requirements or RequirementsResult(project=str(context.name), health="dependency_bootstrap")
     project_env_internal = resolve_project_service_env(

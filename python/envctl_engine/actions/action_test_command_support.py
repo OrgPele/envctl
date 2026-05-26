@@ -15,9 +15,11 @@ from envctl_engine.actions.actions_test import (
     is_pytest_command,
     is_unittest_command,
 )
+from envctl_engine.actions.actions_test_python_discovery import backend_poetry_project_root
+from envctl_engine.actions.actions_test_python_discovery import backend_python_roots
 from envctl_engine.actions.action_target_support import action_target_identities
 from envctl_engine.actions.action_test_support_models import TestExecutionSpec, TestTargetContext
-from envctl_engine.shared.node_tooling import detect_python_bin
+from envctl_engine.shared.node_tooling import PythonBinDetector, detect_python_bin
 from envctl_engine.shared.python_project_metadata import pyproject_uses_poetry
 
 
@@ -428,19 +430,19 @@ def normalize_backend_python_test_command(
     *,
     pyproject_uses_poetry_fn: Callable[[Path], bool] | None = None,
     which_fn: Callable[[str], str | None] = shutil.which,
-    detect_python_bin_fn: Callable[..., str | None] = detect_python_bin,
+    detect_python_bin_fn: PythonBinDetector = detect_python_bin,
 ) -> list[str]:
     rendered = [str(part) for part in command]
     if not rendered or rendered[0] not in {"python", "python3", "python3.12"}:
         return rendered
 
-    backend_root = project_root / "backend"
-    pyproject = backend_root / "pyproject.toml"
+    backend_roots = backend_python_roots(project_root)
     uses_poetry = pyproject_uses_poetry_fn or pyproject_uses_poetry
-    if uses_poetry(pyproject) and which_fn("poetry"):
-        return ["poetry", "--project", str(backend_root), "run", "python", *rendered[1:]]
+    poetry_root = backend_poetry_project_root(backend_roots, pyproject_uses_poetry_fn=uses_poetry)
+    if poetry_root is not None and which_fn("poetry"):
+        return ["poetry", "--project", str(poetry_root), "run", "python", *rendered[1:]]
 
-    python_exe = detect_python_bin_fn(backend_root, project_root)
+    python_exe = detect_python_bin_fn(*backend_roots)
     if python_exe and "/" in python_exe:
         return [python_exe, *rendered[1:]]
     return rendered

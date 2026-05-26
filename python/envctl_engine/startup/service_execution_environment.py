@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from envctl_engine.shared.artifact_names import safe_artifact_stem
 from envctl_engine.startup.requirements_execution import requirements_timing_enabled
 from envctl_engine.startup.service_execution_policy import coerce_env_mapping
 
@@ -28,13 +29,27 @@ def resolve_service_workdirs(*, config: Any, project_root: Path) -> tuple[Path, 
 
 def project_service_log_paths(*, runtime: Any, run_id: str, project_name: str) -> ProjectServiceLogPaths:
     run_logs_dir = runtime._run_dir_path(run_id)
-    safe_project_name = project_name.replace("/", "_").replace(" ", "_")
+    safe_project_name = safe_artifact_stem(project_name, fallback="project")
     return ProjectServiceLogPaths(
         run_logs_dir=run_logs_dir,
         safe_project_name=safe_project_name,
-        backend_log_path=str(run_logs_dir / f"{safe_project_name}_backend.txt"),
-        frontend_log_path=str(run_logs_dir / f"{safe_project_name}_frontend.txt"),
+        backend_log_path=project_service_log_path(
+            run_logs_dir=run_logs_dir,
+            project_name=project_name,
+            service_name="backend",
+        ),
+        frontend_log_path=project_service_log_path(
+            run_logs_dir=run_logs_dir,
+            project_name=project_name,
+            service_name="frontend",
+        ),
     )
+
+
+def project_service_log_path(*, run_logs_dir: Path, project_name: object, service_name: object) -> str:
+    safe_project_name = safe_artifact_stem(project_name, fallback="project")
+    safe_service_name = safe_artifact_stem(str(service_name).replace("-", "_"), fallback="service")
+    return str(run_logs_dir / f"{safe_project_name}_{safe_service_name}.txt")
 
 
 def project_env_for_service(
