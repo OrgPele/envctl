@@ -145,6 +145,10 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("Do not run raw `git`, `gh`, or separate commit/PR/status commands", codex)
         self.assertIn("do not block the main agent waiting for a successful ship result", codex)
         self.assertIn("send a message back only for commit/push/PR failures", codex)
+        self.assertIn(
+            "A successful ship result is silent: the shipping subagent must not send a success summary",
+            codex,
+        )
         self.assertIn("keep the main implementation thread moving on non-overlapping work", codex)
         self.assertIn("Only inspect PR review comments when `ship` reports actionable review-comment status", codex)
         self.assertNotIn("Inspect unresolved PR review comments after the PR exists", codex)
@@ -209,6 +213,10 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("Do not run raw `git`, `gh`, or separate commit/PR/status commands", finalize_prompt.body)
         self.assertIn("do not block the main agent waiting for a successful ship result", finalize_prompt.body)
         self.assertIn("should send a message back only for merge conflicts", finalize_prompt.body)
+        self.assertIn(
+            "A successful ship result is silent: the shipping subagent must not send a success summary",
+            finalize_prompt.body,
+        )
         self.assertIn("Only inspect PR review comments when `ship` reports actionable review-comment status", finalize_prompt.body)
         self.assertNotIn("Inspect unresolved PR review comments", finalize_prompt.body)
 
@@ -223,10 +231,24 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("do not wait for a successful ship result", intermediate_prompt)
         self.assertIn("If no real background tool is available, run `envctl ship -m \"<message>\"` normally", intermediate_prompt)
         self.assertIn("only return to the shipping lane if the subagent reports an issue", intermediate_prompt)
+        self.assertIn(
+            "A successful ship result is silent: the shipping subagent must not send a success summary",
+            intermediate_prompt,
+        )
+
+        first_cycle_prompt = _load_template("_plan_agent_first_cycle_completion").body
+        self.assertIn(
+            "A successful ship result is silent: the shipping subagent must not send a success summary",
+            first_cycle_prompt,
+        )
 
         review_comments_prompt = _load_template("_plan_agent_pr_review_comments_followup").body
         self.assertIn("Inspect unresolved PR review comments", review_comments_prompt)
         self.assertIn("address all actionable comments", review_comments_prompt)
+        self.assertIn(
+            "A successful ship result is silent: the shipping subagent must not send a success summary",
+            review_comments_prompt,
+        )
 
         review_worktree_prompt = _load_template("review_worktree_imp")
         self.assertEqual(review_worktree_prompt.name, "review_worktree_imp")

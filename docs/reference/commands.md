@@ -471,7 +471,9 @@ checks still return a non-zero exit. The timeout can be tuned with
 `ENVCTL_SHIP_CHECK_TIMEOUT_SECONDS` and
 `ENVCTL_SHIP_CHECK_POLL_INTERVAL_SECONDS` (default: 5 seconds); progress heartbeat output can be tuned separately with
 `ENVCTL_SHIP_CHECK_PROGRESS_INTERVAL_SECONDS`; the no-check-context grace can be tuned with
-`ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS`.
+`ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS`. When a real background/subagent lane runs `ship`, success is silent: the worker
+should report only commit/push/PR failures, merge conflicts, failed checks, pending timeouts, no-checks-reported status,
+or actionable review comments.
 
 Optional plan-agent launch config for `--plan`:
 

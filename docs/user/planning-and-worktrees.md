@@ -272,7 +272,8 @@ unavailable or reports a recoverable issue. To avoid idling the main
 implementation lane, agents can run `ship` in a background/subagent lane and
 propagate commit/push/PR, merge-conflict, failed-check, pending-timeout, no-checks-reported, or
 review-comment problems when the shipping subagent returns. The main agent should keep working and should not wait for a
-successful ship result; the shipping subagent should send a message back only when it needs attention.
+successful ship result; a successful ship result is silent, so the shipping subagent should send no success summary,
+JSON payload, or completion message back to the main agent.
 
 Use `--plan` when:
 
