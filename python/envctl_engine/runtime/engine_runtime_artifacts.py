@@ -4,16 +4,27 @@ import hashlib
 import json
 import threading
 import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from envctl_engine.runtime.runtime_readiness import (
     FEATURE_MATRIX_RELATIVE_PATH,
     GAP_REPORT_RELATIVE_PATH,
+    RuntimeReadinessResult,
     build_runtime_readiness_report,
     evaluate_runtime_readiness,
 )
 from envctl_engine.state.runtime_map import build_runtime_map
+
+
+class _FinalPort(Protocol):
+    final: int
+
+
+class _SummaryContext(Protocol):
+    name: str
+    ports: Mapping[str, _FinalPort]
 
 
 def write_artifacts(runtime: Any, state: object, contexts: list[object], *, errors: list[str]) -> None:
@@ -48,7 +59,7 @@ def write_runtime_readiness_report(
     runtime: Any,
     *,
     run_dir: Path | None = None,
-    readiness_result: object | None = None,
+    readiness_result: RuntimeReadinessResult | None = None,
 ) -> None:
     started = time.monotonic()
     emit = getattr(runtime, "_emit", None)
@@ -64,7 +75,11 @@ def write_runtime_readiness_report(
             )
         return
 
-    readiness = readiness_result or evaluate_runtime_readiness(runtime.config.base_dir)
+    readiness = (
+        readiness_result
+        if readiness_result is not None
+        else evaluate_runtime_readiness(runtime.config.base_dir)
+    )
     report_payload = build_runtime_readiness_report(readiness)
     report_text = json.dumps(report_payload, indent=2, sort_keys=True)
     _write_runtime_readiness_payload(runtime, report_text=report_text, run_dir=run_dir)
@@ -205,7 +220,7 @@ def _runtime_readiness_async_enabled(runtime: Any) -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
-def print_summary(_runtime: Any, state: object, contexts: list[object]) -> None:
+def print_summary(_runtime: Any, state: object, contexts: Sequence[_SummaryContext]) -> None:
     _ = state
     print("envctl Python engine run summary")
     for context in contexts:

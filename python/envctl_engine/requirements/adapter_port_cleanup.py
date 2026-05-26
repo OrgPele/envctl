@@ -4,7 +4,8 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from .adapter_policy import env_bool
-from .common import run_docker, run_result_error, stop_and_remove_container
+from .container_state_support import stop_and_remove_container
+from .docker_runtime import run_docker, run_result_error
 
 
 def bind_safe_cleanup_enabled(env: Mapping[str, str] | None, *, service_name: str) -> bool:

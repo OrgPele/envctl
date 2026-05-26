@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
-from envctl_engine.shared.services import project_name_from_service_name
+from envctl_engine.shared.services import project_name_from_service_name, service_display_name
 from envctl_engine.state.models import RunState
 
 
@@ -23,7 +24,7 @@ def write_runtime_map(path: str, state: RunState) -> None:
 def build_runtime_projection(state: RunState, *, host: str = "localhost") -> dict[str, dict[str, object]]:
     runtime_map = build_runtime_map_without_projection(state, host=host)
     projection: dict[str, dict[str, object]] = {}
-    projects = runtime_map["projects"]
+    projects = cast(dict[str, dict[str, object]], runtime_map["projects"])
     service_records = state.services
     for project, ports in projects.items():
         backend_port = ports.get("backend_port")
@@ -123,7 +124,7 @@ def _service_projection_ready(service: object | None) -> bool:
 def _project_name_from_service_record(service: object) -> str:
     name = str(getattr(service, "name", "") or "").strip()
     service_type = str(getattr(service, "type", "") or "").strip().lower()
-    display_suffix = " ".join(part.capitalize() for part in service_type.replace("_", "-").split("-") if part)
+    display_suffix = service_display_name(service_type)
     if display_suffix and name.endswith(f" {display_suffix}"):
         return name[: -(len(display_suffix) + 1)]
     return project_name_from_service_name(name)

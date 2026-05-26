@@ -11,15 +11,31 @@ import unittest
 from envctl_engine.actions.action_test_summary_support import (
     collect_failed_test_manifest_entries,
     collect_failed_tests,
+    FailedTestSummaryWriter,
     format_summary_error_lines,
     persist_test_summary_artifacts,
     print_test_suite_overview,
+    summary_float,
+    summary_int,
     suite_display_name,
+    TestSummaryArtifactPersistor,
     write_failed_tests_summary,
 )
 
 
 class ActionTestSummarySupportTests(unittest.TestCase):
+    def test_summary_artifact_support_has_named_owner_objects(self) -> None:
+        self.assertTrue(callable(TestSummaryArtifactPersistor.persist))
+        self.assertTrue(callable(FailedTestSummaryWriter.write))
+
+    def test_summary_value_coercion_defaults_malformed_values(self) -> None:
+        self.assertEqual(summary_int("3"), 3)
+        self.assertEqual(summary_int(object(), default=5), 5)
+        self.assertEqual(summary_int("bad", default=7), 7)
+        self.assertEqual(summary_float("1.25"), 1.25)
+        self.assertEqual(summary_float(object(), default=2.5), 2.5)
+        self.assertEqual(summary_float("bad", default=3.5), 3.5)
+
     def test_collect_failed_tests_deduplicates_and_resolves_file_level_errors(self) -> None:
         outcomes = [
             {
@@ -102,6 +118,25 @@ class ActionTestSummarySupportTests(unittest.TestCase):
             self.assertIn("AssertionError: boom", summary_path.read_text(encoding="utf-8"))
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(manifest["git_state"], {"head": "HEAD", "status_hash": "hash", "status_lines": 2})
+
+    def test_write_failed_tests_summary_uses_single_safe_project_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "run"
+            project_root = Path(tmpdir) / "repo"
+            project_root.mkdir()
+
+            result = write_failed_tests_summary(
+                run_dir=run_dir,
+                project_name="Feature/API v2",
+                project_root=project_root,
+                outcomes=[{"project_name": "Feature/API v2", "suite": "backend_pytest", "returncode": 0}],
+                git_state_components=lambda _root: ("HEAD", "hash", 0),
+            )
+
+            summary_path = Path(str(result["summary_path"]))
+            self.assertEqual(summary_path.parent, run_dir / "Feature_API_v2")
+            self.assertTrue(summary_path.is_file())
+            self.assertFalse((run_dir / "Feature").exists())
 
     def test_persist_test_summary_artifacts_updates_state_metadata_and_emits_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

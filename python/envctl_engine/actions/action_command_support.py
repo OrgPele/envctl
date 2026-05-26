@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Mapping
 
+from envctl_engine.actions.action_target_support import action_target_identity, action_target_names
 from envctl_engine.actions.action_utils import envctl_python_root
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool
@@ -15,14 +16,13 @@ def build_action_replacements(
     targets: list[object],
     target: object | None,
 ) -> dict[str, str]:
-    project_names = [str(getattr(ctx, "name")) for ctx in targets if hasattr(ctx, "name")]
     replacements = {
         "repo_root": str(repo_root),
-        "projects_csv": ",".join(project_names),
+        "projects_csv": ",".join(action_target_names(targets)),
     }
-    if target is not None:
-        replacements["project"] = str(getattr(target, "name"))
-        replacements["project_root"] = str(getattr(target, "root"))
+    if target is not None and (identity := action_target_identity(target)):
+        replacements["project"] = identity.name
+        replacements["project_root"] = str(identity.root)
     return replacements
 
 
@@ -60,7 +60,12 @@ def build_action_extra_env(route: Route) -> dict[str, str]:
         extra["ENVCTL_COMMIT_MESSAGE_FILE"] = str(route.flags["commit_message_file"])
     if isinstance(route.flags.get("analyze_mode"), str):
         extra["ENVCTL_ANALYZE_MODE"] = str(route.flags["analyze_mode"])
-    if bool(route.flags.get("json")):
+    if route.command == "ship":
+        if bool(route.flags.get("human")):
+            extra["ENVCTL_ACTION_HUMAN"] = "true"
+        else:
+            extra["ENVCTL_ACTION_JSON"] = "true"
+    elif bool(route.flags.get("json")):
         extra["ENVCTL_ACTION_JSON"] = "true"
     service_types = service_types_from_route_services(route)
     if service_types == {"backend"}:
@@ -101,9 +106,7 @@ def build_action_env(
     else:
         env["PYTHONPATH"] = python_path
     env["ENVCTL_ACTION_COMMAND"] = command_name
-    env["ENVCTL_ACTION_PROJECTS"] = ",".join(
-        str(getattr(context, "name")) for context in targets if hasattr(context, "name")
-    )
+    env["ENVCTL_ACTION_PROJECTS"] = ",".join(action_target_names(targets))
     env["ENVCTL_ACTION_REPO_ROOT"] = str(repo_root)
     if runtime_root is not None:
         env["ENVCTL_ACTION_RUNTIME_ROOT"] = str(runtime_root)
@@ -111,9 +114,9 @@ def build_action_env(
         env["ENVCTL_ACTION_RUN_ID"] = run_id
     if tree_diffs_root is not None:
         env["ENVCTL_ACTION_TREE_DIFFS_ROOT"] = str(tree_diffs_root)
-    if target is not None:
-        env["ENVCTL_ACTION_PROJECT"] = str(getattr(target, "name"))
-        env["ENVCTL_ACTION_PROJECT_ROOT"] = str(getattr(target, "root"))
+    if target is not None and (identity := action_target_identity(target)):
+        env["ENVCTL_ACTION_PROJECT"] = identity.name
+        env["ENVCTL_ACTION_PROJECT_ROOT"] = str(identity.root)
     if route is not None:
         batch_requested = bool(route.flags.get("batch")) or parse_bool(env.get("BATCH"), False)
         interactive_action = bool(route.flags.get("interactive_command")) or not batch_requested

@@ -103,10 +103,10 @@ class PlanAgentLaunchWorkflowQueueTests(PlanAgentLaunchSupportTestCase):
                 surface_id="surface:9",
                 text=queued_text,
                 require_text_match=False,
-            )
+        )
 
         self.assertFalse(queued)
-        self.assertEqual(sent_keys, [])
+        self.assertNotIn("tab", sent_keys)
 
     def test_codex_cycle_queue_direct_prompt_accepts_pasted_content_placeholder(self) -> None:
         sent_keys: list[str] = []

@@ -1,12 +1,19 @@
 # ruff: noqa: F403,F405
 from __future__ import annotations
 
+import inspect
 import unittest
 
+from envctl_engine.requirements.supabase_lifecycle import native_db
 from tests.python.requirements.requirements_adapter_contract_support import *
 
 
 class SupabaseNativeDbContractTests(unittest.TestCase):
+    def test_supabase_native_db_startup_has_lifecycle_owner(self) -> None:
+        self.assertTrue(hasattr(native_db, "NativeSupabaseDatabaseStarter"))
+        start_lines, _ = inspect.getsourcelines(native_db._start_supabase_db_native)
+        self.assertLessEqual(len(start_lines), 35)
+
     def test_supabase_native_db_recovers_from_timed_out_start_when_container_becomes_healthy(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -155,6 +162,37 @@ class SupabaseNativeDbContractTests(unittest.TestCase):
             )
             self.assertTrue(rm_seen)
             self.assertTrue(create_seen)
+
+    def test_supabase_native_db_recreates_mismatched_adopted_container_when_host_probe_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runner = _FakeRunner()
+            container_name = build_supabase_project_name(project_root=root, project_name="Main") + "-supabase-db-1"
+            runner.existing.add(container_name)
+            runner.status[container_name] = "running"
+            runner.port_mappings[(container_name, "5432")] = "0.0.0.0:5440\n"
+            runner.wait_for_port_sequences[5440] = [False]
+            runner.wait_for_port_sequences[5435] = [True]
+
+            result = start_supabase_stack(
+                process_runner=runner,
+                project_root=root,
+                project_name="Main",
+                db_port=5435,
+                env={"ENVCTL_SUPABASE_DB_START_NATIVE": "true"},
+            )
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.effective_port, 5435)
+            self.assertFalse(result.port_adopted)
+            rm_commands = [cmd for cmd in runner.commands if cmd[:3] == ["docker", "rm", "-f"] and cmd[-1] == container_name]
+            self.assertEqual(len(rm_commands), 1)
+            self.assertTrue(
+                any(
+                    cmd[:2] == ["docker", "create"] and "--name" in cmd and container_name in cmd
+                    for cmd in runner.commands
+                )
+            )
 
     def test_supabase_native_db_recovers_from_timed_out_create_when_container_becomes_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

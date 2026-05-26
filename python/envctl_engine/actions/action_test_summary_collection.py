@@ -13,7 +13,7 @@ def collect_failed_tests(
 ) -> list[tuple[str, str, str]]:
     collected: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str]] = set()
-    ordered = sorted(outcomes, key=lambda value: int(value.get("index", 0)))
+    ordered = sorted(outcomes, key=lambda value: summary_int(value.get("index")))
     for item in ordered:
         if project_name is not None:
             item_project_name = str(item.get("project_name", "")).strip()
@@ -43,7 +43,7 @@ def collect_failed_test_manifest_entries(
     project_name: str | None = None,
 ) -> list[dict[str, object]]:
     entries: list[dict[str, object]] = []
-    ordered = sorted(outcomes, key=lambda value: int(value.get("index", 0)))
+    ordered = sorted(outcomes, key=lambda value: summary_int(value.get("index")))
     for item in ordered:
         if project_name is not None:
             item_project_name = str(item.get("project_name", "")).strip()
@@ -91,13 +91,13 @@ def collect_generic_suite_failures(
     project_name: str | None = None,
 ) -> list[tuple[str, str]]:
     collected: list[tuple[str, str]] = []
-    ordered = sorted(outcomes, key=lambda value: int(value.get("index", 0)))
+    ordered = sorted(outcomes, key=lambda value: summary_int(value.get("index")))
     for item in ordered:
         if project_name is not None:
             item_project_name = str(item.get("project_name", "")).strip()
             if item_project_name != project_name:
                 continue
-        if int(item.get("returncode", 0) or 0) == 0:
+        if summary_int(item.get("returncode")) == 0:
             continue
         parsed = item.get("parsed")
         failed_tests = list(getattr(parsed, "failed_tests", []) or []) if parsed is not None else []
@@ -120,13 +120,13 @@ def collect_suite_failure_contexts(
     project_name: str | None = None,
 ) -> list[tuple[str, str]]:
     collected: list[tuple[str, str]] = []
-    ordered = sorted(outcomes, key=lambda value: int(value.get("index", 0)))
+    ordered = sorted(outcomes, key=lambda value: summary_int(value.get("index")))
     for item in ordered:
         if project_name is not None:
             item_project_name = str(item.get("project_name", "")).strip()
             if item_project_name != project_name:
                 continue
-        if int(item.get("returncode", 0) or 0) == 0:
+        if summary_int(item.get("returncode")) == 0:
             continue
         parsed = item.get("parsed")
         failed_tests = list(getattr(parsed, "failed_tests", []) or []) if parsed is not None else []
@@ -173,3 +173,31 @@ def suite_display_name(source: str, *, failed_only: bool = False) -> str:
     if source == "configured":
         return "Test command (failed only)" if failed_only else "Test command"
     return source.replace("_", " ")
+
+
+def summary_int(value: object, *, default: int = 0) -> int:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float | str | bytes | bytearray):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
+def summary_float(value: object, *, default: float = 0.0) -> float:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, int | float | str | bytes | bytearray):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default

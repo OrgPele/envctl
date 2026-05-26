@@ -68,7 +68,3 @@ def dashboard_configured_missing_services_by_project(
                 continue
             missing.setdefault(project, set()).add(service_type)
     return missing
-
-
-def _service_display_name(service_type: str) -> str:
-    return " ".join(part.capitalize() for part in str(service_type).replace("_", "-").split("-") if part)

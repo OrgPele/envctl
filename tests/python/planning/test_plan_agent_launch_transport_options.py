@@ -140,7 +140,7 @@ class PlanAgentLaunchTransportOptionsTests(PlanAgentLaunchSupportTestCase):
             self.assertEqual(codex_config.cli, "codex")
             self.assertEqual(codex_config.preset, "implement_task")
             self.assertEqual(codex_config.codex_cycles, 3)
-            self.assertTrue(codex_config.pr_review_comments_followup_enable)
+            self.assertFalse(codex_config.pr_review_comments_followup_enable)
             self.assertEqual(codex_workflow.mode, "codex_cycles")
             self.assertEqual(codex_workflow.codex_cycles, 3)
 
@@ -155,7 +155,7 @@ class PlanAgentLaunchTransportOptionsTests(PlanAgentLaunchSupportTestCase):
             self.assertEqual(omx_config.omx_workflow, "ultragoal")
             self.assertEqual(omx_config.codex_cycles, 3)
             self.assertIsNone(omx_config.codex_cycles_warning)
-            self.assertTrue(omx_config.pr_review_comments_followup_enable)
+            self.assertFalse(omx_config.pr_review_comments_followup_enable)
             self.assertEqual(omx_workflow.mode, "codex_cycles")
 
     def test_cmux_flag_enables_default_plan_agent_launch(self) -> None:
@@ -163,14 +163,24 @@ class PlanAgentLaunchTransportOptionsTests(PlanAgentLaunchSupportTestCase):
                 repo = Path(tmpdir) / "repo"
                 runtime = Path(tmpdir) / "runtime"
                 repo.mkdir(parents=True, exist_ok=True)
-                config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime)})
+                config = load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "CMUX": "false",
+                        "CMUX_WORKSPACE_ID": "",
+                        "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "",
+                        "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "",
+                    }
+                )
 
-                default_config = launch_support.resolve_plan_agent_launch_config(
-                    config, {}, route=parse_route(["--plan", "feature-a"], env={})
-                )
-                cmux_config = launch_support.resolve_plan_agent_launch_config(
-                    config, {}, route=parse_route(["--plan", "feature-a", "--cmux"], env={})
-                )
+                with patch("envctl_engine.planning.plan_agent.config.shutil.which", return_value="/usr/local/bin/cmux"):
+                    default_config = launch_support.resolve_plan_agent_launch_config(
+                        config, {}, route=parse_route(["--plan", "feature-a"], env={})
+                    )
+                    cmux_config = launch_support.resolve_plan_agent_launch_config(
+                        config, {}, route=parse_route(["--plan", "feature-a", "--cmux"], env={})
+                    )
 
             self.assertFalse(default_config.enabled)
             self.assertEqual(default_config.transport, "cmux")
@@ -183,7 +193,16 @@ class PlanAgentLaunchTransportOptionsTests(PlanAgentLaunchSupportTestCase):
                 repo = Path(tmpdir) / "repo"
                 runtime = Path(tmpdir) / "runtime"
                 repo.mkdir(parents=True, exist_ok=True)
-                config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime)})
+                config = load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "CMUX": "false",
+                        "CMUX_WORKSPACE_ID": "",
+                        "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "",
+                        "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "",
+                    }
+                )
 
                 with patch("envctl_engine.planning.plan_agent.config.shutil.which", return_value="/usr/local/bin/cmux"):
                     default_config = launch_support.resolve_plan_agent_launch_config(
@@ -206,7 +225,16 @@ class PlanAgentLaunchTransportOptionsTests(PlanAgentLaunchSupportTestCase):
                 repo = Path(tmpdir) / "repo"
                 runtime = Path(tmpdir) / "runtime"
                 repo.mkdir(parents=True, exist_ok=True)
-                config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime)})
+                config = load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "CMUX": "false",
+                        "CMUX_WORKSPACE_ID": "",
+                        "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "",
+                        "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "",
+                    }
+                )
 
                 with patch("envctl_engine.planning.plan_agent.config.shutil.which", return_value=None):
                     default_config = launch_support.resolve_plan_agent_launch_config(

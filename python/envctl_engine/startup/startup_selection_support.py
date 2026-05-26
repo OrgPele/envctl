@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 
 from envctl_engine.planning import list_planning_files, planning_existing_counts, select_projects_for_plan_files
@@ -136,15 +137,15 @@ def _tree_preselected_projects_from_plans(
         if str(getattr(context, "name", "")).strip()
     ]
     existing_counts = planning_existing_counts(projects=projects, planning_files=planning_files)
-    plan_counts = {
-        plan_file: int(existing_counts.get(plan_file, 0))
+    plan_counts = OrderedDict(
+        (plan_file, count)
         for plan_file in planning_files
-        if int(existing_counts.get(plan_file, 0)) > 0
-    }
+        if (count := int(existing_counts.get(plan_file, 0))) > 0
+    )
     if not plan_counts:
         return []
     try:
-        selected = select_projects_for_plan_files(projects=projects, plan_counts=plan_counts)  # type: ignore[arg-type]
+        selected = select_projects_for_plan_files(projects=projects, plan_counts=plan_counts)
     except Exception:
         return []
     return [name for name, _root in selected if str(name).strip()]

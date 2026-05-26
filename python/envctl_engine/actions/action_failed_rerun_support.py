@@ -3,13 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Mapping
 
-from envctl_engine.actions.action_test_support import (
+from envctl_engine.actions.action_test_manifest_support import (
     FailedTestManifest,
-    TestExecutionSpec,
-    TestTargetContext,
-    build_failed_test_execution_specs,
     load_failed_test_manifest,
 )
+from envctl_engine.actions.action_test_support import build_failed_test_execution_specs
+from envctl_engine.actions.action_test_support_models import TestExecutionSpec, TestTargetContext
 
 
 def build_failed_test_execution_specs_from_state(

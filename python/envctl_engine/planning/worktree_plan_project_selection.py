@@ -4,7 +4,7 @@ import sys
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from envctl_engine.planning import (
     filter_projects_for_plan,
@@ -14,17 +14,13 @@ from envctl_engine.planning import (
     select_projects_for_plan_files,
 )
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanSelectionResult, PlanWorktreeSyncResult
+from envctl_engine.planning.protocols import ProjectContextLike
 from envctl_engine.planning.worktree_plan_selection import (
     adjust_plan_counts_for_fresh_ai_launch,
     fresh_ai_launch_transport,
     route_requests_fresh_ai_worktree,
 )
 from envctl_engine.runtime.command_router import Route
-
-
-class ProjectContextLike(Protocol):
-    name: str
-    root: Path
 
 
 def _prediction_selection_result(

@@ -298,7 +298,7 @@ class ActionCommandTargetTests(unittest.TestCase):
         persist.assert_called_once_with(orchestrator, route=route, targets=targets, outcomes=outcomes)
 
         with patch(
-            "envctl_engine.actions.action_test_summary_artifacts.write_failed_tests_summary",
+            "envctl_engine.actions.action_test_summary_support.write_failed_tests_summary",
             return_value={"status": "failed"},
         ) as write_summary:
             summary = write_failed_tests_summary_for_orchestrator(

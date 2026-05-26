@@ -118,7 +118,7 @@ def run_text_input_dialog_textual(
         def on_mount(self) -> None:
             try:
                 apply_textual_driver_compat(
-                    driver=self.driver,
+                    driver=getattr(self, "driver", None),
                     screen="text_input_dialog",
                     mouse_enabled=run_policy.mouse,
                     disable_focus_reporting=True,

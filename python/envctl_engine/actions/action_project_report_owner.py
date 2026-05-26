@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, cast
 
 from envctl_engine.actions.project_action_report_support import (
     build_project_action_failure_handler,
@@ -11,6 +11,7 @@ from envctl_engine.actions.project_action_report_support import (
     review_success_artifact_paths,
 )
 from envctl_engine.state.runtime_map import build_runtime_map
+from envctl_engine.state.models import RunState
 from envctl_engine.actions.action_migrate_support import (
     migrate_failure_headline,
     project_action_failure_summary_lines,
@@ -74,6 +75,10 @@ def persist_project_action_result_with_owner(
         migrate_env_contracts=orchestrator._migrate_env_contracts,
         failure_summary_lines=project_action_failure_summary_lines,
         failure_headline=migrate_failure_headline,
-        runtime_map_builder=build_runtime_map,
+        runtime_map_builder=_build_runtime_map_for_state,
         extra_entry=extra_entry,
     )
+
+
+def _build_runtime_map_for_state(state: object) -> dict[str, object]:
+    return build_runtime_map(cast(RunState, state))

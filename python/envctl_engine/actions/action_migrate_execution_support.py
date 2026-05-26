@@ -4,8 +4,9 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from envctl_engine.actions.actions_analysis import default_migrate_command
-from envctl_engine.actions.action_target_support import ActionCommandResolution
+from envctl_engine.actions.action_target_support import ActionCommandResolution, action_target_names
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.runtime_context import resolve_process_runtime
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.actions.action_migrate_support import (
     migrate_failure_headline,
@@ -66,6 +67,7 @@ def run_migrate_action(
     interactive_command = bool(route.flags.get("interactive_command"))
     observed_outcomes: dict[str, dict[str, object]] = {}
     migrate_env_contracts = migrate_env_contracts or {}
+    process_runtime = resolve_process_runtime(runtime)
 
     def resolve_command(context: object) -> ActionCommandResolution:
         target = getattr(context, "target_obj")
@@ -119,7 +121,7 @@ def run_migrate_action(
             target=getattr(context, "target_obj"),
             extra=extra_env,
         ),
-        process_run=lambda command, cwd, env: runtime.process_runner.run(
+        process_run=lambda command, cwd, env: process_runtime.run(
             command,
             cwd=cwd,
             env=dict(env),
@@ -136,11 +138,7 @@ def run_migrate_action(
         print_noninteractive_successes=False,
     )
     if not interactive_command:
-        target_names = [
-            str(getattr(target, "name", "")).strip()
-            for target in targets
-            if str(getattr(target, "name", "")).strip()
-        ]
+        target_names = action_target_names(targets)
         set_deferred_output(
             lambda: print_result_summary(
                 mode=route.mode,

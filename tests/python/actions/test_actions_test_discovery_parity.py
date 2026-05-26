@@ -19,6 +19,7 @@ from tests.python.actions.actions_parity_test_support import (
     rich_test_command_suggestions,
     strip_ansi,
 )
+from envctl_engine.actions.actions_test_command_discovery import TestCommandDiscovery
 
 
 class ActionsTestDiscoveryParityTests(_ActionsParityTestCase):
@@ -91,6 +92,21 @@ class ActionsTestDiscoveryParityTests(_ActionsParityTestCase):
                 ),
                 msg=fake_runner.run_calls,
             )
+
+    def test_default_test_command_discovers_backend_tests_from_root_python_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "pyproject.toml").write_text(
+                "[tool.poetry]\nname='backend'\nversion='1.0.0'\n",
+                encoding="utf-8",
+            )
+
+            with patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"):
+                command = default_test_command(repo)
+
+        self.assertEqual(command, ["/usr/bin/python3", "-m", "pytest", str(repo / "backend" / "tests")])
 
     def test_default_test_command_prefers_backend_pytest_over_root_unittest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -354,6 +370,35 @@ class ActionsTestDiscoveryParityTests(_ActionsParityTestCase):
             self.assertEqual(commands[0].command, ["pnpm", "run", "test", "--", "src"])
             self.assertEqual(commands[0].cwd, repo / "frontend")
 
+    def test_command_discovery_object_keeps_default_and_suggestion_precedence_together(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "tests").mkdir(parents=True, exist_ok=True)
+            (repo / "backend" / "requirements.txt").write_text("pytest\n", encoding="utf-8")
+            frontend = repo / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"frontend","scripts":{"test":"vitest run"}}',
+                encoding="utf-8",
+            )
+            (frontend / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+
+            with patch(
+                "envctl_engine.shared.node_tooling.shutil.which",
+                side_effect=lambda name: "/usr/bin/pnpm" if name == "pnpm" else None,
+            ):
+                discovery = TestCommandDiscovery(
+                    repo,
+                    detect_python_bin_fn=lambda _project_root, _base_dir: "/usr/bin/python3",
+                )
+                commands = discovery.default_commands()
+                suggestions = discovery.suggestions()
+
+            self.assertEqual([command.source for command in commands], ["backend_pytest", "frontend_package_test"])
+            self.assertEqual([suggestion.source for suggestion in suggestions], ["backend_pytest", "frontend_package_test"])
+            self.assertTrue(all(suggestion.is_default for suggestion in suggestions))
+
     def test_test_action_appends_frontend_test_path_to_configured_frontend_test_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -545,4 +590,3 @@ class ActionsTestDiscoveryParityTests(_ActionsParityTestCase):
         self.assertEqual(len(specs), 1)
         self.assertEqual(specs[0].spec.source, "root_unittest")
         self.assertEqual(specs[0].resolved_source, "root_unittest")
-
