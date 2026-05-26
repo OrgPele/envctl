@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import shutil
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -355,7 +356,7 @@ class RuntimeStateRepository:
         return runtime_map_text
 
     @staticmethod
-    def _json_text(payload: dict[str, object]) -> str:
+    def _json_text(payload: Mapping[str, object]) -> str:
         return json.dumps(payload, indent=2, sort_keys=True)
 
     @staticmethod
