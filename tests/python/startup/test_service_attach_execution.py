@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 import unittest
 
+from envctl_engine.runtime.service_manager import ServiceStartDescriptor
 from envctl_engine.startup.service_attach_execution import ServiceAttachRunner
 from envctl_engine.startup.service_execution_records import PreparedServiceLaunch
-from envctl_engine.state.models import ServiceRecord
+from envctl_engine.state.models import PortPlan, ServiceRecord
+
+
+def port_plan(port: int) -> PortPlan:
+    return PortPlan(project="Main", requested=port, assigned=port, final=port, source="test")
 
 
 class ServiceAttachExecutionTests(unittest.TestCase):
@@ -36,13 +43,17 @@ class ServiceAttachExecutionTests(unittest.TestCase):
         )
 
         def start_services_with_attach(**kwargs: object) -> dict[str, ServiceRecord]:
-            descriptors = tuple(kwargs["descriptors"])
+            descriptor_items = cast(Iterable[ServiceStartDescriptor], kwargs["descriptors"])
+            descriptors = tuple(descriptor_items)
             layers.append(tuple(descriptor.service_type for descriptor in descriptors))
             records: dict[str, ServiceRecord] = {}
             for descriptor in descriptors:
                 ok, error, pid = descriptor.start(descriptor.requested_port)
                 self.assertTrue(ok, error)
-                actual = descriptor.detect_actual(pid, descriptor.requested_port)
+                detect_actual = descriptor.detect_actual
+                self.assertIsNotNone(detect_actual)
+                assert detect_actual is not None
+                actual = detect_actual(pid, descriptor.requested_port)
                 records[f"Main {descriptor.service_type.title().replace('-', ' ')}"] = ServiceRecord(
                     name=f"Main {descriptor.service_type.title().replace('-', ' ')}",
                     type=descriptor.service_type,
@@ -91,8 +102,8 @@ class ServiceAttachExecutionTests(unittest.TestCase):
             port_allocator=SimpleNamespace(reserve_next=lambda port, owner: port),
             project_name="Main",
             project_root=project_root,
-            backend_plan=SimpleNamespace(final=8000),
-            frontend_plan=SimpleNamespace(final=5173),
+            backend_plan=port_plan(8000),
+            frontend_plan=port_plan(5173),
             backend_cwd=project_root / "backend",
             frontend_cwd=project_root / "frontend",
             backend_log_path="/logs/backend.txt",
@@ -155,6 +166,14 @@ class ServiceAttachExecutionTests(unittest.TestCase):
                 for event, payload in events
             )
         )
+        self.assertTrue(
+            any(
+                event == "service.attach.phase"
+                and payload["service"] == "voice-runtime"
+                and payload["phase"] == "process_launch"
+                for event, payload in events
+            )
+        )
 
     def test_additional_listener_truth_failure_emits_failure_event(self) -> None:
         project_root = Path("/tmp/envctl-project")
@@ -174,8 +193,8 @@ class ServiceAttachExecutionTests(unittest.TestCase):
             port_allocator=SimpleNamespace(reserve_next=lambda port, owner: port),
             project_name="Main",
             project_root=project_root,
-            backend_plan=SimpleNamespace(final=8000),
-            frontend_plan=SimpleNamespace(final=5173),
+            backend_plan=port_plan(8000),
+            frontend_plan=port_plan(5173),
             backend_cwd=project_root / "backend",
             frontend_cwd=project_root / "frontend",
             backend_log_path="/logs/backend.txt",
@@ -239,8 +258,8 @@ class ServiceAttachExecutionTests(unittest.TestCase):
             port_allocator=SimpleNamespace(reserve_next=lambda port, owner: port),
             project_name="Main",
             project_root=Path("/repo"),
-            backend_plan=SimpleNamespace(final=8000),
-            frontend_plan=SimpleNamespace(final=5173),
+            backend_plan=port_plan(8000),
+            frontend_plan=port_plan(5173),
             backend_cwd=Path("/repo/backend"),
             frontend_cwd=Path("/repo/frontend"),
             backend_log_path="/logs/backend.txt",

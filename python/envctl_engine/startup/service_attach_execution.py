@@ -180,12 +180,46 @@ class ServiceAttachRunner:
             stderr_path=log_path,
         )
 
+    def _conflicting_start_result(self, service_name: str, port: int) -> tuple[bool, str | None, int | None] | None:
+        remaining = self.runtime._conflict_remaining.get(service_name, 0)
+        if remaining <= 0:
+            return None
+        self.runtime._conflict_remaining[service_name] = remaining - 1
+        self.runtime._emit("service.start", project=self.project_name, service=service_name, port=port, retry=True)
+        return False, "bind: address already in use", None
+
+    def _launch_prepared_process(
+        self,
+        *,
+        service_name: str,
+        command: list[str],
+        launch: PreparedServiceLaunch,
+        launch_port: int,
+        event_port: int,
+        env_extra: dict[str, str],
+        pid_fallback: int,
+    ) -> tuple[bool, str | None, int | None]:
+        launch_started = time.monotonic()
+        process = self._start_process(
+            command,
+            cwd=str(launch.cwd),
+            env=self.command_env_builder(port=launch_port, extra=env_extra),
+            log_path=launch.log_path,
+        )
+        self._emit_attach_phase(service_name, "process_launch", launch_started)
+        self.runtime._emit(
+            "service.start",
+            project=self.project_name,
+            service=service_name,
+            port=event_port,
+            retry=False,
+        )
+        return True, None, getattr(process, "pid", pid_fallback)
+
     def start_backend(self, port: int) -> tuple[bool, str | None, int | None]:
-        remaining = self.runtime._conflict_remaining.get("backend", 0)
-        if remaining > 0:
-            self.runtime._conflict_remaining["backend"] = remaining - 1
-            self.runtime._emit("service.start", project=self.project_name, service="backend", port=port, retry=True)
-            return False, "bind: address already in use", None
+        conflict_result = self._conflicting_start_result("backend", port)
+        if conflict_result is not None:
+            return conflict_result
         command_resolve_started = time.monotonic()
         command, _resolved_source = self.runtime._service_start_command_resolved(
             service_name="backend",
@@ -193,23 +227,20 @@ class ServiceAttachRunner:
             port=port,
         )
         self._emit_attach_phase("backend", "command_resolution", command_resolve_started)
-        launch_started = time.monotonic()
-        process = self._start_process(
-            command,
-            cwd=str(self.prepared_launches["backend"].cwd),
-            env=self.command_env_builder(port=port, extra=self.backend_env_extra),
-            log_path=self.prepared_launches["backend"].log_path,
+        return self._launch_prepared_process(
+            service_name="backend",
+            command=command,
+            launch=self.prepared_launches["backend"],
+            launch_port=port,
+            event_port=port,
+            env_extra=self.backend_env_extra,
+            pid_fallback=os.getpid(),
         )
-        self._emit_attach_phase("backend", "process_launch", launch_started)
-        self.runtime._emit("service.start", project=self.project_name, service="backend", port=port, retry=False)
-        return True, None, getattr(process, "pid", os.getpid())
 
     def start_frontend(self, port: int) -> tuple[bool, str | None, int | None]:
-        remaining = self.runtime._conflict_remaining.get("frontend", 0)
-        if remaining > 0:
-            self.runtime._conflict_remaining["frontend"] = remaining - 1
-            self.runtime._emit("service.start", project=self.project_name, service="frontend", port=port, retry=True)
-            return False, "bind: address already in use", None
+        conflict_result = self._conflicting_start_result("frontend", port)
+        if conflict_result is not None:
+            return conflict_result
         launch_port = port + self.rebound_delta if self.rebound_delta > 0 else port
         if self.rebound_delta > 0:
             launch_port = self.port_allocator.reserve_next(
@@ -223,23 +254,20 @@ class ServiceAttachRunner:
             port=launch_port,
         )
         self._emit_attach_phase("frontend", "command_resolution", command_resolve_started)
-        launch_started = time.monotonic()
-        process = self._start_process(
-            command,
-            cwd=str(self.prepared_launches["frontend"].cwd),
-            env=self.command_env_builder(port=launch_port, extra=self.frontend_env_extra),
-            log_path=self.prepared_launches["frontend"].log_path,
+        return self._launch_prepared_process(
+            service_name="frontend",
+            command=command,
+            launch=self.prepared_launches["frontend"],
+            launch_port=launch_port,
+            event_port=port,
+            env_extra=self.frontend_env_extra,
+            pid_fallback=os.getpid() + 1,
         )
-        self._emit_attach_phase("frontend", "process_launch", launch_started)
-        self.runtime._emit("service.start", project=self.project_name, service="frontend", port=port, retry=False)
-        return True, None, getattr(process, "pid", os.getpid() + 1)
 
     def start_additional_service(self, service_name: str, port: int) -> tuple[bool, str | None, int | None]:
-        remaining = self.runtime._conflict_remaining.get(service_name, 0)
-        if remaining > 0:
-            self.runtime._conflict_remaining[service_name] = remaining - 1
-            self.runtime._emit("service.start", project=self.project_name, service=service_name, port=port, retry=True)
-            return False, "bind: address already in use", None
+        conflict_result = self._conflicting_start_result(service_name, port)
+        if conflict_result is not None:
+            return conflict_result
         launch = self.prepared_launches[service_name]
         service = self.runtime.config.app_service_by_name(service_name)
         if service is None:
@@ -256,14 +284,15 @@ class ServiceAttachRunner:
             cwd=launch.cwd,
         )
         self._emit_attach_phase(service_name, "command_resolution", command_resolve_started)
-        process = self._start_process(
-            command,
-            cwd=str(launch.cwd),
-            env=self.command_env_builder(port=port, extra=launch.env),
-            log_path=launch.log_path,
+        return self._launch_prepared_process(
+            service_name=service_name,
+            command=command,
+            launch=launch,
+            launch_port=port,
+            event_port=port,
+            env_extra=launch.env,
+            pid_fallback=os.getpid(),
         )
-        self.runtime._emit("service.start", project=self.project_name, service=service_name, port=port, retry=False)
-        return True, None, getattr(process, "pid", os.getpid())
 
     def detect_backend_actual(self, pid: int | None, requested: int) -> int | None:
         if not self.backend_listener_expected:
