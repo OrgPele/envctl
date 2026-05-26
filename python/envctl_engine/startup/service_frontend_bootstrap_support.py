@@ -2,22 +2,17 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Mapping
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.node_tooling import detect_package_manager, load_package_json
 from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.startup.protocols import ProjectContextLike
 from envctl_engine.startup.public_urls import browser_backend_url, resolve_public_host
 from envctl_engine.startup.service_runtime_state_support import (
     _frontend_runtime_prep_required,
     _write_frontend_runtime_prep_state,
 )
-
-
-class ProjectContextLike(Protocol):
-    name: str
-    root: Path
-
 
 def _prepare_frontend_runtime(
     self: Any,

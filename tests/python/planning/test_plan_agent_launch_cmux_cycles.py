@@ -153,8 +153,8 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                         "cli": "codex",
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 2,
-                        "queued_steps": 6,
-                        "queued_steps_confirmed": 6,
+                        "queued_steps": 5,
+                        "queued_steps_confirmed": 5,
                         "transport": "cmux",
                     }
                 ],
@@ -459,8 +459,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                     "codex_cycles": 3,
                     "codex_goal_enable": True,
                     "browser_e2e_followup_enable": True,
-                    "pr_review_comments_followup_enable": True,
+                    "pr_review_comments_followup_enable": False,
                 }
             ],
         )
-

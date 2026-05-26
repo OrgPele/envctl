@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from contextlib import nullcontext
 import hashlib
 from pathlib import Path
@@ -13,7 +14,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.startup.resume_restore_support import restore_missing  # noqa: E402
-import envctl_engine.startup.requirements_execution as requirements_execution_module  # noqa: E402
+import envctl_engine.startup.requirements_project_startup as requirements_project_startup_module  # noqa: E402
 from envctl_engine.startup.protocols import StartupOrchestratorLike  # noqa: E402
 from envctl_engine.startup.requirements_execution import (  # noqa: E402
     requirements_parallel_enabled,
@@ -204,7 +205,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
         orchestrator = SimpleNamespace(runtime=runtime)
 
-        with mock.patch.object(requirements_execution_module.sys, "platform", "darwin"):
+        with mock.patch.object(requirements_project_startup_module.sys, "platform", "darwin"):
             self.assertFalse(
                 requirements_parallel_enabled(orchestrator, route=parse_route(["start"], env={}), enabled_count=3)
             )
@@ -216,7 +217,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 )
             )
 
-        with mock.patch.object(requirements_execution_module.sys, "platform", "linux"):
+        with mock.patch.object(requirements_project_startup_module.sys, "platform", "linux"):
             self.assertTrue(
                 requirements_parallel_enabled(orchestrator, route=parse_route(["start"], env={}), enabled_count=3)
             )
@@ -229,7 +230,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             )
 
         runtime.env["ENVCTL_REQUIREMENTS_PARALLEL"] = "true"
-        with mock.patch.object(requirements_execution_module.sys, "platform", "darwin"):
+        with mock.patch.object(requirements_project_startup_module.sys, "platform", "darwin"):
             self.assertTrue(
                 requirements_parallel_enabled(orchestrator, route=parse_route(["start"], env={}), enabled_count=3)
             )
@@ -518,6 +519,50 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
 
         self.assertEqual(result, ["Feature", "Main"])
 
+    def test_tree_preselected_projects_preserves_plan_file_order_for_plan_fallback(self) -> None:
+        planning_dir = Path("/tmp/repo/todo/plans")
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(planning_dir=planning_dir),
+            _try_load_existing_state=lambda **kwargs: None,
+        )
+        project_contexts = [
+            SimpleNamespace(name="Feature B-1", root=Path("/tmp/repo/trees/feature-b/1")),
+            SimpleNamespace(name="Feature A-1", root=Path("/tmp/repo/trees/feature-a/1")),
+        ]
+
+        def select_projects(*, projects, plan_counts):
+            self.assertEqual(
+                projects,
+                [
+                    ("Feature B-1", Path("/tmp/repo/trees/feature-b/1")),
+                    ("Feature A-1", Path("/tmp/repo/trees/feature-a/1")),
+                ],
+            )
+            self.assertIsInstance(plan_counts, OrderedDict)
+            self.assertEqual(list(plan_counts.items()), [("feature-b.md", 1), ("feature-a.md", 2)])
+            return [("Feature B-1", Path("/tmp/repo/trees/feature-b/1"))]
+
+        with (
+            mock.patch(
+                "envctl_engine.startup.startup_selection_support.list_planning_files",
+                return_value=["feature-b.md", "unused.md", "feature-a.md"],
+            ),
+            mock.patch(
+                "envctl_engine.startup.startup_selection_support.planning_existing_counts",
+                return_value={"feature-a.md": 2, "feature-b.md": 1, "unused.md": 0},
+            ),
+            mock.patch(
+                "envctl_engine.startup.startup_selection_support.select_projects_for_plan_files",
+                side_effect=select_projects,
+            ),
+        ):
+            result = _tree_preselected_projects_from_state(
+                runtime=runtime,
+                project_contexts=project_contexts,
+            )
+
+        self.assertEqual(result, ["Feature B-1"])
+
     def test_maybe_prewarm_docker_does_not_require_orchestrator_wrapper_methods(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
         runtime = SimpleNamespace(
@@ -789,6 +834,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             }
             overlap_hits: list[str] = []
             attach_modes: list[bool] = []
+            overlay_calls: list[str] = []
 
             def prepare_backend_runtime(**kwargs: object) -> None:
                 _ = kwargs
@@ -838,6 +884,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: None),
                 _prepare_backend_runtime=prepare_backend_runtime,
                 _prepare_frontend_runtime=prepare_frontend_runtime,
+                _service_env_overlays=lambda service_name, base_env: overlay_calls.append(service_name) or None,
                 _service_command_source=lambda **kwargs: "configured",
                 _emit=lambda event, **payload: None,
             )
@@ -872,6 +919,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             self.assertIn("Main Frontend", records)
             self.assertEqual(attach_modes, [False])
             self.assertEqual(sorted(overlap_hits), ["backend", "frontend"])
+            self.assertEqual(sorted(overlay_calls), ["backend", "frontend"])
 
     def test_start_project_services_integrates_additional_listener_and_worker_by_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

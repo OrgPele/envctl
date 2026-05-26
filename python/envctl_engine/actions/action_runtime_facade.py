@@ -57,7 +57,7 @@ class ActionRuntimeFacade:
 
     def unsupported_command(self, command: str) -> int:
         unsupported = self._resolve_callable("unsupported_command", "_unsupported_command")
-        return int(unsupported(command))
+        return _exit_code(unsupported(command), default=1)
 
     def emit(self, event: str, **payload: object) -> None:
         emitter = getattr(self._runtime, "_emit", None)
@@ -111,3 +111,13 @@ class ActionRuntimeFacade:
     @property
     def raw_runtime(self) -> Any:
         return self._runtime
+
+
+def _exit_code(raw: object, *, default: int) -> int:
+    if isinstance(raw, bool):
+        return int(raw)
+    try:
+        value = int(raw if isinstance(raw, (int, float, str)) else str(raw))
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default

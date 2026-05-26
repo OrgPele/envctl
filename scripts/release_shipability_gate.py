@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
         "--check-tests",
         dest="check_tests",
         action="store_true",
-        help="Run the Python unittest suite as part of the gate.",
+        help="Run the canonical pytest validation lane through uv as part of the gate.",
     )
     tests_group.add_argument(
         "--skip-tests",

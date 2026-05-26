@@ -211,7 +211,7 @@ class PythonCleanupScriptTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as exc:
                 self.module._ensure_python_modules_available(["basedpyright"])
         self.assertIn("Missing required Python modules", str(exc.exception))
-        self.assertIn(".venv/bin/python -m pip install -e '.[dev]'", str(exc.exception))
+        self.assertIn("uv sync --extra dev --python 3.12", str(exc.exception))
 
     def test_run_plan_prints_fix_scope_note(self) -> None:
         plan = self.module.build_plan(

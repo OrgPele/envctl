@@ -5,12 +5,8 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
-
-class _ProcessRunnerProtocol(Protocol):
-    def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
-        ...
+from envctl_engine.shared.protocols import ProcessRuntime
 
 
 @dataclass(slots=True)
@@ -27,7 +23,7 @@ def delete_worktree_path(
     repo_root: Path,
     trees_root: Path,
     worktree_root: Path,
-    process_runner: _ProcessRunnerProtocol,
+    process_runner: ProcessRuntime,
     dry_run: bool = False,
 ) -> WorktreeDeleteResult:
     resolved_repo = repo_root.resolve()
@@ -84,7 +80,7 @@ def _with_cgc_cleanup_message(message: str, cgc_cleanup_message: str | None) -> 
 def _delete_worktree_cgc_context(
     *,
     worktree_root: Path,
-    process_runner: _ProcessRunnerProtocol,
+    process_runner: ProcessRuntime,
 ) -> str | None:
     context = _worktree_cgc_context_from_metadata(worktree_root)
     if not context:

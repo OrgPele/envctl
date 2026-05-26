@@ -1,0 +1,158 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest import TestCase
+
+from envctl_engine.actions import action_test_runner_progress
+from envctl_engine.actions.action_test_runner_progress import LiveTestProgressReporter, ParallelTestProgressTracker
+
+
+def _execution(*, index: int = 1, source: str = "backend", project_name: str = "feature-a") -> SimpleNamespace:
+    return SimpleNamespace(index=index, spec=SimpleNamespace(source=source), project_name=project_name)
+
+
+class ParallelTestProgressTrackerTests(TestCase):
+    def test_parallel_tracker_groups_config_and_state(self) -> None:
+        self.assertTrue(hasattr(action_test_runner_progress, "ParallelTestProgressConfig"))
+        self.assertTrue(hasattr(action_test_runner_progress, "ParallelTestProgressState"))
+        public_fields = {
+            name for name, field in ParallelTestProgressTracker.__dataclass_fields__.items() if field.init
+        }
+        self.assertEqual(public_fields, {"config", "callbacks", "state"})
+
+    def test_emit_status_renders_queued_running_and_completed_state(self) -> None:
+        messages: list[str] = []
+        tracker = ParallelTestProgressTracker(
+            enabled=True,
+            total_suites=3,
+            max_workers=2,
+            multi_project=True,
+            failed_only=False,
+            emit_status=messages.append,
+            suite_display_name=lambda source, *, failed_only: f"{source}-suite" if not failed_only else source,
+        )
+
+        tracker.emit_status(phase="queued")
+        tracker.mark_running(_execution(index=1, source="backend", project_name="feature-a"))
+        tracker.mark_finished(_execution(index=1, source="backend", project_name="feature-a"), success=True)
+
+        self.assertEqual(
+            messages,
+            [
+                "Tests progress: running 0/2, finished 0/3, queued 3 • running: - • done: -",
+                (
+                    "Tests progress: running 1/2, finished 0/3, queued 2 • running: feature-a / backend-suite "
+                    "• running: feature-a / backend-suite • done: -"
+                ),
+                (
+                    "Tests progress: running 0/2, finished 1/3, queued 2 • completed: feature-a / backend-suite "
+                    "• running: - • done: feature-a / backend-suite (PASS)"
+                ),
+            ],
+        )
+
+    def test_disabled_tracker_does_not_emit_or_mutate_status(self) -> None:
+        messages: list[str] = []
+        tracker = ParallelTestProgressTracker(
+            enabled=False,
+            total_suites=1,
+            max_workers=1,
+            multi_project=False,
+            failed_only=True,
+            emit_status=messages.append,
+            suite_display_name=lambda source, *, failed_only: source,
+        )
+
+        tracker.emit_status(phase="queued")
+        tracker.mark_running(_execution(source="backend"))
+        tracker.mark_finished(_execution(source="backend"), success=False)
+
+        self.assertEqual(messages, [])
+
+    def test_label_rendering_compacts_long_running_and_done_lists(self) -> None:
+        messages: list[str] = []
+        tracker = ParallelTestProgressTracker(
+            enabled=True,
+            total_suites=5,
+            max_workers=4,
+            multi_project=False,
+            failed_only=False,
+            emit_status=messages.append,
+            suite_display_name=lambda source, *, failed_only: source,
+        )
+
+        for index in range(1, 5):
+            tracker.mark_running(_execution(index=index, source=f"suite-{index}"))
+        tracker.mark_finished(_execution(index=1, source="suite-1"), success=False)
+        tracker.mark_finished(_execution(index=2, source="suite-2"), success=True)
+        tracker.mark_finished(_execution(index=3, source="suite-3"), success=True)
+        tracker.mark_finished(_execution(index=4, source="suite-4"), success=True)
+
+        self.assertTrue(any("running: suite-1, suite-2, suite-3, +1 more" in message for message in messages))
+        self.assertIn(
+            "done: suite-1 (FAIL), suite-2 (PASS), suite-3 (PASS), +1 more",
+            messages[-1],
+        )
+
+
+class LiveTestProgressReporterTests(TestCase):
+    def test_collection_progress_is_deduped_and_ignored_after_running_starts(self) -> None:
+        messages: list[str] = []
+        spinner_updates: list[str] = []
+        reporter = LiveTestProgressReporter(
+            label="backend",
+            emit_status=messages.append,
+            parsed_provider=lambda: None,
+            spinner_progress=spinner_updates.append,
+        )
+
+        reporter.emit(current=-1, total=12)
+        reporter.emit(current=-1, total=12)
+        reporter.emit(current=3, total=12)
+        reporter.emit(current=-1, total=20)
+
+        self.assertEqual(
+            messages,
+            [
+                "Collecting backend tests... 12 discovered",
+                "Running backend... 3/12 tests complete • 3 passed, 0 failed",
+            ],
+        )
+        self.assertEqual(spinner_updates, ["12 discovered", "3/12 complete • 3 passed, 0 failed"])
+
+    def test_unknown_total_progress_merges_monotonic_current_and_failed_counts(self) -> None:
+        parsed = SimpleNamespace(failed=1, errors=1, failed_tests=())
+        messages: list[str] = []
+        spinner_updates: list[str] = []
+        reporter = LiveTestProgressReporter(
+            label="frontend",
+            emit_status=messages.append,
+            parsed_provider=lambda: parsed,
+            spinner_progress=spinner_updates.append,
+        )
+
+        reporter.emit(current=4, total=0)
+        reporter.emit(current=2, total=0)
+
+        self.assertEqual(messages, ["Running frontend... 4 tests complete • 2 passed, 2 failed"])
+        self.assertEqual(spinner_updates, ["4 complete • 2 passed, 2 failed"])
+
+    def test_late_total_discovery_preserves_existing_current(self) -> None:
+        messages: list[str] = []
+        reporter = LiveTestProgressReporter(
+            label="backend",
+            emit_status=messages.append,
+            parsed_provider=lambda: SimpleNamespace(failed=1, errors=0, failed_tests=()),
+            spinner_progress=None,
+        )
+
+        reporter.emit(current=5, total=0)
+        reporter.emit(current=0, total=9)
+
+        self.assertEqual(
+            messages,
+            [
+                "Running backend... 5 tests complete • 4 passed, 1 failed",
+                "Running backend... 5/9 tests complete • 4 passed, 1 failed",
+            ],
+        )

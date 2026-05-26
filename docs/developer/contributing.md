@@ -13,8 +13,7 @@ This repository is Python-first at runtime. Most behavior changes therefore need
 3. Install the CLI in editable mode:
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
+uv sync --extra dev --python 3.12
 ```
 
 If you are only operating `envctl` from a source checkout and are not doing contributor validation work, install the runtime-only stack with `python -m pip install -r python/requirements.txt` instead. The editable `.[dev]` lane is for contributors working on this repository itself.
@@ -22,15 +21,15 @@ If you are only operating `envctl` from a source checkout and are not doing cont
 4. Run the authoritative repo-wide validation lane:
 
 ```bash
-.venv/bin/python -m pytest -q
-.venv/bin/python -m build
-.venv/bin/python scripts/release_shipability_gate.py --repo .
+uv run --extra dev pytest -q
+uv run --extra dev python -m build
+uv run --extra dev python scripts/release_shipability_gate.py --repo .
 ```
 
 5. To verify the release gate against the same canonical test lane:
 
 ```bash
-.venv/bin/python scripts/release_shipability_gate.py --repo . --check-tests
+uv run --extra dev python scripts/release_shipability_gate.py --repo . --check-tests
 ```
 
 6. Use narrower `unittest` targets only for focused local iteration; they are no longer the authoritative release-readiness lane.

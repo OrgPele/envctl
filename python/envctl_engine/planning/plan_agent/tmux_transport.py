@@ -1,41 +1,55 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
-import json
-import os
-import re
-import shlex
-import shutil
-import subprocess
 import sys
-import threading
 import time
-from importlib import resources
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Mapping
 
-from envctl_engine.planning import planning_feature_name
-from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
 from envctl_engine.runtime.codex_tmux_support import (
     _attach_interactive,
     _completed_process_error_text as _tmux_completed_process_error_text,
     _run_probe as _run_tmux_probe,
     _tmux_session_exists,
 )
-from envctl_engine.runtime.prompt_install_support import (
-    resolve_codex_direct_prompt_body,
-    resolve_opencode_direct_prompt_body,
-)
-from envctl_engine.state.models import RunState
-from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 
-from envctl_engine.planning.plan_agent.constants import *
-from envctl_engine.planning.plan_agent.models import *
-from envctl_engine.planning.plan_agent.config import *
-from envctl_engine.planning.plan_agent.workflow import *
-from envctl_engine.planning.plan_agent.terminal_screen import *
-from envctl_engine.planning.plan_agent.recovery import *
-from envctl_engine.planning.plan_agent.tmux_session import *
+from envctl_engine.planning.plan_agent.config import _cli_ready_delay_seconds, _guidance_attach_command
+from envctl_engine.planning.plan_agent.constants import (
+    _TMUX_WINDOW_READY_POLL_INTERVAL_SECONDS,
+    _TMUX_WINDOW_READY_TIMEOUT_SECONDS,
+)
+from envctl_engine.planning.plan_agent.models import (
+    AiCliReadyResult,
+    CreatedPlanWorktree,
+    PlanAgentAttachTarget,
+    PlanAgentLaunchConfig,
+    PlanAgentLaunchOutcome,
+    PlanAgentLaunchResult,
+    _PlanAgentWorkflow,
+    _PlanAgentWorkflowStep,
+)
+from envctl_engine.planning.plan_agent.recovery import (
+    _new_session_command_for_route,
+    _persist_runtime_events_snapshot,
+    _print_launch_summary,
+    _queue_failure_event_context,
+    _summarize_failed_launch_outcomes,
+)
+from envctl_engine.planning.plan_agent.terminal_screen import (
+    _format_ai_cli_ready_failure,
+    _screen_excerpt,
+    _screen_looks_active,
+    _screen_looks_ready,
+)
+from envctl_engine.planning.plan_agent.tmux_session import (
+    _prompt_existing_tmux_session_action,
+    _should_prompt_existing_tmux_session,
+)
+from envctl_engine.planning.plan_agent.workflow import (
+    _codex_goal_text_for_worktree,
+    _emit_codex_goal_event,
+    _wrap_omx_initial_prompt_for_workflow,
+)
+from envctl_engine.planning.plan_agent.workflow_prompt_support import _workflow_step_prompt_text
 from envctl_engine.planning.plan_agent.tmux_identity_support import (
     next_available_tmux_session_name as _next_available_tmux_session_name,
     tmux_session_name_for_worktree as _tmux_session_name_for_worktree,
@@ -48,6 +62,14 @@ import envctl_engine.planning.plan_agent.tmux_window_support as tmux_window_supp
 import envctl_engine.planning.plan_agent.tmux_health_support as tmux_health_support
 import envctl_engine.planning.plan_agent.tmux_worktree_launch_support as tmux_worktree_launch_support
 import envctl_engine.planning.plan_agent.tmux_launch_support as tmux_launch_support
+
+_tmux_target = tmux_surface_support.tmux_target
+_run_tmux_command = tmux_surface_support.run_tmux_command
+_send_tmux_text = tmux_surface_support.send_tmux_text
+_send_tmux_key = tmux_surface_support.send_tmux_key
+_read_tmux_screen = tmux_surface_support.read_tmux_screen
+_send_tmux_prompt = tmux_surface_support.send_tmux_prompt
+
 
 def _launch_plan_agent_tmux_terminals(
     runtime: Any,
@@ -101,10 +123,6 @@ def _launch_single_tmux_worktree(
         run_tmux_worktree_bootstrap_fn=_run_tmux_worktree_bootstrap,
         persist_runtime_events_snapshot_fn=_persist_runtime_events_snapshot,
     )
-
-
-def _tmux_target(session_name: str, window_name: str) -> str:
-    return tmux_surface_support.tmux_target(session_name, window_name)
 
 
 def _enable_tmux_mouse_scrollback(runtime: Any, *, session_name: str) -> str | None:
@@ -206,63 +224,6 @@ def _existing_tmux_session_health(runtime: Any, *, session_name: str, window_nam
         screen_looks_active_fn=_screen_looks_active,
         screen_excerpt_fn=_screen_excerpt,
     )
-
-
-def _run_tmux_command(
-    runtime: Any,
-    command: tuple[str, ...],
-    *,
-    emit_failure_event: bool = True,
-    failure_event: str = "planning.agent_launch.failed",
-) -> str | None:
-    return tmux_surface_support.run_tmux_command(
-        runtime,
-        command,
-        emit_failure_event=emit_failure_event,
-        failure_event=failure_event,
-    )
-
-
-def _send_tmux_text(
-    runtime: Any,
-    *,
-    session_name: str,
-    window_name: str,
-    text: str,
-    emit_failure_event: bool = True,
-    failure_event: str = "planning.agent_launch.failed",
-) -> str | None:
-    return tmux_surface_support.send_tmux_text(
-        runtime,
-        session_name=session_name,
-        window_name=window_name,
-        text=text,
-        emit_failure_event=emit_failure_event,
-        failure_event=failure_event,
-    )
-
-
-def _send_tmux_key(
-    runtime: Any,
-    *,
-    session_name: str,
-    window_name: str,
-    key: str,
-    emit_failure_event: bool = True,
-    failure_event: str = "planning.agent_launch.failed",
-) -> str | None:
-    return tmux_surface_support.send_tmux_key(
-        runtime,
-        session_name=session_name,
-        window_name=window_name,
-        key=key,
-        emit_failure_event=emit_failure_event,
-        failure_event=failure_event,
-    )
-
-
-def _read_tmux_screen(runtime: Any, *, session_name: str, window_name: str) -> str:
-    return tmux_surface_support.read_tmux_screen(runtime, session_name=session_name, window_name=window_name)
 
 
 def _run_tmux_existing_session_workflow(
@@ -373,15 +334,6 @@ def _wait_for_tmux_cli_ready(runtime: Any, *, session_name: str, window_name: st
         cli=cli,
         timeout_seconds=timeout_seconds,
         read_tmux_screen_fn=_read_tmux_screen,
-    )
-
-
-def _send_tmux_prompt(runtime: Any, *, session_name: str, window_name: str, text: str) -> str | None:
-    return tmux_surface_support.send_tmux_prompt(
-        runtime,
-        session_name=session_name,
-        window_name=window_name,
-        text=text,
     )
 
 

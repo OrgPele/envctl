@@ -59,6 +59,11 @@ class ActionRuntimeFacadeTests(unittest.TestCase):
         with self.assertRaisesRegex(AttributeError, "missing required action collaborator"):
             facade.discover_projects(mode="trees")
 
+    def test_unsupported_command_invalid_exit_code_fails_closed(self) -> None:
+        facade = ActionRuntimeFacade(SimpleNamespace(_unsupported_command=lambda _command: object()))
+
+        self.assertEqual(facade.unsupported_command("bad"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

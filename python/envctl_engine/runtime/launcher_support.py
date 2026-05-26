@@ -6,9 +6,13 @@ from textwrap import indent
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-import tomllib
 
 from envctl_engine.runtime.help_text import render_help_text as render_runtime_help_text
+from envctl_engine.shared.python_project_metadata import (
+    pyproject_project_string_field_from_payload,
+    pyproject_project_table_from_payload,
+    read_pyproject,
+)
 from envctl_engine.shared.repo_roots import (
     canonical_envctl_project_root,
     find_repo_root,
@@ -98,16 +102,15 @@ def resolve_envctl_version(*, project_root: Path | None = None) -> str:
         if not pyproject_path.is_file():
             continue
         try:
-            payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-        except (OSError, tomllib.TOMLDecodeError) as exc:
+            payload = read_pyproject(pyproject_path)
+        except (OSError, ValueError) as exc:
             raise LauncherError(f"Could not determine envctl version from {pyproject_path}: {exc}") from exc
-        project = payload.get("project")
-        if not isinstance(project, dict):
+        if pyproject_project_table_from_payload(payload) is None:
             raise LauncherError(f"Could not determine envctl version from {pyproject_path}: missing [project] table")
-        version = project.get("version")
-        if not isinstance(version, str) or not version.strip():
+        version = pyproject_project_string_field_from_payload(payload, "version")
+        if version is None:
             raise LauncherError(f"Could not determine envctl version from {pyproject_path}: missing project.version")
-        return version.strip()
+        return version
 
     try:
         return str(importlib_metadata.version("envctl"))
@@ -138,7 +141,7 @@ def _candidate_version_files(project_root: Path | None) -> list[Path]:
 
 
 def find_shadowed_installed_envctl(current_binary: Path, env: Mapping[str, str] | None = None) -> Path | None:
-    env_map = {} if env is None else env
+    env_map: Mapping[str, str] = {} if env is None else env
     current_resolved = _resolved_path(current_binary)
     seen: set[Path] = {current_resolved}
     for candidate in _path_envctl_candidates(env_map):
@@ -197,7 +200,7 @@ def is_explicit_wrapper_path(
     env: Mapping[str, str] | None = None,
     cwd: Path | None = None,
 ) -> bool:
-    env_map = {} if env is None else env
+    env_map: Mapping[str, str] = {} if env is None else env
     invocation = _effective_invocation_argv0(current_binary, argv0, env=env)
     if not invocation:
         return False
@@ -230,7 +233,7 @@ def select_envctl_reexec_target(
     cwd: Path | None = None,
     alternate: Path | None = None,
 ) -> Path | None:
-    env_map = {} if env is None else env
+    env_map: Mapping[str, str] = {} if env is None else env
     if env_map.get("ENVCTL_USE_REPO_WRAPPER") == "1":
         return None
     separators = [os.path.sep]
@@ -406,7 +409,7 @@ def install_or_uninstall(
         if payload:
             payload.append("")
         payload.extend(block)
-        shell_file.write_text("\n".join(payload) + "\n", encoding="utf-8")
+        _ = shell_file.write_text("\n".join(payload) + "\n", encoding="utf-8")
         return ""
     if _BLOCK_START not in existing:
         return shell_file.read_text(encoding="utf-8") if options.dry_run and shell_file.exists() else ""
@@ -414,5 +417,5 @@ def install_or_uninstall(
     if options.dry_run:
         rendered = "\n".join(filtered)
         return rendered + ("\n" if rendered else "")
-    shell_file.write_text(("\n".join(filtered) + "\n") if filtered else "", encoding="utf-8")
+    _ = shell_file.write_text(("\n".join(filtered) + "\n") if filtered else "", encoding="utf-8")
     return ""

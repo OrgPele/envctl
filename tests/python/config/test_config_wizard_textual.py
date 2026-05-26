@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from typing import Any, cast
 from pathlib import Path
+from typing import Any, cast
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 from envctl_engine.config import AppServiceConfig, PortDefaults, StartupProfile, discover_local_config_state
@@ -11,11 +11,13 @@ from envctl_engine.config.persistence import ManagedConfigValues, config_review_
 from envctl_engine.ui.textual.screens.config_wizard import (
     _additional_service_input_id,
     _directory_validation_message,
+    _hydrate_wizard_values,
     _visible_command_fields,
     _visible_directory_fields,
     _visible_port_fields,
     run_config_wizard_textual,
 )
+from envctl_engine.ui.textual.screens.config_wizard_fields import build_additional_service_from_input_values
 
 
 class ConfigWizardTextualTests(unittest.TestCase):
@@ -112,6 +114,94 @@ class ConfigWizardTextualTests(unittest.TestCase):
                 getattr(app, "_steps").index("additional_services"),
             )
 
+    def test_hydration_preserves_additional_service_enable_if_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / "voice-runtime").mkdir()
+            values = ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+                additional_services=(
+                    AppServiceConfig(
+                        name="voice-runtime",
+                        env_suffix="VOICE_RUNTIME",
+                        enabled_main=True,
+                        enabled_trees=False,
+                        dir_name="voice-runtime",
+                        start_cmd="python -m voice_runtime --port {port}",
+                        port_base=8010,
+                        enable_if_path="voice-runtime/app/main.py",
+                    ),
+                ),
+            )
+
+            hydrated = _hydrate_wizard_values(values, base_dir=repo)
+
+            self.assertEqual(hydrated.additional_services[0].enable_if_path, "voice-runtime/app/main.py")
+            self.assertIsNot(hydrated.additional_services[0], values.additional_services[0])
+
+    def test_additional_service_input_builder_preserves_hidden_fields(self) -> None:
+        existing = AppServiceConfig(
+            name="voice-runtime",
+            env_suffix="VOICE_RUNTIME",
+            enabled_main=True,
+            enabled_trees=True,
+            dir_name="voice-runtime",
+            start_cmd="old-start {port}",
+            startup_group="workers",
+            enable_if_path="voice-runtime/app/main.py",
+        )
+        values = {
+            "slug": "voice-runtime",
+            "dir_name": "voice-runtime",
+            "start_cmd": "scripts/start-voice.sh {port}",
+            "port_base": "8010",
+            "listener_expected": "true",
+            "enabled_main": "true",
+            "enabled_trees": "false",
+            "test_cmd": "scripts/test-voice.sh",
+            "public_url": "https://voice.example.test",
+            "health_url": "https://voice.example.test/readyz",
+            "depends_on": "backend, redis",
+            "start_order": "45",
+            "critical": "false",
+        }
+
+        result = build_additional_service_from_input_values(values.get, existing_service=existing)
+
+        self.assertIsNone(result.error_message)
+        self.assertIsNotNone(result.service)
+        service = cast(AppServiceConfig, result.service)
+        self.assertEqual(service.name, "voice-runtime")
+        self.assertEqual(service.env_suffix, "VOICE_RUNTIME")
+        self.assertEqual(service.port_base, 8010)
+        self.assertEqual(service.depends_on, ("backend", "redis"))
+        self.assertEqual(service.start_order, 45)
+        self.assertFalse(service.critical)
+        self.assertEqual(service.startup_group, "workers")
+        self.assertEqual(service.enable_if_path, "voice-runtime/app/main.py")
+
+    def test_additional_service_input_builder_reports_field_errors(self) -> None:
+        values = {
+            "slug": "voice-runtime",
+            "port_base": "eight",
+            "start_order": "45",
+        }
+
+        result = build_additional_service_from_input_values(lambda field: values.get(field, ""))
+
+        self.assertEqual(result.error_message, "Base port must be a positive integer.")
+        self.assertEqual(result.focus_field, "port_base")
+        self.assertIsNone(result.service)
+
+    def test_additional_service_input_builder_removes_current_service_for_blank_slug(self) -> None:
+        result = build_additional_service_from_input_values(lambda _field: "")
+
+        self.assertTrue(result.remove_current)
+        self.assertIsNone(result.service)
+        self.assertIsNone(result.error_message)
 
     def test_additional_app_service_wizard_inputs_add_full_service_definition(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -193,6 +283,8 @@ class ConfigWizardTextualTests(unittest.TestCase):
                         dir_name="voice-runtime",
                         start_cmd="old-start {port}",
                         port_base=8010,
+                        startup_group="workers",
+                        enable_if_path="voice-runtime/app/main.py",
                     ),
                     AppServiceConfig(
                         name="worker",
@@ -227,6 +319,8 @@ class ConfigWizardTextualTests(unittest.TestCase):
             worker = app.values.additional_services[1]  # noqa: SLF001
             self.assertEqual(voice.start_cmd, "new-start {port}")
             self.assertFalse(voice.enabled_trees)
+            self.assertEqual(voice.startup_group, "workers")
+            self.assertEqual(voice.enable_if_path, "voice-runtime/app/main.py")
             self.assertEqual(worker.name, "worker")
             self.assertFalse(worker.expect_listener)
             self.assertFalse(worker.critical)

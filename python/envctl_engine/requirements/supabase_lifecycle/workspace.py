@@ -4,7 +4,7 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
-from ..common import build_container_name
+from ..common_contracts import build_container_name
 from ...shared.dependency_compose_assets import materialize_dependency_compose, supabase_managed_env
 
 def _normalize_compose_error(error: str, *, compose_project_name: str) -> str:
