@@ -10,6 +10,19 @@ from envctl_engine.actions import project_action_workflow_factory
 
 
 class ProjectActionWorkflowFactoryTests(unittest.TestCase):
+    def test_workflow_factory_groups_source_dependencies_by_action_area(self) -> None:
+        self.assertEqual(
+            set(project_action_workflow_factory.ProjectActionWorkflowFactory.__dataclass_fields__),
+            {"git", "commit", "pull_request", "review"},
+        )
+        for class_name in (
+            "ProjectActionWorkflowGitSources",
+            "ProjectActionWorkflowCommitSources",
+            "ProjectActionWorkflowPullRequestSources",
+            "ProjectActionWorkflowReviewSources",
+        ):
+            self.assertTrue(hasattr(project_action_workflow_factory, class_name), class_name)
+
     def test_workflow_runner_uses_named_factory_bridges_for_legacy_patch_points(self) -> None:
         report = object()
         context = domain.ActionProjectContext(

@@ -13,6 +13,7 @@ import envctl_engine.actions.action_pr_message_support as pr_message_support
 import envctl_engine.actions.action_review_artifact_support as review_artifact_support
 import envctl_engine.actions.action_review_plan_support as review_plan_support
 import envctl_engine.actions.action_ship_support as ship_support
+import envctl_engine.actions.project_action_workflow_factory as workflow_factory
 from envctl_engine.actions.action_protected_artifacts import (
     EnvctlProtectedPathPartition,
     ordered_unique_paths as _ordered_unique_paths,
@@ -25,9 +26,7 @@ from envctl_engine.actions.action_review_output_support import (
     print_review_completion_rich as _print_review_completion_rich,
     review_colorizer as _review_colorizer,
 )
-from envctl_engine.actions.project_action_workflow_factory import ProjectActionWorkflowFactory
 from envctl_engine.actions.project_action_workflows import ProjectActionWorkflowRunner
-
 from envctl_engine.shared.parsing import parse_bool
 
 PR_BODY_MAX_CHARS = 48_000
@@ -96,33 +95,41 @@ OriginalPlanResolution = review_plan_support.OriginalPlanResolution
 
 
 def _workflow_runner() -> ProjectActionWorkflowRunner:
-    return ProjectActionWorkflowFactory(
-        resolve_git_root_fn=resolve_git_root,
-        which_fn=shutil.which,
-        git_output_fn=_git_output,
-        run_git_fn=_run_git,
-        print_error_fn=_print_error,
-        partition_envctl_protected_paths_fn=_partition_envctl_protected_paths,
-        ordered_unique_paths_fn=_ordered_unique_paths,
-        resolve_base_branch_fn=_resolve_pr_base_branch,
-        existing_pr_url_fn=existing_pr_url,
-        probe_dirty_worktree_source_fn=probe_dirty_worktree,
-        run_commit_action_fn=run_commit_action,
-        pr_title_fn=_pr_title,
-        pr_body_fn=_pr_body,
-        write_pr_body_file_fn=_write_pr_body_file,
-        print_process_output_fn=_print_process_output,
-        run_process_fn=subprocess.run,
-        run_pr_action_fn=run_pr_action,
-        github_pr_checks_fn=_github_pr_checks,
-        resolve_analyze_mode_fn=_resolve_analyze_mode,
-        resolve_original_plan_fn=_resolve_original_plan,
-        resolve_review_base_fn=_resolve_review_base,
-        analysis_iterations_source_fn=_analysis_iterations,
-        run_analyze_helper_source_fn=_run_analyze_helper,
-        tree_diffs_output_path_fn=_tree_diffs_output_path_from_workflow,
-        original_plan_markdown_lines_source_fn=_original_plan_markdown_lines,
-        sanitize_label_fn=sanitize_label,
+    return workflow_factory.ProjectActionWorkflowFactory(
+        git=workflow_factory.ProjectActionWorkflowGitSources(
+            resolve_git_root_fn=resolve_git_root,
+            which_fn=shutil.which,
+            git_output_fn=_git_output,
+            run_git_fn=_run_git,
+            print_error_fn=_print_error,
+            print_process_output_fn=_print_process_output,
+            run_process_fn=subprocess.run,
+        ),
+        commit=workflow_factory.ProjectActionWorkflowCommitSources(
+            partition_envctl_protected_paths_fn=_partition_envctl_protected_paths,
+            ordered_unique_paths_fn=_ordered_unique_paths,
+        ),
+        pull_request=workflow_factory.ProjectActionWorkflowPullRequestSources(
+            resolve_base_branch_fn=_resolve_pr_base_branch,
+            existing_pr_url_fn=existing_pr_url,
+            probe_dirty_worktree_source_fn=probe_dirty_worktree,
+            run_commit_action_fn=run_commit_action,
+            pr_title_fn=_pr_title,
+            pr_body_fn=_pr_body,
+            write_pr_body_file_fn=_write_pr_body_file,
+            run_pr_action_fn=run_pr_action,
+            github_pr_checks_fn=_github_pr_checks,
+        ),
+        review=workflow_factory.ProjectActionWorkflowReviewSources(
+            resolve_analyze_mode_fn=_resolve_analyze_mode,
+            resolve_original_plan_fn=_resolve_original_plan,
+            resolve_review_base_fn=_resolve_review_base,
+            analysis_iterations_source_fn=_analysis_iterations,
+            run_analyze_helper_source_fn=_run_analyze_helper,
+            tree_diffs_output_path_fn=_tree_diffs_output_path_from_workflow,
+            original_plan_markdown_lines_source_fn=_original_plan_markdown_lines,
+            sanitize_label_fn=sanitize_label,
+        ),
     ).build()
 
 
