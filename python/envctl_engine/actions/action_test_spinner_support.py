@@ -3,12 +3,10 @@ from __future__ import annotations
 import importlib.util
 import sys
 import threading
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import Any, Callable, Mapping
 
+from envctl_engine.actions.action_test_support_models import TestExecutionSpec
 from envctl_engine.ui.color_policy import colors_enabled
-
-if TYPE_CHECKING:
-    from envctl_engine.actions.action_test_support import TestExecutionSpec
 
 
 def rich_progress_available() -> tuple[bool, str]:
