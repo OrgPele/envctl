@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 from typing import Any, Callable
 
+from envctl_engine.actions.action_commit_message_support import (
+    COMMIT_MESSAGE_MAX_CHARS,
+    ENVCTL_COMMIT_LEDGER_NAME,
+    ENVCTL_COMMIT_POINTER_MARKER,
+    CommitMessageResolution,
+    advance_commit_ledger_pointer as _advance_commit_ledger_pointer,
+    atomic_write as _atomic_write,
+    file_has_text as _file_has_text,
+    read_commit_ledger_segment as _read_commit_ledger_segment,
+    resolve_commit_message as _resolve_commit_message,
+    resolve_commit_message_request,
+    write_commit_message_file as _write_commit_message_file,
+)
 from envctl_engine.actions.action_protected_artifacts import EnvctlProtectedPathPartition
-from envctl_engine.actions.action_pr_message_support import normalize_text_block, read_text
 from envctl_engine.ui.path_links import render_paths_in_terminal_text
-
-
-COMMIT_MESSAGE_MAX_CHARS = 16_000
-ENVCTL_COMMIT_LEDGER_NAME = ".envctl-commit-message.md"
-ENVCTL_COMMIT_POINTER_MARKER = "### Envctl pointer ###"
 
 RunGitFn = Callable[[Path, list[str]], subprocess.CompletedProcess[str]]
 GitOutputFn = Callable[[Path, list[str]], str]
@@ -162,18 +167,19 @@ class CommitWorkflowRunner:
         return partition
 
     def _commit_staged_changes(self, git_root: Path, branch: str) -> int:
-        commit_message, message_file, error, ledger_path = resolve_commit_message(self.context, branch=branch)
-        if error:
-            self._print_commit_message_error(error, ledger_path=ledger_path)
+        del branch
+        message = resolve_commit_message_request(self.context)
+        if message.error:
+            self._print_commit_message_error(message.error, ledger_path=message.ledger_path)
             return 1
 
-        commit = self._run_commit(git_root, commit_message=commit_message, message_file=message_file)
+        commit = self._run_commit(git_root, message=message)
         if commit.returncode != 0:
             self.dependencies.print_error("git commit failed", commit)
             return 1
 
-        if ledger_path is not None:
-            return self._advance_ledger_pointer(ledger_path)
+        if message.ledger_path is not None:
+            return self._advance_ledger_pointer(message.ledger_path)
         return 0
 
     def _print_commit_message_error(self, error: str, *, ledger_path: Path | None) -> None:
@@ -196,16 +202,15 @@ class CommitWorkflowRunner:
         self,
         git_root: Path,
         *,
-        commit_message: str,
-        message_file: str,
+        message: CommitMessageResolution,
     ) -> subprocess.CompletedProcess[str]:
-        generated_message_file = message_file.endswith(".envctl-commit-message.txt")
+        generated_message_file = message.message_file.endswith(".envctl-commit-message.txt")
         try:
-            if message_file:
-                return self.dependencies.run_git(git_root, ["commit", "-F", message_file])
-            return self.dependencies.run_git(git_root, ["commit", "-m", commit_message])
+            if message.message_file:
+                return self.dependencies.run_git(git_root, ["commit", "-F", message.message_file])
+            return self.dependencies.run_git(git_root, ["commit", "-m", message.commit_message])
         finally:
-            self._remove_generated_message_file(message_file, generated_message_file=generated_message_file)
+            self._remove_generated_message_file(message.message_file, generated_message_file=generated_message_file)
 
     @staticmethod
     def _remove_generated_message_file(message_file: str, *, generated_message_file: bool) -> None:
@@ -275,108 +280,24 @@ def unstage_envctl_protected_paths(
 
 
 def resolve_commit_message(context: Any, *, branch: str) -> tuple[str, str, str | None, Path | None]:
-    del branch
-    commit_message = str(context.env.get("ENVCTL_COMMIT_MESSAGE", "")).strip()
-    commit_message_file = str(context.env.get("ENVCTL_COMMIT_MESSAGE_FILE", "")).strip()
-    if commit_message:
-        return commit_message, "", None, None
-    if commit_message_file:
-        path = Path(commit_message_file)
-        if path.is_file() and file_has_text(path):
-            return "", str(path), None, None
-        return "", "", f"Commit message file is missing or empty: {commit_message_file}", None
-
-    ledger_path = context.project_root / ENVCTL_COMMIT_LEDGER_NAME
-    payload, error = read_commit_ledger_segment(ledger_path)
-    if error:
-        return "", "", error, ledger_path
-    return "", str(write_commit_message_file(payload)), None, ledger_path
+    return _resolve_commit_message(context, branch=branch)
 
 
 def read_commit_ledger_segment(path: Path) -> tuple[str, str | None]:
-    if not path.exists():
-        atomic_write(path, f"# Envctl Commit Log\n\n{ENVCTL_COMMIT_POINTER_MARKER}\n")
-
-    text = read_text(path)
-    marker_count = text.count(ENVCTL_COMMIT_POINTER_MARKER)
-    if marker_count == 0:
-        payload = normalize_text_block(text)
-        if not payload:
-            return "", (
-                f"Envctl commit log is empty in {path}. Provide --commit-message, "
-                f"--commit-message-file, or append a new summary to {path}."
-            )
-        return payload[:COMMIT_MESSAGE_MAX_CHARS].rstrip() or payload, None
-    if marker_count > 1:
-        return "", f"Envctl commit log is malformed: {path} contains multiple pointer markers."
-
-    before, after = text.split(ENVCTL_COMMIT_POINTER_MARKER, 1)
-    del before
-    payload = normalize_text_block(after)
-    if not payload:
-        return "", (
-            f"Envctl commit log is empty after the pointer in {path}. Provide --commit-message, "
-            f"--commit-message-file, or append a new summary to {path}."
-        )
-    return payload[:COMMIT_MESSAGE_MAX_CHARS].rstrip() or payload, None
+    return _read_commit_ledger_segment(path)
 
 
 def advance_commit_ledger_pointer(path: Path) -> str | None:
-    if not path.exists():
-        return f"Envctl commit log disappeared before pointer advance: {path}"
-    text = read_text(path)
-    marker_count = text.count(ENVCTL_COMMIT_POINTER_MARKER)
-    if marker_count == 0:
-        archived = normalize_text_block(text)
-        updated = f"{archived}\n\n{ENVCTL_COMMIT_POINTER_MARKER}\n" if archived else f"{ENVCTL_COMMIT_POINTER_MARKER}\n"
-        try:
-            atomic_write(path, updated)
-        except OSError as exc:
-            return f"Failed to advance envctl commit log pointer in {path}: {exc}"
-        return None
-    if marker_count > 1:
-        return f"Envctl commit log is malformed during pointer advance: {path} contains multiple pointer markers."
-    before, after = text.split(ENVCTL_COMMIT_POINTER_MARKER, 1)
-    archived_before = normalize_text_block(before)
-    payload = normalize_text_block(after)
-    parts = [part for part in (archived_before, payload) if part]
-    archived = "\n\n".join(parts).strip()
-    updated = f"{archived}\n\n{ENVCTL_COMMIT_POINTER_MARKER}\n" if archived else f"{ENVCTL_COMMIT_POINTER_MARKER}\n"
-    try:
-        atomic_write(path, updated)
-    except OSError as exc:
-        return f"Failed to advance envctl commit log pointer in {path}: {exc}"
-    return None
+    return _advance_commit_ledger_pointer(path)
 
 
 def write_commit_message_file(message: str) -> Path:
-    with tempfile.NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        delete=False,
-        suffix=".envctl-commit-message.txt",
-    ) as handle:
-        handle.write(message)
-        return Path(handle.name)
+    return _write_commit_message_file(message)
 
 
 def atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        Path(temp_name).replace(path)
-    finally:
-        try:
-            if Path(temp_name).exists():
-                Path(temp_name).unlink()
-        except OSError:
-            pass
+    _atomic_write(path, text)
 
 
 def file_has_text(path: Path) -> bool:
-    try:
-        return bool(path.read_text(encoding="utf-8").strip())
-    except OSError:
-        return False
+    return _file_has_text(path)
