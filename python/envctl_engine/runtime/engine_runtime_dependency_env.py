@@ -23,7 +23,7 @@ def service_env_overlays(
     if not normalized_service:
         return {}
     prefix = f"ENVCTL_{normalized_service}_ENV__"
-    raw_sources: list[Mapping[str, str]] = []
+    raw_sources: list[Mapping[object, object]] = []
     config_raw = getattr(getattr(runtime, "config", None), "raw", None)
     if isinstance(config_raw, Mapping):
         raw_sources.append(config_raw)
