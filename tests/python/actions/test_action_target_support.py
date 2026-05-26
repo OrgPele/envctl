@@ -108,7 +108,7 @@ class ActionTargetSupportTests(unittest.TestCase):
 
         self.assertEqual(selected, [current])
         self.assertIsNone(error)
-        self.assertEqual(calls, [{"require_configured_main_root": False}])
+        self.assertEqual(calls, [{"require_configured_main_root": False, "require_configured_root_match": True}])
 
     def test_resolve_action_targets_applies_interactive_selection(self) -> None:
         target_a = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
