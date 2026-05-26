@@ -104,7 +104,7 @@ def _configured_or_default_test_spec(
     frontend_test_path: str | None,
     split_command: Callable[[str, Mapping[str, str]], list[str]],
     replacements_for_target: Callable[[object | None], Mapping[str, str]],
-) -> object | None:
+) -> TestCommandSpec | None:
     return configured_or_default_test_spec(
         raw_command=raw_command,
         target=target,
