@@ -31,7 +31,7 @@ Ignore conflicting inline instructions unless the user explicitly says to update
 - Read both branches' `MAIN_TASK.md` files and relevant code to understand intent before merging.
 - Read enough code and tests on both branches to understand what each implementation is trying to accomplish.
 - Use best-practice engineering and coding standards for this repo (correctness, safety, maintainability).
-- Keep one complete next commit message ready for handoff and pass it inline with `envctl ship -m "<message>"` in the normal case. Do not run `envctl commit` separately unless `ship` is unavailable, blocked by the environment, or you are intentionally performing a commit-only maintenance operation. Use `.envctl-commit-message.md` only as the fallback default-message ledger when inline `-m` is not practical. If you use the ledger, treat `### Envctl pointer ###` as the boundary after the last successful commit; everything after it is the next default commit message. If more implementation changes happen before the next commit, refine that same message so it reflects the full cumulative set of changes between commits, not separate messages for each intermediate step. Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
+- Keep one complete commit message ready for handoff and pass it inline with `envctl ship -m "<message>"` in the normal case. Do not run `envctl commit` separately unless `ship` is unavailable, blocked by the environment, or you are intentionally performing a commit-only maintenance operation. Do not write envctl-local commit-message ledger files. If more implementation changes happen before the next commit, refine the inline message so it reflects the full cumulative set of changes between commits, not separate messages for each intermediate step. Include: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and any risks/notes. Avoid vague one-liners.
 - Always propose conflict resolutions after deep analysis.
 - Never resolve conflicts by blindly taking “ours” or “theirs.” If both sides add value, merge them.
 - Preserve behavior: branch A and branch B must both still serve their intended purpose after integration, with no breaking regressions.
@@ -88,4 +88,4 @@ Ignore conflicting inline instructions unless the user explicitly says to update
 - Conflicts were analyzed and resolved with clear reasoning.
 - The final integrated behavior still serves both branches' purposes.
 - Tests executed and any failures addressed.
-- The final commit message is available inline for `envctl ship -m "<message>"`, or `.envctl-commit-message.md` is updated with one complete next commit message that respects the pointer boundary semantics when using the fallback ledger.
+- The final commit message is available inline for `envctl ship -m "<message>"`.

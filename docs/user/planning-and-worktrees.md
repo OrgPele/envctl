@@ -258,9 +258,9 @@ envctl ship -m "Ship focused implementation"
 Run bare `envctl ship` from inside the current generated worktree/project
 directory; add `--project <name>` only when operating from another checkout.
 `ship` owns the normal handoff flow, so agents should use it instead of running
-`envctl commit`, push, and PR commands separately. Inline `-m` is the preferred
-commit-message path and `.envctl-commit-message.md` remains the fallback default
-message ledger only when inline text is not practical. Envctl-local artifacts such as `.envctl-state/`, `MAIN_TASK.md`,
+`envctl commit`, push, and PR commands separately. Commit messages should be
+passed inline with `-m`; installed prompts tell agents not to maintain
+envctl-local commit-message ledger files. Envctl-local artifacts such as `.envctl-state/`, `MAIN_TASK.md`,
 `OLD_TASK_*.md`, `trees/`, and `trees-*` stay local. The command commits,
 pushes, creates a PR when none exists, reuses or updates the existing PR otherwise, predicts merge conflicts, waits for GitHub
 checks until they pass, fail, time out, or report no check contexts, and returns the PR URL plus
