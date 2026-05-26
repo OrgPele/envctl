@@ -5,6 +5,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
+from envctl_engine.actions import action_test_command_support
 from envctl_engine.actions.action_test_command_support import ConfiguredTestSpecResolver
 from envctl_engine.actions.action_test_command_support import ActionTestExecutionSpecBuilder
 from envctl_engine.actions.action_test_command_support import SharedTestCommandPlanner
@@ -15,6 +16,14 @@ from envctl_engine.actions.action_test_support_models import TestTargetContext a
 
 class ActionTestCommandSupportTests(unittest.TestCase):
     def test_command_support_uses_named_planners_instead_of_inline_branching(self) -> None:
+        self.assertEqual(
+            set(ActionTestExecutionSpecBuilder.__dataclass_fields__),
+            {"commands", "target_scope", "planning_scope", "dependencies"},
+        )
+        self.assertTrue(hasattr(action_test_command_support, "ActionTestCommandSources"))
+        self.assertTrue(hasattr(action_test_command_support, "ActionTestCommandTargetScope"))
+        self.assertTrue(hasattr(action_test_command_support, "ActionTestCommandPlanningScope"))
+        self.assertTrue(hasattr(action_test_command_support, "ActionTestCommandDependencies"))
         self.assertTrue(callable(ActionTestExecutionSpecBuilder.build))
         self.assertTrue(callable(ConfiguredTestSpecResolver.resolve))
         self.assertTrue(callable(SharedTestCommandPlanner.build))
