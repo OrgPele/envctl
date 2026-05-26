@@ -1170,7 +1170,6 @@
         "python/envctl_engine/actions/actions_git.py"
       ],
       "evidence_tests": [
-        "tests/python/actions/test_action_ship_owner_support.py",
         "tests/python/actions/test_action_ship_support.py",
         "tests/python/actions/test_actions_cli_ship.py",
         "tests/python/runtime/test_cli_router_parity.py"
