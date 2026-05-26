@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 import shutil
 import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping
 
 from envctl_engine.runtime import service_command_autodetect
+from envctl_engine.shared.python_project_metadata import pyproject_uses_poetry as _shared_pyproject_uses_poetry
 
 CommandExists = Callable[[str], bool]
 
@@ -20,7 +21,7 @@ class CommandResolutionResult:
 
 class CommandResolutionError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
-        self.code = code
+        self.code: str = code
         super().__init__(f"{code}: {message}")
 
 
@@ -289,7 +290,7 @@ def _prepared_backend_python_runner_prefix(
     command_exists: CommandExists,
 ) -> tuple[str, ...]:
     pyproject = service_root / "pyproject.toml"
-    if pyproject.is_file() and _pyproject_uses_poetry(pyproject) and command_exists("poetry"):
+    if _pyproject_uses_poetry(pyproject) and command_exists("poetry"):
         return ("poetry", "run", "python")
     python_bin = service_command_autodetect.detect_python_bin_for_service(
         project_root=project_root,
@@ -302,8 +303,4 @@ def _prepared_backend_python_runner_prefix(
 
 
 def _pyproject_uses_poetry(pyproject_file: Path) -> bool:
-    try:
-        text = pyproject_file.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    return "[tool.poetry]" in text or "[tool.pdm]" in text
+    return pyproject_file.is_file() and _shared_pyproject_uses_poetry(pyproject_file)

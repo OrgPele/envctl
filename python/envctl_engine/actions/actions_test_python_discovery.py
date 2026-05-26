@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-import tomllib
 from typing import Callable
 
 from envctl_engine.shared.node_tooling import detect_python_bin
+from envctl_engine.shared.python_project_metadata import pyproject_has_tool_table
 
 
 def root_unittest_discover_command(
@@ -46,14 +46,8 @@ def root_pytest_command(
 
 def root_has_pytest_config(base_dir: Path) -> bool:
     pyproject = base_dir / "pyproject.toml"
-    if pyproject.is_file():
-        try:
-            payload = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        except (OSError, tomllib.TOMLDecodeError):
-            payload = {}
-        tool = payload.get("tool") if isinstance(payload, dict) else None
-        if isinstance(tool, dict) and "pytest" in tool:
-            return True
+    if pyproject_has_tool_table(pyproject, "pytest"):
+        return True
     if (base_dir / "pytest.ini").is_file():
         return True
     for name in ("tox.ini", "setup.cfg"):

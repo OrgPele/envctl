@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.shared.python_project_metadata import pyproject_uses_poetry as _shared_pyproject_uses_poetry
 from envctl_engine.startup.service_env_support import _BackendEnvContract
 from envctl_engine.ui.path_links import render_path_for_terminal
 
@@ -28,13 +29,7 @@ def _backend_migrations_enabled(self: Any, route: Route | None) -> bool:
 
 
 def _pyproject_uses_poetry(pyproject_file: Path) -> bool:
-    if not pyproject_file.is_file():
-        return False
-    try:
-        text = pyproject_file.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    return "[tool.poetry]" in text or "[tool.pdm]" in text
+    return pyproject_file.is_file() and _shared_pyproject_uses_poetry(pyproject_file)
 
 
 def _bootstrap_failure_suggestion(step: str, error: str, cwd: Path) -> str:

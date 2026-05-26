@@ -109,7 +109,8 @@ def _prepare_backend_runtime(
     prepare_started = time.monotonic()
     requirements_file = backend_cwd / "requirements.txt"
     pyproject_file = backend_cwd / "pyproject.toml"
-    manager = "poetry" if pyproject_file.is_file() and self._command_exists("poetry") else "pip"
+    uses_poetry = _pyproject_uses_poetry(pyproject_file) and self._command_exists("poetry")
+    manager = "poetry" if uses_poetry else "pip"
     env_contract = _resolve_backend_env_contract(
         self,
         context=context,
@@ -134,7 +135,6 @@ def _prepare_backend_runtime(
         started=env_merge_started,
     )
 
-    uses_poetry = pyproject_file.is_file() and _pyproject_uses_poetry(pyproject_file) and self._command_exists("poetry")
     probe_modules = _backend_runtime_probe_modules(backend_cwd) if uses_poetry else ()
 
     def _poetry_environment_ready() -> bool:
