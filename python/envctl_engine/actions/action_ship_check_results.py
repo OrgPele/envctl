@@ -74,7 +74,18 @@ def _normalized_check_state(check: Mapping[str, object]) -> str:
 
 
 def _status_check_matches_default_target(check: Mapping[str, object]) -> bool:
-    return status_check_display_name(check).casefold().startswith(DEFAULT_CHECK_NAME_PREFIX)
+    return any(
+        _status_check_name_matches_default_target(candidate)
+        for candidate in (
+            status_check_display_name(check),
+            str(check.get("workflow") or check.get("workflowName") or "").strip(),
+            str(check.get("name") or check.get("context") or "").strip(),
+        )
+    )
+
+
+def _status_check_name_matches_default_target(name: str) -> bool:
+    return name.casefold().startswith(DEFAULT_CHECK_NAME_PREFIX)
 
 
 __all__ = [
