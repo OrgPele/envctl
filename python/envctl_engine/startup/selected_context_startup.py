@@ -6,6 +6,7 @@ from typing import Any, Callable, cast
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
+from envctl_engine.startup.no_system_config import copy_no_local_app_system_skips
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import ProjectStartupResult, StartupSession
 from envctl_engine.startup.startup_progress import suppress_progress_output as default_suppress_progress_output
@@ -138,6 +139,7 @@ def start_selected_contexts(
         except RuntimeError:
             _fail_single_spinner(runtime=runtime, active_spinner=active_spinner, enabled=use_single_spinner)
             raise
+        copy_no_local_app_system_skips(source_route=route_for_execution, target_route=session.effective_route)
         _succeed_single_spinner(
             runtime=runtime,
             session=session,

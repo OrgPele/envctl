@@ -65,6 +65,85 @@ class StartupOrchestratorFlowHandoffTests(StartupOrchestratorFlowTestCase):
             self.assertIn("new session: ENVCTL_USE_REPO_WRAPPER=1 /tmp/repo/bin/envctl --plan feature-a --tmux --opencode --new-session --headless", rendered)
             self.assertIn("kill: tmux kill-session -t envctl-test-session", rendered)
 
+    def test_headless_plan_entire_system_no_local_system_reports_clean_continuation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(
+                repo,
+                runtime,
+                extra={
+                    "TREES_POSTGRES_ENABLE": "false",
+                    "TREES_REDIS_ENABLE": "false",
+                    "TREES_SUPABASE_ENABLE": "false",
+                    "TREES_N8N_ENABLE": "false",
+                },
+            )
+            context = self._tree_context(repo, "feature-a-1", "feature-a/1", backend_port=8200, frontend_port=9200)
+            attach_target = PlanAgentAttachTarget(
+                repo_root=repo,
+                session_name="envctl-feature-session",
+                window_name="feature-a-1",
+                attach_via="attach-session",
+                attach_command=("tmux", "attach", "-t", "envctl-feature-session"),
+            )
+            launch_result = PlanAgentLaunchResult(
+                status="launched",
+                reason="launched",
+                outcomes=(
+                    PlanAgentLaunchOutcome(
+                        worktree_name=context.name,
+                        worktree_root=Path(context.root),
+                        surface_id=None,
+                        status="launched",
+                    ),
+                ),
+                attach_target=attach_target,
+            )
+            captured: dict[str, object] = {}
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", return_value=launch_result),
+                patch.object(
+                    engine,
+                    "_write_artifacts",
+                    side_effect=lambda state, contexts, *, errors: captured.update(
+                        {"state": state, "contexts": list(contexts), "errors": list(errors)}
+                    ),
+                ),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(
+                            ["--plan", "feature-a", "--tmux", "--entire-system", "--headless"],
+                            env={"ENVCTL_DEFAULT_MODE": "trees"},
+                        )
+                    )
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("attach: tmux attach -t envctl-feature-session", rendered)
+            self.assertIn("No local app system is configured for feature-a-1.", rendered)
+            self.assertIn("envctl is continuing with the implementation session only.", rendered)
+            self.assertIn("`--entire-system` was honored, but there was nothing configured to start.", rendered)
+            self.assertNotIn("Implementation session is running, but local app startup failed.", rendered)
+            self.assertNotIn("missing_service_start_command", rendered)
+            state = cast(RunState, captured["state"])
+            self.assertNotIn("local_startup_failed", state.metadata)
+            skipped_events = [event for event in engine.events if event.get("event") == "service.attach.skipped"]
+            self.assertTrue(skipped_events)
+            self.assertEqual(skipped_events[-1].get("reason"), "no_system_configured")
+
     def test_headless_plan_does_not_print_stale_attach_target_after_validation_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

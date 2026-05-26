@@ -352,6 +352,11 @@ envctl kill --backend --headless     # alias for stop --backend
 envctl kill-all --headless           # alias for stop-all
 ```
 
+`--entire-system` starts configured or autodetected local app services. If a repo/worktree has no explicit backend,
+frontend, or additional-service configuration and no supported app layout can be autodetected, envctl reports that no
+local app system is configured and continues without app services instead of treating default backend/frontend selection
+as a broken startup command.
+
 Review branch-relative changes:
 
 ```bash

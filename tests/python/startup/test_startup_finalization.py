@@ -446,6 +446,23 @@ class StartupFinalizationTests(unittest.TestCase):
             ],
         )
 
+    def test_headless_plan_session_summary_lines_include_no_system_continuation(self) -> None:
+        session = _session(contexts=[])
+        session.effective_route.flags["_no_system_configured_projects"] = [
+            {
+                "project": "feature-a-1",
+                "mode": "trees",
+                "requested_scope": "entire-system",
+                "selected_services": ["backend", "frontend"],
+            }
+        ]
+
+        lines = headless_plan_session_summary_lines(session)
+
+        self.assertIn("No local app system is configured for feature-a-1.", lines)
+        self.assertIn("envctl is continuing with the implementation session only.", lines)
+        self.assertIn("`--entire-system` was honored, but there was nothing configured to start.", lines)
+
     def test_print_headless_plan_session_summary_validates_when_no_attach_target_override(self) -> None:
         session = _session(contexts=[])
         session.plan_agent_handoff_validation_reason = "attach_target_stale_after_launch"

@@ -19,6 +19,7 @@ from envctl_engine.shared.services import service_display_name
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
 from envctl_engine.startup.requirements_execution import requirements_timing_enabled, startup_breakdown_enabled
 from envctl_engine.startup.run_reuse_support import build_startup_identity_metadata
+from envctl_engine.startup.no_system_config import no_local_app_system_skip_messages
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
 from envctl_engine.startup.session_lifecycle import emit_startup_phase, ensure_run_id
@@ -547,6 +548,7 @@ def headless_plan_session_summary_lines(
     attach_target: object | None = None,
 ) -> list[str]:
     lines = plan_session_summary_lines(session, attach_target=attach_target)
+    lines.extend(no_local_app_system_skip_messages(session.effective_route))
     if attach_target is not None or session.plan_agent_attach_target is not None:
         return lines
     reason = str(session.plan_agent_handoff_validation_reason or "").strip()
