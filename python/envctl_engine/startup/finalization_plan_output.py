@@ -136,6 +136,11 @@ def headless_plan_session_summary_lines(
     attach_target: object | None = None,
 ) -> list[str]:
     lines = plan_session_summary_lines(session, attach_target=attach_target)
+    warning_lines = [str(warning).strip() for warning in session.warnings if str(warning).strip()]
+    if warning_lines:
+        if lines:
+            lines.append("")
+        lines.extend(warning_lines)
     if attach_target is not None or session.plan_agent_attach_target is not None:
         return lines
     reason = str(session.plan_agent_handoff_validation_reason or "").strip()

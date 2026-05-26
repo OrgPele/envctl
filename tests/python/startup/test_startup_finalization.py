@@ -450,6 +450,24 @@ class StartupFinalizationTests(unittest.TestCase):
             ],
         )
 
+    def test_headless_plan_session_summary_lines_include_no_system_warning(self) -> None:
+        session = _session(contexts=[])
+        session.plan_agent_attach_target = SimpleNamespace(
+            attach_command=("tmux", "attach", "-t", "envctl-plan"),
+            new_session_command=(),
+            session_name="envctl-plan",
+        )
+        warning = (
+            "No local app system is configured for this repo/worktree; envctl is continuing with the "
+            "implementation session only. --entire-system was honored, but there was nothing configured to start."
+        )
+        session.warnings.append(warning)
+
+        lines = headless_plan_session_summary_lines(session)
+
+        self.assertIn("attach: tmux attach -t envctl-plan", lines)
+        self.assertIn(warning, lines)
+
     def test_print_headless_plan_session_summary_validates_when_no_attach_target_override(self) -> None:
         session = _session(contexts=[])
         session.plan_agent_handoff_validation_reason = "attach_target_stale_after_launch"

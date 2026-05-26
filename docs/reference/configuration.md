@@ -135,6 +135,8 @@ Only simple `${VAR}` placeholders are supported. Shell-style defaults, command s
 
 Frontend launch-env sections may use `ENVCTL_SOURCE_SUPABASE_URL` and `ENVCTL_SOURCE_SUPABASE_ANON_KEY`. They cannot reference `ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY`; envctl rejects that mapping before launching the frontend process.
 
+Backend/frontend default enablement is only the default startup profile. It is not, by itself, an explicit local app system configuration. A repo with no backend/frontend command, no explicit backend/frontend directory or enable key, no service-specific launch env, no additional app service, and no autodetectable app layout reports a clean no-system skip under `--entire-system` instead of a missing-command startup failure.
+
 ## Managed Supabase Ports
 
 Managed Supabase exposes two distinct local resources:

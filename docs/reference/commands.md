@@ -337,7 +337,7 @@ envctl --frontend --headless         # dependencies + frontend service only
 envctl --fullstack --headless        # dependencies + backend + frontend
 envctl --both --headless             # alias for --fullstack
 envctl --dependencies --headless     # dependencies only; no app services
-envctl --entire-system --headless    # dependencies + all configured app services
+envctl --entire-system --headless    # dependencies + configured/autodetected app services
 envctl --trees --only-backend         # worktree backend only; skip frontend and dependencies
 envctl --trees --no-deps             # worktree app services only; skip managed dependencies/prep
 envctl --trees --no-infra            # worktree state/AI only; skip backend, frontend, and dependencies
@@ -528,6 +528,7 @@ Degraded plan-agent handoff:
 
 - `envctl --plan <selector> --tmux --headless` and `envctl --plan <selector> --omx --headless` can still succeed when the implementation AI session starts but local backend/frontend startup cannot resolve a service command
 - if startup revalidation finds that an OMX-managed attach target is stale or exited, headless output suppresses stale `attach:` guidance and prints a native fallback such as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system --headless --new-session`
+- with `--entire-system`, a repo/worktree that has no configured or autodetected local app system continues without app services and reports that there was nothing configured to start
 - this path prints `Implementation session is running, but local app startup failed.`, then an `AI session:` section with copy-pastable `attach:` and `kill:` guidance when a tmux session is known
 - the `Local app startup:` section names the worktree, preserves the raw startup error, and points to `ENVCTL_BACKEND_START_CMD` / `ENVCTL_FRONTEND_START_CMD` when services should run locally
 - plain `start`, `restart`, `resume`, dashboard, or `--plan` runs without a running implementation session keep normal fatal `Startup failed:` semantics

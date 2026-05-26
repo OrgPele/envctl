@@ -26,6 +26,7 @@ from envctl_engine.startup.service_execution_environment import (
     configured_service_types_for_mode,
     make_service_dependency_emitter,
     make_service_retry_emitter,
+    maybe_skip_no_local_app_system as _skip_no_system,
     project_env_for_service as _project_env_for_service,
     project_service_log_path,
     project_service_log_paths,
@@ -42,7 +43,6 @@ from envctl_engine.startup.public_urls import browser_backend_url, resolve_publi
 from envctl_engine.startup.requirements_execution import requirements_timing_enabled
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
 
-
 def start_project_services(
     orchestrator: StartupOrchestratorLike,
     context: ProjectContextLike,
@@ -58,7 +58,6 @@ def start_project_services(
     backend_plan = context.ports["backend"]
     frontend_plan = context.ports["frontend"]
     backend_cwd, frontend_cwd = resolve_service_workdirs(config=rt.config, project_root=context.root)
-
     services_hook = rt._invoke_envctl_hook(context=context, hook_name="envctl_define_services")
     if services_hook.found:
         if not services_hook.success:
@@ -74,7 +73,6 @@ def start_project_services(
                 f"envctl_define_services hook requested skip_default_services for {context.name} "
                 "but returned no services"
             )
-
     log_paths = project_service_log_paths(runtime=rt, run_id=run_id, project_name=context.name)
     run_logs_dir = log_paths.run_logs_dir
     backend_log_path = log_paths.backend_log_path
@@ -166,7 +164,8 @@ def start_project_services(
             reason="all_services_disabled",
         )
         return {}
-
+    if _skip_no_system(rt, context, route, effective_mode, selected_service_types, configured_additional_services):
+        return {}
     service_started = time.monotonic()
     prepare_backend_duration_ms = 0.0
     prepare_frontend_duration_ms = 0.0
