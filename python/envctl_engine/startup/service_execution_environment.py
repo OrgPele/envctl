@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from envctl_engine.startup.requirements_execution import requirements_timing_enabled
+from envctl_engine.startup.service_execution_policy import coerce_env_mapping
 
 
 @dataclass(slots=True)
@@ -45,7 +46,7 @@ def project_env_for_service(
     service_name: str,
 ) -> dict[str, str]:
     try:
-        return runtime._project_service_env(
+        raw = runtime._project_service_env(
             context,
             requirements=requirements,
             route=route,
@@ -54,19 +55,24 @@ def project_env_for_service(
     except TypeError as exc:
         if "service_name" not in str(exc):
             raise
-        return runtime._project_service_env(context, requirements=requirements, route=route)
+        raw = runtime._project_service_env(context, requirements=requirements, route=route)
+    return coerce_env_mapping(raw, source=f"{service_name} project service env")
 
 
 def configured_service_types_for_mode(runtime: Any, effective_mode: str, project_root: Path) -> set[str]:
     all_service_names_for_mode = getattr(runtime.config, "all_app_service_names_for_mode", None)
     if callable(all_service_names_for_mode):
         try:
+            raw_names = all_service_names_for_mode(effective_mode, project_root=project_root)
+            names = cast(list[str] | tuple[str, ...] | set[str], raw_names)
             return {
                 service_name
-                for service_name in all_service_names_for_mode(effective_mode, project_root=project_root)
+                for service_name in names
             }
         except TypeError:
-            return {service_name for service_name in all_service_names_for_mode(effective_mode)}
+            raw_names = all_service_names_for_mode(effective_mode)
+            names = cast(list[str] | tuple[str, ...] | set[str], raw_names)
+            return {service_name for service_name in names}
     return {
         service_name
         for service_name in ("backend", "frontend")

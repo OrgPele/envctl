@@ -59,6 +59,22 @@ class ServiceExecutionEnvironmentTests(unittest.TestCase):
         self.assertEqual(env, {"PROJECT": "Main"})
         self.assertEqual([call[0] for call in calls], ["worker", None])
 
+    def test_project_env_for_service_normalizes_empty_builder_result(self) -> None:
+        class RuntimeStub:
+            def _project_service_env(self, context, *, requirements, route, service_name=None):  # noqa: ANN001
+                _ = (context, requirements, route, service_name)
+                return None
+
+        env = project_env_for_service(
+            RuntimeStub(),
+            SimpleNamespace(name="Main"),
+            requirements=object(),
+            route=object(),
+            service_name="worker",
+        )
+
+        self.assertEqual(env, {})
+
     def test_configured_service_types_use_mode_aware_config_when_available(self) -> None:
         runtime = SimpleNamespace(
             config=SimpleNamespace(
