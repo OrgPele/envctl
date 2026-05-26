@@ -78,6 +78,7 @@ def review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str
         "summary file": "summary_path",
         "full review bundle": "bundle_path",
     }
+    artifact_labels = set(label_map)
     parsed: dict[str, object] = {}
     for index, raw_line in enumerate(lines):
         label = raw_line.strip().lower()
@@ -88,6 +89,8 @@ def review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str
             candidate = follow_line.strip()
             if not candidate:
                 continue
+            if candidate.lower() in artifact_labels:
+                break
             parsed[key] = candidate
             break
     return parsed

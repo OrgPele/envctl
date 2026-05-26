@@ -35,6 +35,20 @@ class ProjectActionReportSupportTests(unittest.TestCase):
             },
         )
 
+    def test_review_success_artifact_paths_does_not_use_next_label_as_missing_value(self) -> None:
+        parsed = review_success_artifact_paths(
+            stdout="Output directory\nSummary file\n/tmp/summary.md\n",
+            stderr="Full review bundle\n/tmp/bundle.json\n",
+        )
+
+        self.assertEqual(
+            parsed,
+            {
+                "summary_path": "/tmp/summary.md",
+                "bundle_path": "/tmp/bundle.json",
+            },
+        )
+
     def test_project_action_success_status_marks_detached_pr_skip(self) -> None:
         completed = SimpleNamespace(stdout="Skipping PR creation for detached HEAD\nmore detail\n")
 
