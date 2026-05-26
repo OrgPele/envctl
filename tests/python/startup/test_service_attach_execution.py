@@ -147,6 +147,77 @@ class ServiceAttachExecutionTests(unittest.TestCase):
         self.assertIn((["backend", "8000"], str(project_root / "backend"), 8000), process_commands)
         self.assertIn((["voice.py", "8010", "voice-runtime", str(project_root / "voice-runtime")], str(project_root / "voice-runtime"), 8010), process_commands)
         self.assertIn(("service.bind.skipped", {"project": "Main", "service": "worker", "reason": "listener_not_expected"}), events)
+        self.assertTrue(
+            any(
+                event == "service.attach.phase"
+                and payload["service"] == "voice-runtime"
+                and payload["phase"] == "actual_port_detection"
+                for event, payload in events
+            )
+        )
+
+    def test_additional_listener_truth_failure_emits_failure_event(self) -> None:
+        project_root = Path("/tmp/envctl-project")
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(
+            services=SimpleNamespace(),
+            _conflict_remaining={},
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _service_start_command_resolved=lambda service_name, project_root, port: ([service_name, str(port)], "configured"),
+            _detect_service_actual_port=lambda **kwargs: None,
+            _listener_truth_enforced=lambda: True,
+            _service_listener_failure_detail=lambda **kwargs: "process exited",
+        )
+        runner = ServiceAttachRunner(
+            runtime=runtime,
+            process_runtime=SimpleNamespace(),
+            port_allocator=SimpleNamespace(reserve_next=lambda port, owner: port),
+            project_name="Main",
+            project_root=project_root,
+            backend_plan=SimpleNamespace(final=8000),
+            frontend_plan=SimpleNamespace(final=5173),
+            backend_cwd=project_root / "backend",
+            frontend_cwd=project_root / "frontend",
+            backend_log_path="/logs/backend.txt",
+            frontend_log_path="/logs/frontend.txt",
+            backend_env_extra={},
+            frontend_env_extra={},
+            command_env_builder=lambda port, extra: dict(extra),
+            prepared_launches={
+                "voice-runtime": PreparedServiceLaunch(
+                    service_name="voice-runtime",
+                    cwd=project_root / "voice-runtime",
+                    log_path="/logs/voice.txt",
+                    requested_port=8010,
+                    env={"PORT": "8010"},
+                    command_source="configured",
+                )
+            },
+            selected_service_types={"voice-runtime"},
+            additional_services=(),
+            backend_listener_expected=True,
+            rebound_delta=0,
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"voice-runtime listener not detected for Main on port 8010 \(process exited\)",
+        ):
+            runner.detect_additional_actual("voice-runtime", pid=4321, requested=8010)
+
+        self.assertIn(
+            (
+                "service.failure",
+                {
+                    "project": "Main",
+                    "service": "voice-runtime",
+                    "failure_class": "listener_not_detected",
+                    "requested_port": 8010,
+                    "detail": "process exited",
+                },
+            ),
+            events,
+        )
 
     def test_core_only_runner_uses_legacy_service_manager_when_generic_attach_is_missing(self) -> None:
         attach_kwargs: dict[str, object] = {}
