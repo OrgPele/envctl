@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import time
-from typing import Any
+from typing import Any, cast
 
 from envctl_engine.runtime.service_manager import ServiceStartDescriptor
 from envctl_engine.startup.service_execution_policy import ordered_service_layers
@@ -48,7 +48,7 @@ class ServiceAttachRunner:
                 descriptors=descriptors,
                 attach_parallel=attach_parallel,
                 on_service_retry=on_service_retry,
-                generic_attach=generic_attach,
+                generic_attach=cast(Callable[..., dict[str, ServiceRecord]], generic_attach),
             )
         if self.selected_service_types <= {"backend", "frontend"}:
             return self._start_core_services_with_legacy_attach(
@@ -359,36 +359,30 @@ class ServiceAttachRunner:
             service=service_name,
             requested_port=requested,
         )
+        detect_started = time.monotonic()
         detected = self.runtime._detect_service_actual_port(
             pid=pid,
             requested_port=requested,
             service_name=service_name,
             log_path=launch.log_path,
         )
-        if detected is not None:
-            if detected != requested:
-                self.runtime._emit("port.rebound", project=self.project_name, service=service_name, port=detected)
-            self.runtime._emit(
-                "service.bind.actual",
-                project=self.project_name,
-                service=service_name,
-                actual_port=detected,
-            )
-            return detected
-        if self.runtime._listener_truth_enforced():
-            detail = self.runtime._service_listener_failure_detail(log_path=launch.log_path, pid=pid)
-            error_suffix = f" ({detail})" if detail else ""
-            raise RuntimeError(
-                f"{service_name} listener not detected for {self.project_name} on port {requested}{error_suffix}"
-            )
+        actual = self._resolve_detected_actual(
+            service_name=service_name,
+            detected=detected,
+            requested=requested,
+            log_path=launch.log_path,
+            pid=pid,
+            fallback_actual=requested,
+            failure_port=requested,
+        )
         self.runtime._emit(
-            "service.failure",
+            "service.bind.actual",
             project=self.project_name,
             service=service_name,
-            failure_class="listener_unverified",
-            requested_port=requested,
+            actual_port=actual,
         )
-        return requested
+        self._emit_attach_phase(service_name, "actual_port_detection", detect_started)
+        return actual
 
     def _resolve_detected_actual(
         self,
