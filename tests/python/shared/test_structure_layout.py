@@ -531,6 +531,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def print_ship_result", ship_contract_owner.read_text(encoding="utf-8"))
         self.assertIn("def predicted_merge_conflict_report", ship_conflicts_owner.read_text(encoding="utf-8"))
         ship_checks_text = ship_checks_owner.read_text(encoding="utf-8")
+        self.assertIn("class ShipCheckPoller", ship_checks_text)
         self.assertIn("def normalize_github_pr_checks", ship_check_results_owner.read_text(encoding="utf-8"))
         self.assertIn("def target_status_checks", ship_check_results_owner.read_text(encoding="utf-8"))
         self.assertIn("action_ship_check_results", ship_checks_text)
