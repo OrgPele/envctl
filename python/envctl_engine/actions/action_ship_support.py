@@ -8,7 +8,8 @@ import subprocess
 import time
 from typing import Any, Callable
 
-from envctl_engine.actions.action_ship_checks import github_pr_checks, normalize_github_pr_checks
+from envctl_engine.actions.action_ship_check_results import normalize_github_pr_checks
+from envctl_engine.actions.action_ship_checks import github_pr_checks
 from envctl_engine.actions.action_ship_conflicts import (
     existing_merge_conflict_report,
     parse_merge_tree_conflicts,
@@ -29,7 +30,7 @@ RunGit = Callable[[Path, list[str]], subprocess.CompletedProcess[str]]
 ResolveBaseBranch = Callable[[Any, Path], str]
 ResolveBaseRef = Callable[[Path, str], str]
 GithubPrChecks = Callable[..., dict[str, object]]
-SUCCESSFUL_CHECK_PHASE_STATUSES = {"checks_passed", "checks_pending_timeout", "gh_unavailable", "no_checks_reported"}
+SUCCESSFUL_CHECK_PHASE_STATUSES = {"checks_passed"}
 
 
 @dataclass(slots=True)
@@ -72,18 +73,17 @@ class ShipWorkflowRunner:
 
     def run(self) -> int:
         state = self._new_state()
-        if result := self._reject_unavailable_git(state):
-            return result
-        if result := self._resolve_branch(state):
-            return result
-        if result := self._reject_existing_merge_conflicts(state):
-            return result
-        if result := self._run_commit_phase(state):
-            return result
-        if result := self._run_pr_phase(state):
-            return result
-        if result := self._reject_predicted_merge_conflicts(state):
-            return result
+        for phase in (
+            self._reject_unavailable_git,
+            self._resolve_branch,
+            self._reject_existing_merge_conflicts,
+            self._run_commit_phase,
+            self._run_pr_phase,
+            self._reject_predicted_merge_conflicts,
+        ):
+            result = phase(state)
+            if result is not None:
+                return result
         return self._run_checks_phase(state)
 
     def _new_state(self) -> ShipWorkflowState:
@@ -103,7 +103,7 @@ class ShipWorkflowRunner:
         if state.branch and state.branch != "HEAD":
             return None
         state.branch = state.branch or "HEAD"
-        return self._finish(state, status="detached_head", ok=True)
+        return self._finish(state, status="detached_head", ok=False)
 
     def _reject_existing_merge_conflicts(self, state: ShipWorkflowState) -> int | None:
         existing_conflicts = existing_merge_conflict_report(

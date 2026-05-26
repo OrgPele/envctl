@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 import re
 import subprocess
-from typing import Mapping
+from typing import Callable, Mapping
 
 DEFAULT_FAILURE_EXCERPT_LINES = 80
 DEFAULT_FAILURE_EXCERPT_CHARS = 12_000
+DEFAULT_FAILURE_LOG_COMMAND_TIMEOUT_SECONDS = 30.0
+RunCommand = Callable[..., subprocess.CompletedProcess[str]]
 _ACTION_JOB_URL_RE = re.compile(r"/actions/runs/(?P<run_id>\d+)/job/(?P<job_id>\d+)")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+")
@@ -30,6 +33,12 @@ _CHECKOUT_FAILURE_FRAGMENTS = (
     "fatal: repository",
     "fatal: unable to access",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _FailureLogFetch:
+    text: str = ""
+    error: str = ""
 
 
 def failed_check_logs_are_retryable(result: Mapping[str, object]) -> bool:
@@ -56,6 +65,7 @@ def failed_checks_with_log_excerpts(
     *,
     gh_path: str,
     failing_checks: list[Mapping[str, object]],
+    run_command: RunCommand = subprocess.run,
 ) -> list[dict[str, object]]:
     enriched: list[dict[str, object]] = []
     for check in failing_checks:
@@ -66,26 +76,51 @@ def failed_checks_with_log_excerpts(
             enriched.append(item)
             continue
         run_id, job_id = ids
-        completed = subprocess.run(
+        fetched = _fetch_failure_log(
+            git_root,
+            gh_path=gh_path,
+            run_id=run_id,
+            job_id=job_id,
+            run_command=run_command,
+        )
+        if fetched.error:
+            item["failure_log_error"] = fetched.error
+            enriched.append(item)
+            continue
+        excerpt, truncated = failure_log_excerpt(fetched.text)
+        if excerpt:
+            item["failure_excerpt"] = excerpt
+            item["failure_excerpt_truncated"] = truncated
+        item.update(classify_failure_log(fetched.text))
+        enriched.append(item)
+    return enriched
+
+
+def _fetch_failure_log(
+    git_root: Path,
+    *,
+    gh_path: str,
+    run_id: str,
+    job_id: str,
+    run_command: RunCommand,
+) -> _FailureLogFetch:
+    try:
+        completed = run_command(
             [gh_path, "run", "view", run_id, "--job", job_id, "--log"],
             cwd=str(git_root),
             text=True,
             capture_output=True,
             check=False,
+            timeout=DEFAULT_FAILURE_LOG_COMMAND_TIMEOUT_SECONDS,
         )
-        if completed.returncode != 0:
-            error = (completed.stderr or completed.stdout).strip()
-            if error:
-                item["failure_log_error"] = error
-            enriched.append(item)
-            continue
-        excerpt, truncated = failure_log_excerpt(completed.stdout or "")
-        if excerpt:
-            item["failure_excerpt"] = excerpt
-            item["failure_excerpt_truncated"] = truncated
-        item.update(classify_failure_log(completed.stdout or ""))
-        enriched.append(item)
-    return enriched
+    except (OSError, subprocess.SubprocessError) as error:
+        return _FailureLogFetch(error=str(error) or error.__class__.__name__)
+    if completed.returncode != 0:
+        error = (completed.stderr or completed.stdout).strip()
+        if not error:
+            error = f"GitHub Actions log command failed with exit code {completed.returncode}."
+        return _FailureLogFetch(error=error)
+    return _FailureLogFetch(text=completed.stdout or "")
 
 
 def classify_failure_log(log_text: str) -> dict[str, object]:
@@ -205,6 +240,8 @@ def _clean_log_line(line: str) -> str:
 __all__ = [
     "DEFAULT_FAILURE_EXCERPT_CHARS",
     "DEFAULT_FAILURE_EXCERPT_LINES",
+    "DEFAULT_FAILURE_LOG_COMMAND_TIMEOUT_SECONDS",
+    "RunCommand",
     "classify_failure_log",
     "failed_check_logs_are_retryable",
     "failed_checks_with_log_excerpts",

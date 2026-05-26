@@ -13,6 +13,7 @@ from envctl_engine.actions.action_ship_check_results import (
 )
 from envctl_engine.actions.action_ship_failure_logs import failed_checks_with_log_excerpts
 
+DEFAULT_GH_QUERY_TIMEOUT_SECONDS = 30.0
 RunCommand = Callable[..., subprocess.CompletedProcess[str]]
 MonotonicClock = Callable[[], float]
 
@@ -29,21 +30,35 @@ def query_expected_head_pr_checks(
     run_command: RunCommand = subprocess.run,
     monotonic: MonotonicClock = time.monotonic,
 ) -> dict[str, object]:
-    completed = run_command(
+    completed, command_error = _run_gh_query(
         [gh_path, "pr", "view", branch, "--json", "headRefOid,statusCheckRollup,url"],
-        cwd=str(git_root),
-        text=True,
-        capture_output=True,
-        check=False,
+        git_root=git_root,
+        run_command=run_command,
     )
     duration = round(monotonic() - started, 3)
-    if completed.returncode != 0:
-        error = (completed.stderr or completed.stdout).strip()
+    if command_error:
         return _pending_expected_head_result(
             duration_seconds=duration,
             expected_head_sha=expected_head_sha,
             actual_head_sha="",
-            error=error or "GitHub PR status is not available yet.",
+            error=command_error,
+            pr_url=pr_url,
+        )
+    if completed is None:
+        return _pending_expected_head_result(
+            duration_seconds=duration,
+            expected_head_sha=expected_head_sha,
+            actual_head_sha="",
+            error="GitHub PR status is not available yet.",
+            pr_url=pr_url,
+        )
+    if completed.returncode != 0:
+        error = _completed_error_text(completed, fallback="GitHub PR status is not available yet.")
+        return _pending_expected_head_result(
+            duration_seconds=duration,
+            expected_head_sha=expected_head_sha,
+            actual_head_sha="",
+            error=error,
             pr_url=pr_url,
         )
 
@@ -101,13 +116,12 @@ def query_expected_head_pr_checks(
     normalized["expected_head_sha"] = expected_head_sha
     normalized["actual_head_sha"] = actual_head_sha
     normalized["pr_url"] = str(data.get("url") or pr_url)
-    if normalized["state"] == "checks_failed":
-        normalized["failing_checks"] = failed_checks_with_log_excerpts(
-            git_root,
-            gh_path=gh_path,
-            failing_checks=_mapping_check_list(normalized.get("failing_checks")),
-        )
-    return normalized
+    return _with_failed_check_log_excerpts(
+        normalized,
+        git_root=git_root,
+        gh_path=gh_path,
+        run_command=run_command,
+    )
 
 
 def query_github_pr_checks(
@@ -119,16 +133,32 @@ def query_github_pr_checks(
     run_command: RunCommand = subprocess.run,
     monotonic: MonotonicClock = time.monotonic,
 ) -> dict[str, object]:
-    completed = run_command(
+    completed, command_error = _run_gh_query(
         [gh_path, "pr", "checks", branch, "--json", "name,state,workflow,link"],
-        cwd=str(git_root),
-        text=True,
-        capture_output=True,
-        check=False,
+        git_root=git_root,
+        run_command=run_command,
     )
     duration = round(monotonic() - started, 3)
+    if command_error:
+        return {
+            "state": "checks_pending_timeout",
+            "failing_checks": [],
+            "passed_checks": [],
+            "pending_checks": [],
+            "duration_seconds": duration,
+            "error": command_error,
+        }
+    if completed is None:
+        return {
+            "state": "checks_pending_timeout",
+            "failing_checks": [],
+            "passed_checks": [],
+            "pending_checks": [],
+            "duration_seconds": duration,
+            "error": "GitHub PR checks are not available yet.",
+        }
     if completed.returncode != 0:
-        error = (completed.stderr or completed.stdout).strip()
+        error = _completed_error_text(completed, fallback="GitHub PR checks are not available yet.")
         if "no checks reported" in error.casefold():
             return {
                 "state": "no_checks_reported",
@@ -162,13 +192,12 @@ def query_github_pr_checks(
             "error": "GitHub has not reported target test check contexts for this branch.",
         }
     normalized = normalize_github_pr_checks(target_checks, duration_seconds=duration)
-    if normalized["state"] == "checks_failed":
-        normalized["failing_checks"] = failed_checks_with_log_excerpts(
-            git_root,
-            gh_path=gh_path,
-            failing_checks=_mapping_check_list(normalized.get("failing_checks")),
-        )
-    return normalized
+    return _with_failed_check_log_excerpts(
+        normalized,
+        git_root=git_root,
+        gh_path=gh_path,
+        run_command=run_command,
+    )
 
 
 def _pending_expected_head_result(
@@ -205,7 +234,52 @@ def _mapping_check_list(value: object) -> list[Mapping[str, object]]:
     return [item for item in value if isinstance(item, Mapping)]
 
 
+def _run_gh_query(
+    args: list[str],
+    *,
+    git_root: Path,
+    run_command: RunCommand,
+) -> tuple[subprocess.CompletedProcess[str] | None, str]:
+    try:
+        return (
+            run_command(
+                args,
+                cwd=str(git_root),
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=DEFAULT_GH_QUERY_TIMEOUT_SECONDS,
+            ),
+            "",
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, str(error) or error.__class__.__name__
+
+
+def _completed_error_text(completed: subprocess.CompletedProcess[str], *, fallback: str) -> str:
+    return (completed.stderr or completed.stdout).strip() or fallback
+
+
+def _with_failed_check_log_excerpts(
+    result: dict[str, object],
+    *,
+    git_root: Path,
+    gh_path: str,
+    run_command: RunCommand,
+) -> dict[str, object]:
+    if result.get("state") != "checks_failed":
+        return result
+    result["failing_checks"] = failed_checks_with_log_excerpts(
+        git_root,
+        gh_path=gh_path,
+        failing_checks=_mapping_check_list(result.get("failing_checks")),
+        run_command=run_command,
+    )
+    return result
+
+
 __all__ = [
+    "DEFAULT_GH_QUERY_TIMEOUT_SECONDS",
     "MonotonicClock",
     "RunCommand",
     "query_expected_head_pr_checks",

@@ -13,7 +13,11 @@ from envctl_engine.actions.action_ship_check_results import (
     normalize_github_pr_checks as normalize_checks_from_result_owner,
     target_status_checks,
 )
-from envctl_engine.actions.action_ship_failure_logs import classify_failure_log, failure_log_excerpt
+from envctl_engine.actions.action_ship_failure_logs import (
+    classify_failure_log,
+    failed_checks_with_log_excerpts,
+    failure_log_excerpt,
+)
 from envctl_engine.actions.action_ship_conflicts import parse_merge_tree_conflicts as parse_conflicts_from_owner
 from envctl_engine.actions.action_ship_contract import (
     ship_action_payload as ship_action_payload_from_contract,
@@ -452,6 +456,227 @@ def test_github_pr_check_query_ignores_malformed_failing_check_payloads(tmp_path
 
     assert checks["state"] == "checks_failed"
     assert checks["failing_checks"] == [{"name": "pytest", "workflow": "Tests", "state": "FAILURE"}]
+
+
+def test_github_pr_check_query_reports_runner_timeouts_as_pending_status(tmp_path: Path) -> None:
+    seen_timeout: list[float] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen_timeout.append(float(kwargs["timeout"]))
+        raise subprocess.TimeoutExpired(args, timeout=float(kwargs["timeout"]))
+
+    checks = action_ship_check_queries.query_github_pr_checks(
+        tmp_path,
+        gh_path="gh-test",
+        branch="feature/demo",
+        started=0.0,
+        run_command=fake_run,
+        monotonic=lambda: 0.5,
+    )
+
+    assert checks == {
+        "state": "checks_pending_timeout",
+        "failing_checks": [],
+        "passed_checks": [],
+        "pending_checks": [],
+        "duration_seconds": 0.5,
+        "error": "Command '['gh-test', 'pr', 'checks', 'feature/demo', '--json', 'name,state,workflow,link']' "
+        "timed out after 30.0 seconds",
+    }
+    assert seen_timeout == [30.0]
+
+
+def test_expected_head_check_query_reports_runner_timeouts_as_pending_status(tmp_path: Path) -> None:
+    seen_timeout: list[float] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen_timeout.append(float(kwargs["timeout"]))
+        raise subprocess.TimeoutExpired(args, timeout=float(kwargs["timeout"]))
+
+    checks = action_ship_check_queries.query_expected_head_pr_checks(
+        tmp_path,
+        gh_path="gh-test",
+        branch="feature/demo",
+        pr_url="https://github.com/acme/repo/pull/7",
+        expected_head_sha="newsha",
+        started=0.0,
+        no_checks_grace_seconds=10.0,
+        run_command=fake_run,
+        monotonic=lambda: 0.5,
+    )
+
+    assert checks["state"] == "checks_pending_timeout"
+    assert checks["duration_seconds"] == 0.5
+    assert checks["expected_head_sha"] == "newsha"
+    assert checks["pr_url"] == "https://github.com/acme/repo/pull/7"
+    assert "timed out after 30.0 seconds" in str(checks["error"])
+    assert seen_timeout == [30.0]
+
+
+def test_github_pr_check_query_uses_fallback_message_when_cli_error_is_empty(tmp_path: Path) -> None:
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="")
+
+    checks = action_ship_check_queries.query_github_pr_checks(
+        tmp_path,
+        gh_path="gh-test",
+        branch="feature/demo",
+        started=0.0,
+        run_command=fake_run,
+        monotonic=lambda: 0.5,
+    )
+
+    assert checks == {
+        "state": "checks_pending_timeout",
+        "failing_checks": [],
+        "passed_checks": [],
+        "pending_checks": [],
+        "duration_seconds": 0.5,
+        "error": "GitHub PR checks are not available yet.",
+    }
+
+
+def test_github_pr_check_query_uses_injected_runner_for_failed_check_logs(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:3] == ["gh-test", "pr", "checks"]:
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "name": "pytest",
+                            "workflow": "Tests",
+                            "state": "FAILURE",
+                            "link": "https://github.com/acme/repo/actions/runs/123/job/456",
+                        }
+                    ]
+                ),
+                stderr="",
+            )
+        if args[:6] == ["gh-test", "run", "view", "123", "--job", "456"]:
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=(
+                    "pytest\tRun pytest\t2026-05-25T20:00:00Z ================= FAILURES =================\n"
+                    "pytest\tRun pytest\t2026-05-25T20:00:01Z FAILED tests/test_demo.py::test_demo - AssertionError\n"
+                ),
+                stderr="",
+            )
+        raise AssertionError(args)
+
+    checks = action_ship_check_queries.query_github_pr_checks(
+        tmp_path,
+        gh_path="gh-test",
+        branch="feature/demo",
+        started=0.0,
+        run_command=fake_run,
+        monotonic=lambda: 0.5,
+    )
+
+    assert checks["state"] == "checks_failed"
+    assert checks["failing_checks"] == [
+        {
+            "name": "pytest",
+            "workflow": "Tests",
+            "state": "FAILURE",
+            "link": "https://github.com/acme/repo/actions/runs/123/job/456",
+            "failure_excerpt": "================= FAILURES =================\n"
+            "FAILED tests/test_demo.py::test_demo - AssertionError",
+            "failure_excerpt_truncated": False,
+        }
+    ]
+    assert calls == [
+        ["gh-test", "pr", "checks", "feature/demo", "--json", "name,state,workflow,link"],
+        ["gh-test", "run", "view", "123", "--job", "456", "--log"],
+    ]
+
+
+def test_failed_check_log_enrichment_reports_runner_os_errors(tmp_path: Path) -> None:
+    def fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError(2, "No such file or directory", "gh-test")
+
+    enriched = failed_checks_with_log_excerpts(
+        tmp_path,
+        gh_path="gh-test",
+        failing_checks=[
+            {
+                "name": "pytest",
+                "workflow": "Tests",
+                "state": "FAILURE",
+                "link": "https://github.com/acme/repo/actions/runs/123/job/456",
+            }
+        ],
+        run_command=fake_run,
+    )
+
+    assert enriched == [
+        {
+            "name": "pytest",
+            "workflow": "Tests",
+            "state": "FAILURE",
+            "link": "https://github.com/acme/repo/actions/runs/123/job/456",
+            "failure_log_error": "[Errno 2] No such file or directory: 'gh-test'",
+        }
+    ]
+
+
+def test_failed_check_log_enrichment_reports_empty_log_command_errors(tmp_path: Path) -> None:
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=args, returncode=2, stdout="", stderr="")
+
+    enriched = failed_checks_with_log_excerpts(
+        tmp_path,
+        gh_path="gh-test",
+        failing_checks=[
+            {
+                "name": "pytest",
+                "workflow": "Tests",
+                "state": "FAILURE",
+                "link": "https://github.com/acme/repo/actions/runs/123/job/456",
+            }
+        ],
+        run_command=fake_run,
+    )
+
+    assert enriched == [
+        {
+            "name": "pytest",
+            "workflow": "Tests",
+            "state": "FAILURE",
+            "link": "https://github.com/acme/repo/actions/runs/123/job/456",
+            "failure_log_error": "GitHub Actions log command failed with exit code 2.",
+        }
+    ]
+
+
+def test_failed_check_log_enrichment_bounds_log_fetch_subprocesses(tmp_path: Path) -> None:
+    seen_timeout: list[float] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen_timeout.append(float(kwargs["timeout"]))
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="FAILED tests/test_demo.py::test_demo\n", stderr="")
+
+    enriched = failed_checks_with_log_excerpts(
+        tmp_path,
+        gh_path="gh-test",
+        failing_checks=[
+            {
+                "name": "pytest",
+                "workflow": "Tests",
+                "state": "FAILURE",
+                "link": "https://github.com/acme/repo/actions/runs/123/job/456",
+            }
+        ],
+        run_command=fake_run,
+    )
+
+    assert enriched[0]["failure_excerpt"] == "FAILED tests/test_demo.py::test_demo"
+    assert seen_timeout == [30.0]
 
 
 def test_github_pr_checks_can_detect_success_before_next_progress_heartbeat(tmp_path: Path, monkeypatch: Any) -> None:
