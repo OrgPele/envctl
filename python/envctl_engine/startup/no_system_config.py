@@ -75,6 +75,45 @@ def record_no_local_app_system_skip(route: Any | None, skip: NoSystemConfiguredS
         )
 
 
+def should_skip_service_attach_for_selection(
+    runtime: Any,
+    route: Any | None,
+    context: Any,
+    mode: str,
+    selected_service_types: set[str],
+    configured_additional_services: tuple[object, ...],
+) -> bool:
+    if not selected_service_types:
+        runtime._emit(
+            "service.attach.skipped",
+            project=context.name,
+            mode=mode,
+            reason="all_services_disabled",
+        )
+        return True
+    no_system_skip = classify_no_local_app_system(
+        runtime=runtime,
+        project_name=context.name,
+        project_root=context.root,
+        mode=mode,
+        selected_service_types=selected_service_types,
+        configured_additional_services=configured_additional_services,
+        route=route,
+    )
+    if no_system_skip is None:
+        return False
+    record_no_local_app_system_skip(route, no_system_skip)
+    runtime._emit(
+        "service.attach.skipped",
+        project=context.name,
+        mode=mode,
+        reason="no_system_configured",
+        requested_scope=no_system_skip.requested_scope,
+        selected_default_services=list(no_system_skip.selected_services),
+    )
+    return True
+
+
 def no_local_app_system_skip_messages(route: Any | None) -> list[str]:
     flags = getattr(route, "flags", None)
     if not isinstance(flags, dict):

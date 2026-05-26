@@ -37,7 +37,7 @@ from envctl_engine.startup.service_execution_records import (
     finalize_launched_service_records,
 )
 from envctl_engine.startup.service_launch_diagnostics import record_runtime_launch_diagnostics
-from envctl_engine.startup.no_system_config import classify_no_local_app_system, record_no_local_app_system_skip
+from envctl_engine.startup.no_system_config import should_skip_service_attach_for_selection
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
 from envctl_engine.startup.public_urls import browser_backend_url, resolve_public_host
 from envctl_engine.startup.requirements_execution import requirements_timing_enabled
@@ -159,33 +159,9 @@ def start_project_services(
         default_service_types=configured_service_types,
         additional_services=configured_additional_services,
     )
-    if not selected_service_types:
-        rt._emit(
-            "service.attach.skipped",
-            project=context.name,
-            mode=effective_mode,
-            reason="all_services_disabled",
-        )
-        return {}
-    no_system_skip = classify_no_local_app_system(
-        runtime=rt,
-        project_name=context.name,
-        project_root=context.root,
-        mode=effective_mode,
-        selected_service_types=selected_service_types,
-        configured_additional_services=configured_additional_services,
-        route=route,
-    )
-    if no_system_skip is not None:
-        record_no_local_app_system_skip(route, no_system_skip)
-        rt._emit(
-            "service.attach.skipped",
-            project=context.name,
-            mode=effective_mode,
-            reason="no_system_configured",
-            requested_scope=no_system_skip.requested_scope,
-            selected_default_services=list(no_system_skip.selected_services),
-        )
+    if should_skip_service_attach_for_selection(
+        rt, route, context, effective_mode, selected_service_types, configured_additional_services
+    ):
         return {}
 
     service_started = time.monotonic()
