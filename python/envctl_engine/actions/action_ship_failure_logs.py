@@ -10,6 +10,26 @@ DEFAULT_FAILURE_EXCERPT_CHARS = 12_000
 _ACTION_JOB_URL_RE = re.compile(r"/actions/runs/(?P<run_id>\d+)/job/(?P<job_id>\d+)")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+")
+_CHECKOUT_CONTEXT_FRAGMENTS = (
+    "actions/checkout",
+    "checkout repository",
+    "git fetch",
+    "/usr/bin/git",
+)
+_CHECKOUT_AUTH_FAILURE_FRAGMENTS = (
+    "account is suspended",
+    "authentication failed",
+    "could not read username",
+    "permission denied",
+    "repository not found",
+    "requested url returned error: 403",
+    "support.github.com",
+)
+_CHECKOUT_FAILURE_FRAGMENTS = (
+    "exit code 128",
+    "fatal: repository",
+    "fatal: unable to access",
+)
 
 
 def failed_check_logs_are_retryable(result: Mapping[str, object]) -> bool:
@@ -63,8 +83,35 @@ def failed_checks_with_log_excerpts(
         if excerpt:
             item["failure_excerpt"] = excerpt
             item["failure_excerpt_truncated"] = truncated
+        item.update(classify_failure_log(completed.stdout or ""))
         enriched.append(item)
     return enriched
+
+
+def classify_failure_log(log_text: str) -> dict[str, object]:
+    lines = [_clean_log_line(line) for line in log_text.splitlines()]
+    lines = [line for line in lines if line.strip()]
+    if not lines:
+        return {}
+
+    checkout_start = _checkout_failure_start(lines)
+    if checkout_start is None:
+        return {}
+
+    window = _classification_window(lines, checkout_start)
+    if _contains_any(window, _CHECKOUT_AUTH_FAILURE_FRAGMENTS):
+        return {
+            "failure_kind": "github_checkout_auth",
+            "failure_stage": "checkout",
+            "failure_summary": "GitHub checkout/auth failed before tests ran.",
+            "tests_executed": False,
+        }
+    return {
+        "failure_kind": "github_checkout",
+        "failure_stage": "checkout",
+        "failure_summary": "GitHub checkout failed before tests ran.",
+        "tests_executed": False,
+    }
 
 
 def failure_log_excerpt(log_text: str) -> tuple[str, bool]:
@@ -104,6 +151,9 @@ def _github_actions_run_and_job_ids(link: str) -> tuple[str, str] | None:
 
 
 def _failure_excerpt_start(lines: list[str]) -> int:
+    checkout_start = _checkout_failure_start(lines)
+    if checkout_start is not None:
+        return checkout_start
     for index, line in enumerate(lines):
         normalized = line.casefold()
         if "failures" in normalized and "=" in line:
@@ -112,6 +162,34 @@ def _failure_excerpt_start(lines: list[str]) -> int:
         if line.startswith("FAILED ") or "##[error]" in line:
             return index
     return max(len(lines) - DEFAULT_FAILURE_EXCERPT_LINES, 0)
+
+
+def _checkout_failure_start(lines: list[str]) -> int | None:
+    failure_fragments = _CHECKOUT_AUTH_FAILURE_FRAGMENTS + _CHECKOUT_FAILURE_FRAGMENTS
+    for index, line in enumerate(lines):
+        normalized = line.casefold()
+        if not _contains_any(normalized, failure_fragments):
+            continue
+
+        window_start = max(index - 8, 0)
+        window_end = min(index + 4, len(lines))
+        window = "\n".join(lines[window_start:window_end]).casefold()
+        if not _contains_any(window, _CHECKOUT_CONTEXT_FRAGMENTS):
+            continue
+
+        for context_index in range(window_start, index + 1):
+            if _contains_any(lines[context_index].casefold(), _CHECKOUT_CONTEXT_FRAGMENTS):
+                return context_index
+        return max(index - 2, 0)
+    return None
+
+
+def _classification_window(lines: list[str], start: int) -> str:
+    return "\n".join(lines[start : min(start + 24, len(lines))]).casefold()
+
+
+def _contains_any(value: str, fragments: tuple[str, ...]) -> bool:
+    return any(fragment in value for fragment in fragments)
 
 
 def _clean_log_line(line: str) -> str:
@@ -127,6 +205,7 @@ def _clean_log_line(line: str) -> str:
 __all__ = [
     "DEFAULT_FAILURE_EXCERPT_CHARS",
     "DEFAULT_FAILURE_EXCERPT_LINES",
+    "classify_failure_log",
     "failed_check_logs_are_retryable",
     "failed_checks_with_log_excerpts",
     "failure_log_excerpt",

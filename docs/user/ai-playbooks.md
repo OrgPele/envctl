@@ -149,6 +149,7 @@ Codex TUI cycle mode:
 - canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set
 - `CYCLES` does not enable plan-agent launch by itself; use `--cmux`, `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or a cmux workspace override to enable launch
 - envctl only appends messages in this mode; Codex still runs `envctl ship` or the fallback commit, push, and PR flow itself
+- when `ship` is delegated to a real background/subagent lane, successful completion is silent; the worker reports back only for commit/push/PR failures, merge conflicts, failed checks, pending timeouts, no-checks-reported status, or actionable review comments
 
 Then run:
 

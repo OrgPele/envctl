@@ -13,7 +13,7 @@ from envctl_engine.actions.action_ship_check_results import (
     normalize_github_pr_checks as normalize_checks_from_result_owner,
     target_status_checks,
 )
-from envctl_engine.actions.action_ship_failure_logs import failure_log_excerpt
+from envctl_engine.actions.action_ship_failure_logs import classify_failure_log, failure_log_excerpt
 from envctl_engine.actions.action_ship_conflicts import parse_merge_tree_conflicts as parse_conflicts_from_owner
 from envctl_engine.actions.action_ship_contract import (
     ship_action_payload as ship_action_payload_from_contract,
@@ -672,6 +672,86 @@ def test_github_pr_checks_adds_failed_check_log_excerpt(tmp_path: Path, monkeypa
         ["/usr/bin/gh", "pr", "checks", "feature/demo", "--json", "name,state,workflow,link"],
         ["/usr/bin/gh", "run", "view", "12345", "--job", "67890", "--log"],
     ]
+
+
+def test_github_pr_checks_classifies_checkout_auth_failure_before_tests(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[:3] == ["/usr/bin/gh", "pr", "checks"]:
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "name": "pytest",
+                            "state": "FAILURE",
+                            "workflow": "Tests",
+                            "link": "https://github.com/acme/repo/actions/runs/12345/job/67890",
+                        }
+                    ]
+                ),
+                stderr="",
+            )
+        if args[:6] == ["/usr/bin/gh", "run", "view", "12345", "--job", "67890"]:
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=(
+                    "pytest\tCheckout repository\t2026-05-25T20:00:00Z ##[group]Run actions/checkout@v6\n"
+                    "pytest\tCheckout repository\t2026-05-25T20:00:01Z git fetch --no-tags origin main\n"
+                    "pytest\tCheckout repository\t2026-05-25T20:00:02Z remote: Your account is suspended. Please visit https://support.github.com for more information.\n"
+                    "pytest\tCheckout repository\t2026-05-25T20:00:03Z ##[error]fatal: unable to access 'https://github.com/acme/repo/': The requested URL returned error: 403\n"
+                    "pytest\tCheckout repository\t2026-05-25T20:00:04Z Error: Process completed with exit code 128.\n"
+                ),
+                stderr="",
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
+
+    checks = action_ship_checks.github_pr_checks(
+        tmp_path,
+        branch="feature/demo",
+        pr_url="https://github.com/acme/repo/pull/7",
+        timeout_seconds=30.0,
+        poll_interval_seconds=0.01,
+    )
+
+    assert checks["state"] == "checks_failed"
+    failing = checks["failing_checks"]
+    assert failing == [
+        {
+            "name": "pytest",
+            "state": "FAILURE",
+            "workflow": "Tests",
+            "link": "https://github.com/acme/repo/actions/runs/12345/job/67890",
+            "failure_excerpt": (
+                "##[group]Run actions/checkout@v6\n"
+                "git fetch --no-tags origin main\n"
+                "remote: Your account is suspended. Please visit https://support.github.com for more information.\n"
+                "##[error]fatal: unable to access 'https://github.com/acme/repo/': The requested URL returned error: 403\n"
+                "Error: Process completed with exit code 128."
+            ),
+            "failure_excerpt_truncated": False,
+            "failure_kind": "github_checkout_auth",
+            "failure_stage": "checkout",
+            "failure_summary": "GitHub checkout/auth failed before tests ran.",
+            "tests_executed": False,
+        }
+    ]
+
+
+def test_classify_failure_log_ignores_checkout_setup_when_test_body_failed() -> None:
+    log_text = (
+        "pytest\tCheckout repository\t2026-05-25T20:00:00Z ##[group]Run actions/checkout@v6\n"
+        "pytest\tRun pytest\t2026-05-25T20:00:01Z ================= FAILURES =================\n"
+        "pytest\tRun pytest\t2026-05-25T20:00:02Z FAILED tests/test_demo.py::test_demo - AssertionError\n"
+    )
+
+    assert classify_failure_log(log_text) == {}
 
 
 def test_github_pr_checks_retries_failed_check_logs_until_github_makes_them_available(
