@@ -872,7 +872,12 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             runtime = SimpleNamespace(
                 port_planner=_PortAllocatorStub(),
                 env={},
-                config=SimpleNamespace(raw={}, backend_dir_name="backend", frontend_dir_name="frontend"),
+                config=SimpleNamespace(
+                    raw={},
+                    explicit_keys=("ENVCTL_BACKEND_START_CMD", "ENVCTL_FRONTEND_START_CMD"),
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                ),
                 services=SimpleNamespace(start_project_with_attach=start_project_with_attach),
                 _invoke_envctl_hook=lambda **kwargs: SimpleNamespace(found=False, success=False, payload=None),
                 _run_dir_path=lambda run_id: run_dir,
@@ -920,6 +925,302 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             self.assertEqual(attach_modes, [False])
             self.assertEqual(sorted(overlap_hits), ["backend", "frontend"])
             self.assertEqual(sorted(overlay_calls), ["backend", "frontend"])
+
+    def test_start_project_services_skips_default_backend_frontend_when_no_local_system_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project_root = root / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            run_dir = root / "runtime" / "run-1"
+            events: list[tuple[str, dict[str, object]]] = []
+            prep_calls: list[str] = []
+            background_calls: list[object] = []
+
+            runtime = SimpleNamespace(
+                port_planner=_PortAllocatorStub(),
+                env={},
+                config=SimpleNamespace(
+                    raw={},
+                    explicit_keys=(),
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                    additional_services=(),
+                    backend_dependency_env_section_present=False,
+                    frontend_dependency_env_section_present=False,
+                    main_backend_dependency_env_section_present=False,
+                    main_frontend_dependency_env_section_present=False,
+                    trees_backend_dependency_env_section_present=False,
+                    trees_frontend_dependency_env_section_present=False,
+                    service_dependency_env_section_present={},
+                    mode_service_dependency_env_section_present={},
+                    all_app_service_names_for_mode=lambda mode, project_root=None: ("backend", "frontend"),
+                ),
+                services=SimpleNamespace(
+                    start_project_with_attach=lambda **kwargs: self.fail("default services should not start")
+                ),
+                _invoke_envctl_hook=lambda **kwargs: SimpleNamespace(found=False, success=False, payload=None),
+                _run_dir_path=lambda run_id: run_dir,
+                _project_service_env=lambda context, requirements, route=None, service_name=None: {},
+                _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
+                _resolve_frontend_env_file=lambda context, frontend_cwd: None,
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
+                _service_enabled_for_mode=lambda mode, service: True,
+                process_runner=SimpleNamespace(
+                    start_background=lambda *args, **kwargs: background_calls.append((args, kwargs))
+                ),
+                _prepare_backend_runtime=lambda **kwargs: prep_calls.append("backend"),
+                _prepare_frontend_runtime=lambda **kwargs: prep_calls.append("frontend"),
+                _service_command_source=lambda **kwargs: self.fail("command resolution should not run"),
+                _command_exists=lambda command: False,
+                _record_project_startup_warning=lambda project, warning: events.append(
+                    ("startup.warning", {"project": project, "warning": warning})
+                ),
+                _emit=lambda event, **payload: events.append((event, payload)),
+            )
+            orchestrator = SimpleNamespace(
+                runtime=runtime,
+                _restart_service_types_for_project=lambda **kwargs: {"backend", "frontend"},
+                _suppress_timing_output=lambda route: True,
+            )
+            context = SimpleNamespace(
+                name="Main",
+                root=project_root,
+                ports={
+                    "backend": SimpleNamespace(final=8000),
+                    "frontend": SimpleNamespace(final=3000),
+                },
+            )
+            requirements = RequirementsResult(project="Main", components={}, health="healthy", failures=[])
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            records = start_project_services(
+                orchestrator,
+                context,
+                requirements=requirements,
+                run_id="run-1",
+                route=route,
+            )
+
+            self.assertEqual(records, {})
+            self.assertEqual(prep_calls, [])
+            self.assertEqual(background_calls, [])
+            skipped = [payload for event, payload in events if event == "service.attach.skipped"]
+            self.assertEqual(len(skipped), 1)
+            self.assertEqual(skipped[0].get("reason"), "no_system_configured")
+            self.assertEqual(skipped[0].get("requested_scope"), "entire-system")
+            self.assertEqual(skipped[0].get("selected_service_types"), ["backend", "frontend"])
+            warnings = [payload["warning"] for event, payload in events if event == "startup.warning"]
+            self.assertEqual(len(warnings), 1)
+            self.assertIn("No local app system is configured", str(warnings[0]))
+
+    def test_start_project_services_keeps_missing_command_failure_for_explicit_enablement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project_root = root / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            run_dir = root / "runtime" / "run-1"
+
+            runtime = SimpleNamespace(
+                port_planner=_PortAllocatorStub(),
+                env={},
+                config=SimpleNamespace(
+                    raw={},
+                    explicit_keys=("TREES_BACKEND_ENABLE",),
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                    additional_services=(),
+                    all_app_service_names_for_mode=lambda mode, project_root=None: ("backend", "frontend"),
+                ),
+                services=SimpleNamespace(
+                    start_project_with_attach=lambda **kwargs: self.fail("command source should fail first")
+                ),
+                _invoke_envctl_hook=lambda **kwargs: SimpleNamespace(found=False, success=False, payload=None),
+                _run_dir_path=lambda run_id: run_dir,
+                _project_service_env=lambda context, requirements, route=None, service_name=None: {},
+                _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
+                _resolve_frontend_env_file=lambda context, frontend_cwd: None,
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
+                _service_enabled_for_mode=lambda mode, service: True,
+                process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: None),
+                _prepare_backend_runtime=lambda **kwargs: None,
+                _prepare_frontend_runtime=lambda **kwargs: None,
+                _service_command_source=lambda **kwargs: (_ for _ in ()).throw(
+                    RuntimeError("missing_service_start_command: autodetect_failed_backend")
+                ),
+                _command_exists=lambda command: False,
+                _emit=lambda event, **payload: None,
+            )
+            orchestrator = SimpleNamespace(
+                runtime=runtime,
+                _restart_service_types_for_project=lambda **kwargs: {"backend", "frontend"},
+                _suppress_timing_output=lambda route: True,
+            )
+            context = SimpleNamespace(
+                name="Main",
+                root=project_root,
+                ports={
+                    "backend": SimpleNamespace(final=8000),
+                    "frontend": SimpleNamespace(final=3000),
+                },
+            )
+            requirements = RequirementsResult(project="Main", components={}, health="healthy", failures=[])
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            with self.assertRaisesRegex(RuntimeError, "missing_service_start_command"):
+                start_project_services(
+                    orchestrator,
+                    context,
+                    requirements=requirements,
+                    run_id="run-1",
+                    route=route,
+                )
+
+    def test_start_project_services_keeps_missing_command_failure_for_explicit_additional_services(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project_root = root / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            run_dir = root / "runtime" / "run-1"
+
+            runtime = SimpleNamespace(
+                port_planner=_PortAllocatorStub(),
+                env={},
+                config=SimpleNamespace(
+                    raw={},
+                    explicit_keys=("ENVCTL_ADDITIONAL_SERVICES",),
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                    additional_services=(),
+                    all_app_service_names_for_mode=lambda mode, project_root=None: ("backend", "frontend"),
+                ),
+                services=SimpleNamespace(
+                    start_project_with_attach=lambda **kwargs: self.fail("command source should fail first")
+                ),
+                _invoke_envctl_hook=lambda **kwargs: SimpleNamespace(found=False, success=False, payload=None),
+                _run_dir_path=lambda run_id: run_dir,
+                _project_service_env=lambda context, requirements, route=None, service_name=None: {},
+                _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
+                _resolve_frontend_env_file=lambda context, frontend_cwd: None,
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
+                _service_enabled_for_mode=lambda mode, service: True,
+                process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: None),
+                _prepare_backend_runtime=lambda **kwargs: None,
+                _prepare_frontend_runtime=lambda **kwargs: None,
+                _service_command_source=lambda **kwargs: (_ for _ in ()).throw(
+                    RuntimeError("missing_service_start_command: autodetect_failed_backend")
+                ),
+                _command_exists=lambda command: False,
+                _emit=lambda event, **payload: None,
+            )
+            orchestrator = SimpleNamespace(
+                runtime=runtime,
+                _restart_service_types_for_project=lambda **kwargs: {"backend", "frontend"},
+                _suppress_timing_output=lambda route: True,
+            )
+            context = SimpleNamespace(
+                name="Main",
+                root=project_root,
+                ports={
+                    "backend": SimpleNamespace(final=8000),
+                    "frontend": SimpleNamespace(final=3000),
+                },
+            )
+            requirements = RequirementsResult(project="Main", components={}, health="healthy", failures=[])
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            with self.assertRaisesRegex(RuntimeError, "missing_service_start_command"):
+                start_project_services(
+                    orchestrator,
+                    context,
+                    requirements=requirements,
+                    run_id="run-1",
+                    route=route,
+                )
+
+    def test_start_project_services_keeps_autodetectable_default_services_startable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project_root = root / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            (project_root / "package.json").write_text('{"scripts":{"dev":"vite --host 0.0.0.0"}}', encoding="utf-8")
+            run_dir = root / "runtime" / "run-1"
+            source_calls: list[str] = []
+
+            runtime = SimpleNamespace(
+                port_planner=_PortAllocatorStub(),
+                env={},
+                config=SimpleNamespace(
+                    raw={},
+                    explicit_keys=(),
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                    additional_services=(),
+                    all_app_service_names_for_mode=lambda mode, project_root=None: ("backend", "frontend"),
+                ),
+                services=SimpleNamespace(
+                    start_project_with_attach=lambda **kwargs: {
+                        "Main Backend": ServiceRecord(
+                            name="Main Backend",
+                            type="backend",
+                            cwd=str(project_root),
+                            status="running",
+                            requested_port=8000,
+                            actual_port=8000,
+                        ),
+                        "Main Frontend": ServiceRecord(
+                            name="Main Frontend",
+                            type="frontend",
+                            cwd=str(project_root),
+                            status="running",
+                            requested_port=3000,
+                            actual_port=3000,
+                        ),
+                    }
+                ),
+                _invoke_envctl_hook=lambda **kwargs: SimpleNamespace(found=False, success=False, payload=None),
+                _run_dir_path=lambda run_id: run_dir,
+                _project_service_env=lambda context, requirements, route=None, service_name=None: {},
+                _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
+                _resolve_frontend_env_file=lambda context, frontend_cwd: None,
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
+                _service_enabled_for_mode=lambda mode, service: True,
+                process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: None),
+                _prepare_backend_runtime=lambda **kwargs: None,
+                _prepare_frontend_runtime=lambda **kwargs: None,
+                _service_command_source=lambda service_name, **kwargs: source_calls.append(service_name) or "autodetected",
+                _service_start_command_resolved=lambda service_name, **kwargs: (["npm", "run", "dev"], "autodetected"),
+                _command_exists=lambda command: command in {"npm", "npx"},
+                _detect_service_actual_port=lambda pid, requested_port, service_name, log_path: requested_port,
+                _listener_truth_enforced=lambda: False,
+                _emit=lambda event, **payload: None,
+                _conflict_remaining={},
+            )
+            orchestrator = SimpleNamespace(
+                runtime=runtime,
+                _restart_service_types_for_project=lambda **kwargs: {"backend", "frontend"},
+                _suppress_timing_output=lambda route: True,
+            )
+            context = SimpleNamespace(
+                name="Main",
+                root=project_root,
+                ports={
+                    "backend": SimpleNamespace(final=8000),
+                    "frontend": SimpleNamespace(final=3000),
+                },
+            )
+            requirements = RequirementsResult(project="Main", components={}, health="healthy", failures=[])
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            records = start_project_services(
+                orchestrator,
+                context,
+                requirements=requirements,
+                run_id="run-1",
+                route=route,
+            )
+
+            self.assertIn("Main Frontend", records)
+            self.assertIn("frontend", source_calls)
 
     def test_start_project_services_integrates_additional_listener_and_worker_by_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

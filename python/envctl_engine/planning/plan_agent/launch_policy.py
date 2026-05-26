@@ -103,7 +103,7 @@ class PlanAgentLaunchPolicy:
             preset=self._string_value("ENVCTL_PLAN_AGENT_PRESET") or _DEFAULT_PRESET,
             codex_cycles=codex_cycles,
             codex_cycles_warning=codex_cycles_warning,
-            browser_e2e_followup_enable=self._bool_value("ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE", True),
+            browser_e2e_followup_enable=self._bool_value("ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE", False),
             pr_review_comments_followup_enable=self._bool_value(
                 "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE",
                 False,

@@ -50,6 +50,43 @@ PLANNING_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         aliases=("--plan", "parallel-plan", "sequential-plan", "--parallel-plan", "--sequential-plan"),
         related=("ensure-worktree", "list-trees", "install-prompts", "codex-tmux"),
     ),
+    "import": CommandHelpTopic(
+        command="import",
+        summary="import an existing origin branch into a managed worktree and optionally launch AI sessions",
+        usage=(
+            "envctl --import <branch|origin/branch|refs/remotes/origin/branch> [--headless] "
+            "[--cmux|--tmux|--omx] [runtime scope]",
+            "envctl import <branch> [--tmux --codex --entire-system]",
+        ),
+        what_it_does=(
+            "normalizes branch input to an existing origin branch",
+            "fetches origin/<branch>, creates or reuses trees/imported/<branch-slug>, and checks out a "
+            "tracking local branch",
+            "updates reused imported worktrees with fast-forward-only semantics without force reset",
+            "writes import provenance, links shared artifacts, prepares code intelligence, and can launch "
+            "the plan-agent workflow",
+        ),
+        flags=(
+            "--headless          stay non-interactive and print deterministic import/launch output",
+            "--cmux|--tmux|--omx optionally launch the same plan-agent workflow used by --plan",
+            "--codex|--opencode  choose AI CLI for envctl-owned cmux/tmux launches",
+            "--entire-system|--no-infra|runtime scope flags  select local runtime/dependency startup scope",
+            "--new-session       create a fresh launch target instead of reusing an existing one",
+        ),
+        notes=(
+            "v1 supports only the origin remote and existing remote branches",
+            "import never creates a remote branch, never seeds MAIN_TASK.md from todo/plans, and never "
+            "force-resets local work",
+            "dirty, diverged, wrong-branch, and checked-out-elsewhere worktrees fail with actionable diagnostics",
+        ),
+        examples=(
+            "envctl --import feature/foo --headless",
+            "envctl --import origin/feature/foo --cmux --entire-system --headless",
+            "envctl import feature/foo --tmux --codex --entire-system",
+        ),
+        aliases=("--import",),
+        related=("plan", "list-trees", "codex-tmux"),
+    ),
     "delete-worktree": CommandHelpTopic(
         command="delete-worktree",
         summary="remove selected envctl-managed implementation worktrees",

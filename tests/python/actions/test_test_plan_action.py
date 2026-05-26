@@ -166,6 +166,82 @@ class TestPlanActionTests(unittest.TestCase):
         self.assertEqual(payload["run"]["results"][0]["returncode"], 1)
         self.assertEqual(payload["run"]["skipped_commands"], ["uv run --extra dev ruff check python/envctl_engine/actions/test_plan_action.py"])
 
+    def test_default_mode_uses_repo_venv_for_uv_dev_pytest_command_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            python_path = repo.resolve() / ".venv" / "bin" / "python"
+            python_path.parent.mkdir(parents=True)
+            python_path.write_text("#!/bin/sh\n", encoding="utf-8")
+            python_path.chmod(0o755)
+
+            class Context:
+                repo_root = repo
+                project_root = repo
+                project_name = "Main"
+
+            plan = {
+                "contract_version": "envctl.test_plan.v1",
+                "project": "Main",
+                "repo_root": str(repo),
+                "project_root": str(repo),
+                "changed_files": [],
+                "commands": [{"command": "uv run --extra dev pytest -q tests/python"}],
+                "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+            }
+            calls: list[list[str]] = []
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                calls.append(args)
+                return subprocess.CompletedProcess(args=args, returncode=0)
+
+            with (
+                patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+                patch("envctl_engine.actions.test_plan_action.subprocess.run", side_effect=fake_run),
+                redirect_stdout(StringIO()) as stdout,
+            ):
+                code = run_test_plan_action(Context(), json_output=True)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [[str(python_path), "-m", "pytest", "-q", "tests/python"]])
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["run"]["results"][0]["command"], "uv run --extra dev pytest -q tests/python")
+        self.assertEqual(
+            payload["run"]["results"][0]["executed_command"],
+            f"{python_path} -m pytest -q tests/python",
+        )
+
+    def test_default_mode_reports_signal_termination_details(self) -> None:
+        class Context:
+            repo_root = Path("/repo")
+            project_root = Path("/repo")
+            project_name = "Main"
+
+        plan = {
+            "contract_version": "envctl.test_plan.v1",
+            "project": "Main",
+            "repo_root": "/repo",
+            "project_root": "/repo",
+            "changed_files": [],
+            "commands": [{"command": "uv run --extra dev pytest -q tests/python"}],
+            "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+        }
+
+        with (
+            patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+            patch(
+                "envctl_engine.actions.test_plan_action.subprocess.run",
+                return_value=subprocess.CompletedProcess(args=["uv"], returncode=-9),
+            ),
+            redirect_stdout(StringIO()) as stdout,
+        ):
+            code = run_test_plan_action(Context(), json_output=True)
+
+        self.assertEqual(code, -9)
+        result = json.loads(stdout.getvalue())["run"]["results"][0]
+        self.assertEqual(result["status"], "terminated_by_signal")
+        self.assertEqual(result["signal"], 9)
+        self.assertEqual(result["signal_name"], "SIGKILL")
+
     def test_default_mode_reports_success_after_all_focused_commands_pass(self) -> None:
         class Context:
             repo_root = Path("/repo")

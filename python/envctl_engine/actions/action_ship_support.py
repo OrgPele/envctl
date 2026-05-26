@@ -2,36 +2,41 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-import inspect
 from pathlib import Path
 import subprocess
 import time
 from typing import Any, Callable
 
-from envctl_engine.actions.action_ship_check_results import normalize_github_pr_checks
-from envctl_engine.actions.action_ship_checks import github_pr_checks
+from envctl_engine.actions.action_ship_check_results import normalize_github_pr_checks  # noqa: F401
+from envctl_engine.actions.action_ship_checks import github_pr_checks as default_github_pr_checks
 from envctl_engine.actions.action_ship_conflicts import (
     existing_merge_conflict_report,
-    parse_merge_tree_conflicts,
+    parse_merge_tree_conflicts,  # noqa: F401
     predicted_merge_conflict_report,
-    unmerged_stage_entries,
+    unmerged_stage_entries,  # noqa: F401
 )
 from envctl_engine.actions.action_ship_contract import (
     emit_ship_commit_progress,
     emit_ship_progress,
     parse_ship_json_output,
-    print_ship_result,
-    ship_payload,
+    print_ship_result,  # noqa: F401
+    ship_payload,  # noqa: F401
     ship_protected_paths,
 )
+from envctl_engine.actions.action_ship_finish import finish_ship_workflow
+from envctl_engine.actions.action_ship_phase_status import (
+    callable_accepts_keyword,
+    check_phase_status,
+    ship_status_is_success,
+)
+from envctl_engine.actions.action_ship_push import run_ship_push_phase
 
 GitOutput = Callable[[Path, list[str]], str]
 RunGit = Callable[[Path, list[str]], subprocess.CompletedProcess[str]]
 ResolveBaseBranch = Callable[[Any, Path], str]
 ResolveBaseRef = Callable[[Path, str], str]
 GithubPrChecks = Callable[..., dict[str, object]]
-SUCCESSFUL_CHECK_PHASE_STATUSES = {"checks_passed"}
-
+github_pr_checks = default_github_pr_checks
 
 @dataclass(slots=True)
 class ShipWorkflowState:
@@ -43,6 +48,7 @@ class ShipWorkflowState:
     after_sha: str = ""
     protected_paths: list[str] = field(default_factory=list)
     committed: bool = False
+    pushed: bool = False
     pr_url: str = ""
     pr_created: bool = False
     step_statuses: list[str] = field(default_factory=list)
@@ -80,6 +86,7 @@ class ShipWorkflowRunner:
             self._run_commit_phase,
             self._run_pr_phase,
             self._reject_predicted_merge_conflicts,
+            self._run_push_phase,
         ):
             result = phase(state)
             if result is not None:
@@ -140,6 +147,7 @@ class ShipWorkflowRunner:
         state.after_sha = self.dependencies.git_output(state.git_root, ["rev-parse", "HEAD"]).strip()
         sha_changed = bool(state.after_sha and state.before_sha and state.after_sha != state.before_sha)
         state.committed = sha_changed
+        state.pushed = state.committed
         state.step_statuses.append("committed_pushed" if state.committed else "clean_no_changes")
         if commit_code == 0:
             if state.committed:
@@ -168,7 +176,7 @@ class ShipWorkflowRunner:
             status="pr_unresolved",
             ok=False,
             commit_sha=state.after_sha,
-            pushed=state.committed,
+            pushed=state.pushed,
             pr_url="",
             pr_created=False,
         )
@@ -191,31 +199,58 @@ class ShipWorkflowRunner:
             status="merge_conflicts",
             ok=False,
             commit_sha=state.after_sha,
-            pushed=state.committed,
+            pushed=state.pushed,
             pr_url=state.pr_url,
             pr_created=state.pr_created,
             checks={"state": "merge_conflicts", "failing_checks": [], "pending_checks": []},
             merge_conflicts=state.merge_conflicts,
         )
 
+    def _run_push_phase(self, state: ShipWorkflowState) -> int | None:
+        result = run_ship_push_phase(
+            git_root=state.git_root,
+            branch=state.branch,
+            after_sha=state.after_sha,
+            pr_url=state.pr_url,
+            committed=state.committed,
+            context=self.context,
+            run_git=self.dependencies.run_git,
+        )
+        if result.step_status:
+            state.step_statuses.append(result.step_status)
+        if result.failed:
+            return self._finish(
+                state,
+                status="push_failed",
+                ok=False,
+                commit_sha=state.after_sha,
+                pushed=False,
+                pr_url=state.pr_url,
+                pr_created=state.pr_created,
+                merge_conflicts=state.merge_conflicts,
+            )
+        if result.pushed:
+            state.pushed = True
+        return None
+
     def _run_checks_phase(self, state: ShipWorkflowState) -> int:
-        checks_fn = self.dependencies.github_pr_checks or globals()["github_pr_checks"]
+        checks_fn = self.dependencies.github_pr_checks or default_github_pr_checks
         check_kwargs: dict[str, object] = {
             "branch": state.branch,
             "pr_url": state.pr_url,
             "expected_head_sha": state.after_sha,
         }
-        if _callable_accepts_keyword(checks_fn, "progress_callback"):
+        if callable_accepts_keyword(checks_fn, "progress_callback"):
             check_kwargs["progress_callback"] = emit_ship_progress
         checks = checks_fn(state.git_root, **check_kwargs)
-        status = _check_phase_status(checks)
+        status = check_phase_status(checks)
         state.step_statuses.append(status)
         return self._finish(
             state,
             status=status,
-            ok=_ship_status_is_success(status),
+            ok=ship_status_is_success(status),
             commit_sha=state.after_sha,
-            pushed=state.committed,
+            pushed=state.pushed,
             pr_url=state.pr_url,
             pr_created=state.pr_created,
             checks=checks,
@@ -235,42 +270,18 @@ class ShipWorkflowRunner:
         checks: Mapping[str, object] | None = None,
         merge_conflicts: Mapping[str, object] | None = None,
     ) -> int:
-        payload = ship_payload(
-            context=self.context,
-            git_root=state.git_root,
-            branch=state.branch,
+        return finish_ship_workflow(
+            self.context,
+            state,
             status=status,
-            started=state.started,
+            ok=ok,
             commit_sha=commit_sha,
-            committed=state.committed,
             pushed=pushed,
             pr_url=pr_url,
             pr_created=pr_created,
-            protected_paths=state.protected_paths,
             checks=checks,
-            step_statuses=state.step_statuses,
             merge_conflicts=merge_conflicts,
         )
-        return print_ship_result(payload, json_output=state.json_output, ok=ok)
-
-
-def _callable_accepts_keyword(callback: Callable[..., object], keyword: str) -> bool:
-    try:
-        parameters = inspect.signature(callback).parameters
-    except (TypeError, ValueError):
-        return False
-    return keyword in parameters or any(
-        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
-    )
-
-
-def _ship_status_is_success(status: str) -> bool:
-    return status in SUCCESSFUL_CHECK_PHASE_STATUSES
-
-
-def _check_phase_status(checks: Mapping[str, object]) -> str:
-    return str(checks.get("state") or "checks_unresolved")
-
 
 def run_ship_workflow(
     context: Any,
@@ -307,12 +318,3 @@ def run_ship_workflow(
             github_pr_checks=github_pr_checks,
         ),
     ).run()
-
-
-__all__ = [
-    "GitOutput", "GithubPrChecks", "ResolveBaseBranch", "ResolveBaseRef", "RunGit",
-    "ShipWorkflowDependencies", "ShipWorkflowRunner", "ShipWorkflowState",
-    "existing_merge_conflict_report", "github_pr_checks", "normalize_github_pr_checks", "parse_merge_tree_conflicts",
-    "parse_ship_json_output", "predicted_merge_conflict_report", "print_ship_result", "run_ship_workflow",
-    "ship_payload", "ship_protected_paths", "unmerged_stage_entries",
-]

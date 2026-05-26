@@ -49,7 +49,7 @@ class PlanAgentLaunchConfig:
     direct_prompt_enabled: bool
     ulw_loop_prefix: bool
     ulw_suffix: bool
-    browser_e2e_followup_enable: bool = True
+    browser_e2e_followup_enable: bool = False
     pr_review_comments_followup_enable: bool = False
     omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
     codex_goal_enable: bool = True

@@ -42,13 +42,13 @@ Use this section when you need to know which `envctl` commands are safe before r
 | --- | --- | --- |
 | launcher-owned commands | `--help`, `--version`, launcher `doctor`, `install`, `uninstall` | handled by the launcher before the normal runtime path |
 | bootstrap-safe inspection or utility commands | `list-commands`, `list-targets`, `list-trees`, `show-config`, `show-state`, `endpoints`, `explain-startup`, `install-prompts`, `codex-tmux`, `ensure-worktree`, `supabase-user`, `qa-user`, `playwright` | available without a repo-local `.envctl` and outside the full runtime dependency gate |
-| operational runtime commands | `start`, `plan`, `resume`, `restart`, `dashboard`, `test`, `logs`, `health`, `errors`, `pr`, `commit`, `review`, `migrate` | enter the normal runtime path for startup, saved-state, or action workflows |
+| operational runtime commands | `start`, `plan`, `import`, `resume`, `restart`, `dashboard`, `test`, `logs`, `health`, `errors`, `pr`, `commit`, `review`, `migrate` | enter the normal runtime path for startup, saved-state, or action workflows |
 
 This boundary is grounded in the current launcher and Python runtime behavior, not a separate documentation-only model.
 
 - launcher-owned commands are handled before the runtime forwards into the normal command router path
 - bootstrap-safe inspection or utility commands are the right choice when you want to inspect config, state, startup decisions, or install local AI presets before changing `.envctl` or starting services
-- the full envctl runtime dependency gate currently runs before `start`, `plan`, and `restart`, so not every non-launcher command is prereq-gated the same way
+- the full envctl runtime dependency gate currently runs before `start`, `plan`, `import`, and `restart`, so not every non-launcher command is prereq-gated the same way
 
 Examples:
 
@@ -256,6 +256,7 @@ High-value command families:
 - `dashboard`
 - `resume`
 - `plan`
+- `import`
 - `test`
 - `logs`
 - `health`
@@ -296,6 +297,7 @@ Current supported command surface:
 - `preflight`
 - `health`
 - `help`
+- `import`
 - `install-prompts`
 - `list-commands`
 - `list-targets`
@@ -351,6 +353,10 @@ envctl stop --entire-system --headless
 envctl kill --backend --headless     # alias for stop --backend
 envctl kill-all --headless           # alias for stop-all
 ```
+
+For AI plan-agent launches, `--entire-system` starts configured or autodetected local app services. In a repo/worktree
+with no explicit backend, frontend, or additional-service configuration and no supported autodetectable app layout,
+envctl reports that no local app system is configured and continues without app services; the AI session still launches.
 
 Review branch-relative changes:
 
@@ -432,10 +438,21 @@ Planning and worktrees:
 ```bash
 envctl list-trees --json
 envctl --plan
+envctl --import feature/foo --headless
+envctl --import origin/feature/foo --cmux --entire-system --headless
 envctl --parallel-plan
 envctl --sequential-plan
 envctl ensure-worktree feature-a --json
 ```
+
+`--import` creates or reuses a worktree for an existing `origin` branch:
+
+- accepts `feature/foo`, `origin/feature/foo`, or `refs/remotes/origin/feature/foo` and normalizes them to the same source
+- fetches the branch from `origin`, creates `trees/imported/<branch-slug>` when needed, and checks out a local branch tracking `origin/<branch>`
+- reuses an existing import only when the worktree is on the requested branch, then runs a fast-forward-only merge from `origin/<branch>`
+- records import provenance but does not create a plan file or seed `MAIN_TASK.md` from `todo/plans`
+- never uses `git branch -B`, force checkout, or force reset to make local branch names match remote branches
+- supports the same explicit plan-agent handoff flags as `--plan`, including `--cmux`, `--tmux`, `--omx`, `--codex`, `--opencode`, `--headless`, and `--no-infra`
 
 `ensure-worktree` is the cheap automation-oriented worktree surface:
 
@@ -446,7 +463,7 @@ envctl ensure-worktree feature-a --json
 Envctl-managed worktree creation disables repo-local Git hooks by default for reliability. The override is command-scoped
 (`git -c core.hooksPath=/dev/null ...`) and does not edit repo, global, or hook files. Set
 `ENVCTL_WORKTREE_GIT_HOOKS=inherit` when you intentionally want repo-local hooks to run during envctl-managed
-worktree creation. This policy applies to `--plan`, `--setup-worktree`, `--setup-worktrees`, and `ensure-worktree`.
+worktree creation. This policy applies to `--plan`, `--import`, `--setup-worktree`, `--setup-worktrees`, and `ensure-worktree`.
 
 Commit defaults:
 
@@ -456,6 +473,8 @@ Commit defaults:
 - treat `### Envctl pointer ###` as the boundary after the last successful default commit; everything after it is the next default commit message
 - write one complete next commit message in `.envctl-commit-message.md` rather than multiple fragmented summaries only when using the fallback ledger
 - envctl-local control artifacts (`.envctl*`, `MAIN_TASK.md`, `OLD_TASK_*.md`, `trees/`) stay local; if a broad `git add .` stages them, `envctl commit` unstages those protected paths before committing normal changes
+
+Optional plan-agent launch config for `--plan` and `--import`:
 
 `envctl ship` is the preferred AI handoff command. From inside the current
 generated worktree or project, run it without `--project`; use `--project
@@ -477,10 +496,9 @@ checks still return a non-zero exit. The timeout can be tuned with
 should report only commit/push/PR failures, merge conflicts, failed checks, pending timeouts, no-checks-reported status,
 or actionable review comments.
 
-Optional plan-agent launch config for `--plan`:
-
 - `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
 - `envctl --plan <selector> --cmux` enables the default cmux plan-agent launcher for this command without setting `CMUX=true`
+- `envctl --import <branch> --cmux` imports an existing origin branch and then enables the same cmux plan-agent launcher
 - `SUPERSET_PROJECT=<project-id> envctl --plan <selector>` asks Superset to create or reuse a workspace for the branch and start Codex with the rendered implementation prompt; `SUPERSET=true` is optional when a project or workspace is configured
 - `SUPERSET_WORKSPACE=<workspace-id> envctl --plan <selector>` runs Codex in an existing Superset workspace
 - Superset transport uses public `superset workspaces create`, `superset agents run`, and optional `superset workspaces open` commands for workspace management; it does not use cmux surface commands
@@ -496,12 +514,12 @@ Optional plan-agent launch config for `--plan`:
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI for envctl-owned cmux/tmux launches; OMX launches always use Codex
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true` submits Codex `/goal` session framing before the initial implementation prompt; local Superset Codex launches use an envctl Superset host-agent wrapper that types `/goal`, presses Enter, waits for `Goal active`, then submits the implementation prompt; `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex TUI queued cycle workflow for cmux, tmux, and OMX-managed Codex sessions; the default is `2`
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` controls the Codex TUI queued cycle workflow for cmux, tmux, and OMX-managed Codex sessions launched by `--plan` or `--import`; the default is `2`
 - `$envctl-create-plan-auto-codex` computes a `0` through `3` recommendation and uses that command-scoped count for its launch command; the global default remains `2`, and values above `3` are bounded to `3`
 - OpenCode cmux and tmux launches submit the rendered prompt body directly and prepend `/ulw-loop` by default, so ULW/direct-prompt flows do not depend on an installed slash command. Use `--no-ulw-loop` to submit the rendered OpenCode prompt without that prefix for one launch.
 - For `--plan --tmux --opencode`, envctl considers the AI launch successful only after the tmux pane shows a usable OpenCode prompt and the implementation prompt can be submitted. If tmux starts but OpenCode exits, stays on a loading screen, reports a shell/config error, or leaves a stale non-OpenCode pane behind, envctl reports an AI launch failure instead of printing implementation-session attach guidance.
 - Codex installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`; envctl still resolves the shipped prompt body directly when it needs to submit a preset itself
-- `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` queues the Codex/OMX `$browser` E2E follow-up; set it to `false` in `.envctl` to skip that prompt
+- `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` explicitly opts in to the Codex/OMX `$browser` E2E follow-up; it is skipped by default
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` opts in to the final Codex/OMX PR review-comments follow-up; it is skipped by default so core implementation prompts rely on `envctl ship` status unless a dedicated review-comments pass is explicitly enabled
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface or tmux window when envctl owns the terminal bootstrap
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
@@ -527,7 +545,7 @@ Optional plan-agent launch config for `--plan`:
 
 Degraded plan-agent handoff:
 
-- `envctl --plan <selector> --tmux --headless` and `envctl --plan <selector> --omx --headless` can still succeed when the implementation AI session starts but local backend/frontend startup cannot resolve a service command
+- `envctl --plan <selector> --tmux --headless`, `envctl --import <branch> --tmux --headless`, and their `--omx` variants can still succeed when the implementation AI session starts but local backend/frontend startup cannot resolve a service command
 - if startup revalidation finds that an OMX-managed attach target is stale or exited, headless output suppresses stale `attach:` guidance and prints a native fallback such as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system --headless --new-session`
 - this path prints `Implementation session is running, but local app startup failed.`, then an `AI session:` section with copy-pastable `attach:` and `kill:` guidance when a tmux session is known, or cmux workspace/surface/focus guidance when the launch used cmux
 - the `Local app startup:` section names the worktree, preserves the raw startup error, and points to `ENVCTL_BACKEND_START_CMD` / `ENVCTL_FRONTEND_START_CMD` when services should run locally

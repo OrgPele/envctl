@@ -241,7 +241,12 @@ class PlanAgentOmxAttachDiscoveryTests(PlanAgentLaunchSupportTestCase):
                     ),
                     encoding="utf-8",
                 )
-                clock = iter([0.0, 0.0, 1.0])
+                clock_values = [0.0, 0.0, 1.0]
+
+                def _monotonic() -> float:
+                    if clock_values:
+                        return clock_values.pop(0)
+                    return 1.0
 
                 def _write_new_session(_seconds: float) -> None:
                     session_path.write_text(
@@ -258,7 +263,7 @@ class PlanAgentOmxAttachDiscoveryTests(PlanAgentLaunchSupportTestCase):
                 with (
                     patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.2),
                     patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
-                    patch("envctl_engine.planning.plan_agent.omx_transport.time.monotonic", side_effect=lambda: next(clock)),
+                    patch("envctl_engine.planning.plan_agent.omx_transport.time.monotonic", side_effect=_monotonic),
                     patch("envctl_engine.planning.plan_agent.omx_transport.time.sleep", side_effect=_write_new_session),
                     patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
                     patch("envctl_engine.planning.plan_agent.omx_transport._tmux_active_pane_id", return_value="%42"),

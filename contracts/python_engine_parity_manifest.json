@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-22T14:38:40+00:00",
+  "generated_at": "2026-05-26T19:03:08+00:00",
   "engine_default": "python",
   "modes": {
     "main": {
@@ -13,6 +13,7 @@
     "trees": {
       "start": "python_complete",
       "plan": "python_complete",
+      "import": "python_complete",
       "resume": "python_complete",
       "restart": "python_complete",
       "stop": "python_complete",

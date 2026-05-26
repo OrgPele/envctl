@@ -24,6 +24,7 @@ def build_manifest(*, generated_at: str) -> dict[str, object]:
             "trees": {
                 "start": "python_complete",
                 "plan": "python_complete",
+                "import": "python_complete",
                 "resume": "python_complete",
                 "restart": "python_complete",
                 "stop": "python_complete",

@@ -181,6 +181,11 @@ def headless_plan_session_summary_lines(
     attach_target: object | None = None,
 ) -> list[str]:
     lines = plan_session_summary_lines(session, attach_target=attach_target)
+    lines.extend(
+        warning
+        for warning in session.warnings
+        if "No local app system is configured" in warning
+    )
     if attach_target is not None or session.plan_agent_attach_target is not None:
         return lines
     lines = cmux_plan_session_summary_lines(session)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -156,27 +157,24 @@ def run_test_plan_action(context: object, *, json_output: bool = False, dry_run:
 
 
 def _run_plan_commands(payload: Mapping[str, object], *, cwd: Path) -> tuple[dict[str, object], int]:
-    commands = [
-        str(item.get("command") or "").strip()
-        for item in _command_items(payload)
-    ]
+    commands = [str(item.get("command") or "").strip() for item in _command_items(payload)]
     results: list[dict[str, object]] = []
     exit_code = 0
     for index, command in enumerate(commands):
         if not command:
             continue
+        command_args = shlex.split(command)
+        executed_args = _execution_args(command_args, cwd=cwd)
         started = time.monotonic()
-        completed = subprocess.run(shlex.split(command), cwd=str(cwd), check=False)
+        completed = subprocess.run(executed_args, cwd=str(cwd), check=False)
         duration = round(time.monotonic() - started, 3)
-        status = "passed" if completed.returncode == 0 else "failed"
-        results.append(
-            {
-                "command": command,
-                "returncode": completed.returncode,
-                "status": status,
-                "duration_seconds": duration,
-            }
+        result = _command_result(
+            command=command,
+            executed_args=executed_args,
+            returncode=completed.returncode,
+            duration=duration,
         )
+        results.append(result)
         if completed.returncode != 0:
             exit_code = completed.returncode
             skipped = commands[index + 1 :]
@@ -190,6 +188,48 @@ def _run_plan_commands(payload: Mapping[str, object], *, cwd: Path) -> tuple[dic
         "results": results,
         "skipped_commands": [],
     }, exit_code
+
+
+def _execution_args(command_args: list[str], *, cwd: Path) -> list[str]:
+    if command_args[:4] != ["uv", "run", "--extra", "dev"] or len(command_args) < 5:
+        return command_args
+    tool = command_args[4]
+    tool_args = command_args[5:]
+    venv_bin = Path(cwd) / ".venv" / "bin"
+    if tool == "pytest":
+        python = venv_bin / "python"
+        if python.is_file():
+            return [str(python), "-m", "pytest", *tool_args]
+    tool_path = venv_bin / tool
+    if tool_path.is_file():
+        return [str(tool_path), *tool_args]
+    return command_args
+
+
+def _command_result(*, command: str, executed_args: list[str], returncode: int, duration: float) -> dict[str, object]:
+    status = "passed" if returncode == 0 else "failed"
+    result: dict[str, object] = {
+        "command": command,
+        "returncode": returncode,
+        "status": status,
+        "duration_seconds": duration,
+    }
+    executed_command = shlex.join(executed_args)
+    if executed_command != command:
+        result["executed_command"] = executed_command
+    if returncode < 0:
+        signal_number = abs(returncode)
+        result["status"] = "terminated_by_signal"
+        result["signal"] = signal_number
+        result["signal_name"] = _signal_name(signal_number)
+    return result
+
+
+def _signal_name(signal_number: int) -> str:
+    try:
+        return signal.Signals(signal_number).name
+    except ValueError:
+        return f"SIG{signal_number}"
 
 
 def _command_items(payload: Mapping[str, object]) -> list[Mapping[str, object]]:

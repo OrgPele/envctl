@@ -58,7 +58,7 @@ class PlanAgentLaunchTmuxWorkflowQueueTests(PlanAgentLaunchSupportTestCase):
                 "cli": "codex",
                 "workflow_mode": "codex_cycles",
                 "codex_cycles": 1,
-                "reason": "queue_goal_not_ready",
+                "reason": "queue_not_ready",
                 "transport": "tmux",
                 "queue_failed_step_index": 0,
                 "queue_failed_step_kind": "queue_direct_prompt",

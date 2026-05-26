@@ -21,6 +21,11 @@ def _help_target_command(route: Route | None) -> str | None:
     filtered = [token for token in raw_args if token not in {"--help", "-h", "help"}]
     if not filtered:
         return None
+    direct_target = filtered[0]
+    if direct_target in COMMAND_HELP_TOPICS:
+        return direct_target
+    if direct_target.startswith("--") and direct_target[2:] in COMMAND_HELP_TOPICS:
+        return direct_target[2:]
     try:
         resolved = parse_route(filtered, env={})
     except Exception:

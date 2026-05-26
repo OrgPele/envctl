@@ -343,7 +343,7 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_SKIP_DEFAULT_INFRASTRUCTURE` | `false` | Global skip for built-in PostgreSQL and Redis startup. |
 | `ENVCTL_DEFAULT_MODE` | `main` | Startup default when no mode flag is passed (`main` or `trees`). |
 | `ENVCTL_PLANNING_DIR` | `todo/plans` | Planning root used by `--plan`, `--sequential-plan`, and `--planning-prs`. Plans scaled to zero are archived into sibling `done/` under the same parent (for example `todo/done`). |
-| `ENVCTL_WORKTREE_GIT_HOOKS` | `disabled` | Git hook policy for envctl-managed worktree creation. Default `disabled` applies a command-scoped `core.hooksPath=/dev/null` override so repo-local hooks cannot break `--plan`, `--setup-worktree(s)`, or `ensure-worktree`; set `inherit` to run repo-local hooks for those operations. |
+| `ENVCTL_WORKTREE_GIT_HOOKS` | `disabled` | Git hook policy for envctl-managed worktree creation. Default `disabled` applies a command-scoped `core.hooksPath=/dev/null` override so repo-local hooks cannot break `--plan`, `--import`, `--setup-worktree(s)`, or `ensure-worktree`; set `inherit` to run repo-local hooks for those operations. |
 | `ENVCTL_CONFIG_FILE` | unset | Explicit config file path override. |
 | `RUN_SH_RUNTIME_DIR` | `/tmp/envctl-runtime` | Runtime artifact root (Python artifacts are under `python-engine/`). |
 | `ENVCTL_STRICT_N8N_BOOTSTRAP` | `false` | Treat n8n owner/bootstrap endpoint mismatch as hard failure. |
@@ -363,8 +363,8 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 ## Plan Agent Launch
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` agent launch for newly created worktrees. The default workspace-backed transport is cmux. |
-| `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` | `cmux` | Workspace-backed launch transport for default `--plan` launches. Accepted values are `cmux` and `superset`; explicit `--cmux`, `--tmux`, and `--omx` route flags override this setting. `--opencode` selects the CLI and only falls back to tmux when no surface transport flag is provided. |
+| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` or post-`--import` agent launch for selected worktrees. The default workspace-backed transport is cmux. |
+| `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` | `cmux` | Workspace-backed launch transport for default `--plan` and `--import` launches. Accepted values are `cmux` and `superset`; explicit `--cmux`, `--tmux`, and `--omx` route flags override this setting. `--opencode` selects the CLI and only falls back to tmux when no surface transport flag is provided. |
 | `ENVCTL_PLAN_AGENT_CLI` | `codex` | AI CLI selection for launched surfaces (`codex` or `opencode`). |
 | `ENVCTL_PLAN_AGENT_PRESET` | `implement_task` | Prompt preset name submitted after the AI CLI starts. OpenCode launches submit the rendered prompt body directly and prepend `/ulw-loop` by default. Codex resolves the preset from the envctl-managed Codex prompt file and submits that prompt body directly. |
 | `ENVCTL_PLAN_AGENT_DIRECT_PROMPT` | transport/CLI dependent | Use direct prompt-body submission instead of slash-command submission when supported. Defaults to true for OpenCode. |
@@ -372,7 +372,7 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_PLAN_AGENT_APPEND_ULW` | `false` | Append ULW guidance for slash-command mode. |
 | `ENVCTL_PLAN_AGENT_CODEX_CYCLES` | `2` | Codex TUI queued workflow count for the post-`--plan` launcher, including envctl-owned cmux/tmux Codex and OMX-managed Codex sessions. The default `2` queues a first follow-up telling Codex to run focused validation, prefer `envctl ship`, and wait for GitHub status checks before the final `continue_task` -> `implement_task` -> `finalize_task` round, then queues enabled terminal follow-ups after finalization. `0` submits the single implementation prompt and queues enabled follow-ups for Codex/OMX surfaces. `1` queues `implement_task`, `finalize_task`, and enabled follow-ups. Higher values keep that first follow-up, use `ship`-first follow-ups for intermediate rounds, and reserve `finalize_task` plus enabled follow-ups for the final round. OpenCode ignores this setting. Envctl only appends prompt commands/messages in this mode; it does not execute those shell commands itself. |
 | `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE` | `true` | Toggle Codex `/goal` session framing before the initial implementation prompt. Applies to Codex cmux, tmux, OMX-managed tmux, and local Superset launches, including `--omx --ultragoal`, `--omx --ralph`, and `--omx --team`; OpenCode ignores it. Route flags `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch. |
-| `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE` | `true` | Toggle the Codex/OMX `$browser` E2E follow-up. When true, envctl queues a browser validation prompt after implementation/finalization to re-read `MAIN_TASK.md`, validate the feature end-to-end against the full `envctl --entire-system --headless` stack, capture browser evidence where possible, and fix implementation-introduced issues. Set this to `false` in `.envctl` or the environment to skip that follow-up. |
+| `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE` | `false` | Opt in to the Codex/OMX `$browser` E2E follow-up. When true, envctl queues a browser validation prompt after implementation/finalization to re-read `MAIN_TASK.md`, validate the feature end-to-end against the full `envctl --entire-system --headless` stack, capture browser evidence where possible, and fix implementation-introduced issues. Leave this false when browser validation is not applicable. |
 | `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE` | `false` | Opt in to the final Codex/OMX PR review-comments follow-up. When true, envctl queues a `$gh-address-comments` prompt after the current implementation/E2E prompts to inspect unresolved PR comments, address all actionable feedback, commit/push fixes, and ship the follow-up work. Leave this false for the default flow where core implementation prompts rely on `envctl ship` status and the dedicated follow-up is launched only when explicitly enabled. |
 | `ENVCTL_PLAN_AGENT_SHELL` | `zsh` | Shell command used when respawning the new cmux surface. |
 | `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT` | `true` | Require caller `CMUX_WORKSPACE_ID` so envctl can derive the default `"<current workspace> implementation"` target. If false, envctl falls back to the selected cmux workspace title when available. |
@@ -537,6 +537,12 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 | `FRONTEND_PORT_BASE` | `9000` | Frontend base port for allocation. |
 | `BACKEND_ENV_FILE_OVERRIDE` | unset | Explicit backend env file path for non-Main backend startup/migrate flows. Relative paths can resolve from the target root or repo root; ambiguous dual matches are rejected. |
 | `MAIN_ENV_FILE_PATH` | unset | Explicit backend env file path for Main backend startup/migrate flows. Relative paths can resolve from the target root or repo root; ambiguous dual matches are rejected. |
+
+Default backend/frontend enablement keeps the standard startup profile ready, but it is not by itself an explicit local
+app-system configuration. During AI plan-agent launches, a repo with no backend/frontend command, no explicit service
+directories, no service launch env sections, no additional services, and no autodetectable app layout is reported as
+having no configured local app system; envctl then continues without app services instead of treating missing default
+commands as a startup failure.
 
 ## Optional Hooks (`.envctl.sh`)
 
