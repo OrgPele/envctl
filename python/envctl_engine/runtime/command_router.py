@@ -86,6 +86,7 @@ def parse_route(argv: list[str], env: Mapping[str, str]) -> Route:
     _validate_plan_agent_cli_flags(state)
     _validate_plan_agent_workflow_flags(state)
     _validate_dependency_scope_flags(state)
+    _validate_import_branch(state)
 
     # Phase 5: Route Finalization - build final Route object
     return _phase_finalize(state, argv)
@@ -148,6 +149,7 @@ def _classify_token(token: str, norm: str) -> str:
     # Check for plan-related inline flags
     if (
         token.startswith("--plan=")
+        or token.startswith("--import=")
         or token.startswith("--plan-selection=")
         or token.startswith("--planning-envs=")
         or token.startswith("--planning-prs=")
@@ -334,9 +336,12 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
             i += 1
             continue
 
-        # Plan flags (inline plan commands)
+        # Plan/import flags (inline commands)
         if token_type == "plan_flag":
-            _handle_plan_flag(state, token)
+            if token.startswith("--import="):
+                _handle_import_flag(state, token)
+            else:
+                _handle_plan_flag(state, token)
             i += 1
             continue
 
@@ -376,6 +381,13 @@ def _validate_dependency_scope_flags(state: _ParserState) -> None:
     validate_dependency_scope_flags(state.mode, flags=state.flags, sets_up_worktrees=_route_sets_up_worktrees(state))
 
 
+def _validate_import_branch(state: _ParserState) -> None:
+    if state.command != "import":
+        return
+    if not state.passthrough:
+        raise RouteError("Missing value for --import")
+
+
 def _route_sets_up_worktrees(state: _ParserState) -> bool:
     return "setup_worktrees" in state.flags or "setup_worktree" in state.flags
 
@@ -405,6 +417,15 @@ def _handle_plan_flag(state: _ParserState, token: str) -> None:
         state.flags["parallel_trees"] = True
     if "planning-prs" in token or "planning_prs" in token:
         state.flags["planning_prs"] = True
+
+
+def _handle_import_flag(state: _ParserState, token: str) -> None:
+    state.command = "import"
+    state.command_explicit = True
+    state.mode = "trees"
+    value = token.split("=", 1)[1].strip() if "=" in token else ""
+    if value:
+        state.passthrough.extend(_parse_projects(value))
 
 
 def _phase_finalize(state: _ParserState, raw_argv: list[str]) -> Route:

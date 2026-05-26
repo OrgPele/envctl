@@ -62,7 +62,7 @@ ACTION_COMMANDS: Final[frozenset[str]] = frozenset(
         "migrate",
     }
 )
-STARTUP_COMMANDS: Final[frozenset[str]] = frozenset({"restart", "plan", "start"})
+STARTUP_COMMANDS: Final[frozenset[str]] = frozenset({"restart", "plan", "import", "start"})
 
 
 def apply_mode_token(token: str, *, flags: dict[str, object], current_mode: str) -> str:
@@ -88,9 +88,9 @@ def apply_mode_token(token: str, *, flags: dict[str, object], current_mode: str)
 
 def apply_command_policy(flags: dict[str, object], *, command: str, token: str | None = None) -> str | None:
     forced_mode: str | None = None
-    if command == "plan":
+    if command in {"plan", "import"}:
         forced_mode = "trees"
-        if isinstance(token, str):
+        if command == "plan" and isinstance(token, str):
             if "sequential" in token:
                 flags["sequential"] = True
                 flags["parallel_trees"] = False

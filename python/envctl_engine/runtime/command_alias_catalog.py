@@ -6,6 +6,8 @@ _COMMAND_ALIAS_PAIRS = (
     ("start", "start"),
     ("--plan", "plan"),
     ("plan", "plan"),
+    ("--import", "import"),
+    ("import", "import"),
     ("parallel-plan", "plan"),
     ("--parallel-plan", "plan"),
     ("sequential-plan", "plan"),
@@ -152,6 +154,7 @@ SUPPORTED_COMMANDS = sorted(
     {
         "start",
         "plan",
+        "import",
         "resume",
         "restart",
         "stop",

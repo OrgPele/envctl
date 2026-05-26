@@ -434,6 +434,7 @@ envctl list-trees --json
 envctl --plan
 envctl --parallel-plan
 envctl --sequential-plan
+envctl --import feature/foo --headless
 envctl ensure-worktree feature-a --json
 ```
 
@@ -446,7 +447,27 @@ envctl ensure-worktree feature-a --json
 Envctl-managed worktree creation disables repo-local Git hooks by default for reliability. The override is command-scoped
 (`git -c core.hooksPath=/dev/null ...`) and does not edit repo, global, or hook files. Set
 `ENVCTL_WORKTREE_GIT_HOOKS=inherit` when you intentionally want repo-local hooks to run during envctl-managed
-worktree creation. This policy applies to `--plan`, `--setup-worktree`, `--setup-worktrees`, and `ensure-worktree`.
+worktree creation. This policy applies to `--plan`, `--import`, `--setup-worktree`, `--setup-worktrees`, and
+`ensure-worktree`.
+
+`--import` is the remote-branch worktree surface for work that already exists on `origin`:
+
+- accepts `feature/foo`, `origin/feature/foo`, and `refs/remotes/origin/feature/foo`, normalizing all three to `origin/feature/foo` with local branch `feature/foo`
+- fetches `refs/heads/<branch>` first, then creates or reuses `trees/imported/<slug>`
+- creates first imports with a tracking local branch when the branch does not exist yet
+- reuses an existing local branch or existing worktree without resetting it; imports never use `git worktree add -B`
+- updates imported worktrees with `git merge --ff-only origin/<branch>` and fails on dirty, diverged, stale, or wrong-branch targets
+- records import provenance with `resolution_reason=remote_branch_import`, `imported_branch`, `import_remote`, and `remote_ref`
+- does not create or seed a plan file or generated branch
+- can feed the same plan-agent launch flow when you pass an explicit launch flag such as `--cmux`, `--tmux`, or `--omx`; a plain import does not force an AI launch
+
+Examples:
+
+```bash
+envctl --import feature/foo --headless
+envctl --import origin/feature/foo --cmux --entire-system --headless
+envctl import feature/foo --tmux --codex --entire-system
+```
 
 Commit defaults:
 
@@ -477,10 +498,11 @@ checks still return a non-zero exit. The timeout can be tuned with
 should report only commit/push/PR failures, merge conflicts, failed checks, pending timeouts, no-checks-reported status,
 or actionable review comments.
 
-Optional plan-agent launch config for `--plan`:
+Optional plan-agent launch config for `--plan` and explicit launch-enabled `--import`:
 
 - `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
 - `envctl --plan <selector> --cmux` enables the default cmux plan-agent launcher for this command without setting `CMUX=true`
+- `envctl --import <branch> --cmux` launches the imported worktree through the same default cmux plan-agent path; without a launch flag, import only prepares/updates the worktree
 - `SUPERSET_PROJECT=<project-id> envctl --plan <selector>` asks Superset to create or reuse a workspace for the branch and start Codex with the rendered implementation prompt; `SUPERSET=true` is optional when a project or workspace is configured
 - `SUPERSET_WORKSPACE=<workspace-id> envctl --plan <selector>` runs Codex in an existing Superset workspace
 - Superset transport uses public `superset workspaces create`, `superset agents run`, and optional `superset workspaces open` commands for workspace management; it does not use cmux surface commands

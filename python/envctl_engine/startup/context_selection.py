@@ -33,6 +33,12 @@ def select_startup_contexts(
     project_contexts = runtime._discover_projects(mode=runtime_mode)
     if route.command == "plan":
         project_contexts = runtime._select_plan_projects(route, project_contexts)
+    elif route.command == "import":
+        try:
+            project_contexts = runtime._select_import_project(route, project_contexts)
+        except RuntimeError as exc:
+            print(str(exc))
+            return 1
     elif trees_start_selection_required(route=route, runtime_mode=runtime_mode):
         project_contexts = select_start_tree_projects(runtime=runtime, route=route, project_contexts=project_contexts)
     else:
@@ -72,11 +78,21 @@ def select_startup_contexts(
         else:
             print("No projects discovered for selected mode.")
         return 1
-    if route.command == "plan" and not bool(route.flags.get("planning_prs")) and not bool(route.flags.get("dry_run")):
+    if _plan_agent_worktree_handoff_requested(route) and not bool(route.flags.get("dry_run")):
         _prepare_plan_agent_worktrees(session, runtime=runtime, project_contexts=project_contexts)
     session.selected_contexts = list(project_contexts)
     session.contexts_to_start = list(project_contexts)
     return None
+
+
+def _plan_agent_worktree_handoff_requested(route: Route) -> bool:
+    if bool(route.flags.get("planning_prs")):
+        return False
+    if route.command == "plan":
+        return True
+    if route.command != "import":
+        return False
+    return any(bool(route.flags.get(flag_name)) for flag_name in ("cmux", "tmux", "omx", "codex", "opencode"))
 
 
 def _prepare_plan_agent_worktrees(

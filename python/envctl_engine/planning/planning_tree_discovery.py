@@ -50,6 +50,9 @@ def discover_tree_projects(base_dir: Path, trees_dir_name: str) -> list[tuple[st
         for feature_dir in children:
             if _is_ignored(feature_dir.name):
                 continue
+            if feature_dir.name == "imported":
+                _append_imported_projects(projects, seen, feature_dir)
+                continue
             _append_feature_projects(projects, seen, feature_dir.name, feature_dir)
 
     return sorted(projects, key=lambda item: item[0])
@@ -133,6 +136,18 @@ def _append_feature_projects(
         return
     seen.add(dedupe_key)
     projects.append((feature_name, feature_dir))
+
+
+def _append_imported_projects(projects: list[tuple[str, Path]], seen: set[str], imported_dir: Path) -> None:
+    for import_dir in sorted(path for path in imported_dir.iterdir() if path.is_dir()):
+        if _is_ignored(import_dir.name) or not _looks_like_tree_project_root(import_dir):
+            continue
+        project_name = f"imported-{import_dir.name}"
+        dedupe_key = f"{project_name}|{import_dir.resolve()}"
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        projects.append((project_name, import_dir))
 
 
 def _branch_project_name_for_worktree(worktree_root: Path) -> str | None:

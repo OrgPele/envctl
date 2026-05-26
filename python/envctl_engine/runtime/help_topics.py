@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from envctl_engine.runtime.command_catalog import COMMAND_ALIASES
 from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.runtime.help_topic_catalog import COMMAND_HELP_TOPICS
 from envctl_engine.runtime.help_topic_rendering import CommandHelpTopic, render_command_help
@@ -24,6 +25,10 @@ def _help_target_command(route: Route | None) -> str | None:
     try:
         resolved = parse_route(filtered, env={})
     except Exception:
+        for token in filtered:
+            command = COMMAND_ALIASES.get(token)
+            if command in COMMAND_HELP_TOPICS:
+                return command
         return None
     command = str(getattr(resolved, "command", "")).strip()
     return command if command and command != "help" else None

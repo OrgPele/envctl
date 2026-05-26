@@ -11,6 +11,7 @@ from envctl_engine.planning.worktree_domain import (
     _decode_planning_menu_escape as domain_decode_planning_menu_escape,
     _delete_feature_worktrees as domain_delete_feature_worktrees,
     _feature_project_candidates as domain_feature_project_candidates,
+    _link_repo_local_shared_artifacts as domain_link_repo_local_shared_artifacts,
     _move_plan_to_done as domain_move_plan_to_done,
     _next_available_iteration as domain_next_available_iteration,
     _planning_done_root as domain_planning_done_root,
@@ -18,6 +19,7 @@ from envctl_engine.planning.worktree_domain import (
     _planning_root as domain_planning_root,
     _plan_selection_memory_path as domain_plan_selection_memory_path,
     _preferred_tree_root_for_feature as domain_preferred_tree_root_for_feature,
+    _prepare_worktree_code_intelligence as domain_prepare_worktree_code_intelligence,
     _project_sort_key_for_feature as domain_project_sort_key_for_feature,
     _read_planning_menu_escape_sequence as domain_read_planning_menu_escape_sequence,
     _read_planning_menu_key as domain_read_planning_menu_key,
@@ -30,6 +32,7 @@ from envctl_engine.planning.worktree_domain import (
     _trees_root_for_worktree as domain_trees_root_for_worktree,
     _truncate_text as domain_truncate_text,
     _worktree_add_failure as domain_worktree_add_failure,
+    _worktree_git_hooks_disabled as domain_worktree_git_hooks_disabled,
 )
 from envctl_engine.runtime.command_router import Route
 
@@ -57,6 +60,9 @@ class RuntimePlanningFacadeMixin:
     _plan_selection_memory_path = domain_plan_selection_memory_path
     _create_feature_worktrees = domain_create_feature_worktrees
     _worktree_add_failure = domain_worktree_add_failure
+    _worktree_git_hooks_disabled = domain_worktree_git_hooks_disabled
+    _link_repo_local_shared_artifacts = domain_link_repo_local_shared_artifacts
+    _prepare_worktree_code_intelligence = domain_prepare_worktree_code_intelligence
     _setup_worktree_placeholder_fallback_enabled = domain_setup_worktree_placeholder_fallback_enabled
     _delete_feature_worktrees = domain_delete_feature_worktrees
     _cleanup_empty_feature_root = domain_cleanup_empty_feature_root
@@ -71,6 +77,9 @@ class RuntimePlanningFacadeMixin:
 
     def _select_plan_projects(self, route: Route, project_contexts: list[Any]) -> list[Any]:
         return _planning_orchestrator(self).select_plan_projects(route, project_contexts)
+
+    def _select_import_project(self, route: Route, project_contexts: list[Any]) -> list[Any]:
+        return _planning_orchestrator(self).select_import_project(route, project_contexts)
 
     def _prompt_planning_selection(
         self,

@@ -24,6 +24,7 @@ class EngineRuntimeCommandParityHelpTests(EngineRuntimeCommandParityTestCase):
         # Verify all supported commands are present
         expected_commands = {
             "plan",
+            "import",
             "start",
             "restart",
             "resume",
@@ -69,7 +70,7 @@ class EngineRuntimeCommandParityHelpTests(EngineRuntimeCommandParityTestCase):
             "debug-last",
         }
         self.assertEqual(set(lines), expected_commands)
-        self.assertEqual(len(lines), 44, "Should have exactly 44 commands")
+        self.assertEqual(len(lines), 45, "Should have exactly 45 commands")
 
     def test_public_command_inventory_matches_supported_commands(self) -> None:
         self.assertEqual(
@@ -77,6 +78,7 @@ class EngineRuntimeCommandParityHelpTests(EngineRuntimeCommandParityTestCase):
             {
                 "start",
                 "plan",
+                "import",
                 "resume",
                 "dashboard",
                 "config",

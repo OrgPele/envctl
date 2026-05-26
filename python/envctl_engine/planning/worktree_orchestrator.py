@@ -16,6 +16,9 @@ from envctl_engine.planning.worktree_domain import (
     _select_plan_projects as domain_select_plan_projects,
     _sync_plan_worktrees_from_plan_counts as domain_sync_plan_worktrees_from_plan_counts,
 )
+from envctl_engine.planning.worktree_import_orchestration import (
+    select_import_project as domain_select_import_project,
+)
 
 
 class PlanningWorktreeOrchestrator:
@@ -27,6 +30,7 @@ class PlanningWorktreeOrchestrator:
     _save_plan_selection_memory = domain_save_plan_selection_memory
     _planning_keep_plan_enabled = domain_planning_keep_plan_enabled
     _sync_plan_worktrees_from_plan_counts = domain_sync_plan_worktrees_from_plan_counts
+    _select_import_project = domain_select_import_project
 
     def __init__(self, runtime: Any) -> None:
         self._runtime = runtime
@@ -48,6 +52,9 @@ class PlanningWorktreeOrchestrator:
 
     def select_plan_projects(self, route: Route, project_contexts: list[Any]) -> list[Any]:
         return self._select_plan_projects(route, project_contexts)
+
+    def select_import_project(self, route: Route, project_contexts: list[Any]) -> list[Any]:
+        return self._select_import_project(route, project_contexts)
 
     def last_plan_selection_result(self) -> PlanSelectionResult:
         return self._last_plan_selection_result

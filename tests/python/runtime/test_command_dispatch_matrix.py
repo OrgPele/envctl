@@ -48,12 +48,13 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         runtime._debug_last = lambda _route: 0  # type: ignore[method-assign]
         runtime._discover_projects = lambda mode: []  # type: ignore[method-assign]
 
-        # Verify we have exactly 44 commands
-        self.assertEqual(len(commands), 44, f"Expected 44 commands, got {len(commands)}")
+        # Verify we have exactly 45 commands
+        self.assertEqual(len(commands), 45, f"Expected 45 commands, got {len(commands)}")
 
         # Expected command set
         expected_commands = {
             "plan",
+            "import",
             "start",
             "restart",
             "resume",
@@ -104,7 +105,11 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         with patch("envctl_engine.runtime.engine_runtime_dispatch.dispatch_utility_command", return_value=0):
             for command in commands:
                 with self.subTest(command=command):
-                    route = parse_route([f"--{command}"] if command not in {"plan", "start"} else [command], env={})
+                    if command == "import":
+                        argv = ["--import=feature/imported"]
+                    else:
+                        argv = [f"--{command}"] if command not in {"plan", "start"} else [command]
+                    route = parse_route(argv, env={})
                     # Dispatch should return 0 or 1, not raise an exception
                     code = runtime.dispatch(route)
                     self.assertIn(code, {0, 1}, f"Command {command} returned unexpected code {code}")
@@ -117,6 +122,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         command_mappings = {
             # Startup orchestrator
             "plan": "startup_orchestrator",
+            "import": "startup_orchestrator",
             "start": "startup_orchestrator",
             "restart": "startup_orchestrator",
             # Resume orchestrator

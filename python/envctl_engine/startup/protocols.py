@@ -94,6 +94,9 @@ class StartupRuntime(Protocol):
     def _select_plan_projects(
         self, route: Route, project_contexts: list[ProjectContextLike]
     ) -> list[ProjectContextLike]: ...
+    def _select_import_project(
+        self, route: Route, project_contexts: list[ProjectContextLike]
+    ) -> list[ProjectContextLike]: ...
     def _apply_setup_worktree_selection(
         self, route: Route, project_contexts: list[ProjectContextLike]
     ) -> list[ProjectContextLike]: ...

@@ -46,7 +46,7 @@ def prepare_and_launch_plan_agent_worktrees(
     should_fail_for_launch_result = should_fail_for_launch_result or should_fail_for_plan_agent_launch_result
     launch_failure_message = launch_failure_message or plan_agent_launch_failure_message
     route = session.effective_route
-    if route.command != "plan" or bool(route.flags.get("planning_prs")):
+    if route.command not in {"plan", "import"} or bool(route.flags.get("planning_prs")):
         return None
     if not session.plan_agent_launch_requested:
         return None

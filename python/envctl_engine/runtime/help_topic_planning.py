@@ -50,6 +50,43 @@ PLANNING_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         aliases=("--plan", "parallel-plan", "sequential-plan", "--parallel-plan", "--sequential-plan"),
         related=("ensure-worktree", "list-trees", "install-prompts", "codex-tmux"),
     ),
+    "import": CommandHelpTopic(
+        command="import",
+        summary="create or reuse an envctl-managed worktree for a branch that already exists on origin",
+        usage=(
+            "envctl --import <branch> [--headless] [--dry-run]",
+            "envctl import <branch> [--cmux|--tmux|--omx] [--codex|--opencode]",
+        ),
+        what_it_does=(
+            "normalizes branch values such as feature/foo, origin/feature/foo, and refs/remotes/origin/feature/foo",
+            "fetches the remote branch before creating or reusing trees/imported/<branch-slug>",
+            "creates a tracking local branch when needed, or reuses an existing local branch/worktree",
+            "without resetting it",
+            "fast-forwards the imported worktree from origin and records remote-branch import provenance",
+            "can launch the same plan-agent handoff flow when an explicit launch flag is provided",
+        ),
+        flags=(
+            "--headless          stay non-interactive and print deterministic import output",
+            "--dry-run           preview the import without mutating git worktrees or trees/",
+            "--cmux              import and launch the cmux plan-agent workflow",
+            "--tmux              import and launch an envctl-owned tmux implementation session",
+            "--omx               import and launch through an OMX-managed Codex tmux session",
+            "--codex             force Codex for cmux/tmux launches",
+            "--opencode          force OpenCode for cmux/tmux launches",
+            "--new-session       create a fresh launch target instead of reusing an existing one",
+        ),
+        notes=(
+            "plain import prepares or updates the worktree only; pass an explicit launch flag to request an AI launch",
+            "imports fail instead of resetting dirty, diverged, stale, or wrong-branch targets",
+        ),
+        examples=(
+            "envctl --import feature/foo --headless",
+            "envctl --import origin/feature/foo --cmux --entire-system --headless",
+            "envctl import feature/foo --tmux --codex --entire-system",
+        ),
+        aliases=("--import",),
+        related=("plan", "ensure-worktree", "list-trees", "codex-tmux"),
+    ),
     "delete-worktree": CommandHelpTopic(
         command="delete-worktree",
         summary="remove selected envctl-managed implementation worktrees",

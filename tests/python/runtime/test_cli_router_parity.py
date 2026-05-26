@@ -70,6 +70,48 @@ class CliRouterParityTests(unittest.TestCase):
         with self.assertRaises(RouteError):
             parse_route(["definitely-unknown-command"], env={})
 
+    def test_import_route_accepts_flag_inline_and_explicit_forms(self) -> None:
+        for args in (
+            ["--import", "feature/foo"],
+            ["--import=feature/foo"],
+            ["import", "feature/foo"],
+        ):
+            with self.subTest(args=args):
+                route = parse_route(list(args), env={})
+                self.assertEqual(route.command, "import")
+                self.assertEqual(route.mode, "trees")
+                self.assertEqual(route.passthrough_args, ["feature/foo"])
+
+    def test_import_route_preserves_plan_agent_and_runtime_flags(self) -> None:
+        route = parse_route(
+            [
+                "--import",
+                "origin/feature/foo",
+                "--cmux",
+                "--tmux",
+                "--omx",
+                "--preset",
+                "implement_task",
+                "--headless",
+                "--new-session",
+                "--entire-system",
+            ],
+            env={},
+        )
+
+        self.assertEqual(route.command, "import")
+        self.assertTrue(route.flags.get("cmux"))
+        self.assertTrue(route.flags.get("tmux"))
+        self.assertTrue(route.flags.get("omx"))
+        self.assertEqual(route.flags.get("preset"), "implement_task")
+        self.assertTrue(route.flags.get("batch"))
+        self.assertTrue(route.flags.get("new_session"))
+        self.assertEqual(route.flags.get("runtime_scope"), "entire-system")
+
+    def test_import_route_requires_branch_argument(self) -> None:
+        with self.assertRaises(RouteError):
+            parse_route(["--import"], env={})
+
     def test_shared_dependency_scope_flags_are_parsed(self) -> None:
         route = parse_route(["--trees"], env={})
 
