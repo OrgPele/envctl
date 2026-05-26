@@ -8,7 +8,8 @@ from typing import Any
 
 from envctl_engine.config import discover_local_config_state
 from envctl_engine.config.persistence import managed_values_from_local_state, managed_values_to_payload
-from envctl_engine.runtime.command_router import list_supported_commands
+from envctl_engine.planning import PlanProjectPrediction
+from envctl_engine.runtime.command_router import Route, list_supported_commands
 from envctl_engine.startup.startup_selection_support import (
     _state_project_names as _state_project_names_impl,
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
@@ -20,6 +21,7 @@ from envctl_engine.runtime.session_management import (
     kill_session,
 )
 from envctl_engine.state import state_to_dict
+from envctl_engine.state.models import RunState
 from envctl_engine.state.project_runtime import (
     cwd_runtime_warnings,
     dependency_mode_summary,
@@ -43,7 +45,7 @@ from envctl_engine.runtime.startup_inspection_support import (
 )
 
 
-def dispatch_direct_inspection(runtime: Any, route: object) -> int:
+def dispatch_direct_inspection(runtime: Any, route: Route) -> int:
     command = str(getattr(route, "command", "")).strip()
     if command == "list-commands":
         commands = list_supported_commands()
@@ -74,7 +76,7 @@ def _print_list_commands(commands: list[str], *, json_output: bool) -> int:
     return 0
 
 
-def _print_targets(runtime: Any, route: object, *, trees_only: bool) -> int:
+def _print_targets(runtime: Any, route: Route, *, trees_only: bool) -> int:
     mode = "trees" if trees_only else str(getattr(route, "mode", "main"))
     projects = runtime._discover_projects(mode=mode)
     if not bool(getattr(route, "flags", {}).get("json")):
@@ -89,7 +91,7 @@ def _print_targets(runtime: Any, route: object, *, trees_only: bool) -> int:
         startup = getattr(runtime, "startup_orchestrator", None)
         if startup is not None:
             preselected = set(_tree_preselected_projects_from_state_impl(runtime=runtime, project_contexts=projects))
-        state = runtime._try_load_existing_state(mode="trees", strict_mode_match=True)
+        state = _try_load_existing_state(runtime, mode="trees", strict_mode_match=True)
         if state is not None:
             state_present = set(_state_project_names_impl(runtime=runtime, state=state))
             services_running = _running_tree_project_names(runtime=runtime, state=state)
@@ -126,7 +128,7 @@ def _parallel_project_payloads(projects: list[object], fn) -> list[dict[str, obj
     return [result for result in results if isinstance(result, dict)]
 
 
-def _running_tree_project_names(*, runtime: Any, state: Any) -> set[str]:
+def _running_tree_project_names(*, runtime: Any, state: RunState) -> set[str]:
     running: set[str] = set()
     services = getattr(state, "services", {})
     if not isinstance(services, dict):
@@ -147,7 +149,7 @@ def _print_config(runtime: Any, *, json_output: bool) -> int:
     local_state = discover_local_config_state(runtime.config.base_dir, runtime.env.get("ENVCTL_CONFIG_FILE"))
     values = managed_values_from_local_state(local_state)
     _apply_runtime_effective_config_values(values, runtime.config)
-    payload = {
+    payload: dict[str, Any] = {
         "base_dir": str(runtime.config.base_dir),
         "execution_root": str(runtime.config.execution_root),
         "config_file": str(local_state.config_file_path),
@@ -314,9 +316,9 @@ def _apply_runtime_effective_config_values(values: Any, config: Any) -> None:
     values.trees_backend_expect_listener = config.trees_backend_expect_listener
 
 
-def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
+def _print_state(runtime: Any, route: Route, *, json_output: bool) -> int:
     strict = runtime._state_lookup_strict_mode_match(route)
-    state = runtime._try_load_existing_state(mode=getattr(route, "mode", None), strict_mode_match=strict)
+    state = _try_load_existing_state(runtime, mode=route.mode, strict_mode_match=strict)
     if state is None:
         if json_output:
             print(json.dumps({"found": False, "mode": getattr(route, "mode", None)}, indent=2, sort_keys=True))
@@ -361,7 +363,7 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
         requested_projects=list(getattr(route, "projects", []) or []),
     )
     _emit_cwd_runtime_mismatch_warnings(runtime, command="show-state", state=state, warnings=warnings)
-    payload = {
+    payload: dict[str, Any] = {
         "found": True,
         "runtime_root": str(runtime.runtime_root),
         "run_state_path": str(runtime._run_state_path()),
@@ -390,11 +392,19 @@ def _print_state(runtime: Any, route: object, *, json_output: bool) -> int:
 
 
 
+def _try_load_existing_state(runtime: Any, *, mode: str | None, strict_mode_match: bool) -> RunState | None:
+    loader = getattr(runtime, "_try_load_existing_state", None)
+    if not callable(loader):
+        return None
+    state = loader(mode=mode, strict_mode_match=strict_mode_match)
+    return state if isinstance(state, RunState) else None
+
+
 def _emit_cwd_runtime_mismatch_warnings(
     runtime: Any,
     *,
     command: str,
-    state: Any,
+    state: RunState,
     warnings: list[dict[str, object]],
 ) -> None:
     emitter = getattr(runtime, "_emit", None)
@@ -437,7 +447,10 @@ def _startup_services_payload(runtime: Any, mode: str, contexts: list[object]) -
     return _startup_services_payload_impl(runtime, mode, contexts)
 
 
-def _prediction_payloads(runtime: Any, predictions: list[object]) -> tuple[list[dict[str, object]], list[object]]:
+def _prediction_payloads(
+    runtime: Any,
+    predictions: list[PlanProjectPrediction],
+) -> tuple[list[dict[str, object]], list[object]]:
     return _prediction_payloads_impl(runtime, predictions)
 
 

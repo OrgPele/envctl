@@ -119,6 +119,18 @@ class ShowStateProjectGuardTests(unittest.TestCase):
         self.assertEqual(payload["error"], "multiple_projects_not_supported")
         self.assertEqual(payload["requested_projects"], ["Alpha", "Beta"])
 
+    def test_invalid_loaded_state_is_reported_as_missing_state(self) -> None:
+        runtime = self._runtime()
+        runtime._try_load_existing_state = lambda **_kwargs: object()
+        route = Route(command="show-state", mode="trees", projects=["Alpha"], flags={"json": True})
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = dispatch_direct_inspection(runtime, route)
+
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(stdout.getvalue()), {"found": False, "mode": "trees"})
+
 
 if __name__ == "__main__":
     unittest.main()
