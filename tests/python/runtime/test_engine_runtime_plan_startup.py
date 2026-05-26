@@ -402,6 +402,84 @@ class EngineRuntimePlanStartupTests(_EngineRuntimeRealStartupTestCase):
                 ],
             )
 
+    def test_plan_entire_system_no_system_launch_continues_after_agent_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature_task" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "pyproject.toml").write_text("[project]\nname='repo'\n", encoding="utf-8")
+            (repo / "todo" / "plans" / "feature").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "feature" / "task.md").write_text("# task\n", encoding="utf-8")
+            tree_root.mkdir(parents=True, exist_ok=True)
+            (tree_root / ".git").write_text("gitdir: /tmp/fake-worktree\n", encoding="utf-8")
+            (tree_root / "pyproject.toml").write_text("[project]\nname='repo'\n", encoding="utf-8")
+
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    runtime,
+                    extra={
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "TREES_POSTGRES_ENABLE": "false",
+                        "TREES_REDIS_ENABLE": "false",
+                        "TREES_SUPABASE_ENABLE": "false",
+                        "TREES_N8N_ENABLE": "false",
+                    },
+                    include_commands=False,
+                ),
+                env={"CMUX_WORKSPACE_ID": "workspace:4"},
+            )
+            engine.port_planner.availability_checker = lambda _port: True
+            engine.process_runner = _FakeProcessRunner()  # type: ignore[attr-defined]
+            launch_result = PlanAgentLaunchResult(
+                status="launched",
+                reason="launched",
+                outcomes=(
+                    PlanAgentLaunchOutcome(
+                        worktree_name="feature_task-1",
+                        worktree_root=tree_root,
+                        surface_id="surface-1",
+                        status="launched",
+                    ),
+                ),
+            )
+
+            out = StringIO()
+            with (
+                patch(
+                    "envctl_engine.startup.lifecycle.launch_plan_agent_terminals",
+                    return_value=launch_result,
+                ),
+                redirect_stdout(out),
+            ):
+                code = engine.dispatch(
+                    parse_route(
+                        [
+                            "--plan",
+                            "feature/task",
+                            "--cmux",
+                            "--entire-system",
+                            "--headless",
+                            "--new-session",
+                        ],
+                        env={},
+                    )
+                )
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 0)
+            self.assertIn("No local app system is configured for feature_task-", rendered)
+            self.assertIn("--entire-system was honored, but there was nothing configured to start", rendered)
+            self.assertNotIn("missing_service_start_command", rendered)
+            self.assertNotIn("local app startup failed", rendered)
+            self.assertEqual(engine.process_runner.start_background_calls, [])  # type: ignore[attr-defined]
+            state = engine._try_load_existing_state(mode="trees")
+            self.assertIsNotNone(state)
+            assert state is not None
+            self.assertFalse(state.metadata.get("local_startup_failed", False))
+            self.assertNotIn("local_startup_failures", state.metadata)
+
     def test_omx_headless_plan_agent_handoff_persists_degraded_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -534,4 +612,3 @@ class EngineRuntimePlanStartupTests(_EngineRuntimeRealStartupTestCase):
             self.assertIn("plan_selector_exit", checkpoints)
             self.assertIn("startup_branch_enter", checkpoints)
             self.assertIn("before_dashboard_entry", checkpoints)
-
