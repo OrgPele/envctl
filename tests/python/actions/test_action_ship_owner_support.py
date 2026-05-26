@@ -436,6 +436,123 @@ def test_github_pr_checks_adds_failed_check_log_excerpt(tmp_path: Path, monkeypa
     ]
 
 
+def test_github_pr_checks_retries_failed_check_logs_until_github_makes_them_available(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    clock = {"now": 0.0}
+    calls: list[list[str]] = []
+    rollups = [
+        {
+            "headRefOid": "newsha",
+            "url": "https://github.com/acme/repo/pull/7",
+            "statusCheckRollup": [
+                {
+                    "name": "pytest",
+                    "workflowName": "Tests",
+                    "status": "COMPLETED",
+                    "conclusion": "FAILURE",
+                    "detailsUrl": "https://github.com/acme/repo/actions/runs/12345/job/67890",
+                },
+                {
+                    "name": "build & shipability",
+                    "workflowName": "Tests",
+                    "status": "IN_PROGRESS",
+                    "conclusion": "",
+                    "detailsUrl": "https://github.com/acme/repo/actions/runs/12345/job/67891",
+                },
+            ],
+        },
+        {
+            "headRefOid": "newsha",
+            "url": "https://github.com/acme/repo/pull/7",
+            "statusCheckRollup": [
+                {
+                    "name": "pytest",
+                    "workflowName": "Tests",
+                    "status": "COMPLETED",
+                    "conclusion": "FAILURE",
+                    "detailsUrl": "https://github.com/acme/repo/actions/runs/12345/job/67890",
+                },
+                {
+                    "name": "build & shipability",
+                    "workflowName": "Tests",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                    "detailsUrl": "https://github.com/acme/repo/actions/runs/12345/job/67891",
+                },
+            ],
+        },
+    ]
+    log_calls = 0
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal log_calls
+        calls.append(args)
+        if args[:4] == ["/usr/bin/gh", "pr", "view", "feature/demo"]:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(rollups.pop(0)), stderr="")
+        if args[:6] == ["/usr/bin/gh", "run", "view", "12345", "--job", "67890"]:
+            log_calls += 1
+            if log_calls == 1:
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=1,
+                    stdout="",
+                    stderr="run 12345 is still in progress; logs will be available when it is complete",
+                )
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=(
+                    "pytest\tRun pytest\t2026-05-25T20:00:00Z ================= FAILURES =================\n"
+                    "pytest\tRun pytest\t2026-05-25T20:00:01Z FAILED tests/test_demo.py::test_demo - AssertionError\n"
+                ),
+                stderr="",
+            )
+        raise AssertionError(args)
+
+    def fake_sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
+    monkeypatch.setattr(action_ship_checks.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(action_ship_checks.time, "sleep", fake_sleep)
+
+    checks = action_ship_checks.github_pr_checks(
+        tmp_path,
+        branch="feature/demo",
+        pr_url="https://github.com/acme/repo/pull/7",
+        expected_head_sha="newsha",
+        timeout_seconds=120.0,
+        poll_interval_seconds=10.0,
+    )
+
+    assert checks["state"] == "checks_failed"
+    assert checks["pending_checks"] == []
+    assert checks["passed_checks"] == [
+        {
+            "name": "build & shipability",
+            "workflow": "Tests",
+            "state": "SUCCESS",
+            "link": "https://github.com/acme/repo/actions/runs/12345/job/67891",
+        }
+    ]
+    assert checks["failing_checks"] == [
+        {
+            "name": "pytest",
+            "workflow": "Tests",
+            "state": "FAILURE",
+            "link": "https://github.com/acme/repo/actions/runs/12345/job/67890",
+            "failure_excerpt": (
+                "================= FAILURES =================\n"
+                "FAILED tests/test_demo.py::test_demo - AssertionError"
+            ),
+            "failure_excerpt_truncated": False,
+        }
+    ]
+    assert log_calls == 2
+
+
 def test_github_pr_checks_returns_no_checks_reported_without_polling(tmp_path: Path, monkeypatch: Any) -> None:
     calls = 0
 

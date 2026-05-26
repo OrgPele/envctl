@@ -219,6 +219,7 @@ class ProjectActionExecutionSupportTests(unittest.TestCase):
             completed = kwargs["process_run"](["envctl", "ship"], Path("/repo"), {})
             captured["completed"] = completed
             captured["emit_success_output"] = kwargs["emit_success_output"]
+            captured["print_noninteractive_failures"] = kwargs["print_noninteractive_failures"]
             captured["print_message"] = kwargs["success_print_formatter"](context, completed)
             return completed.returncode
 
@@ -252,6 +253,7 @@ class ProjectActionExecutionSupportTests(unittest.TestCase):
         completed = captured["completed"]
         self.assertEqual(completed.stdout, ship_output)
         self.assertFalse(captured["emit_success_output"])
+        self.assertFalse(captured["print_noninteractive_failures"])
         self.assertIn("checks_passed", captured["print_message"])
 
     def test_ship_action_uses_structured_status_success_messages(self) -> None:

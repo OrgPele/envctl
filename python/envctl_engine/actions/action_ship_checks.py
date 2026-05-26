@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 import time
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 FAILING_CHECK_STATES = {"FAILURE", "FAILED", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
 PASSING_CHECK_STATES = {"SUCCESS", "PASSED", "COMPLETED", "NEUTRAL", "SKIPPED"}
@@ -73,7 +73,7 @@ def github_pr_checks(
             if expected_head_sha
             else _query_github_pr_checks(git_root, gh_path=gh_path, branch=branch, started=started)
         )
-        if result["state"] in TERMINAL_SHIP_CHECK_STATES:
+        if _ship_check_result_is_terminal(result):
             return result
         elapsed = time.monotonic() - started
         if progress_callback is not None and elapsed >= next_progress_at:
@@ -81,6 +81,13 @@ def github_pr_checks(
             while next_progress_at <= elapsed:
                 next_progress_at += poll_interval
         if elapsed >= timeout:
+            if result.get("state") == "checks_failed":
+                return {
+                    **result,
+                    "duration_seconds": round(elapsed, 3),
+                    "timeout_seconds": timeout,
+                    "failure_log_timeout": _failed_check_logs_are_retryable(result),
+                }
             return {
                 **result,
                 "state": "checks_pending_timeout",
@@ -88,6 +95,45 @@ def github_pr_checks(
                 "timeout_seconds": timeout,
             }
         time.sleep(min(poll_interval, max(timeout - elapsed, 0.1)))
+
+
+def _ship_check_result_is_terminal(result: Mapping[str, object]) -> bool:
+    state = str(result.get("state") or "")
+    if state != "checks_failed":
+        return state in TERMINAL_SHIP_CHECK_STATES
+    return not _failed_check_logs_are_retryable(result)
+
+
+def _failed_check_logs_are_retryable(result: Mapping[str, object]) -> bool:
+    failing_checks = result.get("failing_checks")
+    if not isinstance(failing_checks, list):
+        return False
+
+    for raw_check in failing_checks:
+        if not isinstance(raw_check, Mapping):
+            continue
+        if str(raw_check.get("failure_excerpt") or "").strip():
+            continue
+        link = str(raw_check.get("link") or "").strip()
+        if _github_actions_run_and_job_ids(link) is None:
+            continue
+        error = str(raw_check.get("failure_log_error") or "").strip()
+        if not error or _failure_log_error_is_retryable(error):
+            return True
+    return False
+
+
+def _failure_log_error_is_retryable(error: str) -> bool:
+    normalized = error.casefold()
+    return any(
+        fragment in normalized
+        for fragment in (
+            "still in progress",
+            "logs will be available",
+            "log will be available",
+            "not yet available",
+        )
+    )
 
 
 def _check_progress_message(
@@ -309,7 +355,7 @@ def _float_env(name: str) -> float | None:
 
 
 def normalize_github_pr_checks(
-    checks: list[Mapping[str, object]],
+    checks: Sequence[Mapping[str, object]],
     *,
     duration_seconds: float,
 ) -> dict[str, object]:

@@ -78,6 +78,7 @@ class ProjectActionRunner:
             on_failure=self.failure_handler,
             success_print_formatter=self.success_print_message if self.command_name == "ship" else None,
             success_status_formatter=self.success_status_message if self.command_name == "ship" else None,
+            print_noninteractive_failures=not (self.command_name == "ship" and self.stream_action_output),
         )
 
     def resolve_command(self, context: object) -> ActionCommandResolution:
