@@ -10,6 +10,7 @@ from typing import Any
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanAgentLaunchConfig, PlanAgentLaunchOutcome
 from envctl_engine.planning.plan_agent.recovery import _print_launch_summary
 from envctl_engine.planning.plan_agent.workflow import _tab_title_for_worktree
+from envctl_engine.runtime.runtime_context import resolve_process_runtime
 
 
 def verify_superset_desktop_workspace(runtime: Any, *, worktree: CreatedPlanWorktree, workspace_id: str) -> str | None:
@@ -199,11 +200,12 @@ def restart_superset_desktop(runtime: Any, *, worktree: CreatedPlanWorktree, wor
     raw = str(env.get("ENVCTL_PLAN_AGENT_SUPERSET_DESKTOP_RESTART") or "true").strip().lower()
     if raw in {"0", "false", "no", "off"}:
         return False
+    process_runtime = resolve_process_runtime(runtime)
     for command in (
         ["osascript", "-e", 'quit app "Superset"'],
         ["open", "/Applications/Superset.app"],
     ):
-        result = runtime.process_runner.run(command, cwd=Path(worktree.root), env=env, timeout=15.0)
+        result = process_runtime.run(command, cwd=Path(worktree.root), env=env, timeout=15.0)
         if getattr(result, "returncode", 1) != 0 and command[0] != "osascript":
             runtime._emit(
                 "planning.agent_launch.superset_desktop_restart_failed",

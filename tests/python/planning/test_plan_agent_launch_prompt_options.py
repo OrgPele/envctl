@@ -98,7 +98,7 @@ class PlanAgentLaunchPromptOptionsTests(PlanAgentLaunchSupportTestCase):
                 runtime = Path(tmpdir) / "runtime"
                 repo.mkdir(parents=True, exist_ok=True)
                 (repo / ".envctl").write_text(
-                    "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false\n",
+                    "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true\n",
                     encoding="utf-8",
                 )
                 config = load_config(
@@ -121,8 +121,8 @@ class PlanAgentLaunchPromptOptionsTests(PlanAgentLaunchSupportTestCase):
                     pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
                 )
 
-            self.assertFalse(launch_config.pr_review_comments_followup_enable)
-            self.assertNotIn(_pr_review_comments_instruction_text(), [step.text for step in workflow.steps])
+            self.assertTrue(launch_config.pr_review_comments_followup_enable)
+            self.assertIn(_pr_review_comments_instruction_text(), [step.text for step in workflow.steps])
 
     def test_resolve_plan_agent_launch_config_allows_browser_e2e_followup_toggle(self) -> None:
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -156,7 +156,7 @@ class PlanAgentLaunchPromptOptionsTests(PlanAgentLaunchSupportTestCase):
 
             self.assertFalse(launch_config.browser_e2e_followup_enable)
             self.assertNotIn(_browser_e2e_instruction_text(), [step.text for step in workflow.steps])
-            self.assertIn(_pr_review_comments_instruction_text(), [step.text for step in workflow.steps])
+            self.assertNotIn(_pr_review_comments_instruction_text(), [step.text for step in workflow.steps])
 
     def test_resolve_plan_agent_launch_config_parses_direct_prompt_and_ulw_flags(self) -> None:
             with tempfile.TemporaryDirectory() as tmpdir:

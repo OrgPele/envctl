@@ -45,6 +45,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "config.py",
             "constants.py",
             "launch.py",
+            "launch_evaluation.py",
             "models.py",
             "omx_attach_support.py",
             "omx_lock_support.py",
@@ -54,6 +55,8 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "omx_validation_support.py",
             "recovery.py",
             "superset_desktop_support.py",
+            "superset_cli_support.py",
+            "superset_goal_agent_support.py",
             "superset_transport.py",
             "terminal_screen.py",
             "tmux_surface_support.py",
@@ -65,6 +68,12 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "tmux_launch_support.py",
             "tmux_transport.py",
             "workflow.py",
+            "workflow_build.py",
+            "workflow_e2e_prompt_context.py",
+            "workflow_prompt_support.py",
+            "workflow_runtime_addresses.py",
+            "workflow_queue_support.py",
+            "workflow_review_support.py",
         }
         actual = {path.name for path in PLAN_AGENT_ROOT.glob("*.py")}
         self.assertTrue(expected.issubset(actual))
@@ -193,14 +202,55 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "resolve_plan_agent_launch_config",
                 "plan_agent_launch_prereq_commands",
             },
-            "workflow.py": {
+            "launch_evaluation.py": {
+                "PlanAgentLaunchEvaluation",
+                "build_plan_agent_launch_evaluation",
+            },
+            "workflow_build.py": {
+                "_build_plan_agent_workflow",
+                "_browser_e2e_instruction_text",
+                "_finalization_instruction_text",
+                "_slash_command",
+                "_tab_title_for_worktree",
+                "PlanAgentWorkflowBuilder",
+            },
+            "workflow_prompt_support.py": {
                 "_workflow_step_prompt_text",
                 "_resolve_preset_submission_text",
                 "_shape_prompt_text",
+            },
+            "workflow_e2e_prompt_context.py": {
+                "_original_plan_file_path",
+                "_original_task_source_prompt_section",
+                "_shape_queue_message_text",
+            },
+            "workflow_runtime_addresses.py": {
+                "RuntimeAddressPromptBuilder",
+                "_append_runtime_addresses_for_preset",
+                "_dependency_address_lines",
                 "_runtime_addresses_prompt_section",
+                "_service_address_lines",
+                "_state_project_matches_worktree",
+                "_state_service_matches_worktree",
+            },
+            "workflow.py": {
                 "_codex_goal_text_for_worktree",
                 "_emit_codex_goal_event",
                 "_wrap_omx_initial_prompt_for_workflow",
+            },
+            "workflow_queue_support.py": {
+                "run_codex_workflow_queue",
+            },
+            "workflow_review_support.py": {
+                "_active_plan_selector_for_path",
+                "_feature_name_from_project_name",
+                "_infer_plan_file_from_feature",
+                "_plan_matches_for_feature",
+                "_recorded_plan_file_from_worktree",
+                "_resolve_recorded_plan_file",
+                "_review_original_plan_path",
+                "_review_prompt_arguments",
+                "resolve_plan_agent_launch_command",
             },
             "terminal_screen.py": {
                 "_screen_looks_ready",
@@ -236,17 +286,24 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "_run_tmux_worktree_bootstrap",
             },
             "tmux_workflow_submission_support.py": {
-                "launch_tmux_cli_bootstrap_commands",
-                "maybe_submit_tmux_codex_goal",
-                "queue_tmux_codex_message",
-                "queue_tmux_codex_workflow_steps",
+                "TmuxPromptBootstrapFlow",
                 "run_existing_tmux_session_workflow",
                 "run_tmux_worktree_bootstrap",
+            },
+            "tmux_prompt_submission_support.py": {
+                "launch_tmux_cli_bootstrap_commands",
+                "maybe_submit_tmux_codex_goal",
                 "submit_tmux_codex_goal",
                 "submit_tmux_prompt_workflow_step",
+            },
+            "tmux_prompt_readiness_support.py": {
                 "wait_for_tmux_cli_ready",
                 "wait_for_tmux_prompt_accepted",
                 "wait_for_tmux_prompt_ready_after_goal",
+            },
+            "tmux_workflow_queue_support.py": {
+                "queue_tmux_codex_message",
+                "queue_tmux_codex_workflow_steps",
             },
             "tmux_surface_support.py": {
                 "read_tmux_screen",
@@ -257,8 +314,6 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "tmux_target",
             },
             "cmux_transport.py": {
-                "_prepare_surface",
-                "_ensure_workspace_id",
                 "launch_review_agent_terminal",
             },
             "cmux_surface_support.py": {
@@ -304,6 +359,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "validate_plan_agent_attach_target",
             },
             "omx_attach_support.py": {
+                "OmxAttachTargetFinder",
                 "attach_discovery_diagnostics",
                 "attach_target_from_omx_record",
                 "attach_target_from_omx_tmux_pane_fallback",
@@ -357,6 +413,16 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "superset_worktree_launch_support.py": {
                 "launch_single_superset_worktree",
             },
+            "superset_cli_support.py": {
+                "git_branch_name",
+                "open_superset_workspace",
+                "superset_workspace_name",
+            },
+            "superset_goal_agent_support.py": {
+                "ensure_superset_codex_goal_agent",
+                "superset_host_agent_db",
+                "write_superset_codex_goal_launcher",
+            },
             "superset_desktop_support.py": {
                 "bridge_superset_desktop_workspace",
                 "parse_superset_json_output",
@@ -380,7 +446,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             definitions[path.name] = {
                 node.name
                 for node in ast.walk(tree)
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
             }
         for filename, names in expected.items():
             missing = sorted(names - definitions.get(filename, set()))
@@ -396,6 +462,19 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             text = (PLAN_AGENT_ROOT / filename).read_text(encoding="utf-8")
             self.assertNotIn("Extracted in later mechanical waves", text)
             self.assertNotIn("Constants stay in launch", text)
+
+    def test_plan_agent_facades_use_explicit_compatibility_imports(self) -> None:
+        for filename in ("config.py", "launch.py", "workflow.py", "recovery.py"):
+            path = PLAN_AGENT_ROOT / filename
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            wildcard_imports = [
+                node.module
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom)
+                for alias in node.names
+                if alias.name == "*"
+            ]
+            self.assertEqual([], wildcard_imports, filename)
 
 
 if __name__ == "__main__":

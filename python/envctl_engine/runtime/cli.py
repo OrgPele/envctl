@@ -254,6 +254,7 @@ def _command_can_skip_local_config_bootstrap(route: Route) -> bool:
         "plan",
         "pr",
         "resume",
+        "ship",
         "show-config",
         "show-state",
         "endpoints",

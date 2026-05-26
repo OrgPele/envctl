@@ -3,10 +3,18 @@ from __future__ import annotations
 
 import unittest
 
+from envctl_engine.requirements.supabase_lifecycle import compose, compose_handoff
 from tests.python.requirements.requirements_adapter_contract_support import *
 
 
 class SupabaseComposeContractTests(unittest.TestCase):
+    def test_supabase_compose_reexports_handoff_owner_functions(self) -> None:
+        self.assertIs(compose._compose_up_handoff, compose_handoff.compose_up_handoff)
+        self.assertIs(compose._compose_handoff_ready, compose_handoff.compose_handoff_ready)
+        self.assertIs(compose._compose_services_started, compose_handoff.compose_services_started)
+        self.assertIs(compose._compose_db_port, compose_handoff.compose_db_port)
+        self.assertIs(compose._compose_public_port, compose_handoff.compose_public_port)
+
     def test_supabase_compose_up_default_timeout_is_120_seconds(self) -> None:
         runner = _FakeRunner()
         captured: dict[str, float] = {}

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from envctl_engine.runtime.command_resolution import suggest_service_start_command
+from envctl_engine.shared.node_tooling import CommandExists
 
 
 DEFAULT_APP_SERVICE_TYPES = frozenset({"backend", "frontend"})
@@ -170,9 +171,8 @@ def _has_autodetectable_default_service(
     project_root: Path,
     selected_services: tuple[str, ...],
 ) -> bool:
-    command_exists = getattr(runtime, "_command_exists", None)
-    if not callable(command_exists):
-        command_exists = None
+    raw_command_exists = getattr(runtime, "_command_exists", None)
+    command_exists = cast(CommandExists | None, raw_command_exists) if callable(raw_command_exists) else None
     return any(
         suggest_service_start_command(
             service_name=service,

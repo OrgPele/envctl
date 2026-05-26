@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from dataclasses import dataclass
 import shlex
 import sys
 from typing import Any, Callable, Mapping, cast
@@ -12,12 +11,31 @@ from ..runtime.command_policy import DASHBOARD_ALWAYS_HIDDEN_COMMANDS
 from ..state.models import RunState
 from .color_policy import colors_enabled
 from .command_aliases import normalize_interactive_command
+from . import command_loop_spinner as _spinner_support
 from .debug_anomaly_rules import detect_input_anomalies, detect_spinner_anomaly
-from .path_links import local_paths_in_text, render_paths_in_terminal_text
-from .spinner import Spinner, spinner, spinner_enabled, use_spinner_policy
+from .spinner import spinner, spinner_enabled, use_spinner_policy
 from .spinner_service import emit_spinner_policy, resolve_spinner_policy
 from .debug_snapshot import emit_plan_handoff_snapshot, snapshot_enabled
 from .terminal_session import TerminalSession, _restore_stdin_terminal_sane
+
+_SpinnerTracker = _spinner_support.CommandSpinnerTracker
+_coerce_int = _spinner_support.coerce_int
+_command_label = _spinner_support.command_label
+_command_spinner_message = _spinner_support.command_spinner_message
+_command_success_message = _spinner_support.command_success_message
+_command_supports_spinner = _spinner_support.command_supports_spinner
+_install_spinner_event_bridge = _spinner_support.install_spinner_event_bridge
+_noop_restore = _spinner_support.noop_restore
+_payload_count = _spinner_support.payload_count
+_payload_text = _spinner_support.payload_text
+_render_spinner_message = _spinner_support.render_spinner_message
+_service_count_label = _spinner_support.service_count_label
+_spinner_end = _spinner_support.spinner_end
+_spinner_failure_message_for_event = _spinner_support.spinner_failure_message_for_event
+_spinner_message_for_event = _spinner_support.spinner_message_for_event
+_spinner_starts_for_event = _spinner_support.spinner_starts_for_event
+_state_action_progress_message = _spinner_support.state_action_progress_message
+_suite_spinner_group_enabled_event = _spinner_support.suite_spinner_group_enabled_event
 
 
 def run_dashboard_command_loop(
@@ -354,14 +372,6 @@ def _consume_post_dashboard_prompt(
         runtime._emit("ui.input.read.end", component="ui.command_loop", prompt_kind="post_command", interrupted=True)
 
 
-@dataclass
-class _SpinnerTracker:
-    started: bool = False
-    failed: bool = False
-    failure_message: str = ""
-    suppressed_by_suite_group: bool = False
-
-
 def _normalize_interactive_command(raw: str) -> str | None:
     try:
         tokens = shlex.split(raw)
@@ -373,361 +383,10 @@ def _normalize_interactive_command(raw: str) -> str | None:
     return normalize_interactive_command(command)
 
 
-def _command_supports_spinner(command: str) -> bool:
-    return command in {
-        "stop",
-        "restart",
-        "test",
-        "pr",
-        "commit",
-        "review",
-        "migrate",
-        "config",
-        "logs",
-        "clear-logs",
-        "health",
-        "errors",
-        "stop-all",
-        "blast-all",
-        "blast-worktree",
-    }
-
-
-def _command_spinner_message(command: str | None) -> str:
-    messages = {
-        "stop": "Stopping selected services...",
-        "restart": "Preparing restart...",
-        "test": "Preparing tests...",
-        "pr": "Preparing pull request workflow...",
-        "commit": "Preparing commit workflow...",
-        "review": "Preparing review...",
-        "migrate": "Preparing migrations...",
-        "config": "Opening configuration...",
-        "logs": "Loading logs...",
-        "clear-logs": "Clearing logs...",
-        "health": "Checking service health...",
-        "errors": "Inspecting runtime errors...",
-        "stop-all": "Stopping all services...",
-        "blast-all": "Blasting all runtime processes...",
-        "blast-worktree": "Blasting selected worktree...",
-    }
-    if command is None:
-        return "Running command..."
-    return messages.get(command, f"Running {command}...")
-
-
-def _command_success_message(command: str | None, *, exiting: bool) -> str | None:
-    if exiting:
-        return "Command finished; leaving interactive mode..."
-    if command is None:
-        return "Command complete"
-    if command == "pr":
-        # PR output already includes concise status lines; suppress redundant
-        # spinner success footer ("+ pr complete").
-        return None
-    return f"{command} complete"
-
-
 def _interactive_exit_message(command: str | None) -> str:
     if command in {"stop-all", "blast-all"}:
         return "Exiting interactive mode."
     return "Exiting interactive mode (services continue running)."
-
-
-def _command_label(command: str | None) -> str:
-    if not command:
-        return "Command"
-    return command
-
-
-def _install_spinner_event_bridge(
-    *,
-    runtime: Any,
-    active_spinner: Spinner,
-    tracker: _SpinnerTracker,
-    command_id: str,
-) -> Callable[[], None]:
-    add_listener = getattr(runtime, "add_emit_listener", None)
-    if callable(add_listener):
-
-        def listener(event_name: str, payload: Mapping[str, object]) -> None:
-            if _suite_spinner_group_enabled_event(event_name, payload):
-                tracker.suppressed_by_suite_group = True
-                if tracker.started:
-                    _spinner_end(active_spinner)
-                    tracker.started = False
-                return
-            if tracker.suppressed_by_suite_group and event_name == "ui.status":
-                return
-            if _spinner_starts_for_event(event_name) and not tracker.started:
-                active_spinner.start()
-                tracker.started = True
-            message = _spinner_message_for_event(event_name, payload)
-            if message and tracker.started:
-                active_spinner.update(_render_spinner_message(runtime=runtime, event_name=event_name, message=message))
-            failure_message = _spinner_failure_message_for_event(event_name, payload)
-            if failure_message and not tracker.failed:
-                tracker.failed = True
-                tracker.failure_message = failure_message
-                if tracker.started:
-                    active_spinner.update(failure_message)
-
-        remove = add_listener(listener)
-        if callable(remove):
-
-            def restore_from_listener() -> None:
-                remove()
-
-            return restore_from_listener
-        return _noop_restore
-
-    emit = getattr(runtime, "_emit", None)
-    if not callable(emit):
-        return _noop_restore
-
-    def bridged_emit(event_name: str, **payload: object) -> None:
-        emit(event_name, **payload)
-        if _suite_spinner_group_enabled_event(event_name, payload):
-            tracker.suppressed_by_suite_group = True
-            if tracker.started:
-                _spinner_end(active_spinner)
-                tracker.started = False
-            return
-        if tracker.suppressed_by_suite_group and event_name == "ui.status":
-            return
-        if _spinner_starts_for_event(event_name) and not tracker.started:
-            active_spinner.start()
-            tracker.started = True
-        message = _spinner_message_for_event(event_name, payload)
-        if message and tracker.started:
-            active_spinner.update(_render_spinner_message(runtime=runtime, event_name=event_name, message=message))
-        failure_message = _spinner_failure_message_for_event(event_name, payload)
-        if failure_message and not tracker.failed:
-            tracker.failed = True
-            tracker.failure_message = failure_message
-            if tracker.started:
-                active_spinner.update(failure_message)
-
-    try:
-        setattr(runtime, "_emit", bridged_emit)
-    except Exception:
-        return _noop_restore
-
-    def restore() -> None:
-        try:
-            setattr(runtime, "_emit", emit)
-        except Exception:
-            pass
-
-    return restore
-
-
-def _render_spinner_message(*, runtime: object, event_name: str, message: str) -> str:
-    if event_name != "ui.status":
-        return message
-    return render_paths_in_terminal_text(
-        message,
-        paths=local_paths_in_text(message),
-        env=getattr(runtime, "env", {}),
-        stream=sys.stdout,
-        interactive_tty=True,
-    )
-
-
-def _spinner_message_for_event(event_name: str, payload: Mapping[str, object]) -> str | None:
-    if event_name == "ui.status":
-        message = _payload_text(payload, "message")
-        return message or None
-    if event_name == "startup.execution":
-        mode = _payload_text(payload, "mode")
-        project_count = _payload_count(payload, "projects")
-        workers = _payload_text(payload, "workers")
-        if project_count is not None and mode and workers:
-            return f"Starting {project_count} project(s) in {mode} mode ({workers} workers)..."
-        if project_count is not None and mode:
-            return f"Starting {project_count} project(s) in {mode} mode..."
-        return f"Starting services ({mode})..." if mode else "Starting services..."
-    if event_name == "planning.projects.start":
-        project_count = _payload_count(payload, "projects")
-        if project_count is None:
-            return "Preparing planning PRs..."
-        return f"Preparing planning PRs for {project_count} project(s)..."
-    if event_name == "state.resume":
-        return "Resuming previous runtime state..."
-    if event_name == "state.action.start":
-        command = _payload_text(payload, "command")
-        service_count = _payload_count(payload, "service_count")
-        if command == "logs":
-            return _state_action_progress_message("Loading logs", service_count)
-        if command == "clear-logs":
-            return _state_action_progress_message("Clearing logs", service_count)
-        if command == "health":
-            return _state_action_progress_message("Checking health", service_count)
-        if command == "errors":
-            return _state_action_progress_message("Inspecting errors", service_count)
-        return f"Running {command}..." if command else "Running state action..."
-    if event_name == "config.command.start":
-        return "Opening configuration..."
-    if event_name == "requirements.start":
-        service = _payload_text(payload, "service") or "dependency"
-        project = _payload_text(payload, "project")
-        port = _payload_text(payload, "port")
-        if project and port:
-            return f"Starting {service} for {project} on port {port}..."
-        return f"Starting {service} for {project}..." if project else f"Starting {service}..."
-    if event_name == "requirements.healthy":
-        service = _payload_text(payload, "service") or "dependency"
-        project = _payload_text(payload, "project")
-        return f"{service} healthy for {project}..." if project else f"{service} healthy..."
-    if event_name == "service.bootstrap":
-        service = _payload_text(payload, "service") or "service"
-        step = _payload_text(payload, "step")
-        if step:
-            return f"Bootstrapping {service} ({step})..."
-        return f"Bootstrapping {service}..."
-    if event_name == "service.start":
-        service = _payload_text(payload, "service") or "service"
-        project = _payload_text(payload, "project")
-        port = _payload_text(payload, "port")
-        retry = _payload_text(payload, "retry").lower() in {"1", "true", "yes", "on"}
-        prefix = "Retrying" if retry else "Starting"
-        if project and port:
-            return f"{prefix} {service} for {project} on port {port}..."
-        return f"{prefix} {service} for {project}..." if project else f"{prefix} {service}..."
-    if event_name == "service.bind.actual":
-        service = _payload_text(payload, "service") or "service"
-        port = _payload_text(payload, "actual_port")
-        if port:
-            return f"{service} bound on port {port}..."
-        return f"Binding {service}..."
-    if event_name == "cleanup.stop":
-        return "Stopping selected services..."
-    if event_name == "cleanup.stop_all":
-        return "Stopping all services..."
-    if event_name == "cleanup.blast":
-        return "Blasting all services and containers..."
-    if event_name == "cleanup.stop_all.remove_volumes":
-        return "Removing Docker volumes..."
-    if event_name == "action.command.start":
-        command = _payload_text(payload, "command")
-        return f"Running {command}..." if command else "Running command..."
-    if event_name == "action.command.finish":
-        command = _payload_text(payload, "command")
-        code = _coerce_int(payload.get("code"))
-        if code == 0:
-            return f"{command} completed..." if command else "Command completed..."
-    return None
-
-
-def _spinner_starts_for_event(event_name: str) -> bool:
-    return event_name in {
-        "ui.status",
-        "action.command.start",
-        "startup.execution",
-        "state.resume",
-        "state.action.start",
-        "config.command.start",
-        "requirements.start",
-        "service.bootstrap",
-        "service.start",
-        "cleanup.stop",
-        "cleanup.stop_all",
-        "cleanup.blast",
-        "cleanup.stop_all.remove_volumes",
-    }
-
-
-def _spinner_failure_message_for_event(event_name: str, payload: Mapping[str, object]) -> str | None:
-    if event_name == "action.command.finish":
-        code = _coerce_int(payload.get("code"))
-        if code is not None and code != 0:
-            command = _payload_text(payload, "command") or "command"
-            return f"{command} failed (exit {code})"
-    if event_name == "state.action.finish":
-        code = _coerce_int(payload.get("code"))
-        if code is not None and code != 0:
-            command = _payload_text(payload, "command") or "state action"
-            return f"{command} failed (exit {code})"
-    if event_name == "config.command.finish":
-        code = _coerce_int(payload.get("code"))
-        if code is not None and code != 0:
-            return f"config failed (exit {code})"
-    if event_name == "planning.projects.finish":
-        code = _coerce_int(payload.get("code"))
-        if code is not None and code != 0:
-            return f"Planning PR workflow failed (exit {code})"
-    if event_name == "planning.projects.duplicate":
-        return "Planning project selection failed"
-    if event_name == "startup.failed":
-        return "Startup failed"
-    return None
-
-
-def _suite_spinner_group_enabled_event(event_name: str, payload: Mapping[str, object]) -> bool:
-    if event_name != "test.suite_spinner_group.policy":
-        return False
-    enabled = payload.get("enabled")
-    if isinstance(enabled, bool):
-        return enabled
-    text = str(enabled).strip().lower()
-    return text in {"1", "true", "yes", "on"}
-
-
-def _spinner_end(active_spinner: Spinner) -> None:
-    try:
-        end = getattr(active_spinner, "end", None)
-        if callable(end):
-            end()
-    except Exception:
-        return
-
-
-def _payload_text(payload: Mapping[str, object], key: str) -> str:
-    value = payload.get(key)
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
-def _payload_count(payload: Mapping[str, object], key: str) -> int | None:
-    value = payload.get(key)
-    if isinstance(value, list):
-        return len(value)
-    if isinstance(value, tuple):
-        return len(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped.isdigit():
-            return int(stripped)
-    return None
-
-
-def _state_action_progress_message(prefix: str, count: int | None) -> str:
-    if count is None:
-        return f"{prefix}..."
-    return f"{prefix} for {_service_count_label(count)}..."
-
-
-def _service_count_label(count: int | None) -> str:
-    if count is None:
-        return "selected service(s)"
-    return f"{count} service(s)"
-
-
-def _coerce_int(value: object) -> int | None:
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped.isdigit() or (stripped.startswith("-") and stripped[1:].isdigit()):
-            return int(stripped)
-    return None
-
-
-def _noop_restore() -> None:
-    return None
 
 
 def _spinner_backend_name(env: Mapping[str, str]) -> str:
