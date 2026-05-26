@@ -78,9 +78,9 @@ class ProcessRunnerSpinnerIntegrationTests(unittest.TestCase):
             yield _SpinnerStub()
 
         with (
-            patch("envctl_engine.shared.process_runner.spinner", side_effect=fake_spinner),
-            patch("envctl_engine.shared.process_runner.spinner_enabled", return_value=True),
-            patch("envctl_engine.shared.process_runner.subprocess.Popen", return_value=_FakePopen("line-1\nline-2\n")),
+            patch("envctl_engine.shared.process_streaming_support.spinner", side_effect=fake_spinner),
+            patch("envctl_engine.shared.process_streaming_support.spinner_enabled", return_value=True),
+            patch("envctl_engine.shared.process_streaming_support.subprocess.Popen", return_value=_FakePopen("line-1\nline-2\n")),
         ):
             completed = runner.run_streaming(["echo", "hello"], callback=None)
 
@@ -110,9 +110,9 @@ class ProcessRunnerSpinnerIntegrationTests(unittest.TestCase):
             yield _SpinnerStub()
 
         with (
-            patch("envctl_engine.shared.process_runner.spinner", side_effect=fake_spinner),
-            patch("envctl_engine.shared.process_runner.spinner_enabled", return_value=True),
-            patch("envctl_engine.shared.process_runner.subprocess.Popen", return_value=_FakePopen("line-a\nline-b\n")),
+            patch("envctl_engine.shared.process_streaming_support.spinner", side_effect=fake_spinner),
+            patch("envctl_engine.shared.process_streaming_support.spinner_enabled", return_value=True),
+            patch("envctl_engine.shared.process_streaming_support.subprocess.Popen", return_value=_FakePopen("line-a\nline-b\n")),
             patch("builtins.print") as print_mock,
         ):
             completed = runner.run_streaming(["echo", "hello"], callback=lambda line: seen_lines.append(line))
@@ -144,10 +144,10 @@ class ProcessRunnerSpinnerIntegrationTests(unittest.TestCase):
             yield _SpinnerStub()
 
         with (
-            patch("envctl_engine.shared.process_runner.spinner", side_effect=fake_spinner),
-            patch("envctl_engine.shared.process_runner.spinner_enabled", return_value=True),
+            patch("envctl_engine.shared.process_streaming_support.spinner", side_effect=fake_spinner),
+            patch("envctl_engine.shared.process_streaming_support.spinner_enabled", return_value=True),
             patch(
-                "envctl_engine.shared.process_runner.subprocess.Popen", return_value=_FakePopen("line\n", returncode=1)
+                "envctl_engine.shared.process_streaming_support.subprocess.Popen", return_value=_FakePopen("line\n", returncode=1)
             ),
             patch("builtins.print") as print_mock,
         ):
@@ -184,10 +184,10 @@ class ProcessRunnerSpinnerIntegrationTests(unittest.TestCase):
             return timeout_state["now"]
 
         with (
-            patch("envctl_engine.shared.process_runner.spinner", side_effect=fake_spinner),
-            patch("envctl_engine.shared.process_runner.spinner_enabled", return_value=True),
-            patch("envctl_engine.shared.process_runner.subprocess.Popen", return_value=_NeverEndingPopen()),
-            patch("envctl_engine.shared.process_runner.time.time", side_effect=fake_time),
+            patch("envctl_engine.shared.process_streaming_support.spinner", side_effect=fake_spinner),
+            patch("envctl_engine.shared.process_streaming_support.spinner_enabled", return_value=True),
+            patch("envctl_engine.shared.process_streaming_support.subprocess.Popen", return_value=_NeverEndingPopen()),
+            patch("envctl_engine.shared.process_streaming_support.time.time", side_effect=fake_time),
             patch("builtins.print") as print_mock,
         ):
             completed = runner.run_streaming(["echo", "hello"], callback=None, show_spinner=False, timeout=1.0)
@@ -226,8 +226,8 @@ class ProcessRunnerSpinnerIntegrationTests(unittest.TestCase):
             return _FakePopen("line-1\n")
 
         with (
-            patch("envctl_engine.shared.process_runner.spinner_enabled", return_value=False),
-            patch("envctl_engine.shared.process_runner.subprocess.Popen", side_effect=fake_popen),
+            patch("envctl_engine.shared.process_streaming_support.spinner_enabled", return_value=False),
+            patch("envctl_engine.shared.process_streaming_support.subprocess.Popen", side_effect=fake_popen),
         ):
             completed = runner.run_streaming(["echo", "hello"], callback=None, stdin=subprocess.DEVNULL)
 
@@ -259,8 +259,8 @@ class ProcessRunnerSpinnerIntegrationTests(unittest.TestCase):
                 _ = timeout
                 return 0
 
-        with patch("envctl_engine.shared.process_runner.spinner_enabled", return_value=False), patch(
-            "envctl_engine.shared.process_runner.subprocess.Popen",
+        with patch("envctl_engine.shared.process_streaming_support.spinner_enabled", return_value=False), patch(
+            "envctl_engine.shared.process_streaming_support.subprocess.Popen",
             return_value=_BinaryPopen(),
         ):
             completed = runner.run_streaming(["echo", "hello"], callback=None)
