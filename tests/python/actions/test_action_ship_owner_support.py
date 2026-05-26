@@ -770,6 +770,31 @@ def test_ship_payload_and_result_output_keep_json_contract(tmp_path: Path, capsy
     assert parse_ship_json_output(_Context("Main", tmp_path, tmp_path, {"ENVCTL_ACTION_HUMAN": "true"})) is False
 
 
+def test_ship_payload_normalizes_malformed_nested_payloads(tmp_path: Path) -> None:
+    context = _Context(project_name="Main", project_root=tmp_path / "project", repo_root=tmp_path, env={})
+    context.project_root.mkdir()
+
+    payload = ship_payload(
+        context=context,
+        git_root=tmp_path,
+        branch="feature",
+        status="checks_passed",
+        started=0.0,
+        checks={
+            "state": "checks_passed",
+            "passed_checks": "malformed",
+            "failing_checks": {"name": "pytest"},
+            "pending_checks": None,
+        },
+        merge_conflicts="malformed",  # type: ignore[arg-type]
+    )
+
+    assert payload["passed_checks"] == []
+    assert payload["failing_checks"] == []
+    assert payload["pending_checks"] == []
+    assert payload["merge_conflicts"] == {}
+
+
 def test_ship_result_human_output_includes_pr_creation_state(tmp_path: Path, capsys: Any) -> None:
     context = _Context(project_name="Main", project_root=tmp_path / "project", repo_root=tmp_path, env={})
     context.project_root.mkdir()

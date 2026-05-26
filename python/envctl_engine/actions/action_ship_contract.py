@@ -57,7 +57,8 @@ def ship_payload(
     step_statuses: list[str] | None = None,
     merge_conflicts: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    checks_payload = dict(checks or {})
+    checks_payload = dict(_mapping_payload_value(checks))
+    merge_conflicts_payload = dict(_mapping_payload_value(merge_conflicts))
     operation_statuses = ship_operation_statuses(
         status=status,
         committed=committed,
@@ -65,7 +66,7 @@ def ship_payload(
         pr_url=pr_url,
         pr_created=pr_created,
         checks_state=str(checks_payload.get("state", "") or ""),
-        merge_conflicts=merge_conflicts,
+        merge_conflicts=merge_conflicts_payload,
     )
     return {
         "contract_version": "envctl.ship.v1",
@@ -83,14 +84,14 @@ def ship_payload(
         "pr_url": pr_url,
         "pr_created": pr_created,
         "checks_state": checks_payload.get("state", ""),
-        "passed_checks": checks_payload.get("passed_checks", []),
-        "failing_checks": checks_payload.get("failing_checks", []),
-        "pending_checks": checks_payload.get("pending_checks", []),
+        "passed_checks": _list_payload_value(checks_payload.get("passed_checks")),
+        "failing_checks": _list_payload_value(checks_payload.get("failing_checks")),
+        "pending_checks": _list_payload_value(checks_payload.get("pending_checks")),
         "checks_error": checks_payload.get("error", ""),
         "checks_expected_head_sha": checks_payload.get("expected_head_sha", ""),
         "checks_actual_head_sha": checks_payload.get("actual_head_sha", ""),
         "checks_timeout_seconds": checks_payload.get("timeout_seconds", 0.0),
-        "merge_conflicts": dict(merge_conflicts or {}),
+        "merge_conflicts": merge_conflicts_payload,
         "monitor_duration_seconds": checks_payload.get("duration_seconds", 0.0),
         "duration_seconds": round(time.monotonic() - started, 3),
         "protected_local_artifacts_skipped": protected_paths or [],
@@ -175,6 +176,10 @@ def print_ship_result(payload: Mapping[str, object], *, json_output: bool, ok: b
 
 def _mapping_payload_value(value: object) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _list_payload_value(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
 
 
 def parse_ship_json_output(context: Any) -> bool:

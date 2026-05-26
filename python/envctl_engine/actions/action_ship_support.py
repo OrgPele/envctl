@@ -29,12 +29,7 @@ RunGit = Callable[[Path, list[str]], subprocess.CompletedProcess[str]]
 ResolveBaseBranch = Callable[[Any, Path], str]
 ResolveBaseRef = Callable[[Path, str], str]
 GithubPrChecks = Callable[..., dict[str, object]]
-SUCCESSFUL_CHECK_PHASE_STATUSES = {
-    "checks_passed",
-    "checks_pending_timeout",
-    "gh_unavailable",
-    "no_checks_reported",
-}
+SUCCESSFUL_CHECK_PHASE_STATUSES = {"checks_passed", "checks_pending_timeout", "gh_unavailable", "no_checks_reported"}
 
 
 @dataclass(slots=True)
@@ -314,28 +309,10 @@ def run_ship_workflow(
     ).run()
 
 
-_parse_json_output = parse_ship_json_output
-
-
 __all__ = [
-    "GitOutput",
-    "GithubPrChecks",
-    "ResolveBaseBranch",
-    "ResolveBaseRef",
-    "RunGit",
-    "ShipWorkflowDependencies",
-    "ShipWorkflowRunner",
-    "ShipWorkflowState",
-    "_parse_json_output",
-    "existing_merge_conflict_report",
-    "github_pr_checks",
-    "normalize_github_pr_checks",
-    "parse_merge_tree_conflicts",
-    "parse_ship_json_output",
-    "predicted_merge_conflict_report",
-    "print_ship_result",
-    "run_ship_workflow",
-    "ship_payload",
-    "ship_protected_paths",
-    "unmerged_stage_entries",
+    "GitOutput", "GithubPrChecks", "ResolveBaseBranch", "ResolveBaseRef", "RunGit",
+    "ShipWorkflowDependencies", "ShipWorkflowRunner", "ShipWorkflowState",
+    "existing_merge_conflict_report", "github_pr_checks", "normalize_github_pr_checks", "parse_merge_tree_conflicts",
+    "parse_ship_json_output", "predicted_merge_conflict_report", "print_ship_result", "run_ship_workflow",
+    "ship_payload", "ship_protected_paths", "unmerged_stage_entries",
 ]
