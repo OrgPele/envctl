@@ -10,6 +10,7 @@ import time
 from typing import Callable, Mapping
 
 from envctl_engine.actions.action_ship_check_queries import (
+    RunCommand,
     query_expected_head_pr_checks as _query_expected_head_pr_checks,
     query_github_pr_checks as _query_github_pr_checks,
 )
@@ -32,6 +33,9 @@ DEFAULT_CHECK_TIMEOUT_SECONDS = 120.0
 DEFAULT_CHECK_POLL_INTERVAL_SECONDS = 5.0
 DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS = 10.0
 DEFAULT_NO_CHECKS_GRACE_SECONDS = 10.0
+Clock = Callable[[], float]
+Sleeper = Callable[[float], None]
+GhPathResolver = Callable[[], str | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +91,9 @@ class ShipCheckPoller:
     expected_head_sha: str | None
     timing: ShipCheckTiming
     started: float
+    run_command: RunCommand
+    monotonic: Clock
+    sleep: Sleeper
     progress_callback: Callable[[str], None] | None = None
 
     def run(self) -> dict[str, object]:
@@ -96,7 +103,7 @@ class ShipCheckPoller:
             if _ship_check_result_is_terminal(result):
                 return result
 
-            elapsed = time.monotonic() - self.started
+            elapsed = self.monotonic() - self.started
             next_progress_at = self._emit_progress_if_needed(
                 result,
                 elapsed_seconds=elapsed,
@@ -116,16 +123,16 @@ class ShipCheckPoller:
                 expected_head_sha=self.expected_head_sha,
                 started=self.started,
                 no_checks_grace_seconds=self.timing.no_checks_grace_seconds,
-                run_command=subprocess.run,
-                monotonic=time.monotonic,
+                run_command=self.run_command,
+                monotonic=self.monotonic,
             )
         return _query_github_pr_checks(
             self.git_root,
             gh_path=self.gh_path,
             branch=self.branch,
             started=self.started,
-            run_command=subprocess.run,
-            monotonic=time.monotonic,
+            run_command=self.run_command,
+            monotonic=self.monotonic,
         )
 
     def _emit_progress_if_needed(
@@ -165,12 +172,10 @@ class ShipCheckPoller:
         }
 
     def _sleep_until_next_poll(self, *, elapsed_seconds: float) -> None:
-        time.sleep(
-            min(
-                self.timing.poll_interval_seconds,
-                max(self.timing.timeout_seconds - elapsed_seconds, 0.1),
-            )
-        )
+        remaining_seconds = self.timing.timeout_seconds - elapsed_seconds
+        if remaining_seconds <= 0:
+            return
+        self.sleep(min(self.timing.poll_interval_seconds, remaining_seconds))
 
 
 def github_pr_checks(
@@ -184,9 +189,13 @@ def github_pr_checks(
     progress_interval_seconds: float | None = None,
     no_checks_grace_seconds: float | None = None,
     progress_callback: Callable[[str], None] | None = None,
+    run_command: RunCommand | None = None,
+    monotonic: Clock | None = None,
+    sleep: Sleeper | None = None,
+    gh_path_resolver: GhPathResolver | None = None,
 ) -> dict[str, object]:
-    gh_path = shutil.which("gh")
-    if gh_path is None:
+    resolved_gh_path = (gh_path_resolver if gh_path_resolver is not None else _default_gh_path)()
+    if resolved_gh_path is None:
         return {
             "state": "gh_unavailable",
             "failing_checks": [],
@@ -194,7 +203,8 @@ def github_pr_checks(
             "pending_checks": [],
             "duration_seconds": 0.0,
         }
-    started = time.monotonic()
+    resolved_monotonic = monotonic if monotonic is not None else time.monotonic
+    started = resolved_monotonic()
     timing = ShipCheckTiming.from_inputs(
         timeout_seconds=timeout_seconds,
         poll_interval_seconds=poll_interval_seconds,
@@ -203,14 +213,21 @@ def github_pr_checks(
     )
     return ShipCheckPoller(
         git_root=git_root,
-        gh_path=gh_path,
+        gh_path=resolved_gh_path,
         branch=branch,
         pr_url=pr_url,
         expected_head_sha=expected_head_sha,
         timing=timing,
         started=started,
+        run_command=run_command if run_command is not None else subprocess.run,
+        monotonic=resolved_monotonic,
+        sleep=sleep if sleep is not None else time.sleep,
         progress_callback=progress_callback,
     ).run()
+
+
+def _default_gh_path() -> str | None:
+    return shutil.which("gh")
 
 
 def _ship_check_result_is_terminal(result: Mapping[str, object]) -> bool:
@@ -264,6 +281,7 @@ def _float_env(name: str) -> float | None:
 
 
 __all__ = [
+    "Clock",
     "DEFAULT_CHECK_NAME_PREFIX",
     "DEFAULT_CHECK_POLL_INTERVAL_SECONDS",
     "DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS",
@@ -272,9 +290,12 @@ __all__ = [
     "DEFAULT_FAILURE_EXCERPT_LINES",
     "DEFAULT_NO_CHECKS_GRACE_SECONDS",
     "FAILING_CHECK_STATES",
+    "GhPathResolver",
     "PASSING_CHECK_STATES",
+    "RunCommand",
     "ShipCheckPoller",
     "ShipCheckTiming",
+    "Sleeper",
     "TERMINAL_SHIP_CHECK_STATES",
     "failed_checks_with_log_excerpts",
     "failure_log_excerpt",

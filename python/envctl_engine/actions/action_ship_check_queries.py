@@ -86,31 +86,26 @@ def query_expected_head_pr_checks(
     target_checks = target_status_checks(checks)
     if not target_checks:
         if duration < no_checks_grace_seconds:
-            return {
-                "state": "checks_pending_timeout",
-                "failing_checks": [],
-                "passed_checks": [],
-                "pending_checks": [
+            return _check_query_result(
+                state="checks_pending_timeout",
+                duration_seconds=duration,
+                pending_checks=[
                     {
                         "name": "github_checks",
                         "state": "WAITING",
                         "expected_head_sha": expected_head_sha,
                     }
                 ],
-                "duration_seconds": duration,
-                "expected_head_sha": expected_head_sha,
-                "pr_url": str(data.get("url") or pr_url),
-                "error": "GitHub has not reported target test check contexts for the pushed head commit yet.",
-            }
-        return {
-            "state": "no_checks_reported",
-            "failing_checks": [],
-            "passed_checks": [],
-            "pending_checks": [],
-            "duration_seconds": duration,
-            "expected_head_sha": expected_head_sha,
-            "pr_url": str(data.get("url") or pr_url),
-        }
+                error="GitHub has not reported target test check contexts for the pushed head commit yet.",
+                expected_head_sha=expected_head_sha,
+                pr_url=str(data.get("url") or pr_url),
+            )
+        return _check_query_result(
+            state="no_checks_reported",
+            duration_seconds=duration,
+            expected_head_sha=expected_head_sha,
+            pr_url=str(data.get("url") or pr_url),
+        )
 
     normalized = normalize_github_pr_checks(target_checks, duration_seconds=duration)
     normalized["expected_head_sha"] = expected_head_sha
@@ -140,42 +135,18 @@ def query_github_pr_checks(
     )
     duration = round(monotonic() - started, 3)
     if command_error:
-        return {
-            "state": "checks_pending_timeout",
-            "failing_checks": [],
-            "passed_checks": [],
-            "pending_checks": [],
-            "duration_seconds": duration,
-            "error": command_error,
-        }
+        return _check_query_result(state="checks_pending_timeout", duration_seconds=duration, error=command_error)
     if completed is None:
-        return {
-            "state": "checks_pending_timeout",
-            "failing_checks": [],
-            "passed_checks": [],
-            "pending_checks": [],
-            "duration_seconds": duration,
-            "error": "GitHub PR checks are not available yet.",
-        }
+        return _check_query_result(
+            state="checks_pending_timeout",
+            duration_seconds=duration,
+            error="GitHub PR checks are not available yet.",
+        )
     if completed.returncode != 0:
         error = _completed_error_text(completed, fallback="GitHub PR checks are not available yet.")
         if "no checks reported" in error.casefold():
-            return {
-                "state": "no_checks_reported",
-                "failing_checks": [],
-                "passed_checks": [],
-                "pending_checks": [],
-                "duration_seconds": duration,
-                "error": error,
-            }
-        return {
-            "state": "checks_pending_timeout",
-            "failing_checks": [],
-            "passed_checks": [],
-            "pending_checks": [],
-            "duration_seconds": duration,
-            "error": error,
-        }
+            return _check_query_result(state="no_checks_reported", duration_seconds=duration, error=error)
+        return _check_query_result(state="checks_pending_timeout", duration_seconds=duration, error=error)
     try:
         loaded = json.loads(completed.stdout or "[]")
     except json.JSONDecodeError:
@@ -183,14 +154,11 @@ def query_github_pr_checks(
     checks = loaded if isinstance(loaded, list) else []
     target_checks = target_status_checks(checks)
     if not target_checks:
-        return {
-            "state": "no_checks_reported",
-            "failing_checks": [],
-            "passed_checks": [],
-            "pending_checks": [],
-            "duration_seconds": duration,
-            "error": "GitHub has not reported target test check contexts for this branch.",
-        }
+        return _check_query_result(
+            state="no_checks_reported",
+            duration_seconds=duration,
+            error="GitHub has not reported target test check contexts for this branch.",
+        )
     normalized = normalize_github_pr_checks(target_checks, duration_seconds=duration)
     return _with_failed_check_log_excerpts(
         normalized,
@@ -208,11 +176,10 @@ def _pending_expected_head_result(
     error: str,
     pr_url: str,
 ) -> dict[str, object]:
-    return {
-        "state": "checks_pending_timeout",
-        "failing_checks": [],
-        "passed_checks": [],
-        "pending_checks": [
+    return _check_query_result(
+        state="checks_pending_timeout",
+        duration_seconds=duration_seconds,
+        pending_checks=[
             {
                 "name": "github_head_ref",
                 "state": "WAITING",
@@ -220,12 +187,34 @@ def _pending_expected_head_result(
                 "actual_head_sha": actual_head_sha,
             }
         ],
+        error=error,
+        expected_head_sha=expected_head_sha,
+        actual_head_sha=actual_head_sha,
+        pr_url=pr_url,
+    )
+
+
+def _check_query_result(
+    *,
+    state: str,
+    duration_seconds: float,
+    failing_checks: list[object] | None = None,
+    passed_checks: list[object] | None = None,
+    pending_checks: list[object] | None = None,
+    error: str = "",
+    **extra: object,
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "state": state,
+        "failing_checks": failing_checks or [],
+        "passed_checks": passed_checks or [],
+        "pending_checks": pending_checks or [],
         "duration_seconds": duration_seconds,
-        "expected_head_sha": expected_head_sha,
-        "actual_head_sha": actual_head_sha,
-        "pr_url": pr_url,
-        "error": error,
     }
+    result.update(extra)
+    if error:
+        result["error"] = error
+    return result
 
 
 def _mapping_check_list(value: object) -> list[Mapping[str, object]]:

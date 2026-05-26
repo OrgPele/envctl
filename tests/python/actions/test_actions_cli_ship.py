@@ -47,7 +47,7 @@ class ActionsCliShipTests(unittest.TestCase):
             )
 
             head_sha = {"value": "abc123"}
-            git_outputs = {
+            git_outputs: dict[tuple[str, ...], str] = {
                 ("rev-parse", "--abbrev-ref", "HEAD"): "feature/demo\n",
                 ("status", "--porcelain", "--untracked-files=all"): (
                     "?? app.py\n"
@@ -279,6 +279,16 @@ class ActionsCliShipTests(unittest.TestCase):
         self.assertEqual(payload["merge_conflicts"]["state"], "conflicts")
         self.assertEqual(payload["merge_conflicts"]["type"], "unmerged_index")
         self.assertEqual(payload["merge_conflicts"]["conflicting_files"][0]["stages"], ["1", "2", "3"])
+        self.assertEqual(
+            payload["operation_statuses"],
+            {
+                "checks": "not_run",
+                "commit": "not_run",
+                "merge_conflicts": "conflicts",
+                "pr": "not_run",
+                "push": "not_run",
+            },
+        )
         commit_action.assert_not_called()
 
     def test_probe_dirty_worktree_classifies_porcelain_status(self) -> None:

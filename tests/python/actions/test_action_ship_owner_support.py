@@ -4,7 +4,7 @@ import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from envctl_engine.actions import action_ship_checks
 from envctl_engine.actions import action_ship_check_queries
@@ -21,6 +21,7 @@ from envctl_engine.actions.action_ship_failure_logs import (
 from envctl_engine.actions.action_ship_conflicts import parse_merge_tree_conflicts as parse_conflicts_from_owner
 from envctl_engine.actions.action_ship_contract import (
     ship_action_payload as ship_action_payload_from_contract,
+    ship_operation_statuses,
     ship_payload as ship_payload_from_owner,
 )
 from envctl_engine.actions.action_ship_support import (
@@ -40,6 +41,24 @@ class _Context:
     project_root: Path
     repo_root: Path
     env: dict[str, str]
+
+
+def _fake_gh_path() -> str | None:
+    return "/usr/bin/gh"
+
+
+def _no_sleep(_seconds: float) -> None:
+    return None
+
+
+def _github_pr_checks(git_root: Path, **overrides: Any) -> dict[str, object]:
+    kwargs: dict[str, Any] = {
+        "branch": "feature/demo",
+        "pr_url": "https://github.com/acme/repo/pull/7",
+        "gh_path_resolver": _fake_gh_path,
+    }
+    kwargs.update(overrides)
+    return action_ship_checks.github_pr_checks(git_root, **kwargs)
 
 
 def test_existing_merge_conflict_report_includes_unmerged_stage_entries(tmp_path: Path) -> None:
@@ -141,11 +160,15 @@ def test_github_check_normalization_reports_failed_pending_and_passed_states() -
 def test_ship_check_target_filter_matches_tests_workflow_case_insensitively() -> None:
     checks = [
         {"name": "pytest", "workflow": "TeStS", "state": "SUCCESS"},
+        {"name": "Tests / integration", "workflow": "CI", "state": "SUCCESS"},
         {"name": "security", "workflow": "CodeQL", "state": "PENDING"},
         "malformed",
     ]
 
-    assert target_status_checks(checks) == [{"name": "pytest", "workflow": "TeStS", "state": "SUCCESS"}]
+    assert target_status_checks(checks) == [
+        {"name": "pytest", "workflow": "TeStS", "state": "SUCCESS"},
+        {"name": "Tests / integration", "workflow": "CI", "state": "SUCCESS"},
+    ]
 
 
 def test_github_check_normalization_treats_completed_without_conclusion_as_pending() -> None:
@@ -175,40 +198,75 @@ def test_ship_failure_log_excerpt_starts_at_failure_section_and_strips_runner_pr
     assert truncated is True
 
 
-def test_github_pr_checks_polls_until_pending_checks_finish(tmp_path: Path, monkeypatch: Any) -> None:
+def test_github_pr_checks_polls_until_pending_checks_finish(tmp_path: Path) -> None:
     calls: list[list[str]] = []
     outputs = [
         [{"name": "pytest", "workflow": "Tests", "state": "PENDING", "link": "https://ci.test/1"}],
         [{"name": "pytest", "workflow": "Tests", "state": "SUCCESS", "link": "https://ci.test/1"}],
     ]
 
-    class _Completed:
-        returncode = 0
-        stderr = ""
-
-        @property
-        def stdout(self) -> str:
-            return json.dumps(outputs.pop(0))
-
-    def fake_run(args: list[str], **_kwargs: object) -> _Completed:
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(args)
-        return _Completed()
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
 
-    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
-    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
-    monkeypatch.setattr(action_ship_checks.time, "sleep", lambda _seconds: None)
-
-    checks = action_ship_checks.github_pr_checks(
+    checks = _github_pr_checks(
         tmp_path,
-        branch="feature/demo",
-        pr_url="https://github.com/acme/repo/pull/7",
         timeout_seconds=5.0,
         poll_interval_seconds=0.01,
+        run_command=fake_run,
+        sleep=_no_sleep,
     )
 
     assert checks["state"] == "checks_passed"
     assert checks["pending_checks"] == []
     assert len(calls) == 2
+
+
+def test_github_pr_checks_does_not_sleep_past_remaining_timeout(tmp_path: Path) -> None:
+    clock_values = iter([0.0, 0.9, 0.95, 1.1, 1.1])
+    sleep_calls: list[float] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=json.dumps(
+                [{"name": "pytest", "workflow": "Tests", "state": "PENDING", "link": "https://ci.test/1"}]
+            ),
+            stderr="",
+        )
+
+    checks = _github_pr_checks(
+        tmp_path,
+        timeout_seconds=1.0,
+        poll_interval_seconds=5.0,
+        run_command=fake_run,
+        monotonic=lambda: next(clock_values),
+        sleep=sleep_calls.append,
+    )
+
+    assert checks["state"] == "checks_pending_timeout"
+    assert len(sleep_calls) == 1
+    assert abs(sleep_calls[0] - 0.05) < 0.001
+
+
+def test_github_pr_checks_reports_unavailable_gh_without_running_checks(tmp_path: Path) -> None:
+    def fail_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("ship check runner should not be called when gh is unavailable")
+
+    checks = _github_pr_checks(
+        tmp_path,
+        run_command=fail_run,
+        gh_path_resolver=lambda: None,
+    )
+
+    assert checks == {
+        "state": "gh_unavailable",
+        "failing_checks": [],
+        "passed_checks": [],
+        "pending_checks": [],
+        "duration_seconds": 0.0,
+    }
 
 
 def test_github_pr_checks_default_timeout_is_two_minute_wait_window() -> None:
@@ -256,9 +314,7 @@ def test_ship_check_timing_rejects_non_finite_values(monkeypatch: Any) -> None:
     assert timing.no_checks_grace_seconds == action_ship_checks.DEFAULT_NO_CHECKS_GRACE_SECONDS
 
 
-def test_github_pr_checks_reports_no_checks_after_ten_second_grace_for_expected_head(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_github_pr_checks_reports_no_checks_after_ten_second_grace_for_expected_head(tmp_path: Path) -> None:
     clock = {"now": 0.0}
     calls: list[list[str]] = []
 
@@ -280,18 +336,14 @@ def test_github_pr_checks_reports_no_checks_after_ten_second_grace_for_expected_
     def fake_sleep(seconds: float) -> None:
         clock["now"] += seconds
 
-    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
-    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
-    monkeypatch.setattr(action_ship_checks.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(action_ship_checks.time, "sleep", fake_sleep)
-
-    checks = action_ship_checks.github_pr_checks(
+    checks = _github_pr_checks(
         tmp_path,
-        branch="feature/demo",
-        pr_url="https://github.com/acme/repo/pull/7",
         expected_head_sha="newsha",
         timeout_seconds=120.0,
         poll_interval_seconds=10.0,
+        run_command=fake_run,
+        monotonic=lambda: clock["now"],
+        sleep=fake_sleep,
     )
 
     assert checks["state"] == "no_checks_reported"
@@ -299,9 +351,7 @@ def test_github_pr_checks_reports_no_checks_after_ten_second_grace_for_expected_
     assert len(calls) == 2
 
 
-def test_github_pr_checks_emits_progress_every_progress_interval_while_pending(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_github_pr_checks_emits_progress_every_progress_interval_while_pending(tmp_path: Path) -> None:
     clock = {"now": 0.0}
     updates: list[str] = []
     outputs = [
@@ -327,26 +377,22 @@ def test_github_pr_checks_emits_progress_every_progress_interval_while_pending(
     def fake_sleep(seconds: float) -> None:
         clock["now"] += seconds
 
-    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
-    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
-    monkeypatch.setattr(action_ship_checks.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(action_ship_checks.time, "sleep", fake_sleep)
-
-    checks = action_ship_checks.github_pr_checks(
+    checks = _github_pr_checks(
         tmp_path,
-        branch="feature/demo",
-        pr_url="https://github.com/acme/repo/pull/7",
         expected_head_sha="newsha",
         timeout_seconds=120.0,
         poll_interval_seconds=10.0,
         progress_callback=updates.append,
+        run_command=fake_run,
+        monotonic=lambda: clock["now"],
+        sleep=fake_sleep,
     )
 
     assert checks["state"] == "checks_passed"
     assert updates == ["ship: GitHub checks still running after 10s (pending=1, passed=0, failed=0, timeout=120s)"]
 
 
-def test_github_pr_checks_ignores_non_test_checks_after_target_tests_pass(tmp_path: Path, monkeypatch: Any) -> None:
+def test_github_pr_checks_ignores_non_test_checks_after_target_tests_pass(tmp_path: Path) -> None:
     clock = {"now": 0.0}
     outputs = [
         {
@@ -371,18 +417,14 @@ def test_github_pr_checks_ignores_non_test_checks_after_target_tests_pass(tmp_pa
     def fake_sleep(seconds: float) -> None:
         clock["now"] += seconds
 
-    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
-    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
-    monkeypatch.setattr(action_ship_checks.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(action_ship_checks.time, "sleep", fake_sleep)
-
-    checks = action_ship_checks.github_pr_checks(
+    checks = _github_pr_checks(
         tmp_path,
-        branch="feature/demo",
-        pr_url="https://github.com/acme/repo/pull/7",
         expected_head_sha="newsha",
         timeout_seconds=120.0,
         poll_interval_seconds=5.0,
+        run_command=fake_run,
+        monotonic=lambda: clock["now"],
+        sleep=fake_sleep,
     )
 
     assert checks["state"] == "checks_passed"
@@ -391,7 +433,7 @@ def test_github_pr_checks_ignores_non_test_checks_after_target_tests_pass(tmp_pa
     assert checks["pending_checks"] == []
 
 
-def test_github_pr_checks_ignores_malformed_check_items(tmp_path: Path, monkeypatch: Any) -> None:
+def test_github_pr_checks_ignores_malformed_check_items(tmp_path: Path) -> None:
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
             args=args,
@@ -405,13 +447,9 @@ def test_github_pr_checks_ignores_malformed_check_items(tmp_path: Path, monkeypa
             stderr="",
         )
 
-    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
-    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
-
-    checks = action_ship_checks.github_pr_checks(
+    checks = _github_pr_checks(
         tmp_path,
-        branch="feature/demo",
-        pr_url="https://github.com/acme/repo/pull/7",
+        run_command=fake_run,
     )
 
     assert checks["state"] == "checks_passed"
@@ -462,8 +500,9 @@ def test_github_pr_check_query_reports_runner_timeouts_as_pending_status(tmp_pat
     seen_timeout: list[float] = []
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        seen_timeout.append(float(kwargs["timeout"]))
-        raise subprocess.TimeoutExpired(args, timeout=float(kwargs["timeout"]))
+        timeout = cast(float, kwargs["timeout"])
+        seen_timeout.append(timeout)
+        raise subprocess.TimeoutExpired(args, timeout=timeout)
 
     checks = action_ship_check_queries.query_github_pr_checks(
         tmp_path,
@@ -490,8 +529,9 @@ def test_expected_head_check_query_reports_runner_timeouts_as_pending_status(tmp
     seen_timeout: list[float] = []
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        seen_timeout.append(float(kwargs["timeout"]))
-        raise subprocess.TimeoutExpired(args, timeout=float(kwargs["timeout"]))
+        timeout = cast(float, kwargs["timeout"])
+        seen_timeout.append(timeout)
+        raise subprocess.TimeoutExpired(args, timeout=timeout)
 
     checks = action_ship_check_queries.query_expected_head_pr_checks(
         tmp_path,
@@ -658,7 +698,7 @@ def test_failed_check_log_enrichment_bounds_log_fetch_subprocesses(tmp_path: Pat
     seen_timeout: list[float] = []
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        seen_timeout.append(float(kwargs["timeout"]))
+        seen_timeout.append(cast(float, kwargs["timeout"]))
         return subprocess.CompletedProcess(args=args, returncode=0, stdout="FAILED tests/test_demo.py::test_demo\n", stderr="")
 
     enriched = failed_checks_with_log_excerpts(
@@ -679,7 +719,7 @@ def test_failed_check_log_enrichment_bounds_log_fetch_subprocesses(tmp_path: Pat
     assert seen_timeout == [30.0]
 
 
-def test_github_pr_checks_can_detect_success_before_next_progress_heartbeat(tmp_path: Path, monkeypatch: Any) -> None:
+def test_github_pr_checks_can_detect_success_before_next_progress_heartbeat(tmp_path: Path) -> None:
     clock = {"now": 0.0}
     updates: list[str] = []
     outputs = [
@@ -701,20 +741,16 @@ def test_github_pr_checks_can_detect_success_before_next_progress_heartbeat(tmp_
     def fake_sleep(seconds: float) -> None:
         clock["now"] += seconds
 
-    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
-    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
-    monkeypatch.setattr(action_ship_checks.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(action_ship_checks.time, "sleep", fake_sleep)
-
-    checks = action_ship_checks.github_pr_checks(
+    checks = _github_pr_checks(
         tmp_path,
-        branch="feature/demo",
-        pr_url="https://github.com/acme/repo/pull/7",
         expected_head_sha="newsha",
         timeout_seconds=120.0,
         poll_interval_seconds=2.0,
         progress_interval_seconds=10.0,
         progress_callback=updates.append,
+        run_command=fake_run,
+        monotonic=lambda: clock["now"],
+        sleep=fake_sleep,
     )
 
     assert checks["state"] == "checks_passed"
@@ -722,7 +758,7 @@ def test_github_pr_checks_can_detect_success_before_next_progress_heartbeat(tmp_
     assert updates == []
 
 
-def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(tmp_path: Path, monkeypatch: Any) -> None:
+def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(tmp_path: Path) -> None:
     calls: list[list[str]] = []
     outputs = [
         {
@@ -770,17 +806,13 @@ def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(tm
         calls.append(args)
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
 
-    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
-    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
-    monkeypatch.setattr(action_ship_checks.time, "sleep", lambda _seconds: None)
-
-    checks = action_ship_checks.github_pr_checks(
+    checks = _github_pr_checks(
         tmp_path,
-        branch="feature/demo",
-        pr_url="https://github.com/acme/repo/pull/7",
         expected_head_sha="newsha",
         timeout_seconds=5.0,
         poll_interval_seconds=0.01,
+        run_command=fake_run,
+        sleep=_no_sleep,
     )
 
     assert checks["state"] == "checks_passed"
@@ -799,7 +831,7 @@ def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(tm
     ]
 
 
-def test_github_pr_checks_returns_failed_check_without_waiting_for_timeout(tmp_path: Path, monkeypatch: Any) -> None:
+def test_github_pr_checks_returns_failed_check_without_waiting_for_timeout(tmp_path: Path) -> None:
     calls = 0
 
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -814,15 +846,11 @@ def test_github_pr_checks_returns_failed_check_without_waiting_for_timeout(tmp_p
             stderr="",
         )
 
-    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
-    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
-
-    checks = action_ship_checks.github_pr_checks(
+    checks = _github_pr_checks(
         tmp_path,
-        branch="feature/demo",
-        pr_url="https://github.com/acme/repo/pull/7",
         timeout_seconds=30.0,
         poll_interval_seconds=0.01,
+        run_command=fake_run,
     )
 
     assert checks["state"] == "checks_failed"
@@ -832,7 +860,7 @@ def test_github_pr_checks_returns_failed_check_without_waiting_for_timeout(tmp_p
     assert calls == 1
 
 
-def test_github_pr_checks_adds_failed_check_log_excerpt(tmp_path: Path, monkeypatch: Any) -> None:
+def test_github_pr_checks_adds_failed_check_log_excerpt(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -866,15 +894,11 @@ def test_github_pr_checks_adds_failed_check_log_excerpt(tmp_path: Path, monkeypa
             )
         raise AssertionError(args)
 
-    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
-    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
-
-    checks = action_ship_checks.github_pr_checks(
+    checks = _github_pr_checks(
         tmp_path,
-        branch="feature/demo",
-        pr_url="https://github.com/acme/repo/pull/7",
         timeout_seconds=30.0,
         poll_interval_seconds=0.01,
+        run_command=fake_run,
     )
 
     assert checks["state"] == "checks_failed"
@@ -899,9 +923,7 @@ def test_github_pr_checks_adds_failed_check_log_excerpt(tmp_path: Path, monkeypa
     ]
 
 
-def test_github_pr_checks_classifies_checkout_auth_failure_before_tests(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_github_pr_checks_classifies_checkout_auth_failure_before_tests(tmp_path: Path) -> None:
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         if args[:3] == ["/usr/bin/gh", "pr", "checks"]:
             return subprocess.CompletedProcess(
@@ -934,15 +956,11 @@ def test_github_pr_checks_classifies_checkout_auth_failure_before_tests(
             )
         raise AssertionError(args)
 
-    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
-    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
-
-    checks = action_ship_checks.github_pr_checks(
+    checks = _github_pr_checks(
         tmp_path,
-        branch="feature/demo",
-        pr_url="https://github.com/acme/repo/pull/7",
         timeout_seconds=30.0,
         poll_interval_seconds=0.01,
+        run_command=fake_run,
     )
 
     assert checks["state"] == "checks_failed"
@@ -979,9 +997,7 @@ def test_classify_failure_log_ignores_checkout_setup_when_test_body_failed() -> 
     assert classify_failure_log(log_text) == {}
 
 
-def test_github_pr_checks_retries_failed_check_logs_until_github_makes_them_available(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_github_pr_checks_retries_failed_check_logs_until_github_makes_them_available(tmp_path: Path) -> None:
     clock = {"now": 0.0}
     calls: list[list[str]] = []
     rollups = [
@@ -1056,18 +1072,14 @@ def test_github_pr_checks_retries_failed_check_logs_until_github_makes_them_avai
     def fake_sleep(seconds: float) -> None:
         clock["now"] += seconds
 
-    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
-    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
-    monkeypatch.setattr(action_ship_checks.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(action_ship_checks.time, "sleep", fake_sleep)
-
-    checks = action_ship_checks.github_pr_checks(
+    checks = _github_pr_checks(
         tmp_path,
-        branch="feature/demo",
-        pr_url="https://github.com/acme/repo/pull/7",
         expected_head_sha="newsha",
         timeout_seconds=120.0,
         poll_interval_seconds=10.0,
+        run_command=fake_run,
+        monotonic=lambda: clock["now"],
+        sleep=fake_sleep,
     )
 
     assert checks["state"] == "checks_failed"
@@ -1095,7 +1107,7 @@ def test_github_pr_checks_retries_failed_check_logs_until_github_makes_them_avai
     assert log_calls == 2
 
 
-def test_github_pr_checks_returns_no_checks_reported_without_polling(tmp_path: Path, monkeypatch: Any) -> None:
+def test_github_pr_checks_returns_no_checks_reported_without_polling(tmp_path: Path) -> None:
     calls = 0
 
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -1108,16 +1120,12 @@ def test_github_pr_checks_returns_no_checks_reported_without_polling(tmp_path: P
             stderr="no checks reported on the 'feature/demo' branch\n",
         )
 
-    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
-    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
-    monkeypatch.setattr(action_ship_checks.time, "sleep", lambda _seconds: None)
-
-    checks = action_ship_checks.github_pr_checks(
+    checks = _github_pr_checks(
         tmp_path,
-        branch="feature/demo",
-        pr_url="https://github.com/acme/repo/pull/7",
         timeout_seconds=30.0,
         poll_interval_seconds=0.01,
+        run_command=fake_run,
+        sleep=_no_sleep,
     )
 
     assert checks["state"] == "no_checks_reported"
@@ -1182,6 +1190,42 @@ def test_ship_contract_owner_parses_embedded_payload_and_strips_ansi() -> None:
     }
 
 
+def test_ship_operation_statuses_treat_commit_failure_before_new_commit_as_skipped_push() -> None:
+    assert ship_operation_statuses(
+        status="commit_failed",
+        committed=False,
+        pushed=False,
+        pr_url="",
+        pr_created=False,
+        checks_state="",
+        merge_conflicts={},
+    ) == {
+        "checks": "not_run",
+        "commit": "failed",
+        "merge_conflicts": "not_checked",
+        "pr": "not_run",
+        "push": "not_run",
+    }
+
+
+def test_ship_operation_statuses_treat_commit_failure_after_new_commit_as_push_failure() -> None:
+    assert ship_operation_statuses(
+        status="commit_failed",
+        committed=True,
+        pushed=False,
+        pr_url="",
+        pr_created=False,
+        checks_state="",
+        merge_conflicts={},
+    ) == {
+        "checks": "not_run",
+        "commit": "success",
+        "merge_conflicts": "not_checked",
+        "pr": "not_run",
+        "push": "failed",
+    }
+
+
 def test_ship_payload_normalizes_malformed_nested_payloads(tmp_path: Path) -> None:
     context = _Context(project_name="Main", project_root=tmp_path / "project", repo_root=tmp_path, env={})
     context.project_root.mkdir()
@@ -1198,7 +1242,7 @@ def test_ship_payload_normalizes_malformed_nested_payloads(tmp_path: Path) -> No
             "failing_checks": {"name": "pytest"},
             "pending_checks": None,
         },
-        merge_conflicts="malformed",  # type: ignore[arg-type]
+        merge_conflicts=cast(Any, "malformed"),
     )
 
     assert payload["passed_checks"] == []

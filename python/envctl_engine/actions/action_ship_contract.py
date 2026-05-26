@@ -110,18 +110,36 @@ def ship_operation_statuses(
     checks_state: str,
     merge_conflicts: Mapping[str, object] | None,
 ) -> dict[str, str]:
+    pre_commit_abort = _status_prevented_commit_phase(
+        status=status,
+        committed=committed,
+        pushed=pushed,
+        pr_url=pr_url,
+        pr_created=pr_created,
+    )
     return {
-        "commit": _commit_status(status=status, committed=committed),
-        "push": _push_status(status=status, committed=committed, pushed=pushed),
-        "pr": _pr_status(status=status, pr_url=pr_url, pr_created=pr_created),
+        "commit": "not_run" if pre_commit_abort else _commit_status(status=status, committed=committed),
+        "push": "not_run" if pre_commit_abort else _push_status(status=status, committed=committed, pushed=pushed),
+        "pr": "not_run" if pre_commit_abort else _pr_status(status=status, pr_url=pr_url, pr_created=pr_created),
         "merge_conflicts": _merge_conflict_status(status=status, merge_conflicts=merge_conflicts),
         "checks": checks_state or _checks_status(status),
     }
 
 
+def _status_prevented_commit_phase(
+    *,
+    status: str,
+    committed: bool,
+    pushed: bool,
+    pr_url: str,
+    pr_created: bool,
+) -> bool:
+    return status == "merge_conflicts" and not committed and not pushed and not pr_url and not pr_created
+
+
 def _commit_status(*, status: str, committed: bool) -> str:
     if status == "commit_failed":
-        return "failed"
+        return "success" if committed else "failed"
     if status in {"git_unavailable", "detached_head"}:
         return "not_run"
     return "success" if committed else "no_changes"
@@ -129,7 +147,9 @@ def _commit_status(*, status: str, committed: bool) -> str:
 
 def _push_status(*, status: str, committed: bool, pushed: bool) -> str:
     if status == "commit_failed":
-        return "failed"
+        if pushed:
+            return "success"
+        return "failed" if committed else "not_run"
     if status in {"git_unavailable", "detached_head"}:
         return "not_run"
     if pushed:
