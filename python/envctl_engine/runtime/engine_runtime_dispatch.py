@@ -3,12 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 from .command_policy import dispatch_family_for_command
+from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.inspection_support import dispatch_direct_inspection
 from envctl_engine.runtime.utility_command_support import dispatch_utility_command
 from envctl_engine.shared.process_probe import ProcessProbe
 
 
-def dispatch(runtime: Any, route: object) -> int:
+def dispatch(runtime: Any, route: Route) -> int:
     runtime.process_probe = ProcessProbe(runtime._build_process_probe_backend())
     effective_mode = getattr(route, "mode", "")
     if getattr(route, "command", "") in {"start", "plan", "restart"}:
@@ -30,7 +31,7 @@ def dispatch(runtime: Any, route: object) -> int:
     return dispatch_command(runtime, route)
 
 
-def dispatch_command(runtime: Any, route: object) -> int:
+def dispatch_command(runtime: Any, route: Route) -> int:
     command = str(getattr(route, "command", "")).strip()
     family = dispatch_family_for_command(command)
     if family == "help":

@@ -202,7 +202,7 @@ the dependency ports before generating those URLs. Backend/frontend app ports re
 `ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS=false` only when Main-mode dependencies must bind the exact configured
 `DB_PORT`, `REDIS_PORT`, and `N8N_PORT_BASE` values.
 
-`envctl config` seeds these sections when missing, then preserves them as-is.
+`envctl config` seeds these sections when missing, then preserves them as-is. The same save step also creates or updates an envctl-managed block in repo-local `AGENTS.md` so coding agents see the envctl workflow, plus Serena or CodeGraphContext guidance when those repo configs are present.
 
 ## Validation Rules
 

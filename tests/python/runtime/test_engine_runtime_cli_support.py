@@ -43,7 +43,7 @@ class EngineRuntimeCliSupportTests(unittest.TestCase):
         self.assertEqual(code, 17)
         command.assert_called_once_with(runtime, route)
 
-    def test_migrate_hooks_delegates_to_hook_migration_support(self) -> None:
+    def test_migrate_hooks_delegates_to_cli_support_hook_migration(self) -> None:
         runtime = SimpleNamespace(name="runtime")
         route = parse_route(["migrate-hooks"], env={})
 

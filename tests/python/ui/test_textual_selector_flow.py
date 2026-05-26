@@ -23,8 +23,16 @@ class TextualSelectorFlowTests(unittest.TestCase):
         projects = [_Project("alpha"), _Project("beta")]
         captured = {}
 
-        def fake_selector(*, prompt, options, multi, initial_tokens=None, emit=None):  # noqa: ANN001
-            _ = prompt, multi, initial_tokens, emit
+        def fake_selector(  # noqa: ANN001
+            *,
+            prompt,
+            options,
+            multi,
+            initial_tokens=None,
+            exclusive_token=None,
+            emit=None,
+        ):
+            _ = prompt, multi, initial_tokens, exclusive_token, emit
             captured["labels"] = [option.label for option in options]
             return ["__UNTESTED__"]
 
@@ -49,8 +57,16 @@ class TextualSelectorFlowTests(unittest.TestCase):
         projects = [_Project("alpha")]
         captured = {}
 
-        def fake_selector(*, prompt, options, multi, initial_tokens=None, emit=None):  # noqa: ANN001
-            _ = prompt, multi, initial_tokens, emit
+        def fake_selector(  # noqa: ANN001
+            *,
+            prompt,
+            options,
+            multi,
+            initial_tokens=None,
+            exclusive_token=None,
+            emit=None,
+        ):
+            _ = prompt, multi, initial_tokens, exclusive_token, emit
             captured["labels"] = [option.label for option in options]
             return ["__PROJECT__:alpha"]
 
@@ -88,8 +104,16 @@ class TextualSelectorFlowTests(unittest.TestCase):
         projects = [_Project("Main")]
         captured = {}
 
-        def fake_selector(*, prompt, options, multi, initial_tokens=None, emit=None):  # noqa: ANN001
-            _ = prompt, multi, initial_tokens, emit
+        def fake_selector(  # noqa: ANN001
+            *,
+            prompt,
+            options,
+            multi,
+            initial_tokens=None,
+            exclusive_token=None,
+            emit=None,
+        ):
+            _ = prompt, multi, initial_tokens, exclusive_token, emit
             captured["labels"] = [option.label for option in options]
             return ["__PROJECT__:Main"]
 
@@ -127,8 +151,16 @@ class TextualSelectorFlowTests(unittest.TestCase):
         projects = [_Project("alpha"), _Project("beta")]
         captured: dict[str, object] = {}
 
-        def fake_selector(*, prompt, options, multi, initial_tokens=None, emit=None):  # noqa: ANN001
-            _ = prompt, options, multi, emit
+        def fake_selector(  # noqa: ANN001
+            *,
+            prompt,
+            options,
+            multi,
+            initial_tokens=None,
+            exclusive_token=None,
+            emit=None,
+        ):
+            _ = prompt, options, multi, exclusive_token, emit
             captured["initial_tokens"] = list(initial_tokens or [])
             return ["__PROJECT__:beta"]
 

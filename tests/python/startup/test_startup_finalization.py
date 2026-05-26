@@ -32,6 +32,7 @@ from envctl_engine.startup.finalization import (
     restart_port_rebound_summary_lines,
 )
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanAgentLaunchOutcome, PlanAgentLaunchResult
+from envctl_engine.startup.finalization_failure import StartupFailureFinalizer
 from envctl_engine.startup.session import LocalStartupFailure, StartupSession
 from envctl_engine.state.models import RunState
 
@@ -71,6 +72,9 @@ def _runtime_stub(**overrides: object) -> SimpleNamespace:
 
 
 class StartupFinalizationTests(unittest.TestCase):
+    def test_failure_finalization_uses_named_owner(self) -> None:
+        self.assertTrue(callable(StartupFailureFinalizer.finalize))
+
     def test_finalize_failed_startup_writes_error_artifacts_and_releases_ports(self) -> None:
         context = SimpleNamespace(name="Main")
         session = _session(contexts=[context])

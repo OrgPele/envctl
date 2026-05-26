@@ -48,12 +48,16 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
             REPO_ROOT / "python/envctl_engine/startup/startup_orchestrator.py",
             REPO_ROOT / "python/envctl_engine/startup/resume_orchestrator.py",
             REPO_ROOT / "python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py",
+            REPO_ROOT / "python/envctl_engine/runtime/lifecycle_blast_support.py",
+            REPO_ROOT / "python/envctl_engine/startup/restart_prestop_support.py",
         ]
         for orchestrator_path in orchestrator_paths:
             raw = orchestrator_path.read_text(encoding="utf-8")
             self.assertNotIn("rt.port_planner", raw)
             self.assertNotIn("rt.state_repository", raw)
             self.assertNotIn("rt.process_runner", raw)
+            self.assertNotIn('getattr(runtime, "port_planner"', raw)
+            self.assertNotIn('getattr(self.runtime, "port_planner"', raw)
 
     def test_helper_accessors_prefer_runtime_context_dependencies(self) -> None:
         context_state_repository = object()
@@ -83,6 +87,7 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
         self.assertIs(
             _lifecycle_cleanup.LifecycleCleanupOrchestrator._process_runtime(runtime), context_process_runtime
         )
+        self.assertIs(_lifecycle_cleanup.LifecycleCleanupOrchestrator._port_allocator(runtime), context_port_allocator)
 
     def test_helper_accessors_fall_back_to_runtime_attributes_when_context_missing(self) -> None:
         runtime = SimpleNamespace()
@@ -98,6 +103,99 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
             _lifecycle_cleanup.LifecycleCleanupOrchestrator._state_repository(runtime), runtime.state_repository
         )
         self.assertIs(_lifecycle_cleanup.LifecycleCleanupOrchestrator._process_runtime(runtime), runtime.process_runner)
+        self.assertIs(_lifecycle_cleanup.LifecycleCleanupOrchestrator._port_allocator(runtime), runtime.port_planner)
+
+    def test_optional_accessors_prefer_context_and_return_none_when_missing(self) -> None:
+        context_state_repository = object()
+        context_process_runtime = object()
+        runtime = SimpleNamespace(
+            runtime_context=RuntimeContext(
+                config=object(),
+                env={},
+                process_runtime=context_process_runtime,
+                port_allocator=object(),
+                state_repository=context_state_repository,
+                terminal_ui=object(),
+                emit=lambda *_args, **_kwargs: None,
+            ),
+            state_repository=object(),
+            process_runner=object(),
+        )
+
+        self.assertIs(_runtime_context.optional_state_repository(runtime), context_state_repository)
+        self.assertIs(_runtime_context.optional_process_runtime(runtime), context_process_runtime)
+        self.assertIsNone(_runtime_context.optional_state_repository(SimpleNamespace()))
+        self.assertIsNone(_runtime_context.optional_process_runtime(SimpleNamespace()))
+
+    def test_artifact_path_helpers_use_repository_when_available_and_runtime_root_fallback(self) -> None:
+        repository = SimpleNamespace(
+            run_dir_path=lambda run_id: Path("/repo-runs") / str(run_id),
+            test_results_dir_path=lambda run_id: Path("/repo-results") / str(run_id),
+        )
+        runtime = SimpleNamespace(
+            runtime_context=RuntimeContext(
+                config=object(),
+                env={},
+                process_runtime=object(),
+                port_allocator=object(),
+                state_repository=repository,
+                terminal_ui=object(),
+                emit=lambda *_args, **_kwargs: None,
+            ),
+            runtime_root=Path("/runtime-root"),
+        )
+
+        self.assertEqual(_runtime_context.run_dir_path(runtime, "run-1"), Path("/repo-runs/run-1"))
+        self.assertEqual(_runtime_context.test_results_dir_path(runtime, "run-1"), Path("/repo-results/run-1"))
+
+        fallback_runtime = SimpleNamespace(runtime_root=Path("/runtime-root"))
+        self.assertEqual(_runtime_context.run_dir_path(fallback_runtime, "run-2"), Path("/runtime-root/runs/run-2"))
+        self.assertEqual(
+            _runtime_context.test_results_dir_path(fallback_runtime, "run-2"),
+            Path("/runtime-root/runs/run-2/test-results"),
+        )
+
+    def test_command_support_uses_runtime_context_dependency_helpers(self) -> None:
+        support_paths = [
+            REPO_ROOT / "python/envctl_engine/runtime/engine_runtime_event_support.py",
+            REPO_ROOT / "python/envctl_engine/planning/plan_agent/workflow.py",
+            REPO_ROOT / "python/envctl_engine/actions/action_test_interrupt_support.py",
+            REPO_ROOT / "python/envctl_engine/runtime/playwright_command_support.py",
+            REPO_ROOT / "python/envctl_engine/runtime/qa_user_command_support.py",
+            REPO_ROOT / "python/envctl_engine/runtime/codex_tmux_support.py",
+            REPO_ROOT / "python/envctl_engine/actions/action_test_summary_artifacts.py",
+            REPO_ROOT / "python/envctl_engine/actions/project_action_env_support.py",
+            REPO_ROOT / "python/envctl_engine/actions/project_action_execution_support.py",
+            REPO_ROOT / "python/envctl_engine/actions/project_action_report_support.py",
+            REPO_ROOT / "python/envctl_engine/actions/action_migrate_execution_support.py",
+            REPO_ROOT / "python/envctl_engine/actions/action_worktree_runner.py",
+            REPO_ROOT / "python/envctl_engine/planning/worktree_runtime_bridge.py",
+            REPO_ROOT / "python/envctl_engine/planning/worktree_provenance.py",
+            REPO_ROOT / "python/envctl_engine/planning/worktree_code_intelligence_cgc.py",
+            REPO_ROOT / "python/envctl_engine/planning/plan_agent/cmux_surface_support.py",
+            REPO_ROOT / "python/envctl_engine/planning/plan_agent/cmux_workspace_support.py",
+            REPO_ROOT / "python/envctl_engine/planning/plan_agent/superset_cli_support.py",
+            REPO_ROOT / "python/envctl_engine/planning/plan_agent/superset_desktop_support.py",
+            REPO_ROOT / "python/envctl_engine/planning/plan_agent/superset_worktree_launch_support.py",
+        ]
+        for support_path in support_paths:
+            raw = support_path.read_text(encoding="utf-8")
+            self.assertIn("envctl_engine.runtime.runtime_context", raw)
+            self.assertNotIn('getattr(runtime, "state_repository"', raw)
+            self.assertNotIn('getattr(runtime, "process_runner"', raw)
+            self.assertNotIn('getattr(self.runtime, "process_runner"', raw)
+            self.assertNotIn("self.process_runner", raw)
+            self.assertNotIn("runtime.process_runner", raw)
+            self.assertNotIn("raw_runtime.process_runner", raw)
+            self.assertNotIn("runtime.state_repository.save_resume_state", raw)
+            self.assertNotIn("runtime.state_repository.run_dir_path", raw)
+            self.assertNotIn("runtime.state_repository.test_results_dir_path", raw)
+
+        worktree_domain = (REPO_ROOT / "python/envctl_engine/planning/worktree_domain.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("create_planning_runtime_bridge", worktree_domain)
+        self.assertNotIn("envctl_engine.runtime.runtime_context", worktree_domain)
 
     def test_runtime_context_stays_synced_when_runtime_collaborators_are_reassigned(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

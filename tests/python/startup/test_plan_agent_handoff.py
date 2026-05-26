@@ -11,6 +11,7 @@ from envctl_engine.planning.plan_agent.models import (
     PlanAgentLaunchResult,
 )
 from envctl_engine.runtime.command_router import parse_route
+from envctl_engine.startup.plan_agent_dependency_bootstrap import PlanAgentDependencyBootstrapper
 from envctl_engine.startup.plan_agent_handoff import (
     emit_plan_agent_launch_state,
     launch_plan_agent_terminals_with_spinner,
@@ -29,6 +30,7 @@ from envctl_engine.startup.plan_agent_handoff import (
     should_degrade_to_validated_plan_agent_handoff,
     validate_plan_agent_handoff,
 )
+from envctl_engine.startup.plan_agent_launch_spinner import PlanAgentLaunchSpinner
 from envctl_engine.startup.session import StartupSession
 
 
@@ -44,6 +46,10 @@ def _session(*, args: list[str] | None = None) -> StartupSession:
 
 
 class PlanAgentHandoffTests(unittest.TestCase):
+    def test_plan_agent_handoff_uses_named_launch_and_dependency_owners(self) -> None:
+        self.assertTrue(callable(PlanAgentLaunchSpinner.launch))
+        self.assertTrue(callable(PlanAgentDependencyBootstrapper.prepare))
+
     def test_local_startup_failure_reason_classifies_missing_start_command(self) -> None:
         self.assertEqual(
             local_startup_failure_reason("missing_service_start_command: backend"),

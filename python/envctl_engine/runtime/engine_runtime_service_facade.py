@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Mapping
+from typing import Mapping
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_commands import (
@@ -59,9 +59,7 @@ from envctl_engine.runtime.engine_runtime_service_truth import (
 from envctl_engine.state.models import PortPlan, RequirementsResult, RunState, ServiceRecord
 from envctl_engine.requirements.orchestrator import RequirementOutcome
 from envctl_engine.shared.hooks import HookInvocationResult
-
-if TYPE_CHECKING:
-    from envctl_engine.runtime.engine_runtime import ProjectContext
+from envctl_engine.startup.protocols import ProjectContextLike
 
 
 class RuntimeServiceFacadeMixin:
@@ -80,7 +78,7 @@ class RuntimeServiceFacadeMixin:
 
     def _project_service_env(
         self,
-        context: ProjectContext,
+        context: ProjectContextLike,
         *,
         requirements: RequirementsResult,
         route: Route | None = None,
@@ -92,7 +90,7 @@ class RuntimeServiceFacadeMixin:
 
     def _project_service_env_internal(
         self,
-        context: ProjectContext,
+        context: ProjectContextLike,
         *,
         requirements: RequirementsResult,
         route: Route | None = None,
@@ -108,7 +106,7 @@ class RuntimeServiceFacadeMixin:
     def _requirement_enabled_for_mode(self, mode: str, requirement_name: str, *, route: Route | None = None) -> bool:
         return runtime_requirement_enabled_for_mode(self, mode, requirement_name, route=route)
 
-    def _invoke_envctl_hook(self, *, context: ProjectContext, hook_name: str) -> HookInvocationResult:
+    def _invoke_envctl_hook(self, *, context: ProjectContextLike, hook_name: str) -> HookInvocationResult:
         return runtime_invoke_envctl_hook(self, context=context, hook_name=hook_name)
 
     def _startup_hook_contract_issue(self) -> str | None:
@@ -117,7 +115,7 @@ class RuntimeServiceFacadeMixin:
     def _requirements_result_from_hook_payload(
         self,
         *,
-        context: ProjectContext,
+        context: ProjectContextLike,
         mode: str,
         payload: Mapping[str, object],
     ) -> RequirementsResult:
@@ -126,7 +124,7 @@ class RuntimeServiceFacadeMixin:
     def _services_from_hook_payload(
         self,
         *,
-        context: ProjectContext,
+        context: ProjectContextLike,
         payload: Mapping[str, object],
     ) -> dict[str, ServiceRecord]:
         return runtime_services_from_hook_payload(self, context=context, payload=payload)

@@ -11,14 +11,17 @@ from typing import Any, Mapping
 
 from envctl_engine.requirements.supabase_auth_users import SupabaseAuthAdminClient, SupabaseAuthAdminError
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.runtime_context import run_dir_path
 from envctl_engine.runtime.supabase_user_command_support import _connection_from_requirements
 from envctl_engine.state.project_runtime import (
+    ProjectRuntimeResolution,
     active_project_names,
     dependency_mode_summary,
     project_resolution_event_payload,
     project_root_for_state,
     resolve_requested_project_state,
 )
+from envctl_engine.state.models import RunState
 
 _REDACTED = "<redacted>"
 _SNIPPET_LIMIT = 4096
@@ -94,16 +97,23 @@ def run_qa_user_command(runtime: Any, route: Route) -> int:
         else:
             record = existing
             reused = True
-            update_kwargs: dict[str, object] = {}
+            password_update: str | None = None
+            user_metadata_update: dict[str, object] | None = None
+            app_metadata_update: dict[str, object] | None = None
             if update_password:
-                update_kwargs["password"] = password
+                password_update = password
                 updated_fields.append("password")
             if update_metadata:
-                update_kwargs["user_metadata"] = user_metadata
-                update_kwargs["app_metadata"] = app_metadata
+                user_metadata_update = user_metadata
+                app_metadata_update = app_metadata
                 updated_fields.extend(["user_metadata", "app_metadata"])
-            if update_kwargs:
-                record = client.update_user(str(getattr(existing, "id", "") or ""), **update_kwargs)
+            if update_password or update_metadata:
+                record = client.update_user(
+                    str(getattr(existing, "id", "") or ""),
+                    password=password_update,
+                    user_metadata=user_metadata_update,
+                    app_metadata=app_metadata_update,
+                )
                 updated = True
         seeds = _seed_values(flags.get("seed"))
         dependency_env = _dependency_env(
@@ -179,7 +189,7 @@ def run_qa_user_command(runtime: Any, route: Route) -> int:
         return _emit({"ok": False, "error": str(exc)}, json_output=json_output, ok=False)
 
 
-def _resolve_project_supabase_connection(runtime: Any, state: Any, project: str) -> tuple[str, str]:
+def _resolve_project_supabase_connection(runtime: Any, state: RunState, project: str) -> tuple[str, str]:
     requirements = getattr(state, "requirements", {}).get(project)
     if requirements is None and len(getattr(state, "requirements", {})) == 1:
         requirements = next(iter(getattr(state, "requirements", {}).values()))
@@ -203,7 +213,7 @@ def _resolve_project_supabase_connection(runtime: Any, state: Any, project: str)
 def _run_seed_hooks(
     runtime: Any,
     *,
-    state: Any,
+    state: RunState,
     project: str,
     user_id: str,
     email: str,
@@ -285,7 +295,7 @@ def _run_seed_hooks(
 
 def _dependency_env(
     runtime: Any,
-    state: Any,
+    state: RunState,
     project: str,
     *,
     base_url: str,
@@ -307,16 +317,22 @@ def _supabase_component_env(requirements: object | None) -> dict[str, str]:
     component = component_getter("supabase")
     if not isinstance(component, dict):
         return {}
-    raw_env = component.get("env") if isinstance(component.get("env"), dict) else {}
+    raw_env = component.get("env")
+    if not isinstance(raw_env, dict):
+        return {}
     return {str(key): str(value) for key, value in raw_env.items() if str(value).strip()}
 
 
 def _seed_hook_timeout_seconds(runtime: Any) -> float:
-    raw = getattr(getattr(runtime, "config", None), "raw", {}) or {}
-    runtime_env = getattr(runtime, "env", {}) if isinstance(getattr(runtime, "env", {}), dict) else {}
+    raw: Mapping[str, object] = getattr(getattr(runtime, "config", None), "raw", {}) or {}
+    runtime_env: Mapping[str, object] = (
+        getattr(runtime, "env", {}) if isinstance(getattr(runtime, "env", {}), dict) else {}
+    )
     value = runtime_env.get("ENVCTL_QA_USER_SEED_TIMEOUT_SECONDS") or raw.get("ENVCTL_QA_USER_SEED_TIMEOUT_SECONDS")
+    if value in {None, ""}:
+        return _DEFAULT_SEED_HOOK_TIMEOUT_SECONDS
     try:
-        parsed = float(value)
+        parsed = float(str(value).strip())
     except (TypeError, ValueError):
         return _DEFAULT_SEED_HOOK_TIMEOUT_SECONDS
     return parsed if parsed > 0 else _DEFAULT_SEED_HOOK_TIMEOUT_SECONDS
@@ -338,7 +354,7 @@ def _seed_values(raw: object) -> list[str]:
     return result
 
 
-def _load_state(runtime: Any, route: Route):  # noqa: ANN201
+def _load_state(runtime: Any, route: Route) -> RunState | None:
     loader = getattr(runtime, "_try_load_existing_state", None)
     if not callable(loader):
         return None
@@ -346,7 +362,8 @@ def _load_state(runtime: Any, route: Route):  # noqa: ANN201
     strict_resolver = getattr(runtime, "_state_lookup_strict_mode_match", None)
     if callable(strict_resolver):
         strict = bool(strict_resolver(route))
-    return loader(mode=getattr(route, "mode", None), strict_mode_match=strict)
+    loaded = loader(mode=getattr(route, "mode", None), strict_mode_match=strict)
+    return loaded if isinstance(loaded, RunState) else None
 
 
 def _json_flag_object(raw: object, flag_name: str) -> dict[str, object]:
@@ -372,7 +389,7 @@ def _project_resolution_payload(resolution: Any) -> dict[str, object]:
 def _write_artifact(
     runtime: Any,
     *,
-    state: Any,
+    state: RunState,
     project: str,
     dependency_summary: Mapping[str, object],
     user_id: str,
@@ -407,14 +424,10 @@ def _write_artifact(
 
 
 def _artifact_path(runtime: Any, run_id: str) -> Path:
-    repository = getattr(runtime, "state_repository", None)
-    run_dir = getattr(repository, "run_dir_path", None)
-    if callable(run_dir):
-        return Path(run_dir(run_id)) / "qa-user-ensure.json"
-    return Path(getattr(runtime, "runtime_root", ".")) / "runs" / run_id / "qa-user-ensure.json"
+    return run_dir_path(runtime, run_id) / "qa-user-ensure.json"
 
 
-def _emit_resolution(runtime: Any, event: str, resolution: Any, state: Any) -> None:
+def _emit_resolution(runtime: Any, event: str, resolution: ProjectRuntimeResolution, state: RunState) -> None:
     emitter = getattr(runtime, "_emit", None)
     if not callable(emitter):
         return

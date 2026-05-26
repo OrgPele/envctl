@@ -8,12 +8,15 @@ from typing import Any
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.endpoints_command_support import build_endpoints_payload
+from envctl_engine.runtime.runtime_context import optional_process_runtime, test_results_dir_path
 from envctl_engine.state.project_runtime import (
+    ProjectRuntimeResolution,
     active_project_names,
     project_resolution_event_payload,
     project_root_for_state,
     resolve_requested_project_state,
 )
+from envctl_engine.state.models import RunState
 
 
 def run_playwright_command(runtime: Any, route: Route) -> int:
@@ -61,7 +64,8 @@ def run_playwright_command(runtime: Any, route: Route) -> int:
         config=getattr(runtime, "config", None),
         runtime=runtime,
     )
-    frontend = endpoints.get("frontend") if isinstance(endpoints.get("frontend"), dict) else {}
+    raw_frontend = endpoints.get("frontend")
+    frontend: dict[str, Any] = dict(raw_frontend) if isinstance(raw_frontend, dict) else {}
     selected_url = str(frontend.get("public_url") or frontend.get("local_url") or "").strip()
     if not selected_url:
         return _emit(
@@ -71,7 +75,9 @@ def run_playwright_command(runtime: Any, route: Route) -> int:
         )
     cwd = Path(str(project_root_for_state(selected_state, project, runtime=runtime) or ".")).resolve()
     env = dict(os.environ)
-    env.update({str(key): str(value) for key, value in (getattr(runtime, "env", {}) or {}).items()})
+    runtime_env = getattr(runtime, "env", {})
+    if isinstance(runtime_env, dict):
+        env.update({str(key): str(value) for key, value in runtime_env.items()})
     metadata_path = _metadata_path(runtime, state.run_id)
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     endpoints_path = metadata_path.with_name("playwright-endpoints.json")
@@ -95,7 +101,7 @@ def run_playwright_command(runtime: Any, route: Route) -> int:
             "ENVCTL_ENDPOINTS_JSON_PATH": str(endpoints_path),
         }
     )
-    runner = getattr(runtime, "process_runner", None)
+    runner = optional_process_runtime(runtime)
     run = getattr(runner, "run", None)
     if not callable(run):
         return _emit({"ok": False, "error": "process_runner_unavailable"}, json_output=json_output, ok=False)
@@ -113,7 +119,7 @@ def run_playwright_command(runtime: Any, route: Route) -> int:
             ok=False,
         )
     exit_code = int(getattr(completed, "returncode", 1) or 0)
-    metadata = {
+    metadata: dict[str, object] = {
         "project": project,
         "run_id": state.run_id,
         "mode": state.mode,
@@ -125,7 +131,7 @@ def run_playwright_command(runtime: Any, route: Route) -> int:
         "exit_code": exit_code,
     }
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
-    payload = {
+    payload: dict[str, object] = {
         "ok": exit_code == 0,
         "project": project,
         "run_id": state.run_id,
@@ -141,22 +147,17 @@ def _passthrough_requests_help(command: list[str]) -> bool:
     return len(command) == 1 and command[0] in {"--help", "-h", "help"}
 
 
-def _emit_resolution(runtime: Any, event: str, resolution: Any, state: Any) -> None:
+def _emit_resolution(runtime: Any, event: str, resolution: ProjectRuntimeResolution, state: RunState) -> None:
     emitter = getattr(runtime, "_emit", None)
     if not callable(emitter):
         return
     emitter(event, **project_resolution_event_payload(resolution, state, runtime=runtime))
 
 def _metadata_path(runtime: Any, run_id: str) -> Path:
-    repository = getattr(runtime, "state_repository", None)
-    test_results = getattr(repository, "test_results_dir_path", None)
-    if callable(test_results):
-        return Path(test_results(run_id)) / "playwright-runtime-metadata.json"
-    runtime_root = Path(getattr(runtime, "runtime_root", "."))
-    return runtime_root / "runs" / run_id / "test-results" / "playwright-runtime-metadata.json"
+    return test_results_dir_path(runtime, run_id) / "playwright-runtime-metadata.json"
 
 
-def _load_state(runtime: Any, route: Route):  # noqa: ANN201
+def _load_state(runtime: Any, route: Route) -> RunState | None:
     loader = getattr(runtime, "_try_load_existing_state", None)
     if not callable(loader):
         return None
@@ -164,7 +165,8 @@ def _load_state(runtime: Any, route: Route):  # noqa: ANN201
     strict_resolver = getattr(runtime, "_state_lookup_strict_mode_match", None)
     if callable(strict_resolver):
         strict = bool(strict_resolver(route))
-    return loader(mode=getattr(route, "mode", None), strict_mode_match=strict)
+    loaded = loader(mode=getattr(route, "mode", None), strict_mode_match=strict)
+    return loaded if isinstance(loaded, RunState) else None
 
 
 def _emit(payload: dict[str, object], *, json_output: bool, ok: bool) -> int:

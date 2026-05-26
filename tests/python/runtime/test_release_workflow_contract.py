@@ -66,7 +66,7 @@ def test_release_workflow_cleans_dist_before_uploading_artifacts() -> None:
     workflow = _release_workflow()
 
     clean_index = workflow.rindex("rm -rf dist build ./*.egg-info")
-    build_index = workflow.rindex(".venv/bin/python -m build --wheel --sdist")
+    build_index = workflow.rindex("uv run --extra dev python -m build --wheel --sdist")
     release_index = workflow.index("gh release create")
 
     assert clean_index < build_index < release_index

@@ -436,8 +436,6 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
             self._prepare_repo(repo)
-            python_bin = self._write_repo_local_python(repo)
-
             with patch("envctl_engine.runtime.release_gate._run_cmd_capture") as run_cmd:
                 run_cmd.return_value = type("Result", (), {"returncode": 0, "output": ""})()
                 result = evaluate_shipability(
@@ -452,7 +450,6 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
         self.assertEqual(run_cmd.call_count, 1)
         self.assertEqual(run_cmd.call_args.args[0], repo)
         self.assertEqual(run_cmd.call_args.args[1], canonical_validation_command(repo))
-        self.assertEqual(run_cmd.call_args.args[1][0], str(python_bin))
 
     def test_gate_check_packaging_reports_failed_build_stage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -475,7 +472,7 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
 
         self.assertFalse(result.passed)
         self.assertIn("packaging_build_failed", result.errors[0])
-        self.assertIn(".venv/bin/python -m build", result.errors[0])
+        self.assertIn("uv run --extra dev python -m build", result.errors[0])
         self.assertEqual(run_cmd.call_args.args[1], canonical_packaging_command(repo))
 
     def test_gate_check_packaging_reports_warning_output(self) -> None:

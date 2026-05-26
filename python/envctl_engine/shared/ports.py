@@ -15,6 +15,18 @@ from typing import Callable
 from envctl_engine.state.models import PortPlan
 
 
+_CORE_SERVICE_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "backend",
+        "frontend",
+        "db",
+        "redis",
+        "n8n",
+        "supabase_api",
+    }
+)
+
+
 class PortPlanner:
     def __init__(
         self,
@@ -45,11 +57,7 @@ class PortPlanner:
         self.redis_base = redis_base
         self.n8n_base = n8n_base
         self.supabase_api_base = supabase_api_base
-        self.additional_service_bases = {
-            str(name).strip().lower(): int(port)
-            for name, port in (additional_service_bases or {}).items()
-            if str(name).strip() and int(port) > 0
-        }
+        self.additional_service_bases = self._normalized_additional_service_bases(additional_service_bases or {})
         self.lock_dir = Path(lock_dir or "/tmp/envctl-python-locks")
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         self.session_id = session_id or f"session-{uuid.uuid4().hex[:8]}"
@@ -79,28 +87,36 @@ class PortPlanner:
         requested = requested or {}
         sources = sources or {}
         retries = retries or {}
-        backend_requested = requested.get(
-            "backend", self._preferred_port(project, "backend", self.backend_base, index=index)
+        backend_requested = self._requested_port(
+            project,
+            "backend",
+            self.backend_base,
+            index=index,
+            requested=requested,
         )
-        frontend_requested = requested.get(
-            "frontend", self._preferred_port(project, "frontend", self.frontend_base, index=index)
+        frontend_requested = self._requested_port(
+            project,
+            "frontend",
+            self.frontend_base,
+            index=index,
+            requested=requested,
         )
         return {
-            "backend": PortPlan(
+            "backend": self._plan(
                 project=project,
-                requested=backend_requested,
-                assigned=backend_requested,
-                final=backend_requested,
-                source=sources.get("backend", "env"),
-                retries=retries.get("backend", 0),
+                service_name="backend",
+                requested_port=backend_requested,
+                sources=sources,
+                retries=retries,
+                default_source="env",
             ),
-            "frontend": PortPlan(
+            "frontend": self._plan(
                 project=project,
-                requested=frontend_requested,
-                assigned=frontend_requested,
-                final=frontend_requested,
-                source=sources.get("frontend", "env"),
-                retries=retries.get("frontend", 0),
+                service_name="frontend",
+                requested_port=frontend_requested,
+                sources=sources,
+                retries=retries,
+                default_source="env",
             ),
         }
 
@@ -116,65 +132,42 @@ class PortPlanner:
         sources = sources or {}
         retries = retries or {}
         plans = self.plan_project(project, index=index, requested=requested, sources=sources, retries=retries)
-        db_requested = requested.get("db", self._preferred_dependency_port(project, "db", self.db_base, index=index))
-        redis_requested = requested.get(
-            "redis", self._preferred_dependency_port(project, "redis", self.redis_base, index=index)
-        )
-        n8n_requested = requested.get(
-            "n8n", self._preferred_dependency_port(project, "n8n", self.n8n_base, index=index)
-        )
-        supabase_api_requested = requested.get(
-            "supabase_api",
-            self._preferred_dependency_port(project, "supabase_api", self.supabase_api_base, index=index),
-        )
-        plans.update(
-            {
-                "db": PortPlan(
-                    project=project,
-                    requested=db_requested,
-                    assigned=db_requested,
-                    final=db_requested,
-                    source=sources.get("db", "planner"),
-                    retries=retries.get("db", 0),
-                ),
-                "redis": PortPlan(
-                    project=project,
-                    requested=redis_requested,
-                    assigned=redis_requested,
-                    final=redis_requested,
-                    source=sources.get("redis", "planner"),
-                    retries=retries.get("redis", 0),
-                ),
-                "n8n": PortPlan(
-                    project=project,
-                    requested=n8n_requested,
-                    assigned=n8n_requested,
-                    final=n8n_requested,
-                    source=sources.get("n8n", "planner"),
-                    retries=retries.get("n8n", 0),
-                ),
-                "supabase_api": PortPlan(
-                    project=project,
-                    requested=supabase_api_requested,
-                    assigned=supabase_api_requested,
-                    final=supabase_api_requested,
-                    source=sources.get("supabase_api", "planner"),
-                    retries=retries.get("supabase_api", 0),
-                ),
-            }
-        )
-        for service_name, base_port in self.additional_service_bases.items():
-            requested_port = requested.get(
+        for service_name, base_port in (
+            ("db", self.db_base),
+            ("redis", self.redis_base),
+            ("n8n", self.n8n_base),
+            ("supabase_api", self.supabase_api_base),
+        ):
+            requested_port = self._requested_dependency_port(
+                project,
                 service_name,
-                self._preferred_port(project, service_name, base_port, index=index),
+                base_port,
+                index=index,
+                requested=requested,
             )
-            plans[service_name] = PortPlan(
+            plans[service_name] = self._plan(
                 project=project,
-                requested=requested_port,
-                assigned=requested_port,
-                final=requested_port,
-                source=sources.get(service_name, "planner"),
-                retries=retries.get(service_name, 0),
+                service_name=service_name,
+                requested_port=requested_port,
+                sources=sources,
+                retries=retries,
+                default_source="planner",
+            )
+        for service_name, base_port in self.additional_service_bases.items():
+            requested_port = self._requested_port(
+                project,
+                service_name,
+                base_port,
+                index=index,
+                requested=requested,
+            )
+            plans[service_name] = self._plan(
+                project=project,
+                service_name=service_name,
+                requested_port=requested_port,
+                sources=sources,
+                retries=retries,
+                default_source="planner",
             )
         return plans
 
@@ -256,6 +249,61 @@ class PortPlanner:
 
     def _lock_path(self, port: int) -> Path:
         return self.lock_dir / f"{port}.lock"
+
+    @staticmethod
+    def _normalized_additional_service_bases(raw_bases: dict[str, int]) -> dict[str, int]:
+        bases: dict[str, int] = {}
+        for raw_name, raw_port in raw_bases.items():
+            service_name = str(raw_name).strip().lower()
+            base_port = int(raw_port)
+            if not service_name or service_name in _CORE_SERVICE_NAMES or base_port <= 0:
+                continue
+            bases[service_name] = base_port
+        return bases
+
+    def _plan(
+        self,
+        *,
+        project: str,
+        service_name: str,
+        requested_port: int,
+        sources: dict[str, str],
+        retries: dict[str, int],
+        default_source: str,
+    ) -> PortPlan:
+        return PortPlan(
+            project=project,
+            requested=requested_port,
+            assigned=requested_port,
+            final=requested_port,
+            source=sources.get(service_name, default_source),
+            retries=retries.get(service_name, 0),
+        )
+
+    def _requested_port(
+        self,
+        project: str,
+        service_name: str,
+        base: int,
+        *,
+        index: int,
+        requested: dict[str, int],
+    ) -> int:
+        return requested.get(service_name, self._preferred_port(project, service_name, base, index=index))
+
+    def _requested_dependency_port(
+        self,
+        project: str,
+        service_name: str,
+        base: int,
+        *,
+        index: int,
+        requested: dict[str, int],
+    ) -> int:
+        return requested.get(
+            service_name,
+            self._preferred_dependency_port(project, service_name, base, index=index),
+        )
 
     def _preferred_port(self, project: str, service_name: str, base: int, *, index: int) -> int:
         if self.preferred_port_strategy == "legacy_spacing":

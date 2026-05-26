@@ -13,17 +13,19 @@ from .adapter_base import (
     retryable_probe_error,
     run_container_lifecycle,
 )
-from .common import (
+from .adapter_lifecycle_models import project_container_lifecycle_result
+from .common_contracts import (
     ContainerStartResult,
     RetryResult,
     build_container_name,
-    container_exists,
-    container_status,
+    run_with_retry,
+)
+from .container_state_support import container_exists, container_status
+from .docker_image_support import ensure_docker_image_present
+from .docker_runtime import (
     docker_port_publish_lock,
-    ensure_docker_image_present,
     run_docker,
     run_result_error,
-    run_with_retry,
 )
 
 
@@ -81,13 +83,7 @@ def start_n8n_container(
         recreate_on_restart_listener_timeout=True,
     )
     lifecycle_run = run_container_lifecycle(lifecycle)
-    result = lifecycle_run.result
-    result.stage_events = [event.to_payload() for event in lifecycle_run.events]
-    result.stage_durations_ms = dict(lifecycle_run.stage_durations_ms)
-    result.listener_wait_ms = float(lifecycle_run.listener_wait_ms)
-    result.container_reused = bool(lifecycle_run.container_reused)
-    result.container_recreated = bool(lifecycle_run.container_recreated)
-    return result
+    return project_container_lifecycle_result(lifecycle_run)
 
 
 def _n8n_image(env: Mapping[str, str] | None, *, default: str) -> str:

@@ -32,7 +32,10 @@ class PlanAgentLaunchCmuxWorkspaceConfiguredTests(PlanAgentLaunchSupportTestCase
                 ]
             )
 
-            with patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None):
+            with (
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._start_background_surface_bootstrap", return_value=None),
+            ):
                 result = launch_plan_agent_terminals(
                     rt,
                     route=parse_route(["--plan", "feature-a"], env={}),
@@ -75,7 +78,10 @@ class PlanAgentLaunchCmuxWorkspaceConfiguredTests(PlanAgentLaunchSupportTestCase
                 ]
             )
 
-            with patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None):
+            with (
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._start_background_surface_bootstrap", return_value=None),
+            ):
                 result = launch_plan_agent_terminals(
                     rt,
                     route=parse_route(["--plan", "feature-a"], env={}),
@@ -119,7 +125,10 @@ class PlanAgentLaunchCmuxWorkspaceConfiguredTests(PlanAgentLaunchSupportTestCase
                 ]
             )
 
-            with patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None):
+            with (
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._start_background_surface_bootstrap", return_value=None),
+            ):
                 result = launch_plan_agent_terminals(
                     rt,
                     route=parse_route(["--plan", "feature-a"], env={}),

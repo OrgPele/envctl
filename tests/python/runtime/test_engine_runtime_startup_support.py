@@ -25,10 +25,18 @@ from envctl_engine.runtime.engine_runtime_startup_support import (  # noqa: E402
     tree_parallel_startup_config,
 )
 from envctl_engine.shared.ports import PortPlanner  # noqa: E402
+from envctl_engine.startup.run_reuse_dashboard_restore import DashboardStoppedServiceRestorer  # noqa: E402
+from envctl_engine.startup.run_reuse_decision import RunReuseEvaluator  # noqa: E402
+from envctl_engine.startup.run_reuse_fresh_start import FreshStartServiceReplacer  # noqa: E402
 from envctl_engine.state.models import PortPlan, RunState, ServiceRecord  # noqa: E402
 
 
 class EngineRuntimeStartupSupportTests(unittest.TestCase):
+    def test_run_reuse_support_has_named_owner_objects(self) -> None:
+        self.assertTrue(callable(RunReuseEvaluator.evaluate))
+        self.assertTrue(callable(DashboardStoppedServiceRestorer.prepare))
+        self.assertTrue(callable(FreshStartServiceReplacer.replace))
+
     def _reuse_runtime(
         self,
         *,

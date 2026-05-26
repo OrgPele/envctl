@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from .common import RetryResult, run_with_retry
+from .common_contracts import RetryResult, run_with_retry
 from envctl_engine.requirements.supabase_lifecycle.orchestrator import start_supabase_stack
 
 # Re-export config symbols for backwards compatibility

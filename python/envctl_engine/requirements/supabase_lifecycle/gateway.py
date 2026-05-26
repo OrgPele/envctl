@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
-from ..common import run_docker
+from ..docker_runtime import run_docker
 from .compose import _compose_run
 from .formatting import _format_auth_service_state
 from .inspect import _inspect_auth_gateway_service
@@ -200,5 +200,4 @@ def _remove_auth_gateway_services(
         env=env,
         args=["rm", "-f", *service_names],
     )
-
 

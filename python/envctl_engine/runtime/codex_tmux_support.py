@@ -10,7 +10,10 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
+
+from envctl_engine.runtime.runtime_context import optional_process_runtime
+from envctl_engine.shared.protocols import CommandResult
 
 
 _SESSION_PREFIX = "envctl-codex"
@@ -29,6 +32,10 @@ class CodexTmuxLaunchPlan:
     attach_via: str
     create_command: tuple[str, ...] | None
     attach_command: tuple[str, ...]
+
+
+class _InteractiveProcessHandle(Protocol):
+    def wait(self) -> int: ...
 
 
 def run_codex_tmux_command(runtime: Any, route: object) -> int:
@@ -217,14 +224,16 @@ def _tmux_session_exists(runtime: Any, session_name: str) -> bool:
     return result.returncode == 0
 
 
-def _run_probe(runtime: Any, command: tuple[str, ...], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+def _run_probe(runtime: Any, command: tuple[str, ...], *, cwd: Path) -> CommandResult:
     env = dict(os.environ)
-    env.update(dict(getattr(runtime, "env", {}) or {}))
-    process_runner = getattr(runtime, "process_runner", None)
-    if process_runner is not None and hasattr(process_runner, "run_probe"):
-        return process_runner.run_probe(command, cwd=cwd, env=env, timeout=10.0)
-    if process_runner is not None and hasattr(process_runner, "run"):
-        return process_runner.run(command, cwd=cwd, env=env, timeout=10.0)
+    env.update(_runtime_env(runtime))
+    process_runner = optional_process_runtime(runtime)
+    run_probe = getattr(process_runner, "run_probe", None)
+    if callable(run_probe):
+        return cast(CommandResult, run_probe(command, cwd=cwd, env=env, timeout=10.0))
+    run = getattr(process_runner, "run", None)
+    if callable(run):
+        return cast(CommandResult, run(command, cwd=cwd, env=env, timeout=10.0))
     return subprocess.run(
         list(command),
         cwd=str(cwd),
@@ -237,15 +246,19 @@ def _run_probe(runtime: Any, command: tuple[str, ...], *, cwd: Path) -> subproce
 
 
 def _attach_interactive(runtime: Any, command: tuple[str, ...], *, cwd: Path) -> int:
-    process_runner = getattr(runtime, "process_runner", None)
+    process_runner = optional_process_runtime(runtime)
     try:
-        if process_runner is not None and hasattr(process_runner, "start_interactive_child"):
-            process = process_runner.start_interactive_child(command, cwd=cwd, env=getattr(runtime, "env", {}))
+        start_interactive_child = getattr(process_runner, "start_interactive_child", None)
+        if callable(start_interactive_child):
+            process = cast(
+                _InteractiveProcessHandle,
+                start_interactive_child(command, cwd=cwd, env=_runtime_env(runtime)),
+            )
         else:
             process = subprocess.Popen(
                 list(command),
                 cwd=str(cwd),
-                env=dict(getattr(runtime, "env", {})),
+                env=_runtime_env(runtime),
                 text=True,
             )
         return int(process.wait())
@@ -254,7 +267,14 @@ def _attach_interactive(runtime: Any, command: tuple[str, ...], *, cwd: Path) ->
         return 1
 
 
-def _completed_process_error_text(result: subprocess.CompletedProcess[str]) -> str:
+def _runtime_env(runtime: Any) -> dict[str, str]:
+    raw_env = getattr(runtime, "env", {})
+    if not isinstance(raw_env, dict):
+        return {}
+    return {str(key): str(value) for key, value in raw_env.items()}
+
+
+def _completed_process_error_text(result: CommandResult) -> str:
     stderr = str(getattr(result, "stderr", "") or "").strip()
     stdout = str(getattr(result, "stdout", "") or "").strip()
     if stderr:
