@@ -21,6 +21,8 @@ from envctl_engine.actions.action_review_output_support import (
     print_review_failure,
     prune_review_output_dir,
 )
+from envctl_engine.actions.action_review_artifact_support import timestamped_markdown_path
+from envctl_engine.shared.artifact_names import safe_artifact_stem
 
 
 def resolve_analyze_mode(context: ReviewActionContext) -> str:
@@ -83,7 +85,6 @@ def run_analyze_helper(
     scope: str,
     review_base: ReviewBaseResolution | None,
     original_plan: OriginalPlanResolution,
-    sanitize_label_fn: Callable[[str], str],
     run_process_fn: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> int:
     project_root = context.project_root.resolve()
@@ -93,7 +94,8 @@ def run_analyze_helper(
 
     approach = "combine" if mode == "grouped" and len(iterations) > 1 else "optimal"
     output_dir = tree_diffs_root(context) / (
-        f"analysis_{sanitize_label_fn(context.project_name)}_{sanitize_label_fn(scope)}_{mode}_"
+        f"analysis_{safe_artifact_stem(context.project_name, fallback='project')}_"
+        f"{safe_artifact_stem(scope, fallback='scope')}_{mode}_"
         f"{datetime.now(tz=UTC).strftime('%Y%m%d_%H%M%S')}"
     )
     args = [
@@ -170,12 +172,5 @@ def tree_diffs_output_path(
     directory: str,
     prefix: str,
     label: str | None = None,
-    *,
-    sanitize_label_fn: Callable[[str], str],
 ) -> Path:
-    output_dir = tree_diffs_root(context) / directory
-    output_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
-    if label:
-        return output_dir / f"{prefix}_{sanitize_label_fn(label)}_{timestamp}.md"
-    return output_dir / f"{prefix}_{timestamp}.md"
+    return timestamped_markdown_path(tree_diffs_root(context) / directory, prefix, label)

@@ -11,7 +11,9 @@ import envctl_engine.actions.action_commit_support as commit_support
 import envctl_engine.actions.action_git_state_support as git_state_support
 import envctl_engine.actions.action_pr_message_support as pr_message_support
 import envctl_engine.actions.action_review_artifact_support as review_artifact_support
-import envctl_engine.actions.action_review_plan_support as review_plan_support
+import envctl_engine.actions.action_review_base_support as review_base_support
+import envctl_engine.actions.action_review_iteration_support as review_iteration_support
+import envctl_engine.actions.action_review_original_plan_support as review_original_plan_support
 import envctl_engine.actions.action_ship_support as ship_support
 import envctl_engine.actions.project_action_workflow_factory as workflow_factory
 from envctl_engine.actions.action_protected_artifacts import (
@@ -74,7 +76,6 @@ __all__ = [
     "run_pr_action",
     "run_review_action",
     "run_ship_action",
-    "sanitize_label",
 ]
 
 
@@ -90,9 +91,9 @@ class ActionProjectContext:
         return parse_bool(self.env.get("ENVCTL_ACTION_INTERACTIVE"), False) and bool(sys.stdin.isatty())
 
 
-ReviewBaseResolution = review_plan_support.ReviewBaseResolution
-ReviewBaseResolutionError = review_plan_support.ReviewBaseResolutionError
-OriginalPlanResolution = review_plan_support.OriginalPlanResolution
+ReviewBaseResolution = review_base_support.ReviewBaseResolution
+ReviewBaseResolutionError = review_base_support.ReviewBaseResolutionError
+OriginalPlanResolution = review_original_plan_support.OriginalPlanResolution
 
 def _workflow_runner() -> ProjectActionWorkflowRunner:
     return workflow_factory.ProjectActionWorkflowFactory(
@@ -126,9 +127,8 @@ def _workflow_runner() -> ProjectActionWorkflowRunner:
             resolve_review_base_fn=_resolve_review_base,
             analysis_iterations_source_fn=_analysis_iterations,
             run_analyze_helper_source_fn=_run_analyze_helper,
-            tree_diffs_output_path_fn=_tree_diffs_output_path_from_workflow,
+            tree_diffs_output_path_fn=_tree_diffs_output_path,
             original_plan_markdown_lines_source_fn=_original_plan_markdown_lines,
-            sanitize_label_fn=sanitize_label,
         ),
     ).build()
 
@@ -268,7 +268,6 @@ def run_review_action(context: ActionProjectContext) -> int:
 DirtyWorktreeReport = git_state_support.DirtyWorktreeReport
 resolve_git_root = git_state_support.resolve_git_root
 _classify_dirty_porcelain = git_state_support.classify_dirty_porcelain
-sanitize_label = git_state_support.sanitize_label
 
 
 def probe_dirty_worktree(project_root: Path, repo_root: Path, *, project_name: str = "") -> DirtyWorktreeReport:
@@ -293,14 +292,14 @@ def existing_pr_url(git_root: Path, branch: str) -> str:
     )
 
 
-_resolve_original_plan = review_plan_support.resolve_original_plan
-_read_worktree_provenance = review_plan_support.read_worktree_provenance
-_resolve_plan_file_from_record = review_plan_support.resolve_plan_file_from_record
-_infer_original_plan_file = review_plan_support.infer_original_plan_file
-_feature_name_from_project_name = review_plan_support.feature_name_from_project_name
-_original_plan_markdown_lines = review_plan_support.original_plan_markdown_lines
-_augment_review_output_dir = review_plan_support.augment_review_output_dir
-_augment_review_markdown_file = review_plan_support.augment_review_markdown_file
+_resolve_original_plan = review_original_plan_support.resolve_original_plan
+_read_worktree_provenance = review_original_plan_support.read_worktree_provenance
+_resolve_plan_file_from_record = review_original_plan_support.resolve_plan_file_from_record
+_infer_original_plan_file = review_original_plan_support.infer_original_plan_file
+_feature_name_from_project_name = review_original_plan_support.feature_name_from_project_name
+_original_plan_markdown_lines = review_original_plan_support.original_plan_markdown_lines
+_augment_review_output_dir = review_original_plan_support.augment_review_output_dir
+_augment_review_markdown_file = review_original_plan_support.augment_review_markdown_file
 
 
 def _resolve_commit_message(
@@ -326,11 +325,11 @@ def _resolve_pr_base_branch(context: ActionProjectContext, git_root: Path) -> st
     return detect_default_branch(git_root)
 
 
-_resolve_analyze_mode = review_plan_support.resolve_analyze_mode
+_resolve_analyze_mode = review_iteration_support.resolve_analyze_mode
 
 
 def _resolve_review_base(context: ReviewActionContext, git_root: Path) -> ReviewBaseResolution:
-    return review_plan_support.resolve_review_base(
+    return review_base_support.resolve_review_base(
         context,
         git_root,
         detect_default_branch_fn=detect_default_branch,
@@ -342,7 +341,7 @@ def _resolve_provenance_review_base(
     git_root: Path,
     provenance: Mapping[str, object] | None,
 ) -> ReviewBaseResolution | None:
-    return review_plan_support.resolve_provenance_review_base(
+    return review_base_support.resolve_provenance_review_base(
         git_root,
         provenance,
         git_output_fn=_git_output,
@@ -350,7 +349,7 @@ def _resolve_provenance_review_base(
 
 
 def _resolve_upstream_review_base(git_root: Path) -> ReviewBaseResolution | None:
-    return review_plan_support.resolve_upstream_review_base(git_root, git_output_fn=_git_output)
+    return review_base_support.resolve_upstream_review_base(git_root, git_output_fn=_git_output)
 
 
 def _resolve_review_base_candidate(
@@ -360,7 +359,7 @@ def _resolve_review_base_candidate(
     source: str,
     preferred_ref: str = "",
 ) -> ReviewBaseResolution | None:
-    return review_plan_support.resolve_review_base_candidate(
+    return review_base_support.resolve_review_base_candidate(
         git_root,
         base_branch=base_branch,
         source=source,
@@ -370,7 +369,7 @@ def _resolve_review_base_candidate(
 
 
 def _resolve_review_base_ref(git_root: Path, *, base_branch: str, preferred_ref: str = "") -> str:
-    return review_plan_support.resolve_review_base_ref(
+    return review_base_support.resolve_review_base_ref(
         git_root,
         base_branch=base_branch,
         preferred_ref=preferred_ref,
@@ -378,18 +377,18 @@ def _resolve_review_base_ref(git_root: Path, *, base_branch: str, preferred_ref:
     )
 
 
-_branch_name_from_ref = review_plan_support.branch_name_from_ref
-_load_worktree_provenance = review_plan_support.load_worktree_provenance
+_branch_name_from_ref = review_base_support.branch_name_from_ref
+_load_worktree_provenance = review_base_support.load_worktree_provenance
 _write_commit_message_file = commit_support.write_commit_message_file
 _atomic_write = commit_support.atomic_write
 
 
 def _analysis_iterations(context: ReviewActionContext, *, mode: str) -> list[str]:
-    return review_plan_support.analysis_iterations(context, mode=mode)
+    return review_iteration_support.analysis_iterations(context, mode=mode)
 
 
-_project_family_dir = review_plan_support.project_family_dir
-_git_iteration_dirs = review_plan_support.git_iteration_dirs
+_project_family_dir = review_iteration_support.project_family_dir
+_git_iteration_dirs = review_iteration_support.git_iteration_dirs
 
 
 def _run_analyze_helper(
@@ -402,7 +401,7 @@ def _run_analyze_helper(
     review_base: ReviewBaseResolution | None,
     original_plan: OriginalPlanResolution,
 ) -> int:
-    return review_plan_support.run_analyze_helper(
+    return review_iteration_support.run_analyze_helper(
         context=context,
         helper=helper,
         iterations=iterations,
@@ -410,7 +409,6 @@ def _run_analyze_helper(
         scope=scope,
         review_base=review_base,
         original_plan=original_plan,
-        sanitize_label_fn=sanitize_label,
         run_process_fn=subprocess.run,
     )
 
@@ -419,7 +417,7 @@ _file_has_text = review_artifact_support.file_has_text
 
 
 def _tree_changelog_path(context: ReviewActionContext) -> Path | None:
-    return review_artifact_support.tree_changelog_path(context, sanitize_label_fn=sanitize_label)
+    return review_artifact_support.tree_changelog_path(context)
 
 
 def _summary_output_path(repo_root: Path, directory: str, prefix: str, label: str | None = None) -> Path:
@@ -428,12 +426,11 @@ def _summary_output_path(repo_root: Path, directory: str, prefix: str, label: st
         directory,
         prefix,
         label,
-        sanitize_label_fn=sanitize_label,
     )
 
 
 def _tree_diffs_root(context: ReviewActionContext) -> Path:
-    return review_plan_support.tree_diffs_root(context)
+    return review_iteration_support.tree_diffs_root(context)
 
 
 def _tree_diffs_output_path(
@@ -442,17 +439,12 @@ def _tree_diffs_output_path(
     prefix: str,
     label: str | None = None,
 ) -> Path:
-    return review_plan_support.tree_diffs_output_path(
+    return review_iteration_support.tree_diffs_output_path(
         context,
         directory,
         prefix,
         label,
-        sanitize_label_fn=sanitize_label,
     )
-
-
-def _tree_diffs_output_path_from_workflow(context: ReviewActionContext, directory: str, prefix: str) -> Path:
-    return _tree_diffs_output_path(context, directory, prefix)
 
 
 _write_markdown_lines = review_artifact_support.write_markdown_lines
@@ -467,13 +459,6 @@ def _git_output(git_root: Path, args: list[str]) -> str:
 
 
 _print_process_output = git_state_support.print_process_output
-
-
-def _first_existing_path(*paths: Path) -> Path:
-    for path in paths:
-        if path.is_file():
-            return path
-    return paths[0]
 
 
 def _print_error(prefix: str, result: subprocess.CompletedProcess[str]) -> None:

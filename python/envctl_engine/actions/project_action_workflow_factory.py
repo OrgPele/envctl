@@ -9,7 +9,8 @@ from typing import Any
 import envctl_engine.actions.action_ship_support as ship_support
 from envctl_engine.actions.action_git_state_support import DirtyWorktreeReport
 from envctl_engine.actions.action_review_context import ReviewActionContext
-from envctl_engine.actions.action_review_plan_support import OriginalPlanResolution, ReviewBaseResolution
+from envctl_engine.actions.action_review_base_support import ReviewBaseResolution
+from envctl_engine.actions.action_review_original_plan_support import OriginalPlanResolution
 from envctl_engine.actions.project_action_workflows import (
     ProjectActionCommitWorkflowDependencies,
     ProjectActionGitWorkflowDependencies,
@@ -58,7 +59,6 @@ class ProjectActionWorkflowReviewSources:
     run_analyze_helper_source_fn: Callable[..., int]
     tree_diffs_output_path_fn: Callable[[ReviewActionContext, str, str], Path]
     original_plan_markdown_lines_source_fn: Callable[..., list[str]]
-    sanitize_label_fn: Callable[[str], str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +104,6 @@ class ProjectActionWorkflowFactory:
                 run_analyze_helper_fn=self.run_analyze_helper,
                 tree_diffs_output_path_fn=self.review.tree_diffs_output_path_fn,
                 original_plan_markdown_lines_fn=self.original_plan_markdown_lines,
-                sanitize_label_fn=self.review.sanitize_label_fn,
             ),
         )
 

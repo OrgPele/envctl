@@ -456,7 +456,6 @@ class StructureLayoutTests(unittest.TestCase):
         pr_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_pr_message_support.py"
         review_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_output_support.py"
         review_artifact_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_artifact_support.py"
-        review_plan_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_plan_support.py"
         review_original_plan_owner = (
             REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_review_original_plan_support.py"
         )
@@ -489,7 +488,6 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertTrue(pr_owner.is_file())
         self.assertTrue(review_owner.is_file())
         self.assertTrue(review_artifact_owner.is_file())
-        self.assertTrue(review_plan_owner.is_file())
         self.assertTrue(review_original_plan_owner.is_file())
         self.assertTrue(review_base_owner.is_file())
         self.assertTrue(review_iteration_owner.is_file())
@@ -521,11 +519,6 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("resolve_original_plan", review_original_plan_owner.read_text(encoding="utf-8"))
         self.assertIn("resolve_review_base", review_base_owner.read_text(encoding="utf-8"))
         self.assertIn("run_analyze_helper", review_iteration_owner.read_text(encoding="utf-8"))
-        review_plan_text = review_plan_owner.read_text(encoding="utf-8")
-        self.assertIn("action_review_original_plan_support", review_plan_text)
-        self.assertIn("action_review_base_support", review_plan_text)
-        self.assertIn("action_review_iteration_support", review_plan_text)
-        self.assertLessEqual(len(review_plan_text.splitlines()), 180)
         git_state_text = git_state_owner.read_text(encoding="utf-8")
         self.assertIn("class DirtyWorktreeReport", git_state_text)
         self.assertIn("def probe_dirty_worktree", git_state_text)
@@ -578,7 +571,9 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("action_pr_message_support", facade_text)
         self.assertIn("action_review_artifact_support", facade_text)
         self.assertIn("action_review_output_support", facade_text)
-        self.assertIn("action_review_plan_support", facade_text)
+        self.assertIn("action_review_base_support", facade_text)
+        self.assertIn("action_review_iteration_support", facade_text)
+        self.assertIn("action_review_original_plan_support", facade_text)
         self.assertIn("action_git_state_support", facade_text)
         self.assertIn("action_ship_support", facade_text)
         self.assertIn("project_action_workflow_factory", facade_text)

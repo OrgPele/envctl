@@ -12,7 +12,8 @@ import envctl_engine.actions.action_review_workflow_support as review_workflow_s
 import envctl_engine.actions.action_ship_support as ship_support
 from envctl_engine.actions.action_git_state_support import DirtyWorktreeReport
 from envctl_engine.actions.action_review_context import ReviewActionContext
-from envctl_engine.actions.action_review_plan_support import OriginalPlanResolution, ReviewBaseResolution
+from envctl_engine.actions.action_review_base_support import ReviewBaseResolution
+from envctl_engine.actions.action_review_original_plan_support import OriginalPlanResolution
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +66,6 @@ class ProjectActionReviewWorkflowDependencies:
     ]
     tree_diffs_output_path_fn: Callable[[ReviewActionContext, str, str], Path]
     original_plan_markdown_lines_fn: Callable[[OriginalPlanResolution], list[str]]
-    sanitize_label_fn: Callable[[str], str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,7 +167,6 @@ class ProjectActionWorkflowRunner:
             run_analyze_helper_fn=self.review.run_analyze_helper_fn,
             tree_diffs_output_path_fn=self.review.tree_diffs_output_path_fn,
             original_plan_markdown_lines_fn=self.review.original_plan_markdown_lines_fn,
-            sanitize_label_fn=self.review.sanitize_label_fn,
         )
 
     def _resolve_base_ref(self, git_root: Path, base_branch: str) -> str:

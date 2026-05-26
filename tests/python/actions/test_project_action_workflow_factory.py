@@ -22,6 +22,10 @@ class ProjectActionWorkflowFactoryTests(unittest.TestCase):
             "ProjectActionWorkflowReviewSources",
         ):
             self.assertTrue(hasattr(project_action_workflow_factory, class_name), class_name)
+        self.assertNotIn(
+            "sanitize_label_fn",
+            project_action_workflow_factory.ProjectActionWorkflowReviewSources.__dataclass_fields__,
+        )
 
     def test_workflow_runner_uses_named_factory_bridges_for_legacy_patch_points(self) -> None:
         report = object()
@@ -74,9 +78,11 @@ class ProjectActionWorkflowFactoryTests(unittest.TestCase):
         markdown.assert_called_once_with(original_plan, include_contents=True)
 
     def test_workflow_runner_construction_has_no_anonymous_lambda_wiring(self) -> None:
-        source = Path(project_action_workflow_factory.__file__).read_text(encoding="utf-8")
-        self.assertIn("class ProjectActionWorkflowFactory", source)
-        self.assertNotIn("lambda", source)
+        factory_source = Path(project_action_workflow_factory.__file__).read_text(encoding="utf-8")
+        domain_source = Path(domain.__file__).read_text(encoding="utf-8")
+        self.assertIn("class ProjectActionWorkflowFactory", factory_source)
+        self.assertNotIn("lambda", factory_source)
+        self.assertNotIn("_from_workflow", domain_source)
 
 
 if __name__ == "__main__":
