@@ -105,7 +105,7 @@ def query_expected_head_pr_checks(
         normalized["failing_checks"] = failed_checks_with_log_excerpts(
             git_root,
             gh_path=gh_path,
-            failing_checks=normalized["failing_checks"],  # type: ignore[arg-type]
+            failing_checks=_mapping_check_list(normalized.get("failing_checks")),
         )
     return normalized
 
@@ -166,7 +166,7 @@ def query_github_pr_checks(
         normalized["failing_checks"] = failed_checks_with_log_excerpts(
             git_root,
             gh_path=gh_path,
-            failing_checks=normalized["failing_checks"],  # type: ignore[arg-type]
+            failing_checks=_mapping_check_list(normalized.get("failing_checks")),
         )
     return normalized
 
@@ -197,6 +197,12 @@ def _pending_expected_head_result(
         "pr_url": pr_url,
         "error": error,
     }
+
+
+def _mapping_check_list(value: object) -> list[Mapping[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, Mapping)]
 
 
 __all__ = [
