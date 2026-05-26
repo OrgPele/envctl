@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator
 from envctl_engine.runtime.command_router import Route
@@ -25,8 +25,8 @@ def selectors_from_passthrough(passthrough_args: Iterable[str]) -> set[str]:
     return selectors
 
 
-def projects_for_services(runtime: Any, service_targets: list[object]) -> list[str]:
-    return runtime.action_command_orchestrator.projects_for_services(service_targets)
+def projects_for_services(runtime: Any, service_targets: Sequence[object]) -> list[str]:
+    return runtime.action_command_orchestrator.projects_for_services(list(service_targets))
 
 
 def project_name_from_service(service_name: str) -> str:
@@ -39,30 +39,30 @@ def project_name_from_service(service_name: str) -> str:
     return ""
 
 
-def run_test_action(runtime: Any, route: Route, targets: list[object]) -> int:
-    return runtime.action_command_orchestrator.run_test_action(route, targets)
+def run_test_action(runtime: Any, route: Route, targets: Sequence[object]) -> int:
+    return runtime.action_command_orchestrator.run_test_action(route, list(targets))
 
 
-def run_pr_action(runtime: Any, route: Route, targets: list[object]) -> int:
-    return runtime.action_command_orchestrator.run_pr_action(route, targets)
+def run_pr_action(runtime: Any, route: Route, targets: Sequence[object]) -> int:
+    return runtime.action_command_orchestrator.run_pr_action(route, list(targets))
 
 
-def run_commit_action(runtime: Any, route: Route, targets: list[object]) -> int:
-    return runtime.action_command_orchestrator.run_commit_action(route, targets)
+def run_commit_action(runtime: Any, route: Route, targets: Sequence[object]) -> int:
+    return runtime.action_command_orchestrator.run_commit_action(route, list(targets))
 
 
-def run_analyze_action(runtime: Any, route: Route, targets: list[object]) -> int:
-    return runtime.action_command_orchestrator.run_review_action(route, targets)
+def run_analyze_action(runtime: Any, route: Route, targets: Sequence[object]) -> int:
+    return runtime.action_command_orchestrator.run_review_action(route, list(targets))
 
 
-def run_migrate_action(runtime: Any, route: Route, targets: list[object]) -> int:
-    return runtime.action_command_orchestrator.run_migrate_action(route, targets)
+def run_migrate_action(runtime: Any, route: Route, targets: Sequence[object]) -> int:
+    return runtime.action_command_orchestrator.run_migrate_action(route, list(targets))
 
 
 def run_project_action(
     runtime: Any,
     route: Route,
-    targets: list[object],
+    targets: Sequence[object],
     *,
     command_name: str,
     env_key: str,
@@ -73,7 +73,7 @@ def run_project_action(
 ) -> int:
     return runtime.action_command_orchestrator.run_project_action(
         route,
-        targets,
+        list(targets),
         command_name=command_name,
         env_key=env_key,
         default_command=default_command,
@@ -87,21 +87,21 @@ def run_delete_worktree_action(runtime: Any, route: Route) -> int:
     return runtime.action_command_orchestrator.run_delete_worktree_action(route)
 
 
-def action_replacements(runtime: Any, targets: list[object], *, target: object | None) -> dict[str, str]:
-    return runtime.action_command_orchestrator.action_replacements(targets, target=target)
+def action_replacements(runtime: Any, targets: Sequence[object], *, target: object | None) -> dict[str, str]:
+    return runtime.action_command_orchestrator.action_replacements(list(targets), target=target)
 
 
 def action_env(
     runtime: Any,
     command_name: str,
-    targets: list[object],
+    targets: Sequence[object],
     *,
     target: object | None,
     extra: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     return runtime.action_command_orchestrator.action_env(
         command_name,
-        targets,
+        list(targets),
         target=target,
         extra=extra,
     )

@@ -41,9 +41,59 @@ class TestPlanActionTests(unittest.TestCase):
             )
 
         self.assertIn(
-            "uv run --extra dev pytest -q tests/python/runtime/test_prompt_install_support.py",
+            "uv run --extra dev pytest -q tests/python/runtime/test_prompt_install_support_templates.py",
             [item["command"] for item in result["commands"]],
         )
+
+    def test_documentation_changes_recommend_shared_doc_contracts_without_full_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            result = build_test_plan(
+                repo_root=repo,
+                project_root=repo,
+                project_name="Main",
+                changed_files=("docs/developer/testing-and-validation.md", "AGENTS.md"),
+            )
+
+        commands = [item["command"] for item in result["commands"]]
+
+        self.assertEqual(
+            commands,
+            [
+                "uv run --extra dev pytest -q "
+                "tests/python/shared/test_validation_workflow_contract.py "
+                "tests/python/shared/test_serena_config.py"
+            ],
+        )
+        self.assertEqual(result["commands"][0]["reason"], "documentation or agent tooling contract change")
+        self.assertEqual(result["full_gate"]["recommended"], False)
+
+    def test_prompt_and_documentation_changes_combine_focused_lanes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            result = build_test_plan(
+                repo_root=repo,
+                project_root=repo,
+                project_name="Main",
+                changed_files=(
+                    "python/envctl_engine/runtime/prompt_templates/implement_task.md",
+                    "docs/developer/testing-and-validation.md",
+                ),
+            )
+
+        commands = [item["command"] for item in result["commands"]]
+
+        self.assertEqual(
+            commands,
+            [
+                "uv run --extra dev pytest -q tests/python/runtime",
+                "uv run --extra dev pytest -q tests/python/runtime/test_prompt_install_support_templates.py",
+                "uv run --extra dev pytest -q "
+                "tests/python/shared/test_validation_workflow_contract.py "
+                "tests/python/shared/test_serena_config.py",
+            ],
+        )
+        self.assertEqual(result["full_gate"]["recommended"], False)
 
     def test_mixed_runtime_and_script_changes_recommend_full_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from envctl_engine.requirements.common import ContainerStartResult
+from envctl_engine.requirements.common_contracts import ContainerStartResult
 from envctl_engine.requirements.supabase_lifecycle.compose import _compose_run, _compose_timeout_recovered
 from envctl_engine.requirements.supabase_lifecycle.config import (
     _db_probe_attempts,

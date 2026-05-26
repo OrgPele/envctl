@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
+from envctl_engine.actions.action_test_service_support import AdditionalServiceTestPlanner
 from envctl_engine.actions.action_test_service_support import additional_service_test_execution_specs
 from envctl_engine.runtime.command_router import parse_route
 
@@ -83,6 +84,38 @@ class ActionTestServiceSupportTests(unittest.TestCase):
         self.assertEqual(specs[0].resolved_source, "configured_service:voice-runtime")
         self.assertEqual(specs[1].spec.command, ["npm", "test", "--", "--project", "feature-b-1"])
         self.assertEqual(specs[1].spec.cwd, Path("/repo/trees/feature-b/1/services/voice"))
+
+    def test_planner_object_matches_wrapper_and_keeps_service_policy_cohesive(self) -> None:
+        route = parse_route(["test", "--service", "voice-runtime"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        service = SimpleNamespace(test_cmd="npm test -- --project {project}", env_suffix="", dir_name=".")
+        target = SimpleNamespace(name="feature-a-1", root="/repo/trees/feature-a/1")
+        context = SimpleNamespace(project_name="feature-a-1", project_root=Path(target.root), target_obj=target)
+        planner = AdditionalServiceTestPlanner(
+            route=route,
+            targets=[target],
+            target_contexts=[context],
+            config=_Config({"voice-runtime": service}),
+            split_command=lambda raw, replacements: [
+                token.replace("{project}", replacements["project"]) for token in raw.split()
+            ],
+            action_replacements_builder=lambda _targets, target: {"project": target.name},
+        )
+
+        specs = planner.build()
+        wrapper_specs = additional_service_test_execution_specs(
+            route=route,
+            targets=[target],
+            target_contexts=[context],
+            config=_Config({"voice-runtime": service}),
+            split_command=lambda raw, replacements: [
+                token.replace("{project}", replacements["project"]) for token in raw.split()
+            ],
+            action_replacements_builder=lambda _targets, target: {"project": target.name},
+        )
+
+        self.assertEqual([spec.spec.command for spec in specs], [["npm", "test", "--", "--project", "feature-a-1"]])
+        self.assertEqual(specs[0].spec.cwd, Path("/repo/trees/feature-a/1"))
+        self.assertEqual([spec.spec.command for spec in wrapper_specs], [spec.spec.command for spec in specs])
 
 
 if __name__ == "__main__":

@@ -38,6 +38,8 @@ Do not implement code. Only research and write the plan file.
 6. Review relevant config/env keys and any related docs.
 7. Capture evidence (file paths + function names) to ground the plan.
 
+Use the fastest appropriate code-intelligence layer while researching: use `rg` for exact strings such as flags, env keys, log messages, and docs prose; use Serena for symbol definitions, references, call paths, and semantic edit planning; use CodeGraphContext (`cgc`) for repo-wide ownership, coupling, impact, hotspot, and dead-code questions. Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl.
+
 ## Context intake (ask if missing)
 Before finalizing the plan, request any missing inputs that materially affect the solution:
 - User-facing goal and acceptance criteria (what must be true when done).
@@ -94,6 +96,14 @@ Before showing or running any envctl worktree-and-prompt follow-up, default impl
 
 Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run.
 
+## Browser E2E decision
+Before showing or running any envctl worktree-and-prompt follow-up, decide whether the implementation needs the browser E2E follow-up. Record both the browser E2E decision and rationale in the plan's Rollout / verification section as `browser_e2e_required: true` or `browser_e2e_required: false`.
+
+- Use `browser_e2e_required: true` when the task is browser-visible, touches frontend behavior, changes API contracts consumed by a UI, changes auth/session/form/dashboard flows, changes browser/runtime launch behavior, or when repo evidence leaves browser observability uncertain.
+- Use `browser_e2e_required: false` only for docs-only, prompt-only, CLI-only, backend-only, runtime-only, test-only, or metadata changes where reviewed code and tests show no browser-visible surface.
+- When `browser_e2e_required: false`, include `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` in any envctl follow-up command you show or run so the plan-agent queue skips the `$browser` follow-up.
+- When `browser_e2e_required: true`, do not include `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false`; allow the `$browser` follow-up to run after implementation/finalization.
+
 ## Codex cycle recommendation
 Before writing the final response, choose exactly one integer from `0` through `3` as the recommended Codex cycle count for implementation depth. Use this rubric:
 
@@ -102,7 +112,7 @@ Before writing the final response, choose exactly one integer from `0` through `
 - `2`: normal multi-file feature or fix, moderate verification, or a task that benefits from one continuation/finalization pass.
 - `3`: genuinely complex, high-risk, cross-module, runtime-sensitive, or architecture-sensitive work.
 
-Prefer the smallest number that can plausibly finish the task and verify it; `3` is exceptional. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record both the recommended Codex cycle count and the intended launch-scope flags.
+Prefer the smallest number that can plausibly finish the task and verify it; `3` is exceptional. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record the recommended Codex cycle count, the intended launch-scope flags, and the browser E2E decision.
 
 ## Optional envctl follow-up
 - After completing the required final response items, ask exactly one final approval question asking whether you should now use `envctl` to create or sync the implementation worktree(s) for this plan and launch the implementation prompt workflow.
@@ -121,6 +131,7 @@ Prefer the smallest number that can plausibly finish the task and verify it; `3`
     - `--headless`: envctl stays non-interactive and prints follow-up/attach guidance instead of taking over the current terminal
     - `--new-session`: create a fresh cmux surface, tmux session, or OMX-managed session instead of attaching to an existing one
   - whenever you show a follow-up command, include `--entire-system` by default; use narrower flags (`--only-frontend`, `--only-backend`, or `--no-infra`) only when the plan records why full-stack E2E does not apply
+  - whenever the plan records `browser_e2e_required: false`, prefix shown/run follow-up commands with `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false`; do not use that prefix when browser E2E is required
   - default to the cmux launcher when cmux is installed; use `--tmux` only when cmux is unavailable or the user explicitly asks for tmux
   - whenever you show a follow-up command, also explain in plain language what happens when that exact command runs: whether envctl only prints guidance or actually launches a session, whether the session is tmux-managed by envctl or OMX-managed by omx, whether the current terminal is taken over, and how the user can reconnect to the launched session later
   - keep the wording operational rather than marketing: spell out what envctl creates or syncs, what CLI or session it starts, what prompt preset it submits, and what remains for the user or AI to do after launch

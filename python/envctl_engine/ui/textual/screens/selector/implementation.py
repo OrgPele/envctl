@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Callable, Sequence
+from typing import Callable, Literal, Sequence, overload
 
 from envctl_engine.ui.selector_model import (
     SelectorContext,
@@ -64,6 +64,34 @@ def _run_prompt_toolkit_selector(**kwargs):
     return _run_prompt_toolkit_selector_impl(**kwargs)
 
 
+@overload
+def _run_textual_selector(
+    *,
+    prompt: str,
+    options: list[SelectorItem],
+    multi: bool,
+    initial_tokens: Sequence[str] | None = None,
+    exclusive_token: str | None = None,
+    emit: Callable[..., None] | None = None,
+    build_only: Literal[True],
+    force_textual_backend: bool = False,
+) -> object: ...
+
+
+@overload
+def _run_textual_selector(
+    *,
+    prompt: str,
+    options: list[SelectorItem],
+    multi: bool,
+    initial_tokens: Sequence[str] | None = None,
+    exclusive_token: str | None = None,
+    emit: Callable[..., None] | None = None,
+    build_only: Literal[False] = False,
+    force_textual_backend: bool = False,
+) -> list[str] | None: ...
+
+
 def _run_textual_selector(
     *,
     prompt: str,
@@ -74,7 +102,7 @@ def _run_textual_selector(
     emit: Callable[..., None] | None = None,
     build_only: bool = False,
     force_textual_backend: bool = False,
-) -> list[str] | None:
+) -> list[str] | None | object:
     return _run_textual_selector_impl(
         prompt=prompt,
         options=options,
@@ -229,16 +257,15 @@ def select_project_targets_textual(
         token = available_tokens.get(str(name).strip().lower())
         if token:
             initial_tokens.append(token)
-    selector_kwargs = {
-        "prompt": prompt,
-        "options": result.items,
-        "multi": multi,
-        "initial_tokens": initial_tokens,
-        "emit": emit,
-    }
-    if exclusive_project_name:
-        selector_kwargs["exclusive_token"] = f"__PROJECT__:{exclusive_project_name}"
-    values = _run_selector_with_impl(**selector_kwargs)
+    exclusive_token = f"__PROJECT__:{exclusive_project_name}" if exclusive_project_name else None
+    values = _run_selector_with_impl(
+        prompt=prompt,
+        options=result.items,
+        multi=multi,
+        initial_tokens=initial_tokens,
+        exclusive_token=exclusive_token,
+        emit=emit,
+    )
     return _selection_from_values(values)
 
 

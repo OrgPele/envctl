@@ -427,6 +427,8 @@ envctl config
 printf '%s\n' '{"default_mode":"trees"}' | envctl config --stdin-json
 ```
 
+`envctl config` saves `.envctl`, protects envctl-local artifacts through the configured Git global excludes file, and creates or updates the repo-local `AGENTS.md` envctl-managed agent guidance block.
+
 Planning and worktrees:
 
 ```bash
@@ -461,12 +463,34 @@ worktree creation. This policy applies to `--plan`, `--import`, `--setup-worktre
 
 Commit defaults:
 
-- `envctl commit` now reads its default commit message from the repo-local `.envctl-commit-message.md` file when you do not pass `--commit-message` or `--commit-message-file`
+- prefer `envctl ship -m "<message>"` for normal handoff because it owns commit, push, PR creation/update, merge-conflict prediction, and check reporting
+- use `envctl commit -m "<message>"` only for commit-only maintenance flows or when `ship` is unavailable; `--commit-message <text>` remains the long form
+- `envctl commit` reads its fallback default commit message from the repo-local `.envctl-commit-message.md` file when you do not pass `-m`, `--commit-message`, or `--commit-message-file`
 - treat `### Envctl pointer ###` as the boundary after the last successful default commit; everything after it is the next default commit message
-- write one complete next commit message in `.envctl-commit-message.md` rather than multiple fragmented summaries
+- write one complete next commit message in `.envctl-commit-message.md` rather than multiple fragmented summaries only when using the fallback ledger
 - envctl-local control artifacts (`.envctl*`, `MAIN_TASK.md`, `OLD_TASK_*.md`, `trees/`) stay local; if a broad `git add .` stages them, `envctl commit` unstages those protected paths before committing normal changes
 
 Optional plan-agent launch config for `--plan` and `--import`:
+
+`envctl ship` is the preferred AI handoff command. From inside the current
+generated worktree or project, run it without `--project`; use `--project
+<name>` only when shipping from another checkout. `ship` commits, pushes,
+creates a PR when none exists, reuses or updates the existing PR otherwise, predicts merge conflicts, waits for GitHub PR checks
+whose rendered name starts with `Tests` case-insensitively until they pass, fail, time out, or report no target check contexts,
+and prints a progress update every 10 seconds while target checks are still running.
+If GitHub has attached the pushed head commit but still has no target test check contexts after 10 seconds, `ship` reports
+`no_checks_reported` immediately instead of waiting for the full timeout. The command returns the structured JSON result by default including
+the PR URL, `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`,
+`failing_checks`, `pending_checks`, and `checks_error`. `--json` remains accepted as a compatibility no-op;
+use `--human` only when compact terminal output is preferred. The check wait timeout defaults to 2 minutes; pending
+checks after that window are reported as `checks_pending_timeout` without failing the handoff command, while actual failed
+checks still return a non-zero exit. The timeout can be tuned with
+`ENVCTL_SHIP_CHECK_TIMEOUT_SECONDS` and
+`ENVCTL_SHIP_CHECK_POLL_INTERVAL_SECONDS` (default: 5 seconds); progress heartbeat output can be tuned separately with
+`ENVCTL_SHIP_CHECK_PROGRESS_INTERVAL_SECONDS`; the no-check-context grace can be tuned with
+`ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS`. When a real background/subagent lane runs `ship`, success is silent: the worker
+should report only commit/push/PR failures, merge conflicts, failed checks, pending timeouts, no-checks-reported status,
+or actionable review comments.
 
 - `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true` enables the feature
 - `envctl --plan <selector> --cmux` enables the default cmux plan-agent launcher for this command without setting `CMUX=true`
@@ -491,7 +515,7 @@ Optional plan-agent launch config for `--plan` and `--import`:
 - For `--plan --tmux --opencode`, envctl considers the AI launch successful only after the tmux pane shows a usable OpenCode prompt and the implementation prompt can be submitted. If tmux starts but OpenCode exits, stays on a loading screen, reports a shell/config error, or leaves a stale non-OpenCode pane behind, envctl reports an AI launch failure instead of printing implementation-session attach guidance.
 - Codex installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`; envctl still resolves the shipped prompt body directly when it needs to submit a preset itself
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` queues the Codex/OMX `$browser` E2E follow-up; set it to `false` in `.envctl` to skip that prompt
-- `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` queues the final Codex/OMX PR review-comments follow-up; set it to `false` in `.envctl` to skip that prompt
+- `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` opts in to the final Codex/OMX PR review-comments follow-up; it is skipped by default so core implementation prompts rely on `envctl ship` status unless a dedicated review-comments pass is explicitly enabled
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface or tmux window when envctl owns the terminal bootstrap
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
 - `ENVCTL_PLAN_AGENT_CODEX_YOLO=true` appends `--dangerously-bypass-approvals-and-sandbox` to the default envctl-owned Codex cmux/tmux launch command; set it to `false` in `.envctl` when your Codex wrapper or config already supplies that flag
@@ -510,9 +534,9 @@ Optional plan-agent launch config for `--plan` and `--import`:
 - `CYCLES=<n>` is a shorthand alias for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
 - `CYCLES` only changes the Codex cycle count and does not enable plan-agent launch by itself
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and alias forms are set
-- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`), envctl first queues an `envctl ship` handoff follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` submits the single implementation prompt and queues enabled browser-E2E and PR review-comments follow-ups for Codex/OMX surfaces
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- by default (`ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`), envctl first queues an `envctl ship` handoff follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E follow-up, and any explicitly enabled PR review-comments follow-up
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` submits the single implementation prompt and queues enabled browser-E2E plus any explicitly enabled PR review-comments follow-up for Codex/OMX surfaces
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task`, `finalize_task`, enabled browser-E2E, and any explicitly enabled PR review-comments follow-up
 
 Degraded plan-agent handoff:
 
@@ -527,8 +551,8 @@ Optional dashboard review-tab launch:
 - reuses `ENVCTL_PLAN_AGENT_CLI`, `ENVCTL_PLAN_AGENT_CLI_CMD`, `ENVCTL_PLAN_AGENT_SHELL`, `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT`, and `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE`
 - does not require `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`; the explicit yes/no dashboard prompt is the opt-in
 - when no explicit workspace override is set, the review tab targets a sibling workspace named `"<current workspace> reviews"`
-- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues an `envctl ship` handoff follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
-- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first `ship` handoff follow-up, uses `ship`-first intermediate follow-ups, and reserves `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
+- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, envctl first queues an `envctl ship` handoff follow-up, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E, and any explicitly enabled PR review-comments follow-up
+- with `ENVCTL_PLAN_AGENT_CODEX_CYCLES>=3`, envctl keeps that first `ship` handoff follow-up, uses `ship`-first intermediate follow-ups, and reserves `finalize_task` plus enabled browser-E2E and any explicitly enabled PR review-comments follow-up for the last round
 - OpenCode ignores `ENVCTL_PLAN_AGENT_CODEX_CYCLES` and stays on the one-shot preset workflow
 - Superset still stays on a one-shot implementation prompt in this slice; local Codex `/goal` framing is handled by the envctl wrapper before that prompt is submitted, while Codex cycles, screen polling, tab renames, and dashboard review tabs remain cmux/tmux/OMX concerns
 - envctl only appends queued messages; it does not type `envctl test`, `git`, `gh`, `envctl ship`, `envctl commit`, or `envctl pr` commands into the shell

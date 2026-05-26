@@ -1,86 +1,135 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 import json
 from pathlib import Path
+from typing import Protocol
 
+from envctl_engine.config import EngineConfig
+from envctl_engine.runtime.release_gate import ShipabilityResult
+from envctl_engine.runtime.runtime_context import optional_process_runtime
+from envctl_engine.runtime.runtime_readiness import RuntimeReadinessResult, evaluate_runtime_readiness
 from envctl_engine.shared.hooks import legacy_shell_hook_issue
+from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.shared.reason_codes import GateFailureReason
-from envctl_engine.runtime.runtime_readiness import evaluate_runtime_readiness
-from envctl_engine.shared.parsing import parse_bool
+from envctl_engine.state.models import RunState
 from envctl_engine.ui.path_links import render_path_for_terminal
 
 
+class _StateRepositoryCompat(Protocol):
+    compat_mode: object
+
+
+class _DoctorRuntimeLike(Protocol):
+    config: EngineConfig
+    env: dict[str, str]
+    runtime_root: Path
+    state_repository: _StateRepositoryCompat
+    PARTIAL_COMMANDS: Sequence[str]
+
+    def _run_state_path(self) -> Path: ...
+    def _runtime_map_path(self) -> Path: ...
+    def _try_load_existing_state(
+        self,
+        *,
+        mode: str | None = None,
+        strict_mode_match: bool = False,
+    ) -> RunState | None: ...
+    def _state_has_synthetic_services(self, state: RunState) -> bool: ...
+    def _parity_manifest_info(self) -> dict[str, str]: ...
+    def _lock_health_summary(self) -> str: ...
+    def _pointer_status_summary(self) -> str: ...
+    def _write_runtime_readiness_report(self, *, readiness_result: RuntimeReadinessResult) -> None: ...
+    def _error_report_path(self) -> Path: ...
+    def _persist_events_snapshot(self) -> None: ...
+    def _parity_manifest_is_complete(self) -> bool: ...
+    def _reconcile_state_truth(self, state: RunState) -> list[str]: ...
+    def _requirement_truth_issues(self, state: RunState) -> list[dict[str, object]]: ...
+    def _emit(self, event: str, **payload: object) -> None: ...
+    def _evaluate_shipability(
+        self,
+        *,
+        enforce_runtime_readiness_contract: bool,
+    ) -> ShipabilityResult: ...
+
+
 class DoctorRuntimeFacade:
-    def __init__(self, runtime: object) -> None:
+    def __init__(self, runtime: _DoctorRuntimeLike) -> None:
         self._runtime = runtime
-        self.config = runtime.config  # type: ignore[attr-defined]
-        self.env = runtime.env  # type: ignore[attr-defined]
-        self.runtime_root = runtime.runtime_root  # type: ignore[attr-defined]
-        self.partial_commands = list(runtime.PARTIAL_COMMANDS)  # type: ignore[attr-defined]
+        self.config = runtime.config
+        self.env = runtime.env
+        self.runtime_root = runtime.runtime_root
+        self.partial_commands = list(runtime.PARTIAL_COMMANDS)
 
-    def run_state_path(self) -> object:
-        return self._runtime._run_state_path()  # type: ignore[attr-defined]
+    def run_state_path(self) -> Path:
+        return self._runtime._run_state_path()
 
-    def runtime_map_path(self) -> object:
-        return self._runtime._runtime_map_path()  # type: ignore[attr-defined]
+    def runtime_map_path(self) -> Path:
+        return self._runtime._runtime_map_path()
 
     def state_compat_mode(self) -> str:
-        return str(self._runtime.state_repository.compat_mode)  # type: ignore[attr-defined]
+        return str(self._runtime.state_repository.compat_mode)
 
     def latest_debug_bundle_path(self) -> str:
         return str(getattr(self._runtime, "_last_debug_bundle_path", None) or "none")
 
-    def launch_diagnostics_summary(self) -> object:
-        process_runtime = getattr(self._runtime, "process_runner", None)
+    def launch_diagnostics_summary(self) -> Mapping[str, object]:
+        process_runtime = optional_process_runtime(self._runtime)
         candidate = getattr(process_runtime, "launch_diagnostics_summary", None)
         if callable(candidate):
-            return candidate()
+            summary = candidate()
+            if isinstance(summary, Mapping):
+                return summary
         return {}
 
-    def load_state(self) -> object | None:
-        return self._runtime._try_load_existing_state()  # type: ignore[attr-defined]
+    def load_state(self) -> RunState | None:
+        return self._runtime._try_load_existing_state()
 
-    def state_has_synthetic_services(self, state: object) -> bool:
-        return bool(self._runtime._state_has_synthetic_services(state))  # type: ignore[attr-defined]
+    def state_has_synthetic_services(self, state: RunState) -> bool:
+        return bool(self._runtime._state_has_synthetic_services(state))
 
     def parity_manifest_info(self) -> dict[str, str]:
-        return self._runtime._parity_manifest_info()  # type: ignore[attr-defined]
+        return self._runtime._parity_manifest_info()
 
     def lock_health_summary(self) -> str:
-        return str(self._runtime._lock_health_summary())  # type: ignore[attr-defined]
+        return self._runtime._lock_health_summary()
 
     def pointer_status_summary(self) -> str:
-        return str(self._runtime._pointer_status_summary())  # type: ignore[attr-defined]
+        return self._runtime._pointer_status_summary()
 
-    def write_runtime_readiness_report(self, *, readiness_result: object) -> None:
-        self._runtime._write_runtime_readiness_report(readiness_result=readiness_result)  # type: ignore[attr-defined]
+    def write_runtime_readiness_report(self, *, readiness_result: RuntimeReadinessResult) -> None:
+        self._runtime._write_runtime_readiness_report(readiness_result=readiness_result)
 
-    def error_report_path(self) -> object:
-        return self._runtime._error_report_path()  # type: ignore[attr-defined]
+    def error_report_path(self) -> Path:
+        return self._runtime._error_report_path()
 
     def persist_events_snapshot(self) -> None:
-        self._runtime._persist_events_snapshot()  # type: ignore[attr-defined]
+        self._runtime._persist_events_snapshot()
 
     def parity_manifest_is_complete(self) -> bool:
-        return bool(self._runtime._parity_manifest_is_complete())  # type: ignore[attr-defined]
+        return self._runtime._parity_manifest_is_complete()
 
-    def reconcile_state_truth(self, state: object) -> list[str]:
-        return self._runtime._reconcile_state_truth(state)  # type: ignore[attr-defined]
+    def reconcile_state_truth(self, state: RunState) -> list[str]:
+        return self._runtime._reconcile_state_truth(state)
 
-    def requirement_truth_issues(self, state: object) -> list[dict[str, object]]:
-        return self._runtime._requirement_truth_issues(state)  # type: ignore[attr-defined]
+    def requirement_truth_issues(self, state: RunState) -> list[dict[str, object]]:
+        return self._runtime._requirement_truth_issues(state)
 
     def emit(self, event: str, **payload: object) -> None:
-        self._runtime._emit(event, **payload)  # type: ignore[attr-defined]
+        self._runtime._emit(event, **payload)
 
-    def evaluate_shipability(self, *, enforce_runtime_readiness_contract: bool) -> object:
-        return self._runtime._evaluate_shipability(  # type: ignore[attr-defined]
+    def evaluate_shipability(self, *, enforce_runtime_readiness_contract: bool) -> ShipabilityResult:
+        return self._runtime._evaluate_shipability(
             enforce_runtime_readiness_contract=enforce_runtime_readiness_contract,
         )
 
+    def process_runtime_has_terminate(self) -> bool:
+        process_runtime = optional_process_runtime(self._runtime)
+        return callable(getattr(process_runtime, "terminate", None))
+
 
 class DoctorOrchestrator:
-    def __init__(self, runtime: object) -> None:
+    def __init__(self, runtime: _DoctorRuntimeLike) -> None:
         self.runtime = DoctorRuntimeFacade(runtime)
 
     def execute(self, *, json_output: bool = False) -> int:
@@ -120,14 +169,14 @@ class DoctorOrchestrator:
         write_field("debug_latest_bundle", rt.latest_debug_bundle_path())
         write_field("debug_tty_context", "present" if (rt.runtime_root / "debug").is_dir() else "missing")
         launch_summary = rt.launch_diagnostics_summary()
-        if isinstance(launch_summary, dict) and launch_summary:
-            tracked_launch_count = int(launch_summary.get("tracked_launch_count", 0) or 0)
-            active_launch_count = int(launch_summary.get("active_launch_count", 0) or 0)
+        if launch_summary:
+            tracked_launch_count = parse_int(launch_summary.get("tracked_launch_count"), 0)
+            active_launch_count = parse_int(launch_summary.get("active_launch_count"), 0)
             launch_intent_counts = launch_summary.get("launch_intent_counts", {})
             active_input_owners = launch_summary.get("active_controller_input_owners", [])
             write_field("tracked_launch_count", tracked_launch_count)
             write_field("active_launch_count", active_launch_count)
-            if isinstance(launch_intent_counts, dict):
+            if isinstance(launch_intent_counts, Mapping):
                 write_field("launch_intent_counts", json.dumps(launch_intent_counts, sort_keys=True))
                 payload["launch_intent_counts"] = dict(launch_intent_counts)
             if isinstance(active_input_owners, list) and active_input_owners:
@@ -145,16 +194,7 @@ class DoctorOrchestrator:
             else:
                 write_field("active_controller_input_owners", "none")
                 payload["active_controller_input_owners"] = []
-        latest_anomalies = 0
-        latest_pointer = rt.runtime_root / "debug" / "latest"  # type: ignore[attr-defined]
-        if latest_pointer.is_file():
-            session_id = latest_pointer.read_text(encoding="utf-8").strip()
-            if session_id:
-                anomalies_path = rt.runtime_root / "debug" / session_id / "anomalies.jsonl"  # type: ignore[attr-defined]
-                if anomalies_path.is_file():
-                    latest_anomalies = sum(
-                        1 for line in anomalies_path.read_text(encoding="utf-8").splitlines() if line.strip()
-                    )
+        latest_anomalies = _latest_debug_anomaly_count(rt.runtime_root)
         write_field("debug_last_session_anomalies", latest_anomalies)
         doctor_state = rt.load_state()
         synthetic_state_detected = doctor_state is not None and rt.state_has_synthetic_services(doctor_state)
@@ -194,10 +234,12 @@ class DoctorOrchestrator:
         error_report_path = rt.error_report_path()
         if error_report_path.is_file():
             try:
-                payload = json.loads(error_report_path.read_text(encoding="utf-8"))
-                for raw in payload.get("errors", [])[:5]:
-                    text = str(raw)
-                    failures.append(text)
+                error_payload = json.loads(error_report_path.read_text(encoding="utf-8"))
+                if isinstance(error_payload, Mapping):
+                    raw_errors = error_payload.get("errors", [])
+                    if isinstance(raw_errors, list):
+                        for raw in raw_errors[:5]:
+                            failures.append(str(raw))
             except (OSError, json.JSONDecodeError):
                 pass
         if failures:
@@ -264,12 +306,7 @@ class DoctorOrchestrator:
                 gate="command_parity",
                 reason="synthetic_state_detected",
             )
-        lifecycle = hasattr(
-            getattr(rt, "_runtime", None).process_runner
-            if hasattr(getattr(rt, "_runtime", None), "process_runner")
-            else None,
-            "terminate",
-        )
+        lifecycle = rt.process_runtime_has_terminate()
         if state is not None:
             lifecycle = lifecycle and runtime_truth
         readiness_contract = evaluate_runtime_readiness(rt.config.base_dir)
@@ -302,9 +339,7 @@ class DoctorOrchestrator:
             )
         if not shipability:
             first_error = (
-                str(shipability_result.errors[0]).strip()
-                if getattr(shipability_result, "errors", None)
-                else "shipability_failed"
+                str(shipability_result.errors[0]).strip() if shipability_result.errors else "shipability_failed"
             )
             rt.emit(
                 "cutover.gate.fail_reason",
@@ -335,7 +370,7 @@ class DoctorOrchestrator:
     def doctor_should_check_tests(self) -> bool:
         rt = self.runtime
         for key in ("ENVCTL_DOCTOR_CHECK_TESTS", "ENVCTL_RELEASE_CHECK_TESTS"):
-            raw = rt.env.get(key) or rt.config.raw.get(key)  # type: ignore[attr-defined]
+            raw = rt.env.get(key) or rt.config.raw.get(key)
             if raw is None:
                 continue
             return parse_bool(raw, False)
@@ -355,7 +390,7 @@ class DoctorOrchestrator:
         rt = self.runtime
         readiness = evaluate_runtime_readiness(rt.config.base_dir)
         requested_enforcement = (
-            bool(strict_required) if strict_required is not None else rt.config.runtime_truth_mode == "strict"  # type: ignore[attr-defined]
+            bool(strict_required) if strict_required is not None else rt.config.runtime_truth_mode == "strict"
         )
         contract_present = readiness.report_path.is_file() or readiness.parity_manifest_path.is_file()
         enforced = requested_enforcement and contract_present
@@ -377,3 +412,16 @@ class DoctorOrchestrator:
             runtime_readiness_blocking_gap_count=readiness.blocking_gap_count,
         )
         return shipability
+
+
+def _latest_debug_anomaly_count(runtime_root: Path) -> int:
+    latest_pointer = runtime_root / "debug" / "latest"
+    if not latest_pointer.is_file():
+        return 0
+    session_id = latest_pointer.read_text(encoding="utf-8").strip()
+    if not session_id:
+        return 0
+    anomalies_path = runtime_root / "debug" / session_id / "anomalies.jsonl"
+    if not anomalies_path.is_file():
+        return 0
+    return sum(1 for line in anomalies_path.read_text(encoding="utf-8").splitlines() if line.strip())
