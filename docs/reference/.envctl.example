@@ -136,11 +136,11 @@ ENVCTL_PLAN_AGENT_SUPERSET_LOCAL=true
 ENVCTL_PLAN_AGENT_SUPERSET_OPEN=true
 
 # Queue an extra Codex/OMX prompt after implementation/finalization to run
-# browser-based E2E validation with $browser-use against the full envctl stack.
-# Set to false to skip this follow-up for repos where browser E2E is not applicable.
-ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true
+# browser-based E2E validation with $browser against the full envctl stack.
+# Set to true to queue the optional browser E2E follow-up after implementation/finalization.
+ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false
 
-# Queue an extra Codex/OMX prompt after the implementation/browser-E2E prompts
+# Queue an extra Codex/OMX prompt after implementation and optional browser-E2E prompts
 # to inspect unresolved PR review comments and address all actionable feedback.
 # Set to false to skip this follow-up for repos where PR comment handling is manual.
 ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true

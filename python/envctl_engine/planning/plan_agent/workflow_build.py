@@ -27,7 +27,7 @@ class PlanAgentWorkflowBuilder:
     preset: str
     codex_cycles: int
     direct_prompt_enabled: bool = False
-    browser_e2e_followup_enable: bool = True
+    browser_e2e_followup_enable: bool = False
     pr_review_comments_followup_enable: bool = False
 
     def build(self) -> _PlanAgentWorkflow:
@@ -64,17 +64,19 @@ class PlanAgentWorkflowBuilder:
     ) -> list[_PlanAgentWorkflowStep]:
         steps = [initial_step]
         if normalized_cli == "codex":
-            steps.extend(self._terminal_followup_steps(requires_goal=True))
+            steps.extend(self._terminal_followup_steps(requires_goal=False))
         return steps
 
     def _codex_cycle_steps(self, bounded_cycles: int, *, requires_goal: bool) -> list[_PlanAgentWorkflowStep]:
-        steps = [_PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task", requires_goal=True)]
+        steps = [
+            _PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task", requires_goal=requires_goal)
+        ]
         for cycle in range(1, bounded_cycles + 1):
             if cycle == bounded_cycles:
                 steps.append(
-                    _PlanAgentWorkflowStep(kind="queue_direct_prompt", text="finalize_task", requires_goal=True)
+                    _PlanAgentWorkflowStep(kind="queue_direct_prompt", text="finalize_task", requires_goal=False)
                 )
-                steps.extend(self._terminal_followup_steps(requires_goal=requires_goal))
+                steps.extend(self._terminal_followup_steps(requires_goal=False))
                 continue
             completion_text = (
                 _first_cycle_completion_instruction_text()
@@ -82,10 +84,10 @@ class PlanAgentWorkflowBuilder:
                 else _intermediate_cycle_completion_instruction_text()
             )
             steps.append(
-                _PlanAgentWorkflowStep(kind="queue_message", text=completion_text, requires_goal=requires_goal)
+                _PlanAgentWorkflowStep(kind="queue_message", text=completion_text, requires_goal=False)
             )
-            steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="continue_task", requires_goal=True))
-            steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="implement_task", requires_goal=True))
+            steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="continue_task", requires_goal=False))
+            steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="implement_task", requires_goal=False))
         return steps
 
     def _terminal_followup_steps(self, *, requires_goal: bool) -> list[_PlanAgentWorkflowStep]:
@@ -115,7 +117,7 @@ def _build_plan_agent_workflow(
     preset: str,
     codex_cycles: int,
     direct_prompt_enabled: bool = False,
-    browser_e2e_followup_enable: bool = True,
+    browser_e2e_followup_enable: bool = False,
     pr_review_comments_followup_enable: bool = False,
 ) -> _PlanAgentWorkflow:
     return PlanAgentWorkflowBuilder(

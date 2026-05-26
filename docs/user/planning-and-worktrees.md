@@ -55,7 +55,7 @@ ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true
 ENVCTL_PLAN_AGENT_CLI=codex
 ENVCTL_PLAN_AGENT_PRESET=implement_task
 ENVCTL_PLAN_AGENT_CODEX_CYCLES=2
-ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true
+ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false
 ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false
 ENVCTL_PLAN_AGENT_SHELL=zsh
 ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true
@@ -89,7 +89,7 @@ Behavior:
 - `CMUX=true` is shorthand for enabling the feature with the default `"<current workspace> implementation"` target
 - `CMUX_WORKSPACE=...` is shorthand for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
 - `CYCLES=...` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=...`
-- `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` disables the `$browser` E2E follow-up when browser validation is not applicable
+- `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` opts in to the `$browser` E2E follow-up when browser validation is applicable
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` opts in to the final PR review-comments follow-up when comment handling should run as a dedicated pass
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and shorthand values are set
 
