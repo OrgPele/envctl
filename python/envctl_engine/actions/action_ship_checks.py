@@ -77,6 +77,97 @@ class ShipCheckTiming:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ShipCheckPoller:
+    git_root: Path
+    gh_path: str
+    branch: str
+    pr_url: str
+    expected_head_sha: str | None
+    timing: ShipCheckTiming
+    started: float
+    progress_callback: Callable[[str], None] | None = None
+
+    def run(self) -> dict[str, object]:
+        next_progress_at = self.timing.progress_interval_seconds
+        while True:
+            result = self._query()
+            if _ship_check_result_is_terminal(result):
+                return result
+
+            elapsed = time.monotonic() - self.started
+            next_progress_at = self._emit_progress_if_needed(
+                result,
+                elapsed_seconds=elapsed,
+                next_progress_at=next_progress_at,
+            )
+            if elapsed >= self.timing.timeout_seconds:
+                return self._timeout_result(result, elapsed_seconds=elapsed)
+            self._sleep_until_next_poll(elapsed_seconds=elapsed)
+
+    def _query(self) -> dict[str, object]:
+        if self.expected_head_sha:
+            return _query_expected_head_pr_checks(
+                self.git_root,
+                gh_path=self.gh_path,
+                branch=self.branch,
+                pr_url=self.pr_url,
+                expected_head_sha=self.expected_head_sha,
+                started=self.started,
+                no_checks_grace_seconds=self.timing.no_checks_grace_seconds,
+            )
+        return _query_github_pr_checks(
+            self.git_root,
+            gh_path=self.gh_path,
+            branch=self.branch,
+            started=self.started,
+        )
+
+    def _emit_progress_if_needed(
+        self,
+        result: Mapping[str, object],
+        *,
+        elapsed_seconds: float,
+        next_progress_at: float,
+    ) -> float:
+        if self.progress_callback is None or elapsed_seconds < next_progress_at:
+            return next_progress_at
+
+        self.progress_callback(
+            _check_progress_message(
+                result,
+                elapsed_seconds=elapsed_seconds,
+                timeout_seconds=self.timing.timeout_seconds,
+            )
+        )
+        while next_progress_at <= elapsed_seconds:
+            next_progress_at += self.timing.progress_interval_seconds
+        return next_progress_at
+
+    def _timeout_result(self, result: Mapping[str, object], *, elapsed_seconds: float) -> dict[str, object]:
+        if result.get("state") == "checks_failed":
+            return {
+                **result,
+                "duration_seconds": round(elapsed_seconds, 3),
+                "timeout_seconds": self.timing.timeout_seconds,
+                "failure_log_timeout": _failed_check_logs_are_retryable(result),
+            }
+        return {
+            **result,
+            "state": "checks_pending_timeout",
+            "duration_seconds": round(elapsed_seconds, 3),
+            "timeout_seconds": self.timing.timeout_seconds,
+        }
+
+    def _sleep_until_next_poll(self, *, elapsed_seconds: float) -> None:
+        time.sleep(
+            min(
+                self.timing.poll_interval_seconds,
+                max(self.timing.timeout_seconds - elapsed_seconds, 0.1),
+            )
+        )
+
+
 def github_pr_checks(
     git_root: Path,
     *,
@@ -105,50 +196,16 @@ def github_pr_checks(
         progress_interval_seconds=progress_interval_seconds,
         no_checks_grace_seconds=no_checks_grace_seconds,
     )
-    next_progress_at = timing.progress_interval_seconds
-
-    while True:
-        result = (
-            _query_expected_head_pr_checks(
-                git_root,
-                gh_path=gh_path,
-                branch=branch,
-                pr_url=pr_url,
-                expected_head_sha=expected_head_sha,
-                started=started,
-                no_checks_grace_seconds=timing.no_checks_grace_seconds,
-            )
-            if expected_head_sha
-            else _query_github_pr_checks(git_root, gh_path=gh_path, branch=branch, started=started)
-        )
-        if _ship_check_result_is_terminal(result):
-            return result
-        elapsed = time.monotonic() - started
-        if progress_callback is not None and elapsed >= next_progress_at:
-            progress_callback(
-                _check_progress_message(
-                    result,
-                    elapsed_seconds=elapsed,
-                    timeout_seconds=timing.timeout_seconds,
-                )
-            )
-            while next_progress_at <= elapsed:
-                next_progress_at += timing.progress_interval_seconds
-        if elapsed >= timing.timeout_seconds:
-            if result.get("state") == "checks_failed":
-                return {
-                    **result,
-                    "duration_seconds": round(elapsed, 3),
-                    "timeout_seconds": timing.timeout_seconds,
-                    "failure_log_timeout": _failed_check_logs_are_retryable(result),
-                }
-            return {
-                **result,
-                "state": "checks_pending_timeout",
-                "duration_seconds": round(elapsed, 3),
-                "timeout_seconds": timing.timeout_seconds,
-            }
-        time.sleep(min(timing.poll_interval_seconds, max(timing.timeout_seconds - elapsed, 0.1)))
+    return ShipCheckPoller(
+        git_root=git_root,
+        gh_path=gh_path,
+        branch=branch,
+        pr_url=pr_url,
+        expected_head_sha=expected_head_sha,
+        timing=timing,
+        started=started,
+        progress_callback=progress_callback,
+    ).run()
 
 
 def _ship_check_result_is_terminal(result: Mapping[str, object]) -> bool:
@@ -389,6 +446,7 @@ __all__ = [
     "DEFAULT_NO_CHECKS_GRACE_SECONDS",
     "FAILING_CHECK_STATES",
     "PASSING_CHECK_STATES",
+    "ShipCheckPoller",
     "ShipCheckTiming",
     "TERMINAL_SHIP_CHECK_STATES",
     "failed_checks_with_log_excerpts",
