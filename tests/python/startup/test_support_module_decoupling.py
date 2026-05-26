@@ -789,6 +789,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             }
             overlap_hits: list[str] = []
             attach_modes: list[bool] = []
+            overlay_calls: list[str] = []
 
             def prepare_backend_runtime(**kwargs: object) -> None:
                 _ = kwargs
@@ -838,6 +839,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: None),
                 _prepare_backend_runtime=prepare_backend_runtime,
                 _prepare_frontend_runtime=prepare_frontend_runtime,
+                _service_env_overlays=lambda service_name, base_env: overlay_calls.append(service_name) or None,
                 _service_command_source=lambda **kwargs: "configured",
                 _emit=lambda event, **payload: None,
             )
@@ -872,6 +874,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             self.assertIn("Main Frontend", records)
             self.assertEqual(attach_modes, [False])
             self.assertEqual(sorted(overlap_hits), ["backend", "frontend"])
+            self.assertEqual(sorted(overlay_calls), ["backend", "frontend"])
 
     def test_start_project_services_integrates_additional_listener_and_worker_by_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

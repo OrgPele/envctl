@@ -12,9 +12,13 @@ from envctl_engine.startup.service_attach_execution import ServiceAttachRunner
 from envctl_engine.startup.service_execution_policy import (
     _project_backend_cors_origin,
     additional_service_enabled_for_context,
+    apply_service_env_overlays,
     backend_listener_expected_for_mode,
+    coerce_env_mapping,
     ordered_service_layers as ordered_service_layers,
     resolve_command_env_builder,
+    resolve_project_service_env,
+    resolve_service_env_overlay_builder,
     service_attach_parallel_enabled,
     service_prep_parallel_enabled,
 )
@@ -75,11 +79,7 @@ def start_project_services(
     safe_project_name = log_paths.safe_project_name
     backend_log_path = log_paths.backend_log_path
     frontend_log_path = log_paths.frontend_log_path
-    project_env_internal_builder = getattr(rt, "_project_service_env_internal", None)
-    if callable(project_env_internal_builder):
-        project_env_internal = project_env_internal_builder(context, requirements=requirements, route=route)
-    else:
-        project_env_internal = rt._project_service_env(context, requirements=requirements, route=route)
+    project_env_internal = resolve_project_service_env(rt, context, requirements=requirements, route=route)
 
     def project_env_for_service(service_name: str) -> dict[str, str]:
         return _project_env_for_service(
@@ -100,16 +100,22 @@ def start_project_services(
         context=context,
         frontend_cwd=frontend_cwd,
     )
-    backend_env_extra = rt._service_env_from_file(
-        base_env=backend_project_env_base,
-        env_file=backend_env_file,
-        include_app_env_file=True,
-        env_file_authoritative=not backend_env_is_default,
+    backend_env_extra = coerce_env_mapping(
+        rt._service_env_from_file(
+            base_env=backend_project_env_base,
+            env_file=backend_env_file,
+            include_app_env_file=True,
+            env_file_authoritative=not backend_env_is_default,
+        ),
+        source="backend service env file",
     )
-    frontend_env_extra = rt._service_env_from_file(
-        base_env=frontend_project_env_base,
-        env_file=frontend_env_file,
-        include_app_env_file=False,
+    frontend_env_extra = coerce_env_mapping(
+        rt._service_env_from_file(
+            base_env=frontend_project_env_base,
+            env_file=frontend_env_file,
+            include_app_env_file=False,
+        ),
+        source="frontend service env file",
     )
     backend_url = browser_backend_url(host=resolve_public_host(env=rt.env, config=rt.config), port=backend_plan.final)
     frontend_env_extra["VITE_BACKEND_URL"] = backend_url
@@ -120,14 +126,19 @@ def start_project_services(
         backend_env=backend_env_extra,
         frontend_port=frontend_plan.final,
     )
-    overlay_builder = getattr(rt, "_service_env_overlays", None)
-    if callable(overlay_builder):
-        backend_env_extra.update(
-            overlay_builder(service_name="backend", base_env={**project_env_internal, **backend_env_extra})
-        )
-        frontend_env_extra.update(
-            overlay_builder(service_name="frontend", base_env={**project_env_internal, **frontend_env_extra})
-        )
+    overlay_builder = resolve_service_env_overlay_builder(rt)
+    apply_service_env_overlays(
+        overlay_builder=overlay_builder,
+        service_name="backend",
+        target_env=backend_env_extra,
+        base_env={**project_env_internal, **backend_env_extra},
+    )
+    apply_service_env_overlays(
+        overlay_builder=overlay_builder,
+        service_name="frontend",
+        target_env=frontend_env_extra,
+        base_env={**project_env_internal, **frontend_env_extra},
+    )
     configured_service_types = configured_service_types_for_mode(rt, effective_mode, context.root)
     configured_additional_services = tuple(
         service
@@ -298,8 +309,12 @@ def start_project_services(
         service_env_extra["ENVCTL_SERVICE_NAME"] = service.name
         service_env_extra["ENVCTL_SERVICE_TYPE"] = service.name
         service_env_extra["ENVCTL_PROJECT_NAME"] = context.name
-        if callable(overlay_builder):
-            service_env_extra.update(overlay_builder(service_name=service.name, base_env=service_env_extra))
+        apply_service_env_overlays(
+            overlay_builder=overlay_builder,
+            service_name=service.name,
+            target_env=service_env_extra,
+            base_env=service_env_extra,
+        )
         launch_port = requested_port if service.expect_listener else 0
         prepared_launches[service.name] = PreparedServiceLaunch(
             service_name=service.name,
