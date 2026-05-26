@@ -534,6 +534,8 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 | `BACKEND_ENV_FILE_OVERRIDE` | unset | Explicit backend env file path for non-Main backend startup/migrate flows. Relative paths can resolve from the target root or repo root; ambiguous dual matches are rejected. |
 | `MAIN_ENV_FILE_PATH` | unset | Explicit backend env file path for Main backend startup/migrate flows. Relative paths can resolve from the target root or repo root; ambiguous dual matches are rejected. |
 
+The built-in backend/frontend enable defaults select candidate app services, but they are not by themselves explicit local-system configuration. An explicit command, directory, mode/service enable key, additional service, launch-env section, or supported autodetected layout makes the service surface intentional and startup failures stay actionable.
+
 ## Optional Hooks (`.envctl.sh`)
 
 Use hooks only for advanced custom orchestration.
