@@ -209,6 +209,31 @@ class PortPlanTests(unittest.TestCase):
         self.assertIn("voice-runtime", alpha)
         self.assertEqual(alpha["voice-runtime"].final - 8010, alpha["backend"].final - 8000)
 
+    def test_additional_service_bases_cannot_override_core_service_ports(self) -> None:
+        planner = PortPlanner(
+            backend_base=8000,
+            frontend_base=9000,
+            db_base=5432,
+            redis_base=6379,
+            n8n_base=5678,
+            additional_service_bases={
+                "backend": 10000,
+                "db": 15432,
+                "voice-runtime": 8010,
+            },
+            dynamic_main_dependency_ports=True,
+            scope_key="repo-a",
+            session_id="session-a",
+        )
+
+        plans = planner.plan_project_stack("Main", index=0)
+
+        self.assertEqual(plans["backend"].final, 8000)
+        self.assertNotEqual(plans["db"].final, 15432)
+        self.assertIn("voice-runtime", plans)
+        self.assertNotIn("backend", planner.additional_service_bases)
+        self.assertNotIn("db", planner.additional_service_bases)
+
 
 if __name__ == "__main__":
     unittest.main()
