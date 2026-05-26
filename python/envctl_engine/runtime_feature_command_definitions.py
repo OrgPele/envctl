@@ -25,7 +25,7 @@ for _definitions in _COMMAND_DEFINITION_SOURCES:
     _COMMAND_DEFINITION_BY_NAME.update(_definitions)
 
 _COMMAND_ORDER = tuple(
-    "start plan resume restart stop stop-all blast-all delete-worktree blast-worktree "
+    "start plan import resume restart stop stop-all blast-all delete-worktree blast-worktree "
     "self-destruct-worktree test test-focused pr commit ship review migrate logs clear-logs "
     "health errors show-config show-state explain-startup preflight dashboard config doctor "
     "migrate-hooks debug-pack debug-report debug-last help list-commands install-prompts "

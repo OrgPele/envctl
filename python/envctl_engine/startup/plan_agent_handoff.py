@@ -24,6 +24,8 @@ from envctl_engine.startup.plan_agent_launch_spinner import (
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
 from envctl_engine.startup.session import LocalStartupFailure, StartupSession
 
+PLAN_AGENT_WORKTREE_COMMANDS = {"plan", "import"}
+
 
 def prepare_and_launch_plan_agent_worktrees(
     runtime: Any,
@@ -46,7 +48,7 @@ def prepare_and_launch_plan_agent_worktrees(
     should_fail_for_launch_result = should_fail_for_launch_result or should_fail_for_plan_agent_launch_result
     launch_failure_message = launch_failure_message or plan_agent_launch_failure_message
     route = session.effective_route
-    if route.command != "plan" or bool(route.flags.get("planning_prs")):
+    if route.command not in PLAN_AGENT_WORKTREE_COMMANDS or bool(route.flags.get("planning_prs")):
         return None
     if not session.plan_agent_launch_requested:
         return None
@@ -184,7 +186,7 @@ def record_stale_plan_agent_handoff(
 
 
 def should_fail_for_plan_agent_launch_result(session: StartupSession, launch_result: object) -> bool:
-    if session.effective_route.command != "plan":
+    if session.effective_route.command not in PLAN_AGENT_WORKTREE_COMMANDS:
         return False
     if not session.plan_agent_launch_requested:
         return False
@@ -194,14 +196,14 @@ def should_fail_for_plan_agent_launch_result(session: StartupSession, launch_res
 
 def plan_agent_handoff_validation_required(session: StartupSession) -> bool:
     route = session.effective_route
-    if route.command != "plan":
+    if route.command not in PLAN_AGENT_WORKTREE_COMMANDS:
         return False
     return bool(route.flags.get("omx"))
 
 
 def should_degrade_to_plan_agent_handoff(session: StartupSession, *, error: str) -> bool:
     route = session.effective_route
-    if route.command != "plan":
+    if route.command not in PLAN_AGENT_WORKTREE_COMMANDS:
         return False
     if local_startup_failure_reason(error) is None:
         return False

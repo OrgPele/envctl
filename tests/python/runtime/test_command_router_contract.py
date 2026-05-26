@@ -14,6 +14,8 @@ class CommandRouterContractTests(unittest.TestCase):
         matrix = {
             "--plan": "plan",
             "plan": "plan",
+            "--import": "import",
+            "import": "import",
             "--resume": "resume",
             "resume": "resume",
             "--doctor": "doctor",
@@ -49,7 +51,8 @@ class CommandRouterContractTests(unittest.TestCase):
             "debug-last": "debug-last",
         }
         for token, expected in matrix.items():
-            route = parse_route([token], env={})
+            args = [token, "feature/foo"] if expected == "import" else [token]
+            route = parse_route(args, env={})
             self.assertEqual(route.command, expected, msg=token)
 
     def test_mode_toggle_matrix(self) -> None:

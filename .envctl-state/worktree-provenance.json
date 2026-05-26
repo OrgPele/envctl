@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "source_branch": "codex/reuse-cgc-worktree-context",
+  "source_ref": "origin/codex/reuse-cgc-worktree-context",
+  "resolution_reason": "attached_branch",
+  "created_from_repo": "/Users/kfiramar/projects/envctl",
+  "recorded_at": "2026-05-26T18:50:48.616926+00:00",
+  "plan_file": "features/envctl-import-remote-branch-worktrees.md",
+  "created_for_fresh_ai_launch": true,
+  "fresh_ai_launch_status": "launching",
+  "launch_transport": "cmux"
+}

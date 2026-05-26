@@ -343,7 +343,7 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_SKIP_DEFAULT_INFRASTRUCTURE` | `false` | Global skip for built-in PostgreSQL and Redis startup. |
 | `ENVCTL_DEFAULT_MODE` | `main` | Startup default when no mode flag is passed (`main` or `trees`). |
 | `ENVCTL_PLANNING_DIR` | `todo/plans` | Planning root used by `--plan`, `--sequential-plan`, and `--planning-prs`. Plans scaled to zero are archived into sibling `done/` under the same parent (for example `todo/done`). |
-| `ENVCTL_WORKTREE_GIT_HOOKS` | `disabled` | Git hook policy for envctl-managed worktree creation. Default `disabled` applies a command-scoped `core.hooksPath=/dev/null` override so repo-local hooks cannot break `--plan`, `--setup-worktree(s)`, or `ensure-worktree`; set `inherit` to run repo-local hooks for those operations. |
+| `ENVCTL_WORKTREE_GIT_HOOKS` | `disabled` | Git hook policy for envctl-managed worktree creation. Default `disabled` applies a command-scoped `core.hooksPath=/dev/null` override so repo-local hooks cannot break `--plan`, `--import`, `--setup-worktree(s)`, or `ensure-worktree`; set `inherit` to run repo-local hooks for those operations. |
 | `ENVCTL_CONFIG_FILE` | unset | Explicit config file path override. |
 | `RUN_SH_RUNTIME_DIR` | `/tmp/envctl-runtime` | Runtime artifact root (Python artifacts are under `python-engine/`). |
 | `ENVCTL_STRICT_N8N_BOOTSTRAP` | `false` | Treat n8n owner/bootstrap endpoint mismatch as hard failure. |
@@ -363,8 +363,8 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 ## Plan Agent Launch
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` agent launch for newly created worktrees. The default workspace-backed transport is cmux. |
-| `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` | `cmux` | Workspace-backed launch transport for default `--plan` launches. Accepted values are `cmux` and `superset`; explicit `--cmux`, `--tmux`, and `--omx` route flags override this setting. `--opencode` selects the CLI and only falls back to tmux when no surface transport flag is provided. |
+| `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` | `false` | Enable post-`--plan` or post-`--import` agent launch for selected worktrees. The default workspace-backed transport is cmux. |
+| `ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT` | `cmux` | Workspace-backed launch transport for default `--plan` and `--import` launches. Accepted values are `cmux` and `superset`; explicit `--cmux`, `--tmux`, and `--omx` route flags override this setting. `--opencode` selects the CLI and only falls back to tmux when no surface transport flag is provided. |
 | `ENVCTL_PLAN_AGENT_CLI` | `codex` | AI CLI selection for launched surfaces (`codex` or `opencode`). |
 | `ENVCTL_PLAN_AGENT_PRESET` | `implement_task` | Prompt preset name submitted after the AI CLI starts. OpenCode launches submit the rendered prompt body directly and prepend `/ulw-loop` by default. Codex resolves the preset from the envctl-managed Codex prompt file and submits that prompt body directly. |
 | `ENVCTL_PLAN_AGENT_DIRECT_PROMPT` | transport/CLI dependent | Use direct prompt-body submission instead of slash-command submission when supported. Defaults to true for OpenCode. |

@@ -9,13 +9,13 @@ from envctl_engine.runtime.command_policy import (
     STATE_ACTION_COMMANDS,
 )
 
-WORKFLOW_COMMANDS = frozenset({"start", "restart", "resume", "dashboard", "config", "plan"})
+WORKFLOW_COMMANDS = frozenset({"start", "restart", "resume", "dashboard", "config", "plan", "import"})
 DEBUG_COMMANDS = frozenset({"debug-pack", "debug-report", "debug-last", "doctor"})
 UTILITY_COMMANDS = frozenset(
     {"codex-tmux", "ensure-worktree", "install-prompts", "migrate-hooks", "supabase-user", "qa-user", "playwright"}
 )
 DEFAULT_HEADLESS_COMMANDS = ACTION_COMMANDS | LIFECYCLE_CLEANUP_COMMANDS | STATE_ACTION_COMMANDS
-GENERAL_WORKFLOW_ORDER = ("start", "resume", "restart", "dashboard", "config", "plan")
+GENERAL_WORKFLOW_ORDER = ("start", "resume", "restart", "dashboard", "config", "plan", "import")
 GENERAL_ACTION_ORDER = (
     "stop",
     "stop-all",
