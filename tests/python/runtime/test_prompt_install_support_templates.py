@@ -98,6 +98,7 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("Browser E2E decision", body)
         self.assertIn("browser_e2e_required", body)
         self.assertIn("ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false", body)
+        self.assertIn("ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true", body)
         self.assertIn("Record both the browser E2E decision and rationale", body)
         self.assertIn("Rollout / verification", body)
 

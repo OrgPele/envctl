@@ -500,7 +500,7 @@ Optional plan-agent launch config for `--plan`:
 - OpenCode cmux and tmux launches submit the rendered prompt body directly and prepend `/ulw-loop` by default, so ULW/direct-prompt flows do not depend on an installed slash command. Use `--no-ulw-loop` to submit the rendered OpenCode prompt without that prefix for one launch.
 - For `--plan --tmux --opencode`, envctl considers the AI launch successful only after the tmux pane shows a usable OpenCode prompt and the implementation prompt can be submitted. If tmux starts but OpenCode exits, stays on a loading screen, reports a shell/config error, or leaves a stale non-OpenCode pane behind, envctl reports an AI launch failure instead of printing implementation-session attach guidance.
 - Codex installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`; envctl still resolves the shipped prompt body directly when it needs to submit a preset itself
-- `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` queues the Codex/OMX `$browser` E2E follow-up; set it to `false` in `.envctl` to skip that prompt
+- `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` explicitly opts in to the Codex/OMX `$browser` E2E follow-up; it is skipped by default
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` opts in to the final Codex/OMX PR review-comments follow-up; it is skipped by default so core implementation prompts rely on `envctl ship` status unless a dedicated review-comments pass is explicitly enabled
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface or tmux window when envctl owns the terminal bootstrap
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
