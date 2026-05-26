@@ -10,7 +10,7 @@ import time
 from typing import Callable, Mapping, Sequence
 
 FAILING_CHECK_STATES = {"FAILURE", "FAILED", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
-PASSING_CHECK_STATES = {"SUCCESS", "PASSED", "COMPLETED", "NEUTRAL", "SKIPPED"}
+PASSING_CHECK_STATES = {"SUCCESS", "PASSED", "NEUTRAL", "SKIPPED"}
 TERMINAL_SHIP_CHECK_STATES = {"checks_passed", "checks_failed", "gh_unavailable", "no_checks_reported"}
 DEFAULT_CHECK_TIMEOUT_SECONDS = 120.0
 DEFAULT_CHECK_POLL_INTERVAL_SECONDS = 5.0
@@ -381,13 +381,17 @@ def normalize_github_pr_checks(
     *,
     duration_seconds: float,
 ) -> dict[str, object]:
-    failing = [check for check in checks if str(check.get("state", "")).upper() in FAILING_CHECK_STATES]
-    passed = [check for check in checks if str(check.get("state", "")).upper() in PASSING_CHECK_STATES]
-    pending = [
-        check
-        for check in checks
-        if str(check.get("state", "")).upper() not in FAILING_CHECK_STATES | PASSING_CHECK_STATES
-    ]
+    failing: list[Mapping[str, object]] = []
+    passed: list[Mapping[str, object]] = []
+    pending: list[Mapping[str, object]] = []
+    for check in checks:
+        state = _normalized_check_state(check)
+        if state in FAILING_CHECK_STATES:
+            failing.append(check)
+        elif state in PASSING_CHECK_STATES:
+            passed.append(check)
+        else:
+            pending.append(check)
     if failing:
         state = "checks_failed"
     elif pending:
@@ -401,6 +405,10 @@ def normalize_github_pr_checks(
         "pending_checks": pending,
         "duration_seconds": duration_seconds,
     }
+
+
+def _normalized_check_state(check: Mapping[str, object]) -> str:
+    return str(check.get("state", "")).strip().upper()
 
 
 def _target_status_checks(checks: Sequence[object]) -> list[Mapping[str, object]]:

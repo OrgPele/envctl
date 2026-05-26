@@ -7,6 +7,14 @@ import time
 from typing import Any, Callable, Mapping
 
 GitOutput = Callable[[Path, list[str]], str]
+CHECK_OPERATION_STATUSES = {
+    "checks_passed",
+    "checks_failed",
+    "checks_pending_timeout",
+    "checks_unresolved",
+    "gh_unavailable",
+    "no_checks_reported",
+}
 
 
 def ship_protected_paths(
@@ -141,13 +149,13 @@ def _pr_status(*, status: str, pr_url: str, pr_created: bool) -> str:
 def _merge_conflict_status(*, status: str, merge_conflicts: Mapping[str, object] | None) -> str:
     if status == "merge_conflicts" or dict(merge_conflicts or {}).get("state") == "conflicts":
         return "conflicts"
-    if status in {"git_unavailable", "detached_head", "commit_failed", "pr_failed"}:
+    if status in {"git_unavailable", "detached_head", "commit_failed", "pr_failed", "pr_unresolved"}:
         return "not_checked"
     return "none"
 
 
 def _checks_status(status: str) -> str:
-    if status in {"checks_passed", "checks_failed", "checks_pending_timeout", "gh_unavailable", "no_checks_reported"}:
+    if status in CHECK_OPERATION_STATUSES:
         return status
     return "not_run"
 
@@ -158,10 +166,15 @@ def print_ship_result(payload: Mapping[str, object], *, json_output: bool, ok: b
     else:
         status = str(payload.get("status") or "ship_complete")
         pr_url = str(payload.get("pr_url") or "").strip()
-        pr_state = str(dict(payload.get("operation_statuses") or {}).get("pr") or "")
+        operation_statuses = _mapping_payload_value(payload.get("operation_statuses"))
+        pr_state = str(operation_statuses.get("pr") or "")
         pr_suffix = f" pr={pr_state}" if pr_state else ""
         print(f"ship: {status}{pr_suffix}" + (f" {pr_url}" if pr_url else ""))
     return 0 if ok else 1
+
+
+def _mapping_payload_value(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def parse_ship_json_output(context: Any) -> bool:
