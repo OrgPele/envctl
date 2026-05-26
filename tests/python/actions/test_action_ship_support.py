@@ -9,6 +9,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Callable
 
 import envctl_engine.actions.action_ship_support as ship_support
 from envctl_engine.actions.action_ship_support import run_ship_workflow
@@ -187,7 +188,7 @@ class ActionShipSupportTests(unittest.TestCase):
                     "duration_seconds": 0.1,
                 }
 
-            with redirect_stdout(StringIO()) as stdout:
+            with redirect_stdout(StringIO()) as stdout, redirect_stderr(StringIO()) as stderr:
                 code = run_ship_workflow(
                     context,
                     resolve_git_root=lambda project_root, repo_root: project_root,
@@ -227,6 +228,15 @@ class ActionShipSupportTests(unittest.TestCase):
         )
         self.assertEqual(payload["passed_checks"], [{"name": "pytest", "state": "SUCCESS"}])
         self.assertEqual(payload["pr_url"], "https://github.com/acme/repo/pull/8")
+        self.assertEqual(
+            stderr.getvalue().splitlines(),
+            [
+                "ship: add succeeded for Main.",
+                "ship: commit succeeded for Main (after).",
+                "ship: push succeeded for Main.",
+                "ship: PR created for Main: https://github.com/acme/repo/pull/8",
+            ],
+        )
 
     def test_run_ship_workflow_prints_check_progress_to_stderr(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -252,7 +262,7 @@ class ActionShipSupportTests(unittest.TestCase):
                 branch: str,
                 pr_url: str,
                 expected_head_sha: str,
-                progress_callback: object,
+                progress_callback: Callable[[str], None],
             ) -> dict[str, object]:
                 self.assertEqual(branch, "feature/demo")
                 self.assertEqual(pr_url, "https://github.com/acme/repo/pull/7")
@@ -286,10 +296,16 @@ class ActionShipSupportTests(unittest.TestCase):
                     ),
                     ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
                     github_pr_checks=github_pr_checks,
-                )
+        )
 
         self.assertEqual(code, 0)
-        self.assertEqual(stderr.getvalue(), "ship: GitHub checks still running after 10s\n")
+        self.assertEqual(
+            stderr.getvalue().splitlines(),
+            [
+                "ship: PR already exists for Main: https://github.com/acme/repo/pull/7",
+                "ship: GitHub checks still running after 10s",
+            ],
+        )
         self.assertEqual(json.loads(stdout.getvalue())["status"], "checks_passed")
 
     def test_run_ship_workflow_returns_success_with_pending_status_when_checks_timeout(self) -> None:
