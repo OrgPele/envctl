@@ -134,14 +134,22 @@ def ship_action_payload(output: object) -> dict[str, object]:
     return {}
 
 
+def _ship_completed_payload(completed: Any) -> dict[str, object]:
+    for stream_name in ("stdout", "stderr"):
+        payload = ship_action_payload(getattr(completed, stream_name, ""))
+        if payload:
+            return payload
+    return {}
+
+
 def ship_action_status(completed: Any) -> str:
-    payload = ship_action_payload(getattr(completed, "stdout", ""))
+    payload = _ship_completed_payload(completed)
     status = str(payload.get("status") or "").strip()
     return status or "success"
 
 
 def ship_action_status_message(project_name: str, completed: Any) -> str:
-    payload = ship_action_payload(getattr(completed, "stdout", ""))
+    payload = _ship_completed_payload(completed)
     status = str(payload.get("status") or "").strip() or "success"
     operation_statuses = payload.get("operation_statuses")
     operation_parts: list[str] = []
