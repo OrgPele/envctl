@@ -58,20 +58,24 @@ def import_remote_branch_worktree(self: Any, *, branch_input: str) -> PlanWorktr
         env=env,
         timeout=120.0,
     )
+    fetch_returncode = _returncode(fetch_result)
     _emit_import_event(
         self,
         "planning.import.fetch.result",
         branch_ref=branch_ref,
         target=target,
-        returncode=_returncode(fetch_result),
+        action="fetch",
+        returncode=fetch_returncode,
+        **_failure_payload(fetch_returncode, "fetch_failed"),
     )
-    if _returncode(fetch_result) != 0:
+    if fetch_returncode != 0:
         return _error_result(
             branch_ref=branch_ref,
             target=target,
             action="fetch",
             result=fetch_result,
-            fallback=f"Remote branch not found or fetch failed: {branch_ref.remote_ref}",
+            failure_reason="fetch_failed",
+            fallback=f"remote branch not found or fetch failed: {branch_ref.remote_ref}",
         )
 
     action = "reused" if target.is_dir() else "created"
@@ -85,11 +89,23 @@ def import_remote_branch_worktree(self: Any, *, branch_input: str) -> PlanWorktr
         )
         current_branch = _git_output(self, ["git", "-C", str(target), "branch", "--show-current"], cwd=target, env=env)
         if current_branch != branch_ref.branch:
+            actual_branch = current_branch or "<unknown>"
+            _emit_import_event(
+                self,
+                "planning.import.worktree.branch_mismatch",
+                branch_ref=branch_ref,
+                target=target,
+                action="reuse",
+                failure_reason="wrong_branch",
+                actual_branch=actual_branch,
+                expected_branch=branch_ref.branch,
+                target_path=str(target),
+            )
             return PlanWorktreeSyncResult(
                 raw_projects=[],
                 error=(
-                    f"Imported worktree target already exists at {target} but is on branch "
-                    f"{current_branch or '<unknown>'}, expected {branch_ref.branch}."
+                    "Import reuse failed: imported worktree target already exists on the wrong branch. "
+                    f"actual_branch={actual_branch} expected_branch={branch_ref.branch} target={target}"
                 ),
             )
     else:
@@ -114,21 +130,26 @@ def import_remote_branch_worktree(self: Any, *, branch_input: str) -> PlanWorktr
             env=env,
             timeout=120.0,
         )
+        add_returncode = _returncode(add_result)
+        add_failure_reason = _worktree_add_failure_reason(add_result) if add_returncode != 0 else None
         _emit_import_event(
             self,
             "planning.import.worktree.create.result",
             branch_ref=branch_ref,
             target=target,
             action=action,
-            returncode=_returncode(add_result),
+            returncode=add_returncode,
+            **_failure_payload(add_returncode, add_failure_reason),
         )
-        if _returncode(add_result) != 0:
+        if add_returncode != 0:
+            assert add_failure_reason is not None
             return _error_result(
                 branch_ref=branch_ref,
                 target=target,
                 action="worktree_add",
                 result=add_result,
-                fallback=f"Failed to create imported worktree for {branch_ref.remote_ref}.",
+                failure_reason=add_failure_reason,
+                fallback=_worktree_add_failure_summary(branch_ref, add_failure_reason),
             )
 
     _emit_import_event(
@@ -145,21 +166,24 @@ def import_remote_branch_worktree(self: Any, *, branch_input: str) -> PlanWorktr
         env=env,
         timeout=120.0,
     )
+    update_returncode = _returncode(update_result)
     _emit_import_event(
         self,
         "planning.import.update.result",
         branch_ref=branch_ref,
         target=target,
         action=action,
-        returncode=_returncode(update_result),
+        returncode=update_returncode,
+        **_failure_payload(update_returncode, "ff_only_update_failed"),
     )
-    if _returncode(update_result) != 0:
+    if update_returncode != 0:
         return _error_result(
             branch_ref=branch_ref,
             target=target,
             action="ff_only_update",
             result=update_result,
-            fallback=f"Imported worktree could not fast-forward to {branch_ref.remote_ref}.",
+            failure_reason="ff_only_update_failed",
+            fallback=f"imported worktree could not fast-forward to {branch_ref.remote_ref}",
         )
 
     link_repo_local_shared_artifacts(repo_root=repo_root, target=target)
@@ -247,22 +271,50 @@ def _returncode(result: object) -> int:
     return int(getattr(result, "returncode", 1))
 
 
+def _failure_payload(returncode: int, failure_reason: str | None) -> dict[str, object]:
+    if returncode == 0 or not failure_reason:
+        return {}
+    return {"failure_reason": failure_reason}
+
+
+def _result_detail(result: object, fallback: str) -> str:
+    stderr = str(getattr(result, "stderr", "") or "").strip()
+    stdout = str(getattr(result, "stdout", "") or "").strip()
+    return stderr or stdout or fallback
+
+
+def _worktree_add_failure_reason(result: object) -> str:
+    detail = _result_detail(result, "").lower()
+    if "already used by worktree" in detail or "already checked out" in detail:
+        return "local_branch_checked_out_elsewhere"
+    return "worktree_add_failed"
+
+
+def _worktree_add_failure_summary(branch_ref: ImportedBranchRef, failure_reason: str) -> str:
+    if failure_reason == "local_branch_checked_out_elsewhere":
+        return (
+            f"local branch {branch_ref.branch} is already checked out in another worktree; "
+            f"free that worktree or use its existing checkout before importing {branch_ref.remote_ref}"
+        )
+    return f"failed to create imported worktree for {branch_ref.remote_ref}"
+
+
 def _error_result(
     *,
     branch_ref: ImportedBranchRef,
     target: Path,
     action: str,
     result: object,
+    failure_reason: str,
     fallback: str,
 ) -> PlanWorktreeSyncResult:
-    stderr = str(getattr(result, "stderr", "") or "").strip()
-    stdout = str(getattr(result, "stdout", "") or "").strip()
-    detail = stderr or stdout or fallback
+    detail = _result_detail(result, fallback)
     return PlanWorktreeSyncResult(
         raw_projects=[],
         error=(
-            f"{fallback} action={action} branch={branch_ref.branch} remote={branch_ref.remote} "
-            f"remote_ref={branch_ref.remote_ref} worktree={target}: {detail}"
+            f"Import {action} failed: {fallback}. action={action} failure_reason={failure_reason} "
+            f"branch={branch_ref.branch} remote={branch_ref.remote} remote_ref={branch_ref.remote_ref} "
+            f"worktree={target}: {detail}"
         ),
     )
 
