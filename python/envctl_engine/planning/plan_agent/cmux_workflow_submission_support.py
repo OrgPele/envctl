@@ -1,28 +1,24 @@
 from __future__ import annotations
 
-import shlex
-import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from envctl_engine.planning.plan_agent.constants import (
-    _CODEX_QUEUE_MAX_TAB_ATTEMPTS,
-    _CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS,
-    _CODEX_QUEUE_READY_TIMEOUT_SECONDS,
-)
 from envctl_engine.planning.plan_agent.models import (
     CreatedPlanWorktree,
     PlanAgentLaunchConfig,
     _PlanAgentWorkflow,
     _PlanAgentWorkflowStep,
-    _QueueFailure,
 )
-from envctl_engine.planning.plan_agent.terminal_screen import (
-    _codex_queue_message_needs_tab,
-    _codex_queue_screen_confirms_queued,
-    _codex_queue_screen_looks_ready,
-    _prompt_picker_screen_looks_ready,
+from envctl_engine.planning.plan_agent.workflow_queue_interaction import (
+    CodexQueueMessageInteractor,
+    Clock,
+    Sleeper,
+    wait_until_codex_queue_ready,
+)
+from envctl_engine.planning.plan_agent.workflow_bootstrap_commands import CliBootstrapCommandTyper
+from envctl_engine.planning.plan_agent.workflow_queue_support import (
+    run_codex_workflow_queue,
 )
 
 
@@ -47,37 +43,22 @@ def launch_cli_bootstrap_commands(
     send_surface_key_fn: SendSurfaceKeyFn,
     failure_event: str = "planning.agent_launch.failed",
 ) -> list[str | None]:
-    typed_root = shlex.quote(str(cwd))
-    return [
-        send_surface_text_fn(
+    return CliBootstrapCommandTyper(
+        send_text=lambda text: send_surface_text_fn(
             runtime,
             workspace_id=workspace_id,
             surface_id=surface_id,
-            text=f"cd {typed_root}",
+            text=text,
             failure_event=failure_event,
         ),
-        send_surface_key_fn(
+        send_key=lambda key: send_surface_key_fn(
             runtime,
             workspace_id=workspace_id,
             surface_id=surface_id,
-            key="enter",
+            key=key,
             failure_event=failure_event,
         ),
-        send_surface_text_fn(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            text=cli_command,
-            failure_event=failure_event,
-        ),
-        send_surface_key_fn(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            key="enter",
-            failure_event=failure_event,
-        ),
-    ]
+    ).type_bootstrap_commands(cwd=cwd, cli_command=cli_command)
 
 
 def submit_prompt_workflow_step(
@@ -189,71 +170,32 @@ def queue_codex_workflow_steps(
     paste_surface_text_fn: PasteSurfaceTextFn,
     queue_codex_message_fn: QueueCodexMessageFn,
 ) -> str | None:
-    for step_index, step in enumerate(queued_steps):
-        if launch_config.codex_goal_enable and step.requires_goal:
-            goal_text = codex_goal_text_for_worktree_fn(
-                worktree=worktree,
-                preset=launch_config.preset,
-                workflow_mode=workflow.mode,
-                omx_workflow=launch_config.omx_workflow,
-            )
-            queued_goal_text = f"/goal {goal_text}"
-            goal_send_error = paste_surface_text_fn(
-                runtime,
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                text=queued_goal_text,
-                emit_failure_event=False,
-            )
-            if goal_send_error is not None:
-                return _QueueFailure("queue_goal_send_failed", step_index=step_index, step_kind=step.kind)
-            if not queue_codex_message_fn(
-                runtime,
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                text=queued_goal_text,
-                require_text_match=False,
-            ):
-                return _QueueFailure("queue_goal_not_ready", step_index=step_index, step_kind=step.kind)
-        queued_text, resolution_error = workflow_step_prompt_text_fn(
-            runtime,
-            launch_config=launch_config,
-            cli=cli,
-            step=step,
-            worktree=worktree,
-        )
-        if resolution_error is not None:
-            return _QueueFailure("queue_prompt_resolution_failed", step_index=step_index, step_kind=step.kind)
-        send_error = paste_surface_text_fn(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            text=queued_text,
-            emit_failure_event=False,
-        )
-        if send_error is not None:
-            return _QueueFailure("queue_send_failed", step_index=step_index, step_kind=step.kind)
-        if not queue_codex_message_fn(
-            runtime,
-            workspace_id=workspace_id,
-            surface_id=surface_id,
-            text=queued_text,
-            require_text_match=False,
-        ):
-            return _QueueFailure("queue_not_ready", step_index=step_index, step_kind=step.kind)
-    runtime._emit(
-        "planning.agent_launch.workflow_queued",
-        workspace_id=workspace_id,
-        surface_id=surface_id,
-        worktree=worktree.name,
+    return run_codex_workflow_queue(
+        runtime,
+        worktree=worktree,
+        workflow=workflow,
+        queued_steps=queued_steps,
+        launch_config=launch_config,
         cli=cli,
-        workflow_mode=workflow.mode,
-        codex_cycles=workflow.codex_cycles,
-        queued_steps=len(queued_steps),
-        queued_steps_confirmed=len(queued_steps),
         transport="cmux",
+        event_context={"workspace_id": workspace_id, "surface_id": surface_id},
+        codex_goal_text_for_worktree_fn=codex_goal_text_for_worktree_fn,
+        workflow_step_prompt_text_fn=workflow_step_prompt_text_fn,
+        send_text_fn=lambda text: paste_surface_text_fn(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            text=text,
+            emit_failure_event=False,
+        ),
+        queue_message_fn=lambda text, *, require_text_match=True: queue_codex_message_fn(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            text=text,
+            require_text_match=require_text_match,
+        ),
     )
-    return None
 
 
 def wait_for_codex_queue_ready(
@@ -262,14 +204,18 @@ def wait_for_codex_queue_ready(
     workspace_id: str,
     surface_id: str,
     read_surface_screen_fn: ReadSurfaceScreenFn,
+    monotonic: Clock | None = None,
+    sleep: Sleeper | None = None,
 ) -> bool:
-    deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        screen = read_surface_screen_fn(runtime, workspace_id=workspace_id, surface_id=surface_id)
-        if _codex_queue_screen_looks_ready(screen):
-            return True
-        time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
-    return False
+    wait_kwargs: dict[str, Any] = {}
+    if monotonic is not None:
+        wait_kwargs["monotonic"] = monotonic
+    if sleep is not None:
+        wait_kwargs["sleep"] = sleep
+    return wait_until_codex_queue_ready(
+        read_screen=lambda: read_surface_screen_fn(runtime, workspace_id=workspace_id, surface_id=surface_id),
+        **wait_kwargs,
+    )
 
 
 def queue_codex_message(
@@ -281,50 +227,23 @@ def queue_codex_message(
     require_text_match: bool = True,
     read_surface_screen_fn: ReadSurfaceScreenFn,
     send_surface_key_fn: SendSurfaceKeyFn,
+    monotonic: Clock | None = None,
+    sleep: Sleeper | None = None,
 ) -> bool:
-    deadline = time.monotonic() + _CODEX_QUEUE_READY_TIMEOUT_SECONDS
-    normalized_text = str(text).strip()
-    picker_submitted = False
-    tab_attempts = 0
-    while time.monotonic() < deadline:
-        screen = read_surface_screen_fn(runtime, workspace_id=workspace_id, surface_id=surface_id)
-        if (
-            normalized_text.startswith("/")
-            and not picker_submitted
-            and _prompt_picker_screen_looks_ready("codex", screen, normalized_text)
-        ):
-            submit_error = send_surface_key_fn(
-                runtime,
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                key="enter",
-                emit_failure_event=False,
-            )
-            if submit_error is not None:
-                return False
-            picker_submitted = True
-            time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
-            continue
-        if tab_attempts > 0 and _codex_queue_screen_confirms_queued(
-            screen,
-            text,
-            require_text_match=require_text_match,
-        ):
-            return True
-        if _codex_queue_message_needs_tab(screen, text, require_text_match=require_text_match):
-            if tab_attempts >= _CODEX_QUEUE_MAX_TAB_ATTEMPTS:
-                return False
-            tab_error = send_surface_key_fn(
-                runtime,
-                workspace_id=workspace_id,
-                surface_id=surface_id,
-                key="tab",
-                emit_failure_event=False,
-            )
-            if tab_error is not None:
-                return False
-            tab_attempts += 1
-            time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
-            continue
-        time.sleep(_CODEX_QUEUE_READY_POLL_INTERVAL_SECONDS)
-    return False
+    interactor_kwargs: dict[str, Any] = {}
+    if monotonic is not None:
+        interactor_kwargs["monotonic"] = monotonic
+    if sleep is not None:
+        interactor_kwargs["sleep"] = sleep
+    return CodexQueueMessageInteractor(
+        read_screen=lambda: read_surface_screen_fn(runtime, workspace_id=workspace_id, surface_id=surface_id),
+        send_key=lambda key: send_surface_key_fn(
+            runtime,
+            workspace_id=workspace_id,
+            surface_id=surface_id,
+            key=key,
+            emit_failure_event=False,
+        ),
+        prompt_picker_enabled=True,
+        **interactor_kwargs,
+    ).queue_message(text, require_text_match=require_text_match)

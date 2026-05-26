@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import MappingProxyType
 from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -102,6 +104,49 @@ class StateRepositoryContractTests(unittest.TestCase):
 
             self.assertTrue((runtime_root / "run_state.json").is_file())
             self.assertFalse((legacy_root / "run_state.json").exists())
+
+    def test_save_run_ports_manifest_accepts_mapping_context_ports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_root = Path(tmpdir) / "runtime" / "scope"
+            legacy_root = Path(tmpdir) / "runtime" / "python-engine"
+            runtime_root.mkdir(parents=True, exist_ok=True)
+            legacy_root.mkdir(parents=True, exist_ok=True)
+            repo = RuntimeStateRepository(
+                runtime_root=runtime_root,
+                runtime_legacy_root=legacy_root,
+                runtime_dir=Path(tmpdir) / "runtime",
+                runtime_scope_id="repo-123",
+                compat_mode=RuntimeStateRepository.SCOPED_ONLY,
+            )
+            context = SimpleNamespace(
+                name="Main",
+                root=Path(tmpdir),
+                ports=MappingProxyType(
+                    {
+                        "backend": SimpleNamespace(
+                            requested=8000,
+                            assigned=8001,
+                            final=8001,
+                            source="retry",
+                            retries=1,
+                        )
+                    }
+                ),
+            )
+
+            repo.save_run(
+                state=RunState(run_id="run-ports", mode="main"),
+                contexts=[context],
+                errors=[],
+                events=[],
+                emit=lambda *_args, **_kwargs: None,
+                runtime_map_builder=lambda _state: {"projection": {}},
+            )
+
+            payload = json.loads((runtime_root / "ports_manifest.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["projects"][0]["ports"]["backend"]["final"], 8001)
+        self.assertEqual(payload["projects"][0]["ports"]["backend"]["retries"], 1)
 
     def test_load_latest_honors_requested_mode_over_latest_run_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -434,6 +479,41 @@ class StateRepositoryContractTests(unittest.TestCase):
             assert loaded_main is not None
             self.assertEqual(loaded_main.run_id, "run-main")
             self.assertEqual(loaded_main.mode, "main")
+
+    def test_save_run_trees_uses_safe_pointer_filename_for_project_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir) / "runtime"
+            runtime_root = runtime_dir / "scope"
+            legacy_root = runtime_dir / "python-engine"
+            runtime_root.mkdir(parents=True, exist_ok=True)
+            legacy_root.mkdir(parents=True, exist_ok=True)
+            repo = RuntimeStateRepository(
+                runtime_root=runtime_root,
+                runtime_legacy_root=legacy_root,
+                runtime_dir=runtime_dir,
+                runtime_scope_id="repo-123",
+                compat_mode=RuntimeStateRepository.SCOPED_ONLY,
+            )
+
+            tree_context = SimpleNamespace(name="Feature/API v2", root=Path(tmpdir) / "trees" / "Feature_API_v2", ports={})
+            state = RunState(run_id="run-tree-safe-name", mode="trees", metadata={"repo_scope_id": "repo-123"})
+            repo.save_run(
+                state=state,
+                contexts=[tree_context],
+                errors=[],
+                events=[],
+                emit=lambda *_args, **_kwargs: None,
+                runtime_map_builder=lambda _state: {"projection": {}},
+            )
+
+            safe_pointer = runtime_root / ".last_state.trees.Feature_API_v2"
+            unsafe_pointer_parent = runtime_root / ".last_state.trees.Feature"
+            self.assertTrue(safe_pointer.is_file())
+            self.assertFalse(unsafe_pointer_parent.exists())
+            loaded = repo.load_latest(mode="trees", strict_mode_match=True)
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(loaded.run_id, "run-tree-safe-name")
 
     def test_resume_orchestrator_does_not_write_legacy_state_files_directly(self) -> None:
         resume_path = REPO_ROOT / "python/envctl_engine/startup/resume_orchestrator.py"

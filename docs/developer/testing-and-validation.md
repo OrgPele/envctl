@@ -115,22 +115,21 @@ Expected:
 Canonical repo-wide validation:
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/python -m pytest -q
-.venv/bin/python -m build
-.venv/bin/python scripts/release_shipability_gate.py --repo .
+uv sync --extra dev --python 3.12
+uv run --extra dev pytest -q
+uv run --extra dev python -m build
+uv run --extra dev python scripts/release_shipability_gate.py --repo .
 ```
 
 Install-path reminder:
 
 - source-checkout operator bootstrap: `python -m pip install -r python/requirements.txt`
-- contributor validation lane: `.venv/bin/python -m pip install -e '.[dev]'`
+- contributor validation lane: `uv sync --extra dev --python 3.12`
 
 To confirm the release gate runs the same test lane:
 
 ```bash
-.venv/bin/python scripts/release_shipability_gate.py --repo . --check-tests
+uv run --extra dev python scripts/release_shipability_gate.py --repo . --check-tests
 ```
 
 Serena is the repo's symbolic code navigation tool. It is configured by `.serena/project.yml` and should be used for
@@ -142,6 +141,11 @@ serena project health-check
 
 Serena is not a CI gate for this repository. Keep CI-style validation centered on pytest, ruff, build, and the release
 shipability gate. Use Serena as an interactive symbol/reference layer before broad text search.
+
+CodeGraphContext (`cgc`) is the repo-wide graph analysis layer for ownership, coupling, impact, and hotspot questions.
+Use `cgc` commands such as `cgc stats --context Envctl`, `cgc report --context Envctl`, and read-only `cgc query ...`
+when the question crosses many modules. Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl.
+Use `rg` for exact strings such as flags, log messages, config keys, and docs prose.
 
 Use narrower scopes while iterating, then widen before finishing. Targeted `unittest` runs remain useful for focused module work, but `pytest -q` is the authoritative repo-wide signal.
 

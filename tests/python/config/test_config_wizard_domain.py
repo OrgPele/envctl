@@ -104,6 +104,7 @@ class ConfigWizardDomainTests(unittest.TestCase):
 
             self.assertTrue(result.changed)
             self.assertTrue((repo / ".envctl").is_file())
+            self.assertTrue((repo / "AGENTS.md").is_file())
 
     def test_edit_local_config_cancel_is_nonfatal(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -202,6 +203,32 @@ class ConfigWizardDomainTests(unittest.TestCase):
 
         self.assertIn("Saved startup config: /tmp/repo/.envctl", message)
         self.assertIn("Updated Git global excludes at /tmp/home/.gitignore_global.", message)
+
+    def test_save_message_reports_updated_agent_instructions(self) -> None:
+        from envctl_engine.config.agent_instructions import AgentInstructionsStatus
+
+        result = ConfigWizardResult(
+            values=ManagedConfigValues(
+                default_mode="main",
+                main_profile=StartupProfile(True, True, True, False, False, False, False),
+                trees_profile=StartupProfile(True, True, True, False, False, False, False),
+                port_defaults=PortDefaults(8000, 9000, 5432, 6379, 5678, 20),
+            ),
+            save_result=ConfigSaveResult(
+                path=Path("/tmp/repo/.envctl"),
+                ignore_updated=False,
+                ignore_warning=None,
+                agent_instructions_status=AgentInstructionsStatus(
+                    path=Path("/tmp/repo/AGENTS.md"),
+                    updated=True,
+                ),
+            ),
+        )
+
+        message = _save_message(result)
+
+        self.assertIn("Saved startup config: /tmp/repo/.envctl", message)
+        self.assertIn("Updated agent instructions: /tmp/repo/AGENTS.md", message)
 
     def test_save_message_hyperlinks_embedded_global_ignore_paths_when_enabled(self) -> None:
         excludes_path = Path("/tmp/home/.gitignore_global")

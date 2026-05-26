@@ -3,24 +3,26 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.run_reuse_support import (
     build_startup_identity_metadata as build_startup_identity_metadata_impl,
     evaluate_run_reuse as evaluate_run_reuse_impl,
     mark_run_reused as mark_run_reused_impl,
     state_has_resumable_services as state_has_resumable_services_impl,
 )
+from envctl_engine.startup.protocols import ProjectContextLike
 from envctl_engine.state.models import PortPlan, RunState
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.planning import discover_tree_projects
 
 
-def effective_start_mode(runtime: Any, route: object) -> str:
+def effective_start_mode(runtime: Any, route: Route) -> str:
     if route.mode == "main" and runtime._setup_worktree_requested(route):
         return "trees"
     return route.mode
 
 
-def auto_resume_start_enabled(route: object) -> bool:
+def auto_resume_start_enabled(route: Route) -> bool:
     if route.command not in {"start", "plan"}:
         return False
     if bool(route.flags.get("no_resume")):
@@ -36,21 +38,27 @@ def build_startup_identity_metadata(
     runtime: Any,
     *,
     runtime_mode: str,
-    project_contexts: list[object],
+    project_contexts: list[ProjectContextLike],
     base_metadata: Mapping[str, object] | None = None,
-    route: object | None = None,
+    route: Route | None = None,
 ) -> dict[str, object]:
     return build_startup_identity_metadata_impl(
         runtime,
         runtime_mode=runtime_mode,
-        project_contexts=project_contexts,
+        project_contexts=list(project_contexts),
         base_metadata=base_metadata,
         route=route,
     )
 
 
-def evaluate_run_reuse(runtime: Any, *, runtime_mode: str, route: object, contexts: list[object]) -> object:
-    return evaluate_run_reuse_impl(runtime, runtime_mode=runtime_mode, route=route, contexts=contexts)
+def evaluate_run_reuse(
+    runtime: Any,
+    *,
+    runtime_mode: str,
+    route: Route,
+    contexts: list[ProjectContextLike],
+) -> object:
+    return evaluate_run_reuse_impl(runtime, runtime_mode=runtime_mode, route=route, contexts=list(contexts))
 
 
 def mark_run_reused(metadata: Mapping[str, object] | None, *, reason: str) -> dict[str, object]:
@@ -72,7 +80,7 @@ def load_auto_resume_state(runtime: Any, runtime_mode: str) -> RunState | None:
     return state
 
 
-def tree_parallel_startup_config(runtime: Any, *, mode: str, route: object, project_count: int) -> tuple[bool, int]:
+def tree_parallel_startup_config(runtime: Any, *, mode: str, route: Route, project_count: int) -> tuple[bool, int]:
     if mode != "trees" or project_count <= 1:
         return False, 1
 
@@ -107,16 +115,16 @@ def contexts_from_raw_projects(
     runtime: Any,
     raw_projects: list[tuple[str, Path]],
     *,
-    context_factory: Callable[..., object],
-) -> list[object]:
-    contexts: list[object] = []
+    context_factory: Callable[..., ProjectContextLike],
+) -> list[ProjectContextLike]:
+    contexts: list[ProjectContextLike] = []
     for index, (name, tree_dir) in enumerate(raw_projects):
         plans = runtime.port_planner.plan_project_stack(name, index=index)
         contexts.append(context_factory(name=name, root=tree_dir, ports=plans))
     return contexts
 
 
-def duplicate_project_context_error(contexts: list[object]) -> str | None:
+def duplicate_project_context_error(contexts: list[ProjectContextLike]) -> str | None:
     grouped: dict[str, list[str]] = {}
     for context in contexts:
         grouped.setdefault(context.name.lower(), []).append(str(context.root))
@@ -163,13 +171,18 @@ def set_plan_port_from_component(plan: PortPlan, component: Mapping[str, object]
         set_plan_port(plan, port)
 
 
-def discover_projects(runtime: Any, *, mode: str, context_factory: Callable[..., object]) -> list[object]:
+def discover_projects(
+    runtime: Any,
+    *,
+    mode: str,
+    context_factory: Callable[..., ProjectContextLike],
+) -> list[ProjectContextLike]:
     if mode == "main":
         ports = runtime.port_planner.plan_project_stack("Main", index=0)
         root = getattr(runtime.config, "execution_root", runtime.config.base_dir)
         return [context_factory(name="Main", root=root, ports=ports)]
 
-    contexts: list[object] = []
+    contexts: list[ProjectContextLike] = []
     projects = discover_tree_projects(runtime.config.base_dir, runtime.config.trees_dir_name)
     for index, (name, tree_dir) in enumerate(projects):
         plans = runtime.port_planner.plan_project_stack(name, index=index)
@@ -183,7 +196,7 @@ def discover_projects(runtime: Any, *, mode: str, context_factory: Callable[...,
     return contexts
 
 
-def reserve_project_ports(runtime: Any, context: object, route: object | None = None) -> None:
+def reserve_project_ports(runtime: Any, context: ProjectContextLike, route: Route | None = None) -> None:
     for service_name, plan in context.ports.items():
         owner = f"{context.name}:{service_name}"
         restart_preferred_port = plan.assigned if getattr(plan, "source", "") == "restart" else None
@@ -218,11 +231,9 @@ def reserve_project_ports(runtime: Any, context: object, route: object | None = 
                         "restart_preferred_port": restart_preferred_port,
                         "rebound_reason": "restart_preferred_port_unavailable",
                         "availability_mode": runtime.port_planner.availability_mode,
-                        "interactive_command": bool(
-                            getattr(route, "flags", {}).get("interactive_command", False)
-                            if route is not None
-                            else False
-                        ),
+                        "interactive_command": bool(route.flags.get("interactive_command", False))
+                        if route is not None
+                        else False,
                     }
                 )
                 if restart_conflict_detail:
@@ -251,7 +262,7 @@ def _restart_preferred_conflict_detail(port_planner: Any, port: int) -> str | No
             lock_path = lock_path_for_port(port)
         except Exception:
             lock_path = None
-        if lock_path is not None:
+        if isinstance(lock_path, Path):
             try:
                 lock_exists = bool(lock_path.exists())
             except OSError:

@@ -5,6 +5,7 @@ from typing import Any, Callable, Mapping
 
 from envctl_engine.runtime.command_resolution import CommandResolutionError, resolve_service_start_command
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
 
 _DEFAULT_APP_SERVICES = {"backend", "frontend"}
 
@@ -47,6 +48,38 @@ def no_local_app_system_message() -> str:
         "no local app system is configured for this repo/worktree; continuing with the implementation "
         "session only. --entire-system was honored, but there was nothing configured to start."
     )
+
+
+def skip_no_local_app_system_services(
+    orchestrator: StartupOrchestratorLike,
+    context: ProjectContextLike,
+    route: Route | None,
+    mode: str,
+    selected_service_types: set[str],
+) -> bool:
+    rt = orchestrator.runtime
+    if not no_local_app_system_configured(
+        config=rt.config,
+        env=rt.env,
+        route=route,
+        mode=mode,
+        project_root=context.root,
+        selected_service_types=selected_service_types,
+        command_exists=getattr(rt, "_command_exists", None),
+    ):
+        return False
+    rt._emit(
+        "service.attach.skipped",
+        project=context.name,
+        mode=mode,
+        reason="no_system_configured",
+        requested_scope=route.flags.get("runtime_scope") if route is not None else None,
+        selected_service_types=sorted(selected_service_types),
+    )
+    record_warning = getattr(rt, "_record_project_startup_warning", None)
+    if callable(record_warning):
+        record_warning(context.name, no_local_app_system_message())
+    return True
 
 
 def _has_explicit_local_system_signal(

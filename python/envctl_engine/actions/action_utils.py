@@ -4,6 +4,8 @@ from pathlib import Path
 import shutil
 import sys
 
+from envctl_engine.shared.python_project_metadata import pyproject_uses_poetry as pyproject_uses_poetry
+
 
 def detect_envctl_python() -> str | None:
     runtime_python = str(getattr(sys, "executable", "") or "").strip()

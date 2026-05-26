@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from envctl_engine.runtime.engine_runtime_lifecycle_support import (
     blast_worktree_before_delete as runtime_blast_worktree_before_delete,
@@ -16,8 +17,13 @@ from envctl_engine.runtime.engine_runtime_misc_support import (
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RequirementsResult, RunState
 
+if TYPE_CHECKING:
+    from envctl_engine.runtime.lifecycle_cleanup_orchestrator import LifecycleCleanupOrchestrator
+
 
 class RuntimeLifecycleFacadeMixin:
+    lifecycle_cleanup_orchestrator: "LifecycleCleanupOrchestrator" = cast("LifecycleCleanupOrchestrator", object())
+
     def _release_port_session(self) -> None:
         runtime_release_port_session(self)
 

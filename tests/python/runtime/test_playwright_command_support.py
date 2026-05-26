@@ -262,6 +262,34 @@ class PlaywrightCommandSupportTests(unittest.TestCase):
         self.assertEqual(payload["error"], "frontend_not_running")
         self.assertEqual(runner.calls, [])
 
+    def test_invalid_loaded_state_is_reported_as_missing_state(self) -> None:
+        runner = _Runner()
+        runtime = SimpleNamespace(
+            env={},
+            config=SimpleNamespace(raw={}),
+            runtime_root=Path("/tmp/envctl-runtime-test"),
+            process_runner=runner,
+            _try_load_existing_state=lambda **_kwargs: object(),
+            _state_lookup_strict_mode_match=lambda _route: True,
+            _emit=lambda *_args, **_kwargs: None,
+        )
+        route = Route(
+            command="playwright",
+            mode="trees",
+            projects=["feature-a-1"],
+            passthrough_args=["echo", "x"],
+            flags={"json": True},
+        )
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = run_playwright_command(runtime, route)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["error"], "state_not_found")
+        self.assertEqual(runner.calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()

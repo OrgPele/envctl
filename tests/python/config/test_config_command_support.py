@@ -212,6 +212,9 @@ class ConfigCommandSupportTests(unittest.TestCase):
                 response["ignore_status"]["managed_patterns"],
                 [".envctl*", "MAIN_TASK.md", "OLD_TASK_*.md", "trees/", "trees-*"],
             )
+            self.assertEqual(Path(response["agent_instructions"]["path"]), (repo / "AGENTS.md").resolve())
+            self.assertTrue(response["agent_instructions"]["updated"])
+            self.assertIsNone(response["agent_instructions"]["warning"])
 
     def test_headless_config_bootstraps_missing_global_excludes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -259,6 +262,8 @@ class ConfigCommandSupportTests(unittest.TestCase):
             self.assertIn("Saved startup config:", output)
             self.assertIn("Config saved. Restart required for running services to adopt changes.", output)
             self.assertIn(f"Configured Git global excludes at {Path(tmpdir) / 'home' / '.gitignore_global'}.", output)
+            self.assertIn("Updated agent instructions:", output)
+            self.assertIn(str((repo / "AGENTS.md").resolve()), output)
             self.assertNotIn(".gitignore on save", output)
             self.assertNotIn("not configured", output.lower())
 

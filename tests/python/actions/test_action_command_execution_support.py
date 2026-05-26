@@ -67,6 +67,19 @@ class _Orchestrator:
         return 0
 
 
+class _DeferredOutputOrchestrator(_Orchestrator):
+    def __init__(self) -> None:
+        super().__init__()
+        self.deferred_output_calls = 0
+
+    def run_test_action(self, _route, _targets: list[object]) -> int:
+        self._deferred_post_action_output = self._deferred_output
+        return 0
+
+    def _deferred_output(self) -> None:
+        self.deferred_output_calls += 1
+
+
 @contextmanager
 def _policy_context(_policy):
     yield
@@ -120,6 +133,53 @@ class ActionCommandExecutionSupportTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(
             {"event": "action.command.finish", "command": "test", "code": 1, "error": "No targets"},
+            orchestrator.runtime.events,
+        )
+
+    def test_execute_action_command_flushes_deferred_output_before_finish(self) -> None:
+        orchestrator = _DeferredOutputOrchestrator()
+        route = SimpleNamespace(command="test", mode="main", flags={})
+
+        code = execute_action_command(
+            orchestrator,
+            route,
+            spinner_factory=lambda *_args, **_kwargs: _policy_context(orchestrator.spinner),
+            resolve_spinner_policy_fn=lambda _env: SimpleNamespace(enabled=False),
+            emit_spinner_policy_fn=lambda *_args, **_kwargs: None,
+            use_spinner_policy_fn=_policy_context,
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(orchestrator.deferred_output_calls, 1)
+        self.assertIsNone(orchestrator._deferred_post_action_output)
+        self.assertEqual(orchestrator.runtime.events[-1], {"event": "action.command.finish", "command": "test", "code": 0})
+
+    def test_execute_action_command_suppresses_finish_event_for_json_commands(self) -> None:
+        orchestrator = _Orchestrator()
+        route = SimpleNamespace(command="test", mode="main", flags={"json": True})
+
+        code = execute_action_command(
+            orchestrator,
+            route,
+            spinner_factory=lambda *_args, **_kwargs: _policy_context(orchestrator.spinner),
+            resolve_spinner_policy_fn=lambda _env: SimpleNamespace(enabled=True),
+            emit_spinner_policy_fn=lambda *_args, **_kwargs: None,
+            use_spinner_policy_fn=_policy_context,
+        )
+
+        self.assertEqual(code, 0)
+        self.assertNotIn(
+            {"event": "action.command.finish", "command": "test", "code": 0},
+            orchestrator.runtime.events,
+        )
+        self.assertIn(
+            {
+                "event": "ui.spinner.disabled",
+                "component": "action.command",
+                "command": "test",
+                "op_id": "action.test",
+                "reason": "interactive_command_spinner_suppressed",
+            },
             orchestrator.runtime.events,
         )
 

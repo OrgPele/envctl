@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Callable
 import sys
 
-from envctl_engine.actions.action_test_summary_collection import suite_display_name
+from typing import Protocol
+
+from envctl_engine.actions.action_test_summary_collection import summary_float, summary_int, suite_display_name
 from envctl_engine.test_output.symbols import format_duration
 from envctl_engine.ui.path_links import render_path_for_terminal
 
@@ -35,7 +37,7 @@ def print_test_suite_overview(
         outcomes,
         key=lambda value: (
             str(value.get("project_name", "")).lower(),
-            int(value.get("index", 0)),
+            summary_int(value.get("index")),
         ),
     ):
         project_name = str(item.get("project_name", "")).strip() or "Main"
@@ -50,14 +52,14 @@ def print_test_suite_overview(
             label_rendered = colorize(label, fg="cyan", bold=True)
             if multi_project:
                 label_rendered = f"  {label_rendered}"
-            returncode = int(item.get("returncode", 1))
+            returncode = summary_int(item.get("returncode"), default=1)
             parsed = item.get("parsed")
-            parsed_total = int(getattr(parsed, "total", 0) or 0) if parsed is not None else 0
+            parsed_total = summary_int(getattr(parsed, "total", 0)) if parsed is not None else 0
             counts_detected = bool(getattr(parsed, "counts_detected", False)) if parsed is not None else False
-            passed = int(getattr(parsed, "passed", 0) or 0) if parsed is not None else 0
-            failed = int(getattr(parsed, "failed", 0) or 0) if parsed is not None else 0
-            skipped = int(getattr(parsed, "skipped", 0) or 0) if parsed is not None else 0
-            duration_ms = float(item.get("duration_ms", 0.0) or 0.0)
+            passed = summary_int(getattr(parsed, "passed", 0)) if parsed is not None else 0
+            failed = summary_int(getattr(parsed, "failed", 0)) if parsed is not None else 0
+            skipped = summary_int(getattr(parsed, "skipped", 0)) if parsed is not None else 0
+            duration_ms = summary_float(item.get("duration_ms"))
             duration_text = format_duration(max(duration_ms / 1000.0, 0.0))
 
             icon = colorize("✓", fg="green", bold=True) if returncode == 0 else colorize("✗", fg="red", bold=True)
@@ -118,8 +120,15 @@ def print_test_suite_overview(
     print(colorize("======================================================================", fg="cyan"))
 
 
+class TestSuiteOverviewOrchestrator(Protocol):
+    @property
+    def runtime(self) -> object: ...
+
+    def _colorize(self, text: str, **kwargs: object) -> str: ...
+
+
 def print_test_suite_overview_for_orchestrator(
-    orchestrator: object,
+    orchestrator: TestSuiteOverviewOrchestrator,
     outcomes: list[dict[str, object]],
     *,
     summary_metadata: dict[str, dict[str, object]] | None = None,
@@ -127,6 +136,6 @@ def print_test_suite_overview_for_orchestrator(
     print_test_suite_overview(
         outcomes,
         summary_metadata=summary_metadata,
-        env=dict(getattr(orchestrator.runtime, "env", {})),  # type: ignore[attr-defined]
-        colorize=orchestrator._colorize,  # type: ignore[attr-defined]
+        env=dict(getattr(orchestrator.runtime, "env", {})),
+        colorize=orchestrator._colorize,
     )

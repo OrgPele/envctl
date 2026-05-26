@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from envctl_engine.actions.action_test_runner import _outcome_int
 from tests.python.actions.actions_parity_test_support import (
     PythonEngineRuntime,
     RunState,
@@ -21,6 +22,13 @@ from tests.python.actions.actions_parity_test_support import (
 
 
 class ActionsTestFailureSummaryParityTests(_ActionsParityTestCase):
+    def test_outcome_int_preserves_valid_values_and_defaults_malformed_values(self) -> None:
+        self.assertEqual(_outcome_int(2), 2)
+        self.assertEqual(_outcome_int("3"), 3)
+        self.assertEqual(_outcome_int(None), 0)
+        self.assertEqual(_outcome_int("not-a-number", default=9), 9)
+        self.assertEqual(_outcome_int(object(), default=4), 4)
+
     def test_interactive_test_action_omits_inline_failure_excerpt_when_summary_artifact_is_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -284,7 +292,7 @@ class ActionsTestFailureSummaryParityTests(_ActionsParityTestCase):
                         stdout="",
                         stderr=(
                             "Traceback (most recent call last):\n"
-                            "  File \"/tmp/project/conftest.py\", line 4, in <module>\n"
+                            '  File "/tmp/project/conftest.py", line 4, in <module>\n'
                             "ModuleNotFoundError: No module named 'missing_dependency'\n"
                         ),
                     )
@@ -400,4 +408,3 @@ class ActionsTestFailureSummaryParityTests(_ActionsParityTestCase):
             self.assertEqual(code, 0)
             self.assertFalse((repo / "test-results").exists())
             self.assertFalse((engine.runtime_root / "runs").exists())
-

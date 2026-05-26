@@ -4,6 +4,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from envctl_engine.actions.action_ship_contract import ship_action_payload
+from envctl_engine.runtime.runtime_context import (
+    run_dir_path,
+    save_resume_state,
+)
+from envctl_engine.shared.artifact_names import project_command_artifact_path
 from envctl_engine.test_output.parser_base import strip_ansi
 
 
@@ -72,6 +78,7 @@ def review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str
         "summary file": "summary_path",
         "full review bundle": "bundle_path",
     }
+    artifact_labels = set(label_map)
     parsed: dict[str, object] = {}
     for index, raw_line in enumerate(lines):
         label = raw_line.strip().lower()
@@ -82,6 +89,8 @@ def review_success_artifact_paths(*, stdout: object, stderr: object) -> dict[str
             candidate = follow_line.strip()
             if not candidate:
                 continue
+            if candidate.lower() in artifact_labels:
+                break
             parsed[key] = candidate
             break
     return parsed
@@ -95,10 +104,9 @@ def write_project_action_failure_report(
     command_name: str,
     output: str,
 ) -> Path:
-    results_root = runtime.state_repository.run_dir_path(run_id)
+    results_root = run_dir_path(runtime, run_id)
     results_root.mkdir(parents=True, exist_ok=True)
-    safe_project = project_name.replace(" ", "_")
-    report_path = results_root / f"{safe_project}_{command_name}.txt"
+    report_path = project_command_artifact_path(results_root, project_name=project_name, command_name=command_name)
     report_path.write_text((output or "Command failed.").rstrip() + "\n", encoding="utf-8")
     return report_path
 
@@ -111,7 +119,39 @@ def first_output_line(output: object) -> str:
     return ""
 
 
+def _ship_completed_payload(completed: Any) -> dict[str, object]:
+    for stream_name in ("stdout", "stderr"):
+        payload = ship_action_payload(getattr(completed, stream_name, ""))
+        if payload:
+            return payload
+    return {}
+
+
+def ship_action_status(completed: Any) -> str:
+    payload = _ship_completed_payload(completed)
+    status = str(payload.get("status") or "").strip()
+    return status or "success"
+
+
+def ship_action_status_message(project_name: str, completed: Any) -> str:
+    payload = _ship_completed_payload(completed)
+    status = str(payload.get("status") or "").strip() or "success"
+    operation_statuses = payload.get("operation_statuses")
+    operation_parts: list[str] = []
+    if isinstance(operation_statuses, Mapping):
+        for key in ("commit", "push", "pr", "merge_conflicts", "checks"):
+            value = str(operation_statuses.get(key) or "").strip()
+            if value:
+                operation_parts.append(f"{key}={value}")
+    operations = f" ({', '.join(operation_parts)})" if operation_parts else ""
+    pr_url = str(payload.get("pr_url") or "").strip()
+    pr_suffix = f" {pr_url}" if pr_url else ""
+    return f"ship handoff status for {project_name}: {status}{operations}{pr_suffix}"
+
+
 def project_action_success_status(*, command_name: str, completed: Any) -> str:
+    if command_name == "ship":
+        return ship_action_status(completed)
     if command_name != "pr":
         return "success"
     output = strip_ansi(str(getattr(completed, "stdout", "") or ""))
@@ -132,7 +172,7 @@ def persist_project_action_result(
     migrate_env_contracts: Mapping[str, Mapping[str, object]],
     failure_summary_lines: Callable[..., list[str]],
     failure_headline: Callable[[str], str],
-    runtime_map_builder: Callable[..., object],
+    runtime_map_builder: Callable[[object], dict[str, object]],
     extra_entry: Mapping[str, object] | None = None,
 ) -> None:
     state = runtime.load_existing_state(mode=mode)
@@ -175,8 +215,8 @@ def persist_project_action_result(
     project_metadata[command_name] = entry
     metadata[project_name] = project_metadata
     state.metadata["project_action_reports"] = metadata
-    runtime.state_repository.save_resume_state(
+    save_resume_state(
+        runtime,
         state=state,
-        emit=runtime.emit,
         runtime_map_builder=runtime_map_builder,
     )
