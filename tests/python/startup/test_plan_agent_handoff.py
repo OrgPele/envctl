@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import unittest
 
 from envctl_engine.planning.plan_agent.models import (
+    CreatedPlanWorktree,
     PlanAgentAttachValidation,
     PlanAgentLaunchOutcome,
     PlanAgentLaunchResult,
@@ -441,6 +442,43 @@ class PlanAgentHandoffTests(unittest.TestCase):
                 ("prepare", session.pending_plan_agent_worktrees),
                 ("launch", session.pending_plan_agent_worktrees),
                 ("emit", launch_result),
+            ],
+        )
+
+    def test_prepare_and_launch_plan_agent_worktrees_accepts_import_routes(self) -> None:
+        session = _session(args=["--import", "feature/foo", "--tmux", "--entire-system"])
+        session.plan_agent_launch_requested = True
+        session.pending_plan_agent_worktrees = (
+            CreatedPlanWorktree(name="feature-foo", root=Path("/tmp/feature-foo"), plan_file=""),
+        )
+        runtime = SimpleNamespace(config=SimpleNamespace(), env={}, _emit=lambda event, **payload: None)
+        launch_result = SimpleNamespace(status="launched", reason="ok", attach_target=SimpleNamespace(session_name="s"))
+        calls: list[tuple[str, object]] = []
+
+        result = prepare_and_launch_plan_agent_worktrees(
+            runtime,
+            session,
+            resolve_launch_config_fn=lambda config, env, *, route: SimpleNamespace(enabled=True),
+            ensure_run_id=lambda sess: calls.append(("ensure_run_id", sess)),
+            report_progress=lambda *args, **kwargs: None,
+            prepare_dependencies_for_launch=lambda *args, **kwargs: calls.append(("prepare", kwargs["created_worktrees"])),
+            launch_with_spinner=lambda *args, **kwargs: calls.append(("launch", kwargs["created_worktrees"]))
+            or launch_result,
+            suppress_progress_output=lambda route: False,
+            validate_attach_target_fn=lambda *args, **kwargs: PlanAgentAttachValidation(True, "ok"),
+            emit_launch_state=lambda rt, sess, launch: calls.append(("emit", sess.effective_route.command)),
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(session.effective_route.command, "import")
+        self.assertIs(session.plan_agent_launch_result, launch_result)
+        self.assertEqual(
+            calls,
+            [
+                ("ensure_run_id", session),
+                ("prepare", session.pending_plan_agent_worktrees),
+                ("launch", session.pending_plan_agent_worktrees),
+                ("emit", "import"),
             ],
         )
 

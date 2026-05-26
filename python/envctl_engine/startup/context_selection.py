@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 import time
-from typing import Protocol
+from typing import Protocol, cast
 
-from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
+from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanSelectionResult, PlanWorktreeSyncResult
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
@@ -33,6 +33,10 @@ def select_startup_contexts(
     project_contexts = runtime._discover_projects(mode=runtime_mode)
     if route.command == "plan":
         project_contexts = runtime._select_plan_projects(route, project_contexts)
+    elif route.command == "import":
+        project_contexts = _select_imported_worktree(session, runtime=runtime)
+        if not project_contexts:
+            return 1
     elif trees_start_selection_required(route=route, runtime_mode=runtime_mode):
         project_contexts = select_start_tree_projects(runtime=runtime, route=route, project_contexts=project_contexts)
     else:
@@ -72,11 +76,45 @@ def select_startup_contexts(
         else:
             print("No projects discovered for selected mode.")
         return 1
-    if route.command == "plan" and not bool(route.flags.get("planning_prs")) and not bool(route.flags.get("dry_run")):
+    if (
+        route.command in {"plan", "import"}
+        and not bool(route.flags.get("planning_prs"))
+        and not bool(route.flags.get("dry_run"))
+    ):
         _prepare_plan_agent_worktrees(session, runtime=runtime, project_contexts=project_contexts)
     session.selected_contexts = list(project_contexts)
     session.contexts_to_start = list(project_contexts)
     return None
+
+
+def _select_imported_worktree(
+    session: StartupSession,
+    *,
+    runtime: StartupRuntime,
+) -> list[ProjectContextLike]:
+    route = session.effective_route
+    branch_input = next((arg.strip() for arg in route.passthrough_args if arg.strip()), "")
+    planning_orchestrator = getattr(runtime, "planning_worktree_orchestrator", None)
+    importer = getattr(planning_orchestrator, "import_remote_branch_worktree", None)
+    if not branch_input or not callable(importer):
+        print("--import requires a remote branch argument.")
+        return []
+    result = cast(PlanWorktreeSyncResult, importer(branch_input=branch_input))
+    if result.error:
+        print(result.error)
+        return []
+    project_contexts = runtime._contexts_from_raw_projects(list(result.raw_projects))
+    setattr(
+        planning_orchestrator,
+        "_last_plan_selection_result",
+        PlanSelectionResult(
+            raw_projects=list(result.raw_projects),
+            selected_contexts=list(project_contexts),
+            created_worktrees=result.created_worktrees,
+            error=result.error,
+        ),
+    )
+    return list(project_contexts)
 
 
 def _prepare_plan_agent_worktrees(

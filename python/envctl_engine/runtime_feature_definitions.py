@@ -61,6 +61,24 @@ COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         parity_status="verified_python",
         notes="Plan creation, sync, scale-down, and disabled-run dashboard flows are implemented in Python.",
     ),
+    "import": FeatureDefinition(
+        area="planning",
+        feature="Command: import an existing origin branch into a managed worktree and start or attach to the selected environment",
+        user_visible=True,
+        shell_source_of_truth=(),
+        python_source_of_truth=(
+            "python/envctl_engine/planning/worktree_import_commands.py",
+            "python/envctl_engine/planning/worktree_import_orchestration.py",
+            "python/envctl_engine/startup/startup_orchestrator.py",
+        ),
+        evidence_tests=(
+            "tests/python/planning/test_worktree_import_commands.py",
+            "tests/python/planning/test_worktree_import_orchestration.py",
+            "tests/python/startup/test_startup_context_selection.py",
+        ),
+        parity_status="verified_python",
+        notes="Remote branch import is Python-owned, fetches origin branches without force-resetting local work, and reuses plan-agent launch plumbing.",
+    ),
     "resume": FeatureDefinition(
         area="lifecycle",
         feature="Command: resume the last saved run state for the selected mode",

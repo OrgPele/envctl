@@ -25,13 +25,13 @@ class CommandHelpTopic:
     related: tuple[str, ...] = ()
 
 
-WORKFLOW_COMMANDS = frozenset({"start", "restart", "resume", "dashboard", "config", "plan"})
+WORKFLOW_COMMANDS = frozenset({"start", "restart", "resume", "dashboard", "config", "plan", "import"})
 DEBUG_COMMANDS = frozenset({"debug-pack", "debug-report", "debug-last", "doctor"})
 UTILITY_COMMANDS = frozenset(
     {"codex-tmux", "ensure-worktree", "install-prompts", "migrate-hooks", "supabase-user", "qa-user", "playwright"}
 )
 DEFAULT_HEADLESS_COMMANDS = ACTION_COMMANDS | LIFECYCLE_CLEANUP_COMMANDS | STATE_ACTION_COMMANDS
-GENERAL_WORKFLOW_ORDER = ("start", "resume", "restart", "dashboard", "config", "plan")
+GENERAL_WORKFLOW_ORDER = ("start", "resume", "restart", "dashboard", "config", "plan", "import")
 GENERAL_ACTION_ORDER = (
     "stop",
     "stop-all",
@@ -93,6 +93,8 @@ def _help_target_command(route: Route | None) -> str | None:
     try:
         resolved = parse_route(filtered, env={})
     except Exception:
+        if filtered == ["import"]:
+            return "import"
         return None
     command = str(getattr(resolved, "command", "")).strip()
     return command if command and command != "help" else None
@@ -127,7 +129,7 @@ def _render_general_help() -> str:
             "  Workflow commands (may start services or open interactive flows):",
             f"    {workflow}",
             "    Use these when you want envctl to run or restore the local environment,",
-            "    enter the dashboard, edit configuration, or create plan worktrees.",
+            "    enter the dashboard, edit configuration, or create/import worktrees.",
             "",
             "  Specific action commands (non-interactive/headless by default):",
             f"    {actions}",
@@ -186,6 +188,7 @@ def _render_general_help() -> str:
             "  envctl pr --project feature-a-1 --pr-base main",
             "  envctl kill-all",
             "  envctl --plan feature/task --omx --ultragoal --headless",
+            "  envctl --import origin/feature/task --cmux --entire-system --headless",
             "  envctl list-targets --json",
             "  envctl show-config --json",
             "",
@@ -193,6 +196,7 @@ def _render_general_help() -> str:
             "  envctl <command> --help       # command-specific usage, flags, examples, and notes",
             "  envctl help <command>         # equivalent prefix form for focused help",
             "  envctl --plan --help          # planning/worktree implementation help",
+            "  envctl --import --help        # remote-branch worktree import help",
             "  envctl install-prompts --help # AI workflow preset installation help",
             "  envctl codex-tmux --help      # repo-scoped Codex tmux helper help",
             "  envctl list-commands          # one command per line for scripts/completion",
@@ -408,6 +412,46 @@ COMMAND_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         ),
         aliases=("--plan", "parallel-plan", "sequential-plan", "--parallel-plan", "--sequential-plan"),
         related=("ensure-worktree", "list-trees", "install-prompts", "codex-tmux"),
+    ),
+    "import": CommandHelpTopic(
+        command="import",
+        summary="import an existing origin branch into an envctl worktree and optionally launch AI sessions",
+        usage=(
+            "envctl --import <branch|origin/branch|refs/remotes/origin/branch> [--headless] "
+            "[--cmux|--tmux|--omx] [--codex|--opencode]",
+            "envctl import <branch> [--tmux|--cmux|--omx] [--entire-system|--no-infra]",
+        ),
+        what_it_does=(
+            "fetches the requested branch from origin without forcing or rewriting local branches",
+            "creates or reuses trees/imported/<branch-slug> on the matching local branch",
+            "fast-forwards reused imports from origin/<branch> and records import provenance",
+            "hands the imported worktree to the same cmux/tmux/OMX plan-agent launch pipeline used by --plan",
+        ),
+        flags=(
+            "--headless          stay non-interactive and print follow-up/attach guidance",
+            "--cmux              launch the cmux plan-agent workflow; default when cmux is installed",
+            "--tmux              envctl owns the tmux session/window and submits the workflow there",
+            "--omx               envctl asks OMX to create/manage the detached Codex tmux session",
+            "--codex             force Codex for cmux/tmux launches",
+            "--opencode          force OpenCode for cmux/tmux launches",
+            "--only-backend|--only-frontend|--no-deps|--no-infra  skip local app/dependency launch pieces",
+            "--new-session       create a fresh cmux/tmux/OMX launch target instead of reusing an existing one",
+        ),
+        notes=(
+            "v1 imports only origin branches; refs/remotes/origin/<branch>, origin/<branch>, "
+            "and <branch> normalize to the same source",
+            "import does not create a plan file, does not seed MAIN_TASK.md from todo/plans, "
+            "and does not use git branch -B or force-reset existing work",
+            "if the target worktree already exists, envctl verifies it is on the requested branch "
+            "before fast-forwarding from origin",
+        ),
+        examples=(
+            "envctl --import feature/foo --headless",
+            "envctl --import origin/feature/foo --cmux --entire-system --headless",
+            "envctl import feature/foo --tmux --codex --entire-system",
+        ),
+        aliases=("--import",),
+        related=("plan", "ensure-worktree", "list-trees", "codex-tmux"),
     ),
     "stop": CommandHelpTopic(
         command="stop",

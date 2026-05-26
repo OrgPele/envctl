@@ -284,6 +284,8 @@ _ENV_ASSIGNMENT_KEYS = {
 
 _COMMAND_ALIAS_PAIRS = (
     ("start", "start"),
+    ("--import", "import"),
+    ("import", "import"),
     ("--plan", "plan"),
     ("plan", "plan"),
     ("parallel-plan", "plan"),
@@ -431,6 +433,7 @@ COMMAND_ALIASES = _unique_mapping(registry_name="COMMAND_ALIASES", pairs=_COMMAN
 SUPPORTED_COMMANDS = sorted(
     {
         "start",
+        "import",
         "plan",
         "resume",
         "restart",
@@ -503,4 +506,3 @@ def list_supported_flag_tokens() -> list[str]:
         .union(explicit)
     )
     return sorted(supported)
-

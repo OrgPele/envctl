@@ -80,6 +80,7 @@ def parse_route(argv: list[str], env: Mapping[str, str]) -> Route:
     _apply_default_headless_policy(state)
     _validate_plan_agent_cli_flags(state)
     _validate_plan_agent_workflow_flags(state)
+    _validate_import_branch_argument(state)
     _validate_dependency_scope_flags(state)
 
     # Phase 5: Route Finalization - build final Route object
@@ -143,6 +144,7 @@ def _classify_token(token: str, norm: str) -> str:
     # Check for plan-related inline flags
     if (
         token.startswith("--plan=")
+        or token.startswith("--import=")
         or token.startswith("--plan-selection=")
         or token.startswith("--planning-envs=")
         or token.startswith("--planning-prs=")
@@ -588,6 +590,16 @@ def _handle_env_assignment(flags: dict[str, object], token: str) -> None:
 
 def _handle_plan_flag(state: _ParserState, token: str) -> None:
     """Handle plan-related inline flags."""
+    if token.startswith("--import="):
+        state.command = "import"
+        state.command_explicit = True
+        state.mode = "trees"
+        value = token.split("=", 1)[1].strip()
+        if not value:
+            raise RouteError("--import requires a remote branch argument.")
+        state.passthrough.extend(_parse_projects(value))
+        return
+
     if not state.explain_startup_requested:
         state.command = "plan"
     state.command_explicit = True
@@ -607,6 +619,13 @@ def _handle_plan_flag(state: _ParserState, token: str) -> None:
         state.flags["parallel_trees"] = True
     if "planning-prs" in token or "planning_prs" in token:
         state.flags["planning_prs"] = True
+
+
+def _validate_import_branch_argument(state: _ParserState) -> None:
+    if state.command != "import":
+        return
+    if not any(str(arg).strip() for arg in state.passthrough):
+        raise RouteError("--import requires a remote branch argument.")
 
 
 def _phase_finalize(state: _ParserState, raw_argv: list[str]) -> Route:
