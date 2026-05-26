@@ -639,9 +639,10 @@ class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
             with redirect_stdout(out):
                 code = engine.dispatch(route)
 
+            rendered = out.getvalue()
             self.assertEqual(code, 1)
-            self.assertNotIn("missing_requirement_start_command", out.getvalue())
-            self.assertIn("missing_service_start_command", out.getvalue())
+            self.assertNotIn("missing_requirement_start_command", rendered)
+            self.assertIn("missing_service_start_command", rendered)
             self.assertTrue(any(call[0][:2] == ("docker", "ps") for call in fake_runner.run_calls))
 
     def test_start_fails_when_duplicate_project_identities_are_discovered(self) -> None:
@@ -662,7 +663,7 @@ class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
             self.assertEqual(code, 1)
             self.assertIn("Duplicate project identities detected", out.getvalue())
 
-    def test_startup_fails_with_actionable_error_when_no_real_service_commands_resolve(self) -> None:
+    def test_plan_startup_skips_unconfigured_default_app_services(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -681,16 +682,148 @@ class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
 
             out = StringIO()
             with redirect_stdout(out):
                 code = engine.dispatch(route)
 
-            self.assertEqual(code, 1)
-            self.assertNotIn("missing_requirement_start_command", out.getvalue())
-            self.assertIn("missing_service_start_command", out.getvalue())
+            rendered = out.getvalue()
+            self.assertEqual(code, 0)
+            self.assertIn("No local app system is configured for feature-a-1", rendered)
+            self.assertIn("envctl is continuing with the implementation session only", rendered)
+            self.assertIn("--entire-system was honored, but there was nothing configured to start", rendered)
+            self.assertNotIn("missing_requirement_start_command", rendered)
+            self.assertNotIn("missing_service_start_command", rendered)
+            self.assertNotIn("local app startup failed", rendered)
             self.assertEqual(fake_runner.start_background_calls, [])
+            skip_events = [event for event in engine.events if event.get("event") == "service.attach.skipped"]
+            self.assertTrue(skip_events)
+            self.assertEqual(skip_events[-1].get("reason"), "no_system_configured")
+            self.assertEqual(skip_events[-1].get("requested_scope"), "entire-system")
+            self.assertEqual(skip_events[-1].get("selected_services"), ["backend", "frontend"])
+
+    def test_plan_startup_skips_repo_with_launch_env_templates_but_no_app_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "\n".join(
+                    [
+                        "# >>> envctl managed startup config >>>",
+                        "ENVCTL_DEFAULT_MODE=trees",
+                        "BACKEND_DIR=.",
+                        "FRONTEND_DIR=",
+                        "# <<< envctl managed startup config <<<",
+                        "# >>> envctl backend launch env >>>",
+                        "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}",
+                        "REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}",
+                        "# <<< envctl backend launch env <<<",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 0)
+            self.assertIn("No local app system is configured for feature-a-1", rendered)
+            self.assertNotIn("missing_service_start_command", rendered)
+            self.assertEqual(fake_runner.start_background_calls, [])
+
+    def test_explicit_backend_enable_keeps_missing_service_command_actionable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "TREES_BACKEND_ENABLE": "true",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 1)
+            self.assertNotIn("missing_requirement_start_command", rendered)
+            self.assertIn("missing_service_start_command", rendered)
+            self.assertNotIn("No local app system is configured", rendered)
+            self.assertEqual(fake_runner.start_background_calls, [])
+
+    def test_autodetectable_app_layout_still_starts_under_entire_system(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            project = repo / "trees" / "feature-a" / "1"
+            (project / "backend" / "app").mkdir(parents=True, exist_ok=True)
+            (project / "frontend").mkdir(parents=True, exist_ok=True)
+            (project / "backend" / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+            (project / "backend" / "app" / "main.py").write_text("app = object()\n", encoding="utf-8")
+            (project / "frontend" / "package.json").write_text(
+                '{"scripts":{"dev":"vite --host 127.0.0.1"}}',
+                encoding="utf-8",
+            )
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            engine._command_exists = lambda command: command in {"python", "python3", "npm"}  # type: ignore[method-assign]
+            fake_runner = _FakeSetupWorktreeRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 0)
+            self.assertNotIn("No local app system is configured", rendered)
+            self.assertGreaterEqual(len(fake_runner.start_background_calls), 2)
+            commands = [" ".join(call[0]) for call in fake_runner.start_background_calls]
+            self.assertTrue(any("uvicorn app.main:app" in command for command in commands))
+            self.assertTrue(any("npm run dev" in command for command in commands))
 
     def test_runtime_env_overrides_forward_docker_and_setup_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

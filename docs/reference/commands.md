@@ -352,6 +352,11 @@ envctl kill --backend --headless     # alias for stop --backend
 envctl kill-all --headless           # alias for stop-all
 ```
 
+For AI plan-agent launches, `--entire-system` starts configured or autodetected local app services. In a repo with no
+local app system configured, the default backend/frontend selections are treated as an empty app surface: envctl reports
+that no local app system is configured, keeps dependency and AI-session startup moving, and does not print
+`missing_service_start_command`.
+
 Review branch-relative changes:
 
 ```bash
@@ -503,6 +508,7 @@ Optional plan-agent launch config for `--plan`:
 Degraded plan-agent handoff:
 
 - `envctl --plan <selector> --tmux --headless` and `envctl --plan <selector> --omx --headless` can still succeed when the implementation AI session starts but local backend/frontend startup cannot resolve a service command
+- when `--entire-system` finds no configured or autodetectable local app system, envctl prints that there is no local app system configured and continues with the implementation session only; this is not rendered as a degraded local startup failure
 - if startup revalidation finds that an OMX-managed attach target is stale or exited, headless output suppresses stale `attach:` guidance and prints a native fallback such as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system --headless --new-session`
 - this path prints `Implementation session is running, but local app startup failed.`, then an `AI session:` section with copy-pastable `attach:` and `kill:` guidance when a tmux session is known
 - the `Local app startup:` section names the worktree, preserves the raw startup error, and points to `ENVCTL_BACKEND_START_CMD` / `ENVCTL_FRONTEND_START_CMD` when services should run locally

@@ -21,6 +21,7 @@ from envctl_engine.startup.service_execution_policy import (
     service_attach_parallel_enabled,
     service_prep_parallel_enabled,
 )
+from envctl_engine.startup.no_system_configured import skip_unconfigured_default_app_services
 from envctl_engine.startup.service_launch_diagnostics import record_runtime_launch_diagnostics
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
 from envctl_engine.startup.public_urls import browser_backend_url, resolve_public_host
@@ -190,6 +191,11 @@ def start_project_services(
             mode=effective_mode,
             reason="all_services_disabled",
         )
+        return {}
+    if route is not None and skip_unconfigured_default_app_services(
+        runtime=rt, context=context, route=route, mode=effective_mode,
+        selected_service_types=set(selected_service_types),
+    ):
         return {}
 
     service_started = time.monotonic()
