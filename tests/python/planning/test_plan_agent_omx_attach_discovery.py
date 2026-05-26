@@ -1,6 +1,10 @@
 # ruff: noqa: F403,F405
 from __future__ import annotations
 
+from itertools import chain, repeat
+
+from envctl_engine.planning.plan_agent import omx_attach_support
+
 from tests.python.planning.plan_agent_launch_support_test_support import *
 
 
@@ -241,7 +245,7 @@ class PlanAgentOmxAttachDiscoveryTests(PlanAgentLaunchSupportTestCase):
                     ),
                     encoding="utf-8",
                 )
-                clock = iter([0.0, 0.0, 1.0])
+                clock = chain([0.0, 0.0], repeat(1.0))
 
                 def _write_new_session(_seconds: float) -> None:
                     session_path.write_text(
@@ -256,19 +260,24 @@ class PlanAgentOmxAttachDiscoveryTests(PlanAgentLaunchSupportTestCase):
                     )
 
                 with (
-                    patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.2),
-                    patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
-                    patch("envctl_engine.planning.plan_agent.omx_transport.time.monotonic", side_effect=lambda: next(clock)),
-                    patch("envctl_engine.planning.plan_agent.omx_transport.time.sleep", side_effect=_write_new_session),
                     patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
                     patch("envctl_engine.planning.plan_agent.omx_transport._tmux_active_pane_id", return_value="%42"),
                 ):
-                    attach_target = omx_transport._wait_for_omx_attach_target(
+                    attach_target = omx_attach_support.wait_for_omx_attach_target(
                         rt,
                         repo_root=repo,
                         worktree=worktree,
                         previous_session_id="old-session",
                         attach_via="attach-session",
+                        session_ready_timeout_seconds=0.2,
+                        session_ready_poll_interval_seconds=0.001,
+                        previous_session_names_fn=omx_transport._previous_omx_tmux_session_names_for_worktree,
+                        combined_exclusions_fn=omx_transport._combined_omx_tmux_exclusions,
+                        omx_session_records_for_worktree_fn=omx_transport._omx_session_records_for_worktree,
+                        attach_target_from_omx_record_fn=omx_transport._attach_target_from_omx_record,
+                        attach_target_from_pane_fallback_fn=omx_transport._attach_target_from_omx_tmux_pane_fallback,
+                        monotonic_fn=lambda: next(clock),
+                        sleep_fn=_write_new_session,
                     )
 
                 self.assertIsNotNone(attach_target)
