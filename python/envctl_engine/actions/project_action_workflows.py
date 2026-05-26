@@ -11,6 +11,8 @@ import envctl_engine.actions.action_pr_workflow_support as pr_workflow_support
 import envctl_engine.actions.action_review_workflow_support as review_workflow_support
 import envctl_engine.actions.action_ship_support as ship_support
 from envctl_engine.actions.action_git_state_support import DirtyWorktreeReport
+from envctl_engine.actions.action_review_context import ReviewActionContext
+from envctl_engine.actions.action_review_plan_support import OriginalPlanResolution, ReviewBaseResolution
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,13 +55,16 @@ class ProjectActionPullRequestWorkflowDependencies:
 
 @dataclass(frozen=True, slots=True)
 class ProjectActionReviewWorkflowDependencies:
-    resolve_analyze_mode_fn: Callable[[Any], str]
-    resolve_original_plan_fn: Callable[[Any], Any]
-    resolve_review_base_fn: Callable[[Any, Path], Any]
-    analysis_iterations_fn: Callable[[Any, str], list[str]]
-    run_analyze_helper_fn: Callable[[Any, Path, list[str], str, str, Any, Any], int]
-    tree_diffs_output_path_fn: Callable[[Any, str, str], Path]
-    original_plan_markdown_lines_fn: Callable[[Any], list[str]]
+    resolve_analyze_mode_fn: Callable[[ReviewActionContext], str]
+    resolve_original_plan_fn: Callable[[ReviewActionContext], OriginalPlanResolution]
+    resolve_review_base_fn: Callable[[ReviewActionContext, Path], ReviewBaseResolution]
+    analysis_iterations_fn: Callable[[ReviewActionContext, str], list[str]]
+    run_analyze_helper_fn: Callable[
+        [ReviewActionContext, Path, list[str], str, str, ReviewBaseResolution | None, OriginalPlanResolution],
+        int,
+    ]
+    tree_diffs_output_path_fn: Callable[[ReviewActionContext, str, str], Path]
+    original_plan_markdown_lines_fn: Callable[[OriginalPlanResolution], list[str]]
     sanitize_label_fn: Callable[[str], str]
 
 
@@ -85,15 +90,20 @@ class ProjectActionWorkflowRunner:
         return self.pull_request.probe_dirty_worktree_fn
 
     @property
-    def analysis_iterations_fn(self) -> Callable[[Any, str], list[str]]:
+    def analysis_iterations_fn(self) -> Callable[[ReviewActionContext, str], list[str]]:
         return self.review.analysis_iterations_fn
 
     @property
-    def run_analyze_helper_fn(self) -> Callable[[Any, Path, list[str], str, str, Any, Any], int]:
+    def run_analyze_helper_fn(
+        self,
+    ) -> Callable[
+        [ReviewActionContext, Path, list[str], str, str, ReviewBaseResolution | None, OriginalPlanResolution],
+        int,
+    ]:
         return self.review.run_analyze_helper_fn
 
     @property
-    def original_plan_markdown_lines_fn(self) -> Callable[[Any], list[str]]:
+    def original_plan_markdown_lines_fn(self) -> Callable[[OriginalPlanResolution], list[str]]:
         return self.review.original_plan_markdown_lines_fn
 
     def run_commit_action(self, context: Any) -> int:
@@ -144,7 +154,7 @@ class ProjectActionWorkflowRunner:
             github_pr_checks=self.pull_request.github_pr_checks_fn,
         )
 
-    def run_review_action(self, context: Any) -> int:
+    def run_review_action(self, context: ReviewActionContext) -> int:
         return review_workflow_support.run_review_workflow(
             context,
             resolve_git_root_fn=self.git.resolve_git_root_fn,

@@ -4,8 +4,9 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-from typing import Any, Mapping
+from typing import Mapping
 
+from envctl_engine.actions.action_review_context import ReviewActionContext
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.path_links import (
@@ -16,7 +17,7 @@ from envctl_engine.ui.path_links import (
 
 
 def print_review_completion(
-    context: Any,
+    context: ReviewActionContext,
     *,
     mode: str,
     scope: str,
@@ -63,7 +64,7 @@ def print_review_completion(
 
 
 def print_review_completion_rich(
-    context: Any,
+    context: ReviewActionContext,
     *,
     mode: str,
     scope: str,
@@ -130,7 +131,7 @@ def print_review_completion_rich(
 
 
 def print_review_failure(
-    context: Any,
+    context: ReviewActionContext,
     *,
     output_dir: Path,
     result: subprocess.CompletedProcess[str],
@@ -181,7 +182,7 @@ def prune_review_output_dir(output_dir: Path, *, keep_names: set[str]) -> None:
             continue
 
 
-def review_colorizer(context: Any):
+def review_colorizer(context: ReviewActionContext):
     enabled = colors_enabled(context.env, stream=sys.stdout, interactive_tty=context.interactive)
 
     def colorize(text: str, *, fg: str | None = None, bold: bool = False) -> str:

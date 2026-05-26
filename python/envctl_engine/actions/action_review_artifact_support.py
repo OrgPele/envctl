@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
 
+from envctl_engine.actions.action_review_context import ReviewActionContext
+
 
 def file_has_text(path: Path) -> bool:
     try:
@@ -12,7 +14,7 @@ def file_has_text(path: Path) -> bool:
         return False
 
 
-def tree_changelog_path(context: object, *, sanitize_label_fn: Callable[[str], str]) -> Path | None:
+def tree_changelog_path(context: ReviewActionContext, *, sanitize_label_fn: Callable[[str], str]) -> Path | None:
     tree_name = "main" if context.project_name.strip().lower() == "main" else context.project_name.strip()
     candidate = context.project_root / "docs" / "changelog" / f"{sanitize_label_fn(tree_name)}_changelog.md"
     if candidate.is_file() and file_has_text(candidate):

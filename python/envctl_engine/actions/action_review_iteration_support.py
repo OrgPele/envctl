@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from typing import Callable
 
+from envctl_engine.actions.action_review_context import ReviewActionContext
 from envctl_engine.actions.action_review_base_support import ReviewBaseResolution
 from envctl_engine.actions.action_review_original_plan_support import (
     OriginalPlanResolution,
@@ -22,14 +23,14 @@ from envctl_engine.actions.action_review_output_support import (
 )
 
 
-def resolve_analyze_mode(context: object) -> str:
+def resolve_analyze_mode(context: ReviewActionContext) -> str:
     explicit = str(context.env.get("ENVCTL_ANALYZE_MODE", "")).strip().lower()
     if explicit in {"single", "grouped"}:
         return explicit
     return "single"
 
 
-def analysis_iterations(context: object, *, mode: str) -> list[str]:
+def analysis_iterations(context: ReviewActionContext, *, mode: str) -> list[str]:
     project_root = context.project_root.resolve()
     if project_root == context.repo_root.resolve():
         return []
@@ -75,7 +76,7 @@ def git_iteration_dirs(root: Path) -> list[str]:
 
 def run_analyze_helper(
     *,
-    context: object,
+    context: ReviewActionContext,
     helper: Path,
     iterations: list[str],
     mode: str,
@@ -153,7 +154,7 @@ def run_analyze_helper(
     return result.returncode
 
 
-def tree_diffs_root(context: object) -> Path:
+def tree_diffs_root(context: ReviewActionContext) -> Path:
     explicit = str(context.env.get("ENVCTL_ACTION_TREE_DIFFS_ROOT", "")).strip()
     if explicit:
         root = Path(explicit).expanduser()
@@ -165,7 +166,7 @@ def tree_diffs_root(context: object) -> Path:
 
 
 def tree_diffs_output_path(
-    context: object,
+    context: ReviewActionContext,
     directory: str,
     prefix: str,
     label: str | None = None,
