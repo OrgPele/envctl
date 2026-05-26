@@ -97,4 +97,14 @@ def _has_explicit_local_app_signal(
             f"{mode_prefix}_STARTUP_ENABLE",
         } & explicit_keys:
             return True
+        if _explicit_service_directory(config, service_name=service_name, explicit_keys=explicit_keys):
+            return True
     return False
+
+
+def _explicit_service_directory(config: Any, *, service_name: str, explicit_keys: set[str]) -> bool:
+    key = f"{service_name.upper()}_DIR"
+    if key not in explicit_keys:
+        return False
+    value = str(getattr(config, f"{service_name}_dir_name", "") or "").strip()
+    return value not in {"", "."}

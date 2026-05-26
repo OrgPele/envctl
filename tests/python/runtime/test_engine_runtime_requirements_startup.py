@@ -783,6 +783,38 @@ class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
             self.assertNotIn("No local app system is configured", rendered)
             self.assertEqual(fake_runner.start_background_calls, [])
 
+    def test_explicit_backend_directory_keeps_missing_service_command_actionable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1" / "api").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "BACKEND_DIR": "api",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 1)
+            self.assertIn("missing_service_start_command", rendered)
+            self.assertNotIn("No local app system is configured", rendered)
+            self.assertEqual(fake_runner.start_background_calls, [])
+
     def test_autodetectable_app_layout_still_starts_under_entire_system(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
