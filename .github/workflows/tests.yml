@@ -16,12 +16,11 @@ name: Tests
 #   - package:  python -m build + release shipability gate
 #   - lint:     ruff (non-blocking until main is green)
 #
-# All three use setup-uv's built-in cache keyed by uv.lock so dependency
-# installs reuse already-downloaded wheels without relying on an extra
-# third-party cache action. The pytest job additionally restores .pytest_cache
-# through GitHub's official cache action so `--ff` orders previously-failing
-# tests first on subsequent pushes, delivering signal in seconds when a
-# regression is in flight.
+# All three restore uv's cache through GitHub's official cache action keyed by
+# uv.lock so dependency installs reuse already-downloaded wheels without relying
+# on a third-party setup/cache action. The pytest job additionally restores
+# .pytest_cache so `--ff` orders previously-failing tests first on subsequent
+# pushes, delivering signal in seconds when a regression is in flight.
 #
 # Pytest itself runs through pytest-xdist with `--dist=loadscope` so tests
 # in the same module/class stay on the same worker (the suite has
@@ -52,6 +51,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Restore uv cache
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/uv
+          key: envctl-uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            envctl-uv-${{ runner.os }}-
+
       - name: Restore pytest cache
         uses: actions/cache@v4
         with:
@@ -66,10 +73,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+        run: python -m pip install --upgrade uv
 
       - name: Sync dev environment
         run: uv sync --extra dev --python 3.12
@@ -98,16 +102,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Restore uv cache
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/uv
+          key: envctl-uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            envctl-uv-${{ runner.os }}-
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+        run: python -m pip install --upgrade uv
 
       - name: Sync dev environment
         run: uv sync --extra dev --python 3.12
@@ -128,11 +137,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
+      - name: Restore uv cache
+        uses: actions/cache@v4
         with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          path: /home/runner/.cache/uv
+          key: envctl-uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            envctl-uv-${{ runner.os }}-
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: python -m pip install --upgrade uv
 
       - name: Install ruff
         run: uv tool install --quiet ruff
