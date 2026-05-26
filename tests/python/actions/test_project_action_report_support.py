@@ -88,6 +88,34 @@ class ProjectActionReportSupportTests(unittest.TestCase):
         self.assertIn("https://github.test/acme/envctl/pull/12", message)
         self.assertNotIn("succeeded", message)
 
+    def test_ship_action_status_reads_structured_stderr_when_stdout_has_no_payload(self) -> None:
+        output = (
+            "ship: GitHub checks failed\n"
+            "{\n"
+            '  "contract_version": "envctl.ship.v1",\n'
+            '  "operation_statuses": {\n'
+            '    "checks": "failed",\n'
+            '    "commit": "success",\n'
+            '    "merge_conflicts": "none",\n'
+            '    "pr": "created",\n'
+            '    "push": "success"\n'
+            "  },\n"
+            '  "pr_url": "https://github.test/acme/envctl/pull/13",\n'
+            '  "status": "checks_failed"\n'
+            "}\n"
+        )
+        completed = SimpleNamespace(stdout="Running command...\n", stderr=output)
+
+        self.assertEqual(ship_action_status(completed), "checks_failed")
+        self.assertEqual(project_action_success_status(command_name="ship", completed=completed), "checks_failed")
+
+        message = ship_action_status_message("feature-b", completed)
+        self.assertIn("checks_failed", message)
+        self.assertIn("commit=success", message)
+        self.assertIn("pr=created", message)
+        self.assertIn("checks=failed", message)
+        self.assertIn("https://github.test/acme/envctl/pull/13", message)
+
     def test_build_project_action_success_handler_persists_review_artifacts_and_status(self) -> None:
         persisted: list[dict[str, object]] = []
         cache_cleared: list[bool] = []
