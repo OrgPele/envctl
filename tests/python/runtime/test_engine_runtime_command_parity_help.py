@@ -201,6 +201,7 @@ class EngineRuntimeCommandParityHelpTests(EngineRuntimeCommandParityTestCase):
         self.assertIn("creates a PR when needed and reuses or updates an existing PR", output)
         self.assertIn("predicts merge conflicts", output)
         self.assertIn("conflicting files, messages, and resolution steps", output)
+        self.assertIn("rendered names start with Tests", output)
         self.assertIn("failing_checks and pending_checks", output)
         self.assertIn("JSON is the default", output)
         self.assertIn("--human", output)

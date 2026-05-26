@@ -131,7 +131,10 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("Run bare `envctl ship` from inside the current worktree/project directory", codex)
         self.assertIn("GitHub CLI checks only if `ship` is unavailable", codex)
         self.assertIn("creates a PR when none exists", codex)
-        self.assertIn("waits for GitHub checks until they pass, fail, time out, or report no check contexts", codex)
+        self.assertIn(
+            "waits for target GitHub Tests checks until they pass, fail, time out, or report no target check contexts",
+            codex,
+        )
         self.assertIn(
             "returns JSON by default with the PR URL, `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`",
             codex,

@@ -13,8 +13,10 @@ FAILING_CHECK_STATES = {"FAILURE", "FAILED", "ERROR", "CANCELLED", "TIMED_OUT", 
 PASSING_CHECK_STATES = {"SUCCESS", "PASSED", "COMPLETED", "NEUTRAL", "SKIPPED"}
 TERMINAL_SHIP_CHECK_STATES = {"checks_passed", "checks_failed", "gh_unavailable", "no_checks_reported"}
 DEFAULT_CHECK_TIMEOUT_SECONDS = 120.0
-DEFAULT_CHECK_POLL_INTERVAL_SECONDS = 10.0
+DEFAULT_CHECK_POLL_INTERVAL_SECONDS = 5.0
+DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS = 10.0
 DEFAULT_NO_CHECKS_GRACE_SECONDS = 10.0
+DEFAULT_CHECK_NAME_PREFIX = "tests"
 DEFAULT_FAILURE_EXCERPT_LINES = 80
 DEFAULT_FAILURE_EXCERPT_CHARS = 12_000
 _ACTION_JOB_URL_RE = re.compile(r"/actions/runs/(?P<run_id>\d+)/job/(?P<job_id>\d+)")
@@ -30,6 +32,7 @@ def github_pr_checks(
     expected_head_sha: str | None = None,
     timeout_seconds: float | None = None,
     poll_interval_seconds: float | None = None,
+    progress_interval_seconds: float | None = None,
     no_checks_grace_seconds: float | None = None,
     progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
@@ -49,15 +52,23 @@ def github_pr_checks(
         if poll_interval_seconds is not None
         else _float_env("ENVCTL_SHIP_CHECK_POLL_INTERVAL_SECONDS")
     )
+    progress_interval = (
+        progress_interval_seconds
+        if progress_interval_seconds is not None
+        else _float_env("ENVCTL_SHIP_CHECK_PROGRESS_INTERVAL_SECONDS")
+    )
     timeout = DEFAULT_CHECK_TIMEOUT_SECONDS if timeout is None else max(timeout, 0.0)
     poll_interval = DEFAULT_CHECK_POLL_INTERVAL_SECONDS if poll_interval is None else max(poll_interval, 0.1)
+    progress_interval = (
+        DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS if progress_interval is None else max(progress_interval, 0.1)
+    )
     no_checks_grace = (
         no_checks_grace_seconds
         if no_checks_grace_seconds is not None
         else _float_env("ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS")
     )
     no_checks_grace = DEFAULT_NO_CHECKS_GRACE_SECONDS if no_checks_grace is None else max(no_checks_grace, 0.0)
-    next_progress_at = poll_interval
+    next_progress_at = progress_interval
 
     while True:
         result = (
@@ -79,7 +90,7 @@ def github_pr_checks(
         if progress_callback is not None and elapsed >= next_progress_at:
             progress_callback(_check_progress_message(result, elapsed_seconds=elapsed, timeout_seconds=timeout))
             while next_progress_at <= elapsed:
-                next_progress_at += poll_interval
+                next_progress_at += progress_interval
         if elapsed >= timeout:
             if result.get("state") == "checks_failed":
                 return {
@@ -211,7 +222,8 @@ def _query_expected_head_pr_checks(
         if isinstance(rollup, list)
         else []
     )
-    if not checks:
+    target_checks = _target_status_checks(checks)
+    if not target_checks:
         if duration < no_checks_grace_seconds:
             return {
                 "state": "checks_pending_timeout",
@@ -227,7 +239,7 @@ def _query_expected_head_pr_checks(
                 "duration_seconds": duration,
                 "expected_head_sha": expected_head_sha,
                 "pr_url": str(data.get("url") or pr_url),
-                "error": "GitHub has not reported check contexts for the pushed head commit yet.",
+                "error": "GitHub has not reported target test check contexts for the pushed head commit yet.",
             }
         return {
             "state": "no_checks_reported",
@@ -239,7 +251,7 @@ def _query_expected_head_pr_checks(
             "pr_url": str(data.get("url") or pr_url),
         }
 
-    normalized = normalize_github_pr_checks(checks, duration_seconds=duration)
+    normalized = normalize_github_pr_checks(target_checks, duration_seconds=duration)
     normalized["expected_head_sha"] = expected_head_sha
     normalized["actual_head_sha"] = actual_head_sha
     normalized["pr_url"] = str(data.get("url") or pr_url)
@@ -334,7 +346,17 @@ def _query_github_pr_checks(
     except json.JSONDecodeError:
         loaded = []
     checks = loaded if isinstance(loaded, list) else []
-    normalized = normalize_github_pr_checks(checks, duration_seconds=duration)
+    target_checks = _target_status_checks(checks)
+    if not target_checks:
+        return {
+            "state": "no_checks_reported",
+            "failing_checks": [],
+            "passed_checks": [],
+            "pending_checks": [],
+            "duration_seconds": duration,
+            "error": "GitHub has not reported target test check contexts for this branch.",
+        }
+    normalized = normalize_github_pr_checks(target_checks, duration_seconds=duration)
     if normalized["state"] == "checks_failed":
         normalized["failing_checks"] = failed_checks_with_log_excerpts(
             git_root,
@@ -379,6 +401,22 @@ def normalize_github_pr_checks(
         "pending_checks": pending,
         "duration_seconds": duration_seconds,
     }
+
+
+def _target_status_checks(checks: Sequence[Mapping[str, object]]) -> list[Mapping[str, object]]:
+    return [check for check in checks if _status_check_matches_default_target(check)]
+
+
+def _status_check_matches_default_target(check: Mapping[str, object]) -> bool:
+    return _status_check_display_name(check).casefold().startswith(DEFAULT_CHECK_NAME_PREFIX)
+
+
+def _status_check_display_name(check: Mapping[str, object]) -> str:
+    workflow = str(check.get("workflow") or check.get("workflowName") or "").strip()
+    name = str(check.get("name") or check.get("context") or "").strip()
+    if workflow and name:
+        return f"{workflow} / {name}"
+    return workflow or name
 
 
 def failed_checks_with_log_excerpts(
@@ -462,7 +500,9 @@ def _clean_log_line(line: str) -> str:
 
 
 __all__ = [
+    "DEFAULT_CHECK_NAME_PREFIX",
     "DEFAULT_CHECK_POLL_INTERVAL_SECONDS",
+    "DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS",
     "DEFAULT_CHECK_TIMEOUT_SECONDS",
     "DEFAULT_FAILURE_EXCERPT_CHARS",
     "DEFAULT_FAILURE_EXCERPT_LINES",

@@ -136,8 +136,8 @@ def test_github_check_normalization_reports_failed_pending_and_passed_states() -
 def test_github_pr_checks_polls_until_pending_checks_finish(tmp_path: Path, monkeypatch: Any) -> None:
     calls: list[list[str]] = []
     outputs = [
-        [{"name": "pytest", "state": "PENDING", "link": "https://ci.test/1"}],
-        [{"name": "pytest", "state": "SUCCESS", "link": "https://ci.test/1"}],
+        [{"name": "pytest", "workflow": "Tests", "state": "PENDING", "link": "https://ci.test/1"}],
+        [{"name": "pytest", "workflow": "Tests", "state": "SUCCESS", "link": "https://ci.test/1"}],
     ]
 
     class _Completed:
@@ -175,6 +175,11 @@ def test_github_pr_checks_default_timeout_is_two_minute_wait_window() -> None:
 
 def test_github_pr_checks_default_no_checks_grace_is_ten_seconds() -> None:
     assert action_ship_checks.DEFAULT_NO_CHECKS_GRACE_SECONDS == 10.0
+
+
+def test_github_pr_checks_default_polling_is_more_responsive_than_progress_heartbeat() -> None:
+    assert action_ship_checks.DEFAULT_CHECK_POLL_INTERVAL_SECONDS == 5.0
+    assert action_ship_checks.DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS == 10.0
 
 
 def test_github_pr_checks_reports_no_checks_after_ten_second_grace_for_expected_head(
@@ -220,17 +225,25 @@ def test_github_pr_checks_reports_no_checks_after_ten_second_grace_for_expected_
     assert len(calls) == 2
 
 
-def test_github_pr_checks_emits_progress_every_poll_interval_while_pending(
+def test_github_pr_checks_emits_progress_every_progress_interval_while_pending(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     clock = {"now": 0.0}
     updates: list[str] = []
     outputs = [
-        {"headRefOid": "newsha", "statusCheckRollup": [{"name": "pytest", "status": "IN_PROGRESS"}]},
-        {"headRefOid": "newsha", "statusCheckRollup": [{"name": "pytest", "status": "IN_PROGRESS"}]},
         {
             "headRefOid": "newsha",
-            "statusCheckRollup": [{"name": "pytest", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+            "statusCheckRollup": [{"name": "pytest", "workflowName": "Tests", "status": "IN_PROGRESS"}],
+        },
+        {
+            "headRefOid": "newsha",
+            "statusCheckRollup": [{"name": "pytest", "workflowName": "Tests", "status": "IN_PROGRESS"}],
+        },
+        {
+            "headRefOid": "newsha",
+            "statusCheckRollup": [
+                {"name": "pytest", "workflowName": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"}
+            ],
         },
     ]
 
@@ -259,6 +272,98 @@ def test_github_pr_checks_emits_progress_every_poll_interval_while_pending(
     assert updates == [
         "ship: GitHub checks still running after 10s (pending=1, passed=0, failed=0, timeout=120s)"
     ]
+
+
+def test_github_pr_checks_ignores_non_test_checks_after_target_tests_pass(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    clock = {"now": 0.0}
+    outputs = [
+        {
+            "headRefOid": "newsha",
+            "statusCheckRollup": [
+                {"name": "pytest", "workflowName": "TeStS", "status": "IN_PROGRESS"},
+                {"name": "security", "workflowName": "CodeQL", "status": "IN_PROGRESS"},
+            ],
+        },
+        {
+            "headRefOid": "newsha",
+            "statusCheckRollup": [
+                {"name": "pytest", "workflowName": "TeStS", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                {"name": "security", "workflowName": "CodeQL", "status": "IN_PROGRESS"},
+            ],
+        },
+    ]
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
+
+    def fake_sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
+    monkeypatch.setattr(action_ship_checks.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(action_ship_checks.time, "sleep", fake_sleep)
+
+    checks = action_ship_checks.github_pr_checks(
+        tmp_path,
+        branch="feature/demo",
+        pr_url="https://github.com/acme/repo/pull/7",
+        expected_head_sha="newsha",
+        timeout_seconds=120.0,
+        poll_interval_seconds=5.0,
+    )
+
+    assert checks["state"] == "checks_passed"
+    assert checks["duration_seconds"] == 5.0
+    assert checks["passed_checks"] == [{"name": "pytest", "workflow": "TeStS", "state": "SUCCESS"}]
+    assert checks["pending_checks"] == []
+
+
+def test_github_pr_checks_can_detect_success_before_next_progress_heartbeat(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    clock = {"now": 0.0}
+    updates: list[str] = []
+    outputs = [
+        {
+            "headRefOid": "newsha",
+            "statusCheckRollup": [{"name": "pytest", "workflowName": "Tests", "status": "IN_PROGRESS"}],
+        },
+        {
+            "headRefOid": "newsha",
+            "statusCheckRollup": [
+                {"name": "pytest", "workflowName": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"}
+            ],
+        },
+    ]
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
+
+    def fake_sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
+    monkeypatch.setattr(action_ship_checks.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(action_ship_checks.time, "sleep", fake_sleep)
+
+    checks = action_ship_checks.github_pr_checks(
+        tmp_path,
+        branch="feature/demo",
+        pr_url="https://github.com/acme/repo/pull/7",
+        expected_head_sha="newsha",
+        timeout_seconds=120.0,
+        poll_interval_seconds=2.0,
+        progress_interval_seconds=10.0,
+        progress_callback=updates.append,
+    )
+
+    assert checks["state"] == "checks_passed"
+    assert checks["duration_seconds"] == 2.0
+    assert updates == []
 
 
 def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(
@@ -349,7 +454,7 @@ def test_github_pr_checks_returns_failed_check_without_waiting_for_timeout(tmp_p
         return subprocess.CompletedProcess(
             args=args,
             returncode=0,
-            stdout=json.dumps([{"name": "pytest", "state": "FAILURE", "link": "https://ci.test/1"}]),
+            stdout=json.dumps([{"name": "pytest", "workflow": "Tests", "state": "FAILURE", "link": "https://ci.test/1"}]),
             stderr="",
         )
 
@@ -365,7 +470,9 @@ def test_github_pr_checks_returns_failed_check_without_waiting_for_timeout(tmp_p
     )
 
     assert checks["state"] == "checks_failed"
-    assert checks["failing_checks"] == [{"name": "pytest", "state": "FAILURE", "link": "https://ci.test/1"}]
+    assert checks["failing_checks"] == [
+        {"name": "pytest", "workflow": "Tests", "state": "FAILURE", "link": "https://ci.test/1"}
+    ]
     assert calls == 1
 
 

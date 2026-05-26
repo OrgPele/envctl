@@ -99,7 +99,8 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "and protected local artifacts",
             "creates a PR when needed and reuses or updates an existing PR when one already exists",
             "predicts merge conflicts and returns conflicting files, messages, and resolution steps",
-            "waits for GitHub PR checks and returns passed, failed, pending-timeout, no-checks-reported, "
+            "waits for target GitHub PR checks whose rendered names start with Tests and returns passed, "
+            "failed, pending-timeout, no-checks-reported, "
             "or gh-unavailable status "
             "with failing_checks and pending_checks",
             "prints the structured envctl.ship.v1 JSON payload by default; --json is accepted as a compatibility no-op",
