@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from envctl_engine.actions.action_test_summary_artifacts import (
     _project_roots_from_outcomes,
     _project_roots_from_targets,
@@ -8,7 +10,6 @@ from envctl_engine.actions.action_test_summary_artifacts import (
     persist_test_summary_artifacts_for_orchestrator,
     short_failed_summary_path,
     write_failed_tests_summary,
-    write_failed_tests_summary_for_orchestrator,
 )
 from envctl_engine.actions.action_test_summary_collection import (
     collect_failed_test_manifest_entries,
@@ -37,6 +38,28 @@ from envctl_engine.actions.action_test_summary_formatting import (
     user_code_frame_blocks,
 )
 from envctl_engine.actions.action_test_summary_git import default_git_state_components
+
+
+def write_failed_tests_summary_for_orchestrator(
+    orchestrator: object,
+    *,
+    run_dir: Path,
+    project_name: str,
+    project_root: Path,
+    outcomes: list[dict[str, object]],
+    previous_entry: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return write_failed_tests_summary(
+        run_dir=run_dir,
+        project_name=project_name,
+        project_root=project_root,
+        outcomes=outcomes,
+        previous_entry=previous_entry,
+        short_failed_summary_path=short_failed_summary_path,
+        format_summary_error_lines=format_summary_error_lines,
+        git_state_components=default_git_state_components,
+    )
+
 
 __all__ = [
     "_project_roots_from_outcomes",
