@@ -527,6 +527,7 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("action_ship_conflicts", ship_text)
         self.assertIn("action_ship_checks", ship_text)
         self.assertIn("def ship_payload", ship_contract_owner.read_text(encoding="utf-8"))
+        self.assertIn("def ship_action_payload", ship_contract_owner.read_text(encoding="utf-8"))
         self.assertIn("def print_ship_result", ship_contract_owner.read_text(encoding="utf-8"))
         self.assertIn("def predicted_merge_conflict_report", ship_conflicts_owner.read_text(encoding="utf-8"))
         ship_checks_text = ship_checks_owner.read_text(encoding="utf-8")
