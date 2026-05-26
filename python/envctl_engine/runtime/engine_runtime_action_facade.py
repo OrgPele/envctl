@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Mapping
+from typing import TYPE_CHECKING, Iterable, Mapping, cast
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_action_support import (
@@ -31,7 +31,7 @@ class RuntimeActionFacadeMixin:
 
     def _resolve_action_targets(self, route: Route, *, trees_only: bool) -> tuple[list[ProjectContext], str | None]:
         targets, error = runtime_resolve_action_targets(self, route, trees_only=trees_only)
-        return targets, error  # type: ignore[return-value]
+        return cast("list[ProjectContext]", targets), error
 
     @staticmethod
     def _selectors_from_passthrough(passthrough_args: Iterable[str]) -> set[str]:
