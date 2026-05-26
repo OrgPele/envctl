@@ -6,6 +6,8 @@ import sys
 import time
 from typing import Any, Callable, Mapping
 
+from envctl_engine.test_output.parser_base import strip_ansi
+
 GitOutput = Callable[[Path, list[str]], str]
 CHECK_OPERATION_STATUSES = {
     "checks_passed",
@@ -174,6 +176,21 @@ def print_ship_result(payload: Mapping[str, object], *, json_output: bool, ok: b
     return 0 if ok else 1
 
 
+def ship_action_payload(output: object) -> dict[str, object]:
+    text = strip_ansi(str(output or ""))
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and parsed.get("contract_version") == "envctl.ship.v1":
+            return {str(key): value for key, value in parsed.items()}
+    return {}
+
+
 def _mapping_payload_value(value: object) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}
 
@@ -196,6 +213,7 @@ __all__ = [
     "GitOutput",
     "parse_ship_json_output",
     "print_ship_result",
+    "ship_action_payload",
     "ship_payload",
     "ship_operation_statuses",
     "ship_protected_paths",

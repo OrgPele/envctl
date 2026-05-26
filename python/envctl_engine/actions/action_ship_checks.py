@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -363,7 +364,9 @@ def _query_github_pr_checks(
 
 def _resolved_timing_value(*, explicit: float | None, env_name: str, default: float, minimum: float) -> float:
     value = explicit if explicit is not None else _float_env(env_name)
-    return default if value is None else max(value, minimum)
+    if value is None or not math.isfinite(value):
+        return default
+    return max(value, minimum)
 
 
 def _float_env(name: str) -> float | None:

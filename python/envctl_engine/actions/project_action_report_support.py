@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-import json
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from envctl_engine.actions.action_ship_contract import ship_action_payload
 from envctl_engine.runtime.runtime_context import (
     run_dir_path,
     save_resume_state,
@@ -117,21 +117,6 @@ def first_output_line(output: object) -> str:
         if text:
             return text
     return ""
-
-
-def ship_action_payload(output: object) -> dict[str, object]:
-    text = strip_ansi(str(output or ""))
-    decoder = json.JSONDecoder()
-    for index, char in enumerate(text):
-        if char != "{":
-            continue
-        try:
-            parsed, _end = decoder.raw_decode(text[index:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict) and parsed.get("contract_version") == "envctl.ship.v1":
-            return {str(key): value for key, value in parsed.items()}
-    return {}
 
 
 def _ship_completed_payload(completed: Any) -> dict[str, object]:

@@ -14,7 +14,10 @@ from envctl_engine.actions.action_ship_check_results import (
 )
 from envctl_engine.actions.action_ship_failure_logs import failure_log_excerpt
 from envctl_engine.actions.action_ship_conflicts import parse_merge_tree_conflicts as parse_conflicts_from_owner
-from envctl_engine.actions.action_ship_contract import ship_payload as ship_payload_from_owner
+from envctl_engine.actions.action_ship_contract import (
+    ship_action_payload as ship_action_payload_from_contract,
+    ship_payload as ship_payload_from_owner,
+)
 from envctl_engine.actions.action_ship_support import (
     existing_merge_conflict_report,
     normalize_github_pr_checks,
@@ -240,6 +243,21 @@ def test_ship_check_timing_uses_explicit_values_before_env_and_clamps_minimums(m
     assert timing.poll_interval_seconds == 0.1
     assert timing.progress_interval_seconds == 2.5
     assert timing.no_checks_grace_seconds == 0.0
+
+
+def test_ship_check_timing_rejects_non_finite_values(monkeypatch: Any) -> None:
+    monkeypatch.setenv("ENVCTL_SHIP_CHECK_TIMEOUT_SECONDS", "nan")
+    monkeypatch.setenv("ENVCTL_SHIP_CHECK_POLL_INTERVAL_SECONDS", "inf")
+
+    timing = action_ship_checks.ShipCheckTiming.from_inputs(
+        progress_interval_seconds=float("nan"),
+        no_checks_grace_seconds=float("inf"),
+    )
+
+    assert timing.timeout_seconds == action_ship_checks.DEFAULT_CHECK_TIMEOUT_SECONDS
+    assert timing.poll_interval_seconds == action_ship_checks.DEFAULT_CHECK_POLL_INTERVAL_SECONDS
+    assert timing.progress_interval_seconds == action_ship_checks.DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS
+    assert timing.no_checks_grace_seconds == action_ship_checks.DEFAULT_NO_CHECKS_GRACE_SECONDS
 
 
 def test_github_pr_checks_reports_no_checks_after_ten_second_grace_for_expected_head(
@@ -817,6 +835,21 @@ def test_ship_payload_and_result_output_keep_json_contract(tmp_path: Path, capsy
     assert parse_ship_json_output(_Context("Main", tmp_path, tmp_path, {})) is True
     assert parse_ship_json_output(_Context("Main", tmp_path, tmp_path, {"ENVCTL_ACTION_JSON": "true"})) is True
     assert parse_ship_json_output(_Context("Main", tmp_path, tmp_path, {"ENVCTL_ACTION_HUMAN": "true"})) is False
+
+
+def test_ship_contract_owner_parses_embedded_payload_and_strips_ansi() -> None:
+    output = (
+        "\x1b[32mship progress\x1b[0m\n"
+        "{\n"
+        '  "contract_version": "envctl.ship.v1",\n'
+        '  "status": "checks_pending_timeout"\n'
+        "}\n"
+    )
+
+    assert ship_action_payload_from_contract(output) == {
+        "contract_version": "envctl.ship.v1",
+        "status": "checks_pending_timeout",
+    }
 
 
 def test_ship_payload_normalizes_malformed_nested_payloads(tmp_path: Path) -> None:
