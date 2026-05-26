@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Callable, Mapping
 
+from envctl_engine.actions.action_review_context import ReviewActionContext
+
 WORKTREE_PROVENANCE_SCHEMA_VERSION = 1
 WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
 
@@ -22,7 +24,7 @@ class ReviewBaseResolutionError(RuntimeError):
 
 
 def resolve_review_base(
-    context: object,
+    context: ReviewActionContext,
     git_root: Path,
     *,
     detect_default_branch_fn: Callable[[Path], str],

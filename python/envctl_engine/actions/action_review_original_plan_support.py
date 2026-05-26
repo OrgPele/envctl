@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import tempfile
 
+from envctl_engine.actions.action_review_context import ReviewActionContext
 from envctl_engine.planning import planning_feature_name
 
 WORKTREE_PROVENANCE_PATH = Path(".envctl-state") / "worktree-provenance.json"
@@ -20,7 +21,7 @@ class OriginalPlanResolution:
     source: str
 
 
-def resolve_original_plan(context: object) -> OriginalPlanResolution:
+def resolve_original_plan(context: ReviewActionContext) -> OriginalPlanResolution:
     if context.project_root.resolve() == context.repo_root.resolve():
         return OriginalPlanResolution(path=None, source="not_applicable")
 

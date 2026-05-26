@@ -2,26 +2,27 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 from envctl_engine.actions import action_review_plan_support as review_plan_support
+from envctl_engine.actions.action_review_context import ReviewActionContext
 from envctl_engine.actions.action_review_artifact_support import write_markdown_lines
 from envctl_engine.actions.action_review_output_support import print_review_completion
 
 
 def run_review_workflow(
-    context: Any,
+    context: ReviewActionContext,
     *,
     resolve_git_root_fn: Callable[[Path, Path], Path],
     git_available: bool,
     git_output_fn: Callable[[Path, list[str]], str],
-    resolve_analyze_mode_fn: Callable[[Any], str],
-    resolve_original_plan_fn: Callable[[Any], review_plan_support.OriginalPlanResolution],
-    resolve_review_base_fn: Callable[[Any, Path], review_plan_support.ReviewBaseResolution],
-    analysis_iterations_fn: Callable[[Any, str], list[str]],
+    resolve_analyze_mode_fn: Callable[[ReviewActionContext], str],
+    resolve_original_plan_fn: Callable[[ReviewActionContext], review_plan_support.OriginalPlanResolution],
+    resolve_review_base_fn: Callable[[ReviewActionContext, Path], review_plan_support.ReviewBaseResolution],
+    analysis_iterations_fn: Callable[[ReviewActionContext, str], list[str]],
     run_analyze_helper_fn: Callable[
         [
-            Any,
+            ReviewActionContext,
             Path,
             list[str],
             str,
@@ -31,7 +32,7 @@ def run_review_workflow(
         ],
         int,
     ],
-    tree_diffs_output_path_fn: Callable[[Any, str, str], Path],
+    tree_diffs_output_path_fn: Callable[[ReviewActionContext, str, str], Path],
     original_plan_markdown_lines_fn: Callable[
         [review_plan_support.OriginalPlanResolution],
         list[str],
@@ -96,14 +97,14 @@ def run_review_workflow(
 
 
 def _write_unbased_review_summary(
-    context: Any,
+    context: ReviewActionContext,
     *,
     git_root: Path,
     mode: str,
     scope: str,
     original_plan: review_plan_support.OriginalPlanResolution,
     git_output_fn: Callable[[Path, list[str]], str],
-    tree_diffs_output_path_fn: Callable[[Any, str, str], Path],
+    tree_diffs_output_path_fn: Callable[[ReviewActionContext, str, str], Path],
     original_plan_markdown_lines_fn: Callable[[review_plan_support.OriginalPlanResolution], list[str]],
     sanitize_label_fn: Callable[[str], str],
 ) -> int:
@@ -136,7 +137,7 @@ def _write_unbased_review_summary(
 
 
 def _write_based_review_summary(
-    context: Any,
+    context: ReviewActionContext,
     *,
     git_root: Path,
     mode: str,
@@ -144,7 +145,7 @@ def _write_based_review_summary(
     review_base: review_plan_support.ReviewBaseResolution,
     original_plan: review_plan_support.OriginalPlanResolution,
     git_output_fn: Callable[[Path, list[str]], str],
-    tree_diffs_output_path_fn: Callable[[Any, str, str], Path],
+    tree_diffs_output_path_fn: Callable[[ReviewActionContext, str, str], Path],
     original_plan_markdown_lines_fn: Callable[[review_plan_support.OriginalPlanResolution], list[str]],
     sanitize_label_fn: Callable[[str], str],
 ) -> int:
@@ -197,7 +198,7 @@ def _write_based_review_summary(
     return 0
 
 
-def _print_review_ready(context: Any, *, mode: str, scope: str, output_path: Path) -> None:
+def _print_review_ready(context: ReviewActionContext, *, mode: str, scope: str, output_path: Path) -> None:
     print_review_completion(
         context,
         mode=mode,

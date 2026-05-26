@@ -8,6 +8,8 @@ from typing import Any
 
 import envctl_engine.actions.action_ship_support as ship_support
 from envctl_engine.actions.action_git_state_support import DirtyWorktreeReport
+from envctl_engine.actions.action_review_context import ReviewActionContext
+from envctl_engine.actions.action_review_plan_support import OriginalPlanResolution, ReviewBaseResolution
 from envctl_engine.actions.project_action_workflows import (
     ProjectActionCommitWorkflowDependencies,
     ProjectActionGitWorkflowDependencies,
@@ -49,12 +51,12 @@ class ProjectActionWorkflowPullRequestSources:
 
 @dataclass(frozen=True, slots=True)
 class ProjectActionWorkflowReviewSources:
-    resolve_analyze_mode_fn: Callable[[Any], str]
-    resolve_original_plan_fn: Callable[[Any], Any]
-    resolve_review_base_fn: Callable[[Any, Path], Any]
+    resolve_analyze_mode_fn: Callable[[ReviewActionContext], str]
+    resolve_original_plan_fn: Callable[[ReviewActionContext], OriginalPlanResolution]
+    resolve_review_base_fn: Callable[[ReviewActionContext, Path], ReviewBaseResolution]
     analysis_iterations_source_fn: Callable[..., list[str]]
     run_analyze_helper_source_fn: Callable[..., int]
-    tree_diffs_output_path_fn: Callable[[Any, str, str], Path]
+    tree_diffs_output_path_fn: Callable[[ReviewActionContext, str, str], Path]
     original_plan_markdown_lines_source_fn: Callable[..., list[str]]
     sanitize_label_fn: Callable[[str], str]
 
@@ -109,18 +111,18 @@ class ProjectActionWorkflowFactory:
     def probe_dirty_worktree(self, project_root: Path, repo_root: Path, project_name: str) -> DirtyWorktreeReport:
         return self.pull_request.probe_dirty_worktree_source_fn(project_root, repo_root, project_name=project_name)
 
-    def analysis_iterations(self, context: Any, mode: str) -> list[str]:
+    def analysis_iterations(self, context: ReviewActionContext, mode: str) -> list[str]:
         return self.review.analysis_iterations_source_fn(context, mode=mode)
 
     def run_analyze_helper(
         self,
-        context: Any,
+        context: ReviewActionContext,
         helper: Path,
         iterations: list[str],
         mode: str,
         scope: str,
-        review_base: Any,
-        original_plan: Any,
+        review_base: ReviewBaseResolution | None,
+        original_plan: OriginalPlanResolution,
     ) -> int:
         return self.review.run_analyze_helper_source_fn(
             context=context,
@@ -132,5 +134,5 @@ class ProjectActionWorkflowFactory:
             original_plan=original_plan,
         )
 
-    def original_plan_markdown_lines(self, original_plan: Any) -> list[str]:
+    def original_plan_markdown_lines(self, original_plan: OriginalPlanResolution) -> list[str]:
         return self.review.original_plan_markdown_lines_source_fn(original_plan, include_contents=True)

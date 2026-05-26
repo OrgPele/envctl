@@ -26,6 +26,7 @@ from envctl_engine.actions.action_review_output_support import (
     print_review_completion_rich as _print_review_completion_rich,
     review_colorizer as _review_colorizer,
 )
+from envctl_engine.actions.action_review_context import ReviewActionContext
 from envctl_engine.actions.project_action_workflows import ProjectActionWorkflowRunner
 from envctl_engine.shared.parsing import parse_bool
 
@@ -329,7 +330,7 @@ def _resolve_pr_base_branch(context: ActionProjectContext, git_root: Path) -> st
 _resolve_analyze_mode = review_plan_support.resolve_analyze_mode
 
 
-def _resolve_review_base(context: ActionProjectContext, git_root: Path) -> ReviewBaseResolution:
+def _resolve_review_base(context: ReviewActionContext, git_root: Path) -> ReviewBaseResolution:
     return review_plan_support.resolve_review_base(
         context,
         git_root,
@@ -384,7 +385,7 @@ _write_commit_message_file = commit_support.write_commit_message_file
 _atomic_write = commit_support.atomic_write
 
 
-def _analysis_iterations(context: ActionProjectContext, *, mode: str) -> list[str]:
+def _analysis_iterations(context: ReviewActionContext, *, mode: str) -> list[str]:
     return review_plan_support.analysis_iterations(context, mode=mode)
 
 
@@ -394,7 +395,7 @@ _git_iteration_dirs = review_plan_support.git_iteration_dirs
 
 def _run_analyze_helper(
     *,
-    context: ActionProjectContext,
+    context: ReviewActionContext,
     helper: Path,
     iterations: list[str],
     mode: str,
@@ -418,7 +419,7 @@ def _run_analyze_helper(
 _file_has_text = review_artifact_support.file_has_text
 
 
-def _tree_changelog_path(context: ActionProjectContext) -> Path | None:
+def _tree_changelog_path(context: ReviewActionContext) -> Path | None:
     return review_artifact_support.tree_changelog_path(context, sanitize_label_fn=sanitize_label)
 
 
@@ -432,12 +433,12 @@ def _summary_output_path(repo_root: Path, directory: str, prefix: str, label: st
     )
 
 
-def _tree_diffs_root(context: ActionProjectContext) -> Path:
+def _tree_diffs_root(context: ReviewActionContext) -> Path:
     return review_plan_support.tree_diffs_root(context)
 
 
 def _tree_diffs_output_path(
-    context: ActionProjectContext,
+    context: ReviewActionContext,
     directory: str,
     prefix: str,
     label: str | None = None,
@@ -451,7 +452,7 @@ def _tree_diffs_output_path(
     )
 
 
-def _tree_diffs_output_path_from_workflow(context: ActionProjectContext, directory: str, prefix: str) -> Path:
+def _tree_diffs_output_path_from_workflow(context: ReviewActionContext, directory: str, prefix: str) -> Path:
     return _tree_diffs_output_path(context, directory, prefix)
 
 
