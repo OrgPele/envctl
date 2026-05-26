@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
+from envctl_engine.shared.parsing import parse_int
+
 
 @dataclass(slots=True)
 class SelectorDiagnostics:
@@ -16,10 +18,18 @@ class SelectorDiagnostics:
     idle_after_activity: list[dict[str, object]]
 
 
+@dataclass(slots=True)
+class SelectorDriverDiagnostics:
+    key_totals: dict[str, int]
+    key_names: dict[str, Mapping[str, object]]
+    non_key_names: dict[str, Mapping[str, object]]
+    non_key_totals: dict[str, int]
+
+
 def analyze_selector_diagnostics(timeline: Sequence[Mapping[str, object]]) -> SelectorDiagnostics:
     selector_activity_counts, selector_key_counts = _selector_activity_counts(timeline)
     latest_ts_mono = max(
-        (int(item.get("ts_mono_ns")) for item in timeline if isinstance(item.get("ts_mono_ns"), int)),
+        (parse_int(item.get("ts_mono_ns"), 0) for item in timeline if isinstance(item.get("ts_mono_ns"), int)),
         default=0,
     )
     inactive_tokens = _selector_inactive_tokens(
@@ -37,16 +47,16 @@ def analyze_selector_diagnostics(timeline: Sequence[Mapping[str, object]]) -> Se
     driver = _selector_driver_diagnostics(timeline)
     app_key_totals = _selector_app_key_totals(timeline)
     key_pipeline_gaps = _selector_key_pipeline_gaps(
-        driver_key_totals=driver["key_totals"],
+        driver_key_totals=driver.key_totals,
         app_key_totals=app_key_totals,
-        driver_key_names=driver["key_names"],
+        driver_key_names=driver.key_names,
     )
     read_pipeline_gaps = _selector_read_pipeline_gaps(
         timeline,
-        driver_key_totals=driver["key_totals"],
-        driver_non_key_totals=driver["non_key_totals"],
+        driver_key_totals=driver.key_totals,
+        driver_non_key_totals=driver.non_key_totals,
     )
-    driver_focus_loss = _selector_driver_focus_loss(driver["non_key_names"])
+    driver_focus_loss = _selector_driver_focus_loss(driver.non_key_names)
     idle_after_activity = _selector_idle_after_activity(timeline)
     return SelectorDiagnostics(
         inactive_tokens=inactive_tokens,
@@ -75,10 +85,7 @@ def sum_counter_payload(value: object) -> int:
         return 0
     total = 0
     for raw_count in value.values():
-        try:
-            total += int(raw_count)
-        except (TypeError, ValueError):
-            continue
+        total += parse_int(raw_count, 0)
     return total
 
 
@@ -115,7 +122,7 @@ def _selector_activity_counts(
         summary_total = max(summary_total, sum_counter_payload(item.get("event_counts")))
         summary_total = max(summary_total, sum_counter_payload(item.get("raw_counts")))
         if event_name == "ui.selector.key.snapshot":
-            nav_total = int(item.get("nav_event_counter", 0)) if isinstance(item.get("nav_event_counter"), int) else 0
+            nav_total = parse_int(item.get("nav_event_counter"), 0)
             summary_total = max(summary_total, nav_total)
         if summary_total > key_counts.get(token, 0):
             key_counts[token] = summary_total
@@ -135,9 +142,9 @@ def _selector_inactive_tokens(
         if str(item.get("phase", "")).strip().lower() != "enter":
             continue
         token = selector_token(item)
-        if not token or int(selector_activity_counts.get(token, 0)) > 0:
+        if not token or selector_activity_counts.get(token, 0) > 0:
             continue
-        enter_ts = int(item.get("ts_mono_ns")) if isinstance(item.get("ts_mono_ns"), int) else 0
+        enter_ts = parse_int(item.get("ts_mono_ns"), 0)
         if max(0, latest_ts_mono - enter_ts) >= 1_000_000_000:
             inactive.append(token)
     return inactive
@@ -158,11 +165,11 @@ def _selector_low_throughput(
         token = selector_token(item)
         if not token:
             continue
-        enter_ts = int(item.get("ts_mono_ns")) if isinstance(item.get("ts_mono_ns"), int) else 0
+        enter_ts = parse_int(item.get("ts_mono_ns"), 0)
         observed_window_ns = max(0, latest_ts_mono - enter_ts)
         if observed_window_ns < 2_000_000_000:
             continue
-        key_total = int(selector_key_counts.get(token, 0))
+        key_total = selector_key_counts.get(token, 0)
         if key_total <= 1:
             low_throughput.append(
                 {
@@ -180,14 +187,14 @@ def _selector_mouse_double_toggle(timeline: Sequence[Mapping[str, object]]) -> b
         for item in timeline
         if str(item.get("event", "")).strip() == "ui.selector.mouse" and isinstance(item.get("ts_mono_ns"), int)
     ]
-    mouse_events.sort(key=lambda item: int(item.get("ts_mono_ns", 0)))
+    mouse_events.sort(key=lambda item: parse_int(item.get("ts_mono_ns"), 0))
     last_mouse_by_row: dict[tuple[str, str], int] = {}
     for item in mouse_events:
         token = selector_token(item)
         row_id = str(item.get("row_id", "")).strip()
         if not token or not row_id:
             continue
-        ts = int(item.get("ts_mono_ns", 0))
+        ts = parse_int(item.get("ts_mono_ns"), 0)
         key = (token, row_id)
         previous = last_mouse_by_row.get(key)
         if previous is not None and 0 <= ts - previous <= 250_000_000:
@@ -212,7 +219,7 @@ def _selector_blocked_then_cancel(timeline: Sequence[Mapping[str, object]]) -> b
     return False
 
 
-def _selector_driver_diagnostics(timeline: Sequence[Mapping[str, object]]) -> dict[str, dict[str, object]]:
+def _selector_driver_diagnostics(timeline: Sequence[Mapping[str, object]]) -> SelectorDriverDiagnostics:
     driver_key_totals: dict[str, int] = {}
     driver_key_names: dict[str, Mapping[str, object]] = {}
     driver_non_key_names: dict[str, Mapping[str, object]] = {}
@@ -232,19 +239,19 @@ def _selector_driver_diagnostics(timeline: Sequence[Mapping[str, object]]) -> di
             if non_key_total >= driver_non_key_totals.get(token, -1):
                 driver_non_key_totals[token] = non_key_total
                 driver_non_key_names[token] = non_key
-        key_total = int(item.get("key_events_total", 0)) if isinstance(item.get("key_events_total"), int) else 0
+        key_total = parse_int(item.get("key_events_total"), 0)
         if key_total <= driver_key_totals.get(token, -1):
             continue
         driver_key_totals[token] = key_total
         names = item.get("key_events_by_name")
         if isinstance(names, Mapping):
             driver_key_names[token] = names
-    return {
-        "key_totals": driver_key_totals,
-        "key_names": driver_key_names,
-        "non_key_names": driver_non_key_names,
-        "non_key_totals": driver_non_key_totals,
-    }
+    return SelectorDriverDiagnostics(
+        key_totals=driver_key_totals,
+        key_names=driver_key_names,
+        non_key_names=driver_non_key_names,
+        non_key_totals=driver_non_key_totals,
+    )
 
 
 def _selector_app_key_totals(timeline: Sequence[Mapping[str, object]]) -> dict[str, int]:
@@ -273,7 +280,7 @@ def _selector_key_pipeline_gaps(
 ) -> list[dict[str, object]]:
     gaps: list[dict[str, object]] = []
     for token, driver_total in driver_key_totals.items():
-        app_total = int(app_key_totals.get(token, 0))
+        app_total = app_key_totals.get(token, 0)
         if driver_total <= app_total:
             continue
         gaps.append(
@@ -305,25 +312,25 @@ def _selector_read_pipeline_gaps(
         token = selector_token(item)
         if not token:
             continue
-        read_bytes = int(item.get("read_bytes", 0)) if isinstance(item.get("read_bytes"), int) else 0
+        read_bytes = parse_int(item.get("read_bytes"), 0)
         if read_bytes <= read_totals.get(token, -1):
             continue
         read_totals[token] = read_bytes
-        escape_totals[token] = int(item.get("escape_bytes", 0)) if isinstance(item.get("escape_bytes"), int) else 0
+        escape_totals[token] = parse_int(item.get("escape_bytes"), 0)
 
     gaps: list[dict[str, object]] = []
     for token, read_bytes in read_totals.items():
-        non_key_total = int(driver_non_key_totals.get(token, 0))
+        non_key_total = driver_non_key_totals.get(token, 0)
         if non_key_total > 0:
             continue
-        escape_bytes = int(escape_totals.get(token, 0))
+        escape_bytes = escape_totals.get(token, 0)
         if escape_bytes > 0:
             estimated_key_sequences = escape_bytes
             estimation_method = "escape_bytes"
         else:
             estimated_key_sequences = read_bytes // 3 if read_bytes > 0 else 0
             estimation_method = "read_bytes_div_3"
-        driver_total = int(driver_key_totals.get(token, 0))
+        driver_total = driver_key_totals.get(token, 0)
         if estimated_key_sequences <= driver_total:
             continue
         gaps.append(
@@ -345,8 +352,8 @@ def _selector_driver_focus_loss(
 ) -> list[dict[str, object]]:
     focus_loss: list[dict[str, object]] = []
     for token, names in selector_driver_non_key_names.items():
-        app_blur = int(names.get("AppBlur", 0)) if isinstance(names.get("AppBlur"), int) else 0
-        app_focus = int(names.get("AppFocus", 0)) if isinstance(names.get("AppFocus"), int) else 0
+        app_blur = parse_int(names.get("AppBlur"), 0)
+        app_focus = parse_int(names.get("AppFocus"), 0)
         if app_blur <= 0 or app_focus > 0:
             continue
         focus_loss.append(
@@ -367,8 +374,8 @@ def _selector_idle_after_activity(timeline: Sequence[Mapping[str, object]]) -> l
         token = selector_token(item)
         if not token:
             continue
-        idle_ms = int(item.get("idle_ms", 0)) if isinstance(item.get("idle_ms"), int) else 0
-        nav_events = int(item.get("nav_event_counter", 0)) if isinstance(item.get("nav_event_counter"), int) else 0
+        idle_ms = parse_int(item.get("idle_ms"), 0)
+        nav_events = parse_int(item.get("nav_event_counter"), 0)
         idle_after_activity.append(
             {
                 "selector": token,

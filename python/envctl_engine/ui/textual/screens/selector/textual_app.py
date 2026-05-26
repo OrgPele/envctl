@@ -64,7 +64,7 @@ def create_selector_app(
     from textual.app import App, ComposeResult
     from textual.binding import Binding
     from textual.containers import Horizontal, Vertical
-    from textual.events import Click, Key
+    from textual.events import Click, Event, Key
     from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
 
     def trace_key(**payload: Any) -> None:
@@ -264,11 +264,17 @@ def create_selector_app(
                 focused_model_index=self._focused_model_index,
                 set_last_user_model_index=lambda index: setattr(self, "_last_user_model_index", index),
                 sync_status=self._sync_status,
-                schedule_render=lambda: self.call_after_refresh(lambda: asyncio.create_task(self._render_rows())),
-                schedule_submit=lambda: self.call_after_refresh(
-                    lambda: asyncio.create_task(self.action_submit(cause="initial_navigation_submit"))
-                ),
+                schedule_render=self._schedule_initial_navigation_render,
+                schedule_submit=self._schedule_initial_navigation_submit,
             ).apply()
+
+        def _schedule_initial_navigation_render(self) -> None:
+            self.call_after_refresh(lambda: asyncio.create_task(self._render_rows()))
+
+        def _schedule_initial_navigation_submit(self) -> None:
+            self.call_after_refresh(
+                lambda: asyncio.create_task(self.action_submit(cause="initial_navigation_submit"))
+            )
 
         async def _sync_single_select_focus_selection(self, *, reason: str) -> None:
             await self._navigation_actions().sync_single_select_focus_selection(reason=reason)
@@ -279,7 +285,7 @@ def create_selector_app(
         async def _select_model_index(self, model_index: int) -> None:
             await self._selection_actions.select_model_index(model_index)
 
-        async def action_toggle(self) -> None:
+        async def action_toggle(self, attribute_name: str | None = None) -> None:
             model_index = self._focused_model_index()
             if model_index is None:
                 return
@@ -427,7 +433,7 @@ def create_selector_app(
         async def _maybe_handle_filter_focus_key(self, event: Key) -> bool:
             return await self._key_actions().handle_filter_focus_key(event)
 
-        async def on_event(self, event: object) -> None:
+        async def on_event(self, event: Event) -> None:
             if isinstance(event, Key) or event.__class__.__name__.startswith("Mouse"):
                 self._status_controller.touch_timeout()
             if not mouse_enabled and event.__class__.__name__.startswith("Mouse"):
@@ -439,7 +445,7 @@ def create_selector_app(
                 return
             if key_trace_enabled and isinstance(event, Key):
                 self._key_actions().record_event_key(event)
-            await super().on_event(event)  # type: ignore[misc]
+            await super().on_event(event)
 
         async def on_input_changed(self, event: Input.Changed) -> None:
             query = selection_state.apply_selector_filter(self._rows, event.value)
@@ -464,7 +470,9 @@ def create_selector_app(
             timer = self._key_snapshot_timer
             if timer is not None:
                 try:
-                    timer.stop()  # type: ignore[union-attr]
+                    stop = getattr(timer, "stop", None)
+                    if callable(stop):
+                        stop()
                 except Exception:
                     pass
                 self._key_snapshot_timer = None

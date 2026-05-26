@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
+from envctl_engine.shared.parsing import parse_float, parse_int
+
 
 @dataclass(slots=True)
 class StartupDiagnostics:
@@ -16,6 +18,23 @@ class StartupDiagnostics:
     requirements_total_ms: float
     has_adapter_stage_detail: bool
     has_command_timing_detail: bool
+
+
+def _payload_float(payload: Mapping[str, object], key: str) -> float:
+    return parse_float(payload.get(key), 0.0)
+
+
+def _payload_int(payload: Mapping[str, object], key: str, default: int = 0) -> int:
+    return parse_int(payload.get(key), default)
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(str(value).strip())
+    except ValueError:
+        return None
 
 
 def analyze_startup_diagnostics(timeline: Sequence[Mapping[str, object]]) -> StartupDiagnostics:
@@ -82,10 +101,10 @@ class _StartupAccumulator:
             self._fill_slowest_from_project_summaries()
         project_rows = sorted(
             self.project_breakdown.values(),
-            key=lambda row: float(row.get("total_ms", 0.0) or 0.0),
+            key=lambda row: _payload_float(row, "total_ms"),
             reverse=True,
         )
-        self.slowest_components.sort(key=lambda item: float(item.get("duration_ms", 0.0) or 0.0), reverse=True)
+        self.slowest_components.sort(key=lambda item: _payload_float(item, "duration_ms"), reverse=True)
         requirements_stage_hotspots = _hotspots("stage", self.requirements_stage_totals)
         service_bootstrap_hotspots = _hotspots("target", self.service_bootstrap_totals)
         service_attach_hotspots = _hotspots("target", self.service_attach_totals)
@@ -100,7 +119,7 @@ class _StartupAccumulator:
         known_total_ms = round(self.requirements_total_ms + self.service_total_ms + self.resume_restore_total_ms, 2)
         unknown_ms = round(max(0.0, measured_window_ms - known_total_ms), 2)
         unknown_ratio = round((unknown_ms / measured_window_ms), 4) if measured_window_ms > 0 else 0.0
-        startup_breakdown = {
+        startup_breakdown: dict[str, object] = {
             "execution_mode": self.startup_execution_mode,
             "workers": self.startup_workers,
             "projects": self.startup_projects,
@@ -132,7 +151,7 @@ class _StartupAccumulator:
 
     def _observe_window(self, event_name: str, item: Mapping[str, object]) -> None:
         ts_value = item.get("ts_mono_ns")
-        ts_mono_ns = int(ts_value) if isinstance(ts_value, int) else None
+        ts_mono_ns = parse_int(ts_value, -1) if isinstance(ts_value, int) else None
         if event_name not in _STARTUP_EVENTS or ts_mono_ns is None:
             return
         self.startup_window_first = (
@@ -144,8 +163,7 @@ class _StartupAccumulator:
 
     def _observe_startup_execution(self, item: Mapping[str, object]) -> None:
         self.startup_execution_mode = str(item.get("mode", "")).strip() or self.startup_execution_mode
-        workers = item.get("workers")
-        self.startup_workers = int(workers) if isinstance(workers, int) else self.startup_workers
+        self.startup_workers = _payload_int(item, "workers", self.startup_workers)
         raw_projects = item.get("projects")
         if isinstance(raw_projects, list):
             self.startup_projects = [str(project).strip() for project in raw_projects if str(project).strip()]
@@ -156,14 +174,14 @@ class _StartupAccumulator:
 
     def _observe_requirements_summary(self, item: Mapping[str, object]) -> None:
         project = str(item.get("project", "")).strip() or "unknown"
-        duration_ms = float(item.get("duration_ms", 0.0) or 0.0)
+        duration_ms = _payload_float(item, "duration_ms")
         self.requirements_total_ms += duration_ms
         entry = self._project_entry(project)
-        entry["requirements_ms"] = round(float(entry.get("requirements_ms", 0.0) or 0.0) + duration_ms, 2)
+        entry["requirements_ms"] = round(_payload_float(entry, "requirements_ms") + duration_ms, 2)
 
     def _observe_phase(self, event_name: str, item: Mapping[str, object]) -> None:
         phase = str(item.get("phase", "")).strip() or "unknown"
-        duration_ms = round(float(item.get("duration_ms", 0.0) or 0.0), 2)
+        duration_ms = round(_payload_float(item, "duration_ms"), 2)
         self.phase_totals[phase] = round(self.phase_totals.get(phase, 0.0) + duration_ms, 2)
         self.slowest_components.append(
             {
@@ -176,7 +194,7 @@ class _StartupAccumulator:
         )
 
     def _observe_artifact_timing(self, event_name: str, item: Mapping[str, object]) -> None:
-        duration_ms = round(float(item.get("duration_ms", 0.0) or 0.0), 2)
+        duration_ms = round(_payload_float(item, "duration_ms"), 2)
         self.slowest_components.append(
             {
                 "kind": "artifacts",
@@ -191,7 +209,7 @@ class _StartupAccumulator:
         phase = str(item.get("phase", "")).strip() or "unknown"
         component = str(item.get("component", "")).strip() or "unknown"
         project = str(item.get("project", "")).strip() or "unknown"
-        duration_ms = round(float(item.get("duration_ms", 0.0) or 0.0), 2)
+        duration_ms = round(_payload_float(item, "duration_ms"), 2)
         key = f"{project}:{component}:{phase}"
         target_totals = (
             self.service_bootstrap_totals
@@ -212,17 +230,17 @@ class _StartupAccumulator:
 
     def _observe_service_summary(self, item: Mapping[str, object]) -> None:
         project = str(item.get("project", "")).strip() or "unknown"
-        duration_ms = float(item.get("duration_ms", 0.0) or 0.0)
+        duration_ms = _payload_float(item, "duration_ms")
         self.service_total_ms += duration_ms
         entry = self._project_entry(project)
-        entry["service_ms"] = round(float(entry.get("service_ms", 0.0) or 0.0) + duration_ms, 2)
+        entry["service_ms"] = round(_payload_float(entry, "service_ms") + duration_ms, 2)
 
     def _observe_resume_restore_project(self, item: Mapping[str, object]) -> None:
         project = str(item.get("project", "")).strip() or "unknown"
-        duration_ms = float(item.get("total_ms", 0.0) or 0.0)
+        duration_ms = _payload_float(item, "total_ms")
         self.resume_restore_total_ms += duration_ms
         entry = self._project_entry(project)
-        entry["resume_restore_ms"] = round(float(entry.get("resume_restore_ms", 0.0) or 0.0) + duration_ms, 2)
+        entry["resume_restore_ms"] = round(_payload_float(entry, "resume_restore_ms") + duration_ms, 2)
 
     def _observe_requirements_component(self, item: Mapping[str, object]) -> None:
         self.slowest_components.append(
@@ -230,7 +248,7 @@ class _StartupAccumulator:
                 "kind": "requirement",
                 "project": str(item.get("project", "")).strip() or "unknown",
                 "name": str(item.get("requirement", "")).strip() or "unknown",
-                "duration_ms": round(float(item.get("duration_ms", 0.0) or 0.0), 2),
+                "duration_ms": round(_payload_float(item, "duration_ms"), 2),
                 "success": bool(item.get("success", False)),
             }
         )
@@ -241,23 +259,20 @@ class _StartupAccumulator:
                 "kind": "service",
                 "project": str(item.get("project", "")).strip() or "unknown",
                 "name": str(item.get("component", "")).strip() or "unknown",
-                "duration_ms": round(float(item.get("duration_ms", 0.0) or 0.0), 2),
+                "duration_ms": round(_payload_float(item, "duration_ms"), 2),
                 "success": True,
             }
         )
 
     def _observe_adapter_command_timing(self, item: Mapping[str, object]) -> None:
         self.has_command_timing_detail = True
-        try:
-            command_returncode = int(item.get("returncode", 1))
-        except (TypeError, ValueError):
-            command_returncode = 1
+        command_returncode = _payload_int(item, "returncode", 1)
         self.slowest_components.append(
             {
                 "kind": "adapter_command",
                 "project": str(item.get("project", "")).strip() or "unknown",
                 "name": str(item.get("stage", "")).strip() or "command",
-                "duration_ms": round(float(item.get("duration_ms", 0.0) or 0.0), 2),
+                "duration_ms": round(_payload_float(item, "duration_ms"), 2),
                 "success": command_returncode == 0,
             }
         )
@@ -270,9 +285,8 @@ class _StartupAccumulator:
             stage_key = str(stage_name).strip().lower()
             if not stage_key:
                 continue
-            try:
-                duration = float(raw_duration)
-            except (TypeError, ValueError):
+            duration = _optional_float(raw_duration)
+            if duration is None:
                 continue
             self.requirements_stage_totals[stage_key] = round(
                 self.requirements_stage_totals.get(stage_key, 0.0) + duration,
@@ -293,17 +307,17 @@ class _StartupAccumulator:
 
     def _complete_project_totals(self) -> None:
         for entry in self.project_breakdown.values():
-            requirements_ms = float(entry.get("requirements_ms", 0.0) or 0.0)
-            service_ms = float(entry.get("service_ms", 0.0) or 0.0)
-            resume_ms = float(entry.get("resume_restore_ms", 0.0) or 0.0)
+            requirements_ms = _payload_float(entry, "requirements_ms")
+            service_ms = _payload_float(entry, "service_ms")
+            resume_ms = _payload_float(entry, "resume_restore_ms")
             entry["total_ms"] = round(requirements_ms + service_ms + resume_ms, 2)
 
     def _fill_slowest_from_project_summaries(self) -> None:
         for entry in self.project_breakdown.values():
             project = str(entry.get("project", "")).strip() or "unknown"
-            requirements_ms = round(float(entry.get("requirements_ms", 0.0) or 0.0), 2)
-            service_ms = round(float(entry.get("service_ms", 0.0) or 0.0), 2)
-            resume_ms = round(float(entry.get("resume_restore_ms", 0.0) or 0.0), 2)
+            requirements_ms = round(_payload_float(entry, "requirements_ms"), 2)
+            service_ms = round(_payload_float(entry, "service_ms"), 2)
+            resume_ms = round(_payload_float(entry, "resume_restore_ms"), 2)
             if requirements_ms > 0:
                 self.slowest_components.append(
                     {

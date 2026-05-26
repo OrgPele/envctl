@@ -94,7 +94,6 @@ ReviewBaseResolution = review_plan_support.ReviewBaseResolution
 ReviewBaseResolutionError = review_plan_support.ReviewBaseResolutionError
 OriginalPlanResolution = review_plan_support.OriginalPlanResolution
 
-
 def _workflow_runner() -> ProjectActionWorkflowRunner:
     return workflow_factory.ProjectActionWorkflowFactory(
         git=workflow_factory.ProjectActionWorkflowGitSources(

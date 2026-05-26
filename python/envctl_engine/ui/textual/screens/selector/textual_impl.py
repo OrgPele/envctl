@@ -4,7 +4,7 @@ from contextlib import nullcontext
 import os
 import select
 import sys
-from typing import Callable, Sequence, cast
+from typing import Callable, Literal, Sequence, cast, overload
 
 from envctl_engine.ui.textual.screens.selector.support import (
     _deep_debug_enabled,
@@ -80,6 +80,38 @@ def _consume_initial_selector_actions(*, tty_fd: int | None) -> tuple[str, ...]:
     return tuple(actions)
 
 
+@overload
+def run_textual_selector(
+    *,
+    prompt: str,
+    options: list[SelectorItem],
+    multi: bool,
+    initial_tokens: Sequence[str] | None = None,
+    emit: Callable[..., None] | None = None,
+    exclusive_token: str | None = None,
+    build_only: Literal[True],
+    force_textual_backend: bool = False,
+    selector_backend_decision: Callable[..., tuple[bool, dict[str, object]]] | None = None,
+    run_prompt_toolkit_selector: Callable[..., list[str] | None] | None = None,
+) -> object: ...
+
+
+@overload
+def run_textual_selector(
+    *,
+    prompt: str,
+    options: list[SelectorItem],
+    multi: bool,
+    initial_tokens: Sequence[str] | None = None,
+    emit: Callable[..., None] | None = None,
+    exclusive_token: str | None = None,
+    build_only: Literal[False] = False,
+    force_textual_backend: bool = False,
+    selector_backend_decision: Callable[..., tuple[bool, dict[str, object]]] | None = None,
+    run_prompt_toolkit_selector: Callable[..., list[str] | None] | None = None,
+) -> list[str] | None: ...
+
+
 def run_textual_selector(
     *,
     prompt: str,
@@ -92,7 +124,7 @@ def run_textual_selector(
     force_textual_backend: bool = False,
     selector_backend_decision: Callable[..., tuple[bool, dict[str, object]]] | None = None,
     run_prompt_toolkit_selector: Callable[..., list[str] | None] | None = None,
-) -> list[str] | None:
+) -> list[str] | None | object:
     if not options:
         return []
     if not _textual_importable():
@@ -189,7 +221,7 @@ def run_textual_selector(
             initial_navigation=initial_navigation,
             exclusive_token=exclusive_token,
         )
-        return app  # type: ignore[return-value]
+        return app
     prelaunch_mode = (
         temporary_tty_character_mode(fd=tty_fd, emit=emit)
         if tty_fd is not None and force_textual_backend

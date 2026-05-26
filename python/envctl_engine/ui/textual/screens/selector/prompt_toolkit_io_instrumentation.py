@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import Callable, Sequence, cast
+from typing import Callable, cast
 
+from envctl_engine.shared.parsing import parse_int
 from .backend_policy import emit_selector_debug
 from .io_probe import SelectorIoProbe
+
+SnapshotProbe = Callable[[], dict[str, object]]
 
 
 def _initial_prompt_toolkit_io_stats() -> dict[str, object]:
@@ -31,7 +35,7 @@ def instrument_prompt_toolkit_posix_io(
     deep_debug: bool,
     enabled: bool,
     selector_id: str,
-) -> Sequence[Callable[[], dict[str, object]]]:
+) -> Iterator[tuple[SnapshotProbe,]]:
     if not deep_debug or not enabled:
         yield ((lambda: {}),)
         return
@@ -54,6 +58,9 @@ def instrument_prompt_toolkit_posix_io(
     original_read = getattr(posix_utils.os, "read", None)
     io_probe = SelectorIoProbe()
 
+    def _snapshot() -> dict[str, object]:
+        return prompt_toolkit_io_snapshot(stats)
+
     def _instrumented_select(rlist, wlist, xlist, timeout=None):  # noqa: ANN001,ANN202
         if not callable(original_select):
             raise OSError("select unavailable")
@@ -61,7 +68,7 @@ def instrument_prompt_toolkit_posix_io(
         try:
             ready = original_select(rlist, wlist, xlist, timeout)
         except Exception:
-            stats["select_errors"] = int(stats["select_errors"]) + 1
+            _increment_stat(stats, "select_errors")
             raise
         _record_select_result(stats=stats, ready=ready, io_probe=io_probe)
         return ready
@@ -72,9 +79,10 @@ def instrument_prompt_toolkit_posix_io(
         try:
             data = original_read(fd, count)
         except Exception:
-            stats["read_errors"] = int(stats["read_errors"]) + 1
+            _increment_stat(stats, "read_errors")
             raise
-        _record_read(stats=stats, fd=fd, data=data)
+        if isinstance(data, bytes):
+            _record_read(stats=stats, fd=fd, data=data)
         return data
 
     if callable(original_select):
@@ -96,10 +104,6 @@ def instrument_prompt_toolkit_posix_io(
         method="posix_utils_io_patch",
     )
     try:
-
-        def _snapshot() -> dict[str, object]:
-            return prompt_toolkit_io_snapshot(stats)
-
         yield (_snapshot,)
     finally:
         if callable(original_select):
@@ -122,15 +126,33 @@ def instrument_prompt_toolkit_posix_io(
         )
 
 
+def _stat_int(stats: Mapping[str, object], key: str) -> int:
+    return parse_int(stats.get(key), 0)
+
+
+def _increment_stat(stats: dict[str, object], key: str, amount: int = 1) -> None:
+    stats[key] = _stat_int(stats, key) + amount
+
+
+def _increment_counter(counter: dict[int, int], key: int, amount: int = 1) -> None:
+    counter[key] = parse_int(counter.get(key), 0) + amount
+
+
+def _iterable_items(value: object) -> list[object]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Iterable):
+        return []
+    return list(cast(Iterable[object], value))
+
+
 def _record_select_inputs(*, stats: dict[str, object], rlist: object, io_probe: SelectorIoProbe) -> None:
-    stats["select_calls"] = int(stats["select_calls"]) + 1
+    _increment_stat(stats, "select_calls")
     fd_counts = cast(dict[int, int], stats["select_fd_counts"])
     fd_termios = cast(dict[int, dict[str, object]], stats["select_fd_termios"])
-    for item in list(rlist) if rlist is not None else []:
+    for item in _iterable_items(rlist):
         fd_val = io_probe.fd_value(item)
         if fd_val is None:
             continue
-        fd_counts[fd_val] = int(fd_counts.get(fd_val, 0)) + 1
+        _increment_counter(fd_counts, fd_val)
         if fd_val not in fd_termios:
             fd_termios[fd_val] = io_probe.prompt_toolkit_termios_snapshot(fd_val)
 
@@ -138,22 +160,23 @@ def _record_select_inputs(*, stats: dict[str, object], rlist: object, io_probe: 
 def _record_select_result(*, stats: dict[str, object], ready: object, io_probe: SelectorIoProbe) -> None:
     ready_r = ready[0] if isinstance(ready, tuple) and len(ready) >= 1 else []
     ready_fd_counts = cast(dict[int, int], stats["select_ready_fd_counts"])
-    for item in list(ready_r):
+    ready_items = _iterable_items(ready_r)
+    for item in ready_items:
         fd_val = io_probe.fd_value(item)
         if fd_val is None:
             continue
-        ready_fd_counts[fd_val] = int(ready_fd_counts.get(fd_val, 0)) + 1
-    if ready_r:
-        stats["select_ready_calls"] = int(stats["select_ready_calls"]) + 1
+        _increment_counter(ready_fd_counts, fd_val)
+    if ready_items:
+        _increment_stat(stats, "select_ready_calls")
     else:
-        stats["select_not_ready_calls"] = int(stats["select_not_ready_calls"]) + 1
+        _increment_stat(stats, "select_not_ready_calls")
 
 
 def _record_read(*, stats: dict[str, object], fd: int, data: bytes) -> None:
-    stats["read_calls"] = int(stats["read_calls"]) + 1
-    stats["read_bytes"] = int(stats["read_bytes"]) + len(data)
+    _increment_stat(stats, "read_calls")
+    _increment_stat(stats, "read_bytes", len(data))
     fd_counts = cast(dict[int, int], stats["read_fd_counts"])
-    fd_counts[int(fd)] = int(fd_counts.get(int(fd), 0)) + 1
+    _increment_counter(fd_counts, int(fd))
     read_samples = cast(list[str], stats["read_samples"])
     if len(read_samples) < 24:
         read_samples.append(repr(data[:64]))
@@ -161,16 +184,16 @@ def _record_read(*, stats: dict[str, object], fd: int, data: bytes) -> None:
 
 def prompt_toolkit_io_snapshot(stats: dict[str, object]) -> dict[str, object]:
     return {
-        "io_select_calls": int(stats["select_calls"]),
-        "io_select_ready_calls": int(stats["select_ready_calls"]),
-        "io_select_not_ready_calls": int(stats["select_not_ready_calls"]),
-        "io_select_errors": int(stats["select_errors"]),
+        "io_select_calls": _stat_int(stats, "select_calls"),
+        "io_select_ready_calls": _stat_int(stats, "select_ready_calls"),
+        "io_select_not_ready_calls": _stat_int(stats, "select_not_ready_calls"),
+        "io_select_errors": _stat_int(stats, "select_errors"),
         "io_select_fd_counts": dict(cast(dict[int, int], stats["select_fd_counts"])),
         "io_select_ready_fd_counts": dict(cast(dict[int, int], stats["select_ready_fd_counts"])),
         "io_select_fd_termios": dict(cast(dict[int, dict[str, object]], stats["select_fd_termios"])),
-        "io_read_calls": int(stats["read_calls"]),
-        "io_read_bytes": int(stats["read_bytes"]),
-        "io_read_errors": int(stats["read_errors"]),
+        "io_read_calls": _stat_int(stats, "read_calls"),
+        "io_read_bytes": _stat_int(stats, "read_bytes"),
+        "io_read_errors": _stat_int(stats, "read_errors"),
         "io_read_samples": list(cast(list[str], stats["read_samples"])),
         "io_read_fd_counts": dict(cast(dict[int, int], stats["read_fd_counts"])),
     }

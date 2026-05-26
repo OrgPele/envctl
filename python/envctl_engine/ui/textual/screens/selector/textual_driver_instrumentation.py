@@ -7,6 +7,8 @@ import threading
 import time
 from typing import Any, Callable, Mapping, cast
 
+from envctl_engine.shared.parsing import parse_int
+
 from .backend_policy import emit_selector_debug
 from .io_probe import SelectorIoProbe
 
@@ -38,6 +40,18 @@ def _initial_textual_driver_stats() -> dict[str, object]:
         "non_key_messages": {},
         "feed_samples": [],
     }
+
+
+def _stat_int(stats: Mapping[str, object], key: str) -> int:
+    return parse_int(stats.get(key), 0)
+
+
+def _increment_stat(stats: dict[str, object], key: str, amount: int = 1) -> None:
+    stats[key] = _stat_int(stats, key) + amount
+
+
+def _increment_counter(counter: dict[object, object], key: object, amount: int = 1) -> None:
+    counter[key] = parse_int(counter.get(key), 0) + amount
 
 
 @contextmanager
@@ -112,26 +126,26 @@ def instrument_textual_parser_keys(
     class _InstrumentedXTermParser(original_parser):
         def feed(self, data: str):  # type: ignore[override]
             with stats_lock:
-                stats["feed_calls"] = int(stats["feed_calls"]) + 1
-                stats["feed_chars"] = int(stats["feed_chars"]) + len(data)
-                stats["escape_bytes"] = int(stats["escape_bytes"]) + data.count("\x1b")
+                _increment_stat(stats, "feed_calls")
+                _increment_stat(stats, "feed_chars", len(data))
+                _increment_stat(stats, "escape_bytes", data.count("\x1b"))
                 samples = stats["feed_samples"]
                 if isinstance(samples, list) and len(samples) < 16:
                     samples.append(repr(data[:48]))
             for message in super().feed(data):
                 with stats_lock:
-                    stats["messages_total"] = int(stats["messages_total"]) + 1
+                    _increment_stat(stats, "messages_total")
                     if isinstance(message, textual_events.Key):
-                        stats["key_events_total"] = int(stats["key_events_total"]) + 1
+                        _increment_stat(stats, "key_events_total")
                         key = str(getattr(message, "key", "") or "").strip() or "<empty>"
                         by_name = stats["key_events_by_name"]
                         if isinstance(by_name, dict):
-                            by_name[key] = int(by_name.get(key, 0)) + 1
+                            _increment_counter(by_name, key)
                     else:
                         message_name = type(message).__name__
                         non_key = stats["non_key_messages"]
                         if isinstance(non_key, dict):
-                            non_key[message_name] = int(non_key.get(message_name, 0)) + 1
+                            _increment_counter(non_key, message_name)
                 yield message
 
     original_os_read = getattr(linux_driver_mod.os, "read", None)
@@ -143,7 +157,7 @@ def instrument_textual_parser_keys(
         if not callable(original_selector_select):
             raise OSError("selectors.SelectSelector.select unavailable")
         with stats_lock:
-            stats["select_calls"] = int(stats["select_calls"]) + 1
+            _increment_stat(stats, "select_calls")
             timeout_samples = stats["select_timeout_samples"]
             if isinstance(timeout_samples, list) and len(timeout_samples) < 16:
                 timeout_samples.append(repr(timeout))
@@ -152,14 +166,14 @@ def instrument_textual_parser_keys(
             ready = original_selector_select(self, timeout)
         except Exception:
             with stats_lock:
-                stats["select_errors"] = int(stats["select_errors"]) + 1
+                _increment_stat(stats, "select_errors")
             raise
         ready_r: list[object] = list(ready) if isinstance(ready, list) else []
         with stats_lock:
             if ready_r:
-                stats["select_ready_calls"] = int(stats["select_ready_calls"]) + 1
+                _increment_stat(stats, "select_ready_calls")
             else:
-                stats["select_not_ready_calls"] = int(stats["select_not_ready_calls"]) + 1
+                _increment_stat(stats, "select_not_ready_calls")
             _record_selector_ready_fds(stats=stats, ready=ready_r, io_probe=io_probe)
         return ready
 
@@ -170,7 +184,7 @@ def instrument_textual_parser_keys(
             chunk = cast(bytes, original_os_read(fd, n))
         except Exception:
             with stats_lock:
-                stats["read_errors"] = int(stats["read_errors"]) + 1
+                _increment_stat(stats, "read_errors")
             raise
         with stats_lock:
             _record_textual_read(stats=stats, fd=fd, chunk=chunk, io_probe=io_probe)
@@ -251,7 +265,7 @@ def _record_selector_read_fds(
                 fd_val = fd_raw
             if fd_val is None:
                 continue
-            read_fd_counts[fd_val] = int(read_fd_counts.get(fd_val, 0)) + 1
+            _increment_counter(read_fd_counts, fd_val)
     except Exception:
         pass
 
@@ -278,7 +292,7 @@ def _record_selector_ready_fds(
                     fd_val = fd_raw
             if fd_val is None:
                 continue
-            ready_fd_counts[fd_val] = int(ready_fd_counts.get(fd_val, 0)) + 1
+            _increment_counter(ready_fd_counts, fd_val)
     except Exception:
         pass
 
@@ -290,10 +304,10 @@ def _record_textual_read(
     chunk: bytes,
     io_probe: SelectorIoProbe,
 ) -> None:
-    stats["read_calls"] = int(stats["read_calls"]) + 1
-    stats["read_bytes"] = int(stats["read_bytes"]) + len(chunk)
+    _increment_stat(stats, "read_calls")
+    _increment_stat(stats, "read_bytes", len(chunk))
     if not chunk:
-        stats["read_zero_reads"] = int(stats["read_zero_reads"]) + 1
+        _increment_stat(stats, "read_zero_reads")
     stats["last_read_mono_ns"] = time.monotonic_ns()
     read_samples = stats["read_samples"]
     if isinstance(read_samples, list) and len(read_samples) < 24:
@@ -301,10 +315,10 @@ def _record_textual_read(
     thread_counts = stats["read_thread_counts"]
     if isinstance(thread_counts, dict):
         thread_name = threading.current_thread().name or "<unknown>"
-        thread_counts[thread_name] = int(thread_counts.get(thread_name, 0)) + 1
+        _increment_counter(thread_counts, thread_name)
     fd_counts = stats["read_fd_counts"]
     if isinstance(fd_counts, dict):
-        fd_counts[int(fd)] = int(fd_counts.get(int(fd), 0)) + 1
+        _increment_counter(fd_counts, fd)
     fd_termios_initial = stats["read_fd_termios_initial"]
     if isinstance(fd_termios_initial, dict):
         fd_int = int(fd)
@@ -325,28 +339,28 @@ def textual_driver_snapshot(
         read_fd_termios_initial = dict(cast(dict[int, dict[str, object]], stats["read_fd_termios_initial"]))
         select_read_fd_counts = dict(cast(dict[int, int], stats["select_read_fd_counts"]))
         select_ready_fd_counts = dict(cast(dict[int, int], stats["select_ready_fd_counts"]))
-        last_read_mono_ns = int(stats["last_read_mono_ns"])
+        last_read_mono_ns = _stat_int(stats, "last_read_mono_ns")
         snapshot: dict[str, object] = {
-            "select_calls": int(stats["select_calls"]),
-            "select_ready_calls": int(stats["select_ready_calls"]),
-            "select_not_ready_calls": int(stats["select_not_ready_calls"]),
-            "select_errors": int(stats["select_errors"]),
+            "select_calls": _stat_int(stats, "select_calls"),
+            "select_ready_calls": _stat_int(stats, "select_ready_calls"),
+            "select_not_ready_calls": _stat_int(stats, "select_not_ready_calls"),
+            "select_errors": _stat_int(stats, "select_errors"),
             "select_timeout_samples": list(cast(list[str], stats["select_timeout_samples"])),
             "select_read_fd_counts": {str(fd): int(count) for fd, count in select_read_fd_counts.items()},
             "select_ready_fd_counts": {str(fd): int(count) for fd, count in select_ready_fd_counts.items()},
-            "read_calls": int(stats["read_calls"]),
-            "read_bytes": int(stats["read_bytes"]),
+            "read_calls": _stat_int(stats, "read_calls"),
+            "read_bytes": _stat_int(stats, "read_bytes"),
             "read_samples": list(cast(list[str], stats["read_samples"])),
             "read_thread_counts": dict(cast(dict[str, int], stats["read_thread_counts"])),
             "read_fd_counts": {str(fd): int(count) for fd, count in read_fd_counts.items()},
             "read_fd_termios_initial": {str(fd): dict(state) for fd, state in read_fd_termios_initial.items()},
-            "read_errors": int(stats["read_errors"]),
-            "read_zero_reads": int(stats["read_zero_reads"]),
-            "feed_calls": int(stats["feed_calls"]),
-            "feed_chars": int(stats["feed_chars"]),
-            "escape_bytes": int(stats["escape_bytes"]),
-            "messages_total": int(stats["messages_total"]),
-            "key_events_total": int(stats["key_events_total"]),
+            "read_errors": _stat_int(stats, "read_errors"),
+            "read_zero_reads": _stat_int(stats, "read_zero_reads"),
+            "feed_calls": _stat_int(stats, "feed_calls"),
+            "feed_chars": _stat_int(stats, "feed_chars"),
+            "escape_bytes": _stat_int(stats, "escape_bytes"),
+            "messages_total": _stat_int(stats, "messages_total"),
+            "key_events_total": _stat_int(stats, "key_events_total"),
             "key_events_by_name": dict(cast(dict[str, int], stats["key_events_by_name"])),
             "non_key_messages": dict(cast(dict[str, int], stats["non_key_messages"])),
             "feed_samples": list(cast(list[str], stats["feed_samples"])),

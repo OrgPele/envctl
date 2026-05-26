@@ -5,9 +5,12 @@ from dataclasses import dataclass
 import os
 import sys
 import time
-from typing import Callable, Sequence, cast
+from typing import Any, Callable, Sequence, cast
 
+from envctl_engine.shared.parsing import parse_int
 from envctl_engine.ui.selector_model import SelectorItem
+
+PromptToolkitEmitter = Callable[..., None]
 
 
 @dataclass(slots=True)
@@ -30,8 +33,8 @@ class PromptToolkitListConfig:
     wrap_navigation: bool
     cancel_on_escape: bool
     initial_tokens: Sequence[str] | None = None
-    emit_event: Callable[[str, object], None] | None = None
-    emit_debug: Callable[[str, object], None] | None = None
+    emit_event: PromptToolkitEmitter | None = None
+    emit_debug: PromptToolkitEmitter | None = None
     row_text: Callable[[SelectorItem], str] | None = None
     exclusive_token: str | None = None
     help_text_multi: str = "UP/DOWN or j/k move  Space toggle  a/Ctrl+A all  Enter submit  q/Esc cancel"
@@ -64,6 +67,20 @@ def create_prompt_toolkit_tty_io(*, stack: ExitStack) -> tuple[object, object, s
     if callable(close_output):
         stack.callback(close_output)
     return ptk_input, ptk_output, source
+
+
+def _invalidate_event_app(event: object) -> None:
+    app = getattr(event, "app", None)
+    invalidate = getattr(app, "invalidate", None)
+    if callable(invalidate):
+        invalidate()
+
+
+def _exit_event_app(event: object, *, result: PromptToolkitListResult) -> None:
+    app = getattr(event, "app", None)
+    exit_app = getattr(app, "exit", None)
+    if callable(exit_app):
+        exit_app(result=result)
 
 
 def run_prompt_toolkit_list_selector(
@@ -213,7 +230,7 @@ def run_prompt_toolkit_list_selector(
             selected = True
         _emit_event("ui.selection.toggle", token=str(rows[cursor].token), selected=selected)
         _emit_key(key_name, before, cursor, handled=True)
-        event.app.invalidate()  # type: ignore[attr-defined]
+        _invalidate_event_app(event)
 
     def _toggle_all(event: object) -> None:
         nonlocal selected_indexes, status_error, status_error_deadline
@@ -223,7 +240,7 @@ def run_prompt_toolkit_list_selector(
         if not config.multi:
             selected_indexes = {cursor}
             _emit_key("ctrl+a", before, cursor, handled=True)
-            event.app.invalidate()  # type: ignore[attr-defined]
+            _invalidate_event_app(event)
             return
         selectable_indexes = list(range(len(rows)))
         if config.exclusive_token:
@@ -236,7 +253,7 @@ def run_prompt_toolkit_list_selector(
         selected_indexes = set(selectable_indexes) if should_select else set()
         _emit_event("ui.selection.toggle", token="__VISIBLE__", selected=should_select)
         _emit_key("ctrl+a", before, cursor, handled=True)
-        event.app.invalidate()  # type: ignore[attr-defined]
+        _invalidate_event_app(event)
 
     def _move(delta: int, key_name: str, event: object) -> None:
         nonlocal cursor
@@ -246,7 +263,7 @@ def run_prompt_toolkit_list_selector(
         else:
             cursor = max(0, min(len(rows) - 1, cursor + delta))
         _emit_key(key_name, before, cursor, handled=True)
-        event.app.invalidate()  # type: ignore[attr-defined]
+        _invalidate_event_app(event)
 
     def _submit(event: object) -> None:
         nonlocal status_error, status_error_deadline
@@ -270,7 +287,7 @@ def run_prompt_toolkit_list_selector(
                 cancelled=False,
                 cause=config.confirm_cause,
             )
-            event.app.invalidate()  # type: ignore[attr-defined]
+            _invalidate_event_app(event)
             return
         values = [str(rows[index].token) for index in sorted(selected_indexes)]
         _emit_event(
@@ -287,7 +304,7 @@ def run_prompt_toolkit_list_selector(
             cancelled=False,
             cause=config.confirm_cause,
         )
-        event.app.exit(result=PromptToolkitListResult(values=values, cancelled=False))  # type: ignore[attr-defined]
+        _exit_event_app(event, result=PromptToolkitListResult(values=values, cancelled=False))
 
     def _cancel(event: object) -> None:
         _emit_event("ui.selection.cancel", prompt=config.prompt, multi=config.multi)
@@ -299,7 +316,7 @@ def run_prompt_toolkit_list_selector(
             cancelled=True,
             cause=config.cancel_cause,
         )
-        event.app.exit(result=PromptToolkitListResult(values=None, cancelled=True))  # type: ignore[attr-defined]
+        _exit_event_app(event, result=PromptToolkitListResult(values=None, cancelled=True))
 
     bindings = KeyBindings()
     for key_name in ("up", "k", "w"):
@@ -326,8 +343,8 @@ def run_prompt_toolkit_list_selector(
             layout=Layout(Window(content=FormattedTextControl(text=_frame, focusable=False))),
             key_bindings=bindings,
             full_screen=True,
-            input=ptk_input,
-            output=ptk_output,
+            input=cast(Any, ptk_input),
+            output=cast(Any, ptk_output),
             refresh_interval=0.25,
         )
         selector_timeout_ms_raw = str(os.environ.get("ENVCTL_UI_SELECTOR_TIMEOUT_MS", "")).strip()
@@ -435,9 +452,14 @@ def run_prompt_toolkit_list_selector(
             result = PromptToolkitListResult(values=None, cancelled=True)
         finally:
             io_stats = io_probe() if callable(io_probe) else {}
-            io_read_calls = int(io_stats.get("io_read_calls", 0))
-            io_read_errors = int(io_stats.get("io_read_errors", 0))
-            io_read_samples = list(cast(list[str], io_stats.get("io_read_samples", [])))
+            io_read_calls = parse_int(io_stats.get("io_read_calls"), 0)
+            io_read_errors = parse_int(io_stats.get("io_read_errors"), 0)
+            raw_read_samples = io_stats.get("io_read_samples")
+            io_read_samples = (
+                [str(sample) for sample in raw_read_samples]
+                if isinstance(raw_read_samples, list)
+                else []
+            )
             _emit_debug(
                 "ui.selector.key.driver.summary",
                 selector_id=config.selector_id,
