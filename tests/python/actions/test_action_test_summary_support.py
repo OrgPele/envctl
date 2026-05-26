@@ -15,6 +15,8 @@ from envctl_engine.actions.action_test_summary_support import (
     format_summary_error_lines,
     persist_test_summary_artifacts,
     print_test_suite_overview,
+    summary_float,
+    summary_int,
     suite_display_name,
     TestSummaryArtifactPersistor,
     write_failed_tests_summary,
@@ -25,6 +27,14 @@ class ActionTestSummarySupportTests(unittest.TestCase):
     def test_summary_artifact_support_has_named_owner_objects(self) -> None:
         self.assertTrue(callable(TestSummaryArtifactPersistor.persist))
         self.assertTrue(callable(FailedTestSummaryWriter.write))
+
+    def test_summary_value_coercion_defaults_malformed_values(self) -> None:
+        self.assertEqual(summary_int("3"), 3)
+        self.assertEqual(summary_int(object(), default=5), 5)
+        self.assertEqual(summary_int("bad", default=7), 7)
+        self.assertEqual(summary_float("1.25"), 1.25)
+        self.assertEqual(summary_float(object(), default=2.5), 2.5)
+        self.assertEqual(summary_float("bad", default=3.5), 3.5)
 
     def test_collect_failed_tests_deduplicates_and_resolves_file_level_errors(self) -> None:
         outcomes = [

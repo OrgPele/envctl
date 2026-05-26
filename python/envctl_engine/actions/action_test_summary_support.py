@@ -18,6 +18,8 @@ from envctl_engine.actions.action_test_summary_collection import (
     collect_generic_suite_failures,
     collect_suite_failure_contexts,
     resolve_failed_test_error,
+    summary_float,
+    summary_int,
     suite_display_name,
 )
 from envctl_engine.actions.action_test_summary_display import (
@@ -67,6 +69,8 @@ __all__ = [
     "resolve_failed_test_error",
     "short_failed_summary_path",
     "structured_summary_lines",
+    "summary_float",
+    "summary_int",
     "suite_display_name",
     "TestSummaryArtifactPersistor",
     "user_code_frame_blocks",

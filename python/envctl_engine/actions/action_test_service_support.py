@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 from envctl_engine.actions.action_command_support import service_types_from_route_services
 from envctl_engine.actions.action_test_support import TestCommandSpec, TestExecutionSpec, TestTargetContext
 from envctl_engine.runtime.command_router import Route
+
+
+class AdditionalServiceConfig(Protocol):
+    def app_service_by_name(self, name: str) -> object | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,7 +18,7 @@ class AdditionalServiceTestPlanner:
     route: Route
     targets: list[object]
     target_contexts: list[TestTargetContext]
-    config: object
+    config: AdditionalServiceConfig
     split_command: Callable[[str, dict[str, str]], list[str]]
     action_replacements_builder: Callable[..., dict[str, str]]
 
@@ -60,7 +64,7 @@ class AdditionalServiceTestPlanner:
         return sorted(service_types_from_route_services(self.route) - {"backend", "frontend"})
 
     def _service(self, service_name: str) -> object:
-        service = self.config.app_service_by_name(service_name) if hasattr(self.config, "app_service_by_name") else None
+        service = self.config.app_service_by_name(service_name)
         if service is None:
             raise RuntimeError(f"Unknown additional service {service_name!r} for envctl test --service")
         return service
@@ -85,7 +89,7 @@ def additional_service_test_execution_specs(
     route: Route,
     targets: list[object],
     target_contexts: list[TestTargetContext],
-    config: object,
+    config: AdditionalServiceConfig,
     split_command: Callable[[str, dict[str, str]], list[str]],
     action_replacements_builder: Callable[..., dict[str, str]],
 ) -> list[TestExecutionSpec]:
