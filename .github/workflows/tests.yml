@@ -16,11 +16,12 @@ name: Tests
 #   - package:  python -m build + release shipability gate
 #   - lint:     ruff (non-blocking until main is green)
 #
-# All three share a Blacksmith Sticky Disk for the uv wheel cache, so
-# dependency installs reuse already-downloaded wheels (~1-2s warm vs ~7s
-# cold). The pytest job additionally mounts a cache for .pytest_cache so
-# `--ff` orders previously-failing tests first on subsequent pushes,
-# delivering signal in seconds when a regression is in flight.
+# All three use setup-uv's built-in cache keyed by uv.lock so dependency
+# installs reuse already-downloaded wheels without relying on an extra
+# third-party cache action. The pytest job additionally restores .pytest_cache
+# through GitHub's official cache action so `--ff` orders previously-failing
+# tests first on subsequent pushes, delivering signal in seconds when a
+# regression is in flight.
 #
 # Pytest itself runs through pytest-xdist with `--dist=loadscope` so tests
 # in the same module/class stay on the same worker (the suite has
@@ -36,6 +37,9 @@ on:
 permissions:
   contents: read
 
+env:
+  UV_CACHE_DIR: /home/runner/.cache/uv
+
 concurrency:
   group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -45,27 +49,16 @@ jobs:
     name: pytest
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - name: Mount uv cache (Sticky Disk)
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: envctl-uv-cache
-          path: /home/runner/.cache/uv
-
-      - name: Mount pytest cache (Sticky Disk)
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: envctl-pytest-cache
-          path: /home/runner/.cache/envctl-pytest
-
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Link pytest cache into workspace
-        run: |
-          set -euo pipefail
-          mkdir -p /home/runner/.cache/envctl-pytest
-          rm -rf .pytest_cache
-          ln -s /home/runner/.cache/envctl-pytest .pytest_cache
+      - name: Restore pytest cache
+        uses: actions/cache@v4
+        with:
+          path: .pytest_cache
+          key: envctl-pytest-${{ runner.os }}-${{ github.event.pull_request.number || github.ref }}
+          restore-keys: |
+            envctl-pytest-${{ runner.os }}-
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -75,16 +68,13 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
         with:
-          enable-cache: false
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Sync dev environment
-        env:
-          UV_CACHE_DIR: /home/runner/.cache/uv
         run: uv sync --extra dev --python 3.12
 
       - name: Run pytest
-        env:
-          UV_CACHE_DIR: /home/runner/.cache/uv
         run: |
           uv run --extra dev pytest -q \
             -n 4 --dist=loadscope \
@@ -105,12 +95,6 @@ jobs:
     name: build & shipability
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - name: Mount uv cache (Sticky Disk)
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: envctl-uv-cache
-          path: /home/runner/.cache/uv
-
       - name: Checkout
         uses: actions/checkout@v6
 
@@ -122,21 +106,16 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
         with:
-          enable-cache: false
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Sync dev environment
-        env:
-          UV_CACHE_DIR: /home/runner/.cache/uv
         run: uv sync --extra dev --python 3.12
 
       - name: Build wheel and sdist
-        env:
-          UV_CACHE_DIR: /home/runner/.cache/uv
         run: uv run --extra dev python -m build
 
       - name: Release shipability gate
-        env:
-          UV_CACHE_DIR: /home/runner/.cache/uv
         run: uv run --extra dev python scripts/release_shipability_gate.py --repo .
 
   lint:
@@ -146,23 +125,16 @@ jobs:
     # checks so contributors see signal, but they do not block the gate.
     continue-on-error: true
     steps:
-      - name: Mount uv cache (Sticky Disk)
-        uses: useblacksmith/stickydisk@v1
-        with:
-          key: envctl-uv-cache
-          path: /home/runner/.cache/uv
-
       - name: Checkout
         uses: actions/checkout@v6
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
         with:
-          enable-cache: false
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Install ruff
-        env:
-          UV_CACHE_DIR: /home/runner/.cache/uv
         run: uv tool install --quiet ruff
 
       - name: Run ruff
