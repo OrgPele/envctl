@@ -31,7 +31,7 @@ from envctl_engine.runtime.runtime_context import (
 from envctl_engine.shared.protocols import PortAllocator, ProcessRuntime, StateRepository
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.state.models import RunState
+from envctl_engine.state.models import RequirementsResult, RunState
 from envctl_engine.ui.selection_support import (
     interactive_selection_allowed,
     project_names_from_state,
@@ -39,7 +39,7 @@ from envctl_engine.ui.selection_support import (
 )
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI  # noqa: F401
 from envctl_engine.ui.selection_types import TargetSelection
-from envctl_engine.ui.spinner import spinner, use_spinner_policy
+from envctl_engine.ui.spinner import Spinner, spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
 
@@ -263,12 +263,12 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
     def _requirements_have_enabled_components(requirements: object) -> bool:
         return requirements_have_enabled_components(requirements)
 
-    def _release_requirement_ports(self, requirements: object) -> None:
+    def _release_requirement_ports(self, requirements: RequirementsResult) -> None:
         release = getattr(self.runtime, "_release_requirement_ports", None)
         if callable(release):
             release(requirements)
             return
-        release_requirement_ports(self.runtime, requirements)  # type: ignore[arg-type]
+        release_requirement_ports(self.runtime, requirements)
 
     @staticmethod
     def _service_matches_runtime_scope(name: str, service: object, runtime_scope: str) -> bool:
@@ -402,7 +402,7 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
 
     def _finish_spinner_operation(
         self,
-        active_spinner: object,
+        active_spinner: Spinner,
         *,
         route: Route,
         op_id: str,

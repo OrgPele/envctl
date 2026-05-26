@@ -7,7 +7,7 @@ from envctl_engine.shared.parsing import parse_int
 
 
 class BlastPortSweepSupport:
-    runtime: Any
+    runtime: Any = cast(Any, None)
 
     def blast_all_sweep_ports(self) -> None:
         if self.blast_all_sweep_ports_batched():
