@@ -14,6 +14,7 @@ from envctl_engine.config import (
     _parse_envctl_text,
     ensure_dependency_env_section,
 )
+from envctl_engine.config.agent_instructions import AgentInstructionsStatus, ensure_repo_agent_instructions
 from envctl_engine.config.git_global_ignore import (
     GlobalIgnoreStatus,
     _configured_global_excludes_path,
@@ -105,6 +106,7 @@ class ConfigSaveResult:
     ignore_updated: bool
     ignore_warning: str | None
     ignore_status: GlobalIgnoreStatus | None = None
+    agent_instructions_status: AgentInstructionsStatus | None = None
 
 
 def save_local_config(*, local_state: LocalConfigState, values: ManagedConfigValues) -> ConfigSaveResult:
@@ -136,11 +138,13 @@ def save_local_config_with_ignore_policy(
     merged = ensure_dependency_env_section(merged)
     _atomic_write(local_state.config_file_path, merged)
     ignore_status = ensure_global_ignore_status(local_state.base_dir, update_config=update_global_ignores)
+    agent_instructions_status = ensure_repo_agent_instructions(local_state.base_dir)
     return ConfigSaveResult(
         path=local_state.config_file_path,
         ignore_updated=ignore_status.updated,
         ignore_warning=ignore_status.warning,
         ignore_status=ignore_status,
+        agent_instructions_status=agent_instructions_status,
     )
 
 

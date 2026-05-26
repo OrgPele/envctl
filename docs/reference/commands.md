@@ -425,6 +425,8 @@ envctl config
 printf '%s\n' '{"default_mode":"trees"}' | envctl config --stdin-json
 ```
 
+`envctl config` saves `.envctl`, protects envctl-local artifacts through the configured Git global excludes file, and creates or updates the repo-local `AGENTS.md` envctl-managed agent guidance block.
+
 Planning and worktrees:
 
 ```bash

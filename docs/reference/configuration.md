@@ -27,6 +27,8 @@ That global-ignore contract covers the current envctl local artifact set:
 
 On config save, `envctl` updates the envctl-managed block in your configured Git global excludes file. If `core.excludesFile` is not configured, `envctl config` configures it to `~/.gitignore_global` and writes the envctl-managed artifact patterns there.
 
+On the same save path, `envctl` also creates or updates a repo-local `AGENTS.md` envctl-managed block. The block always includes the envctl implementation and handoff workflow, and it conditionally adds Serena or CodeGraphContext guidance when the repo has `.serena/project.yml`, `.cgcignore`, or `.codegraphcontext` configuration.
+
 Useful commands:
 
 - `envctl config` opens the interactive bootstrap/editor flow

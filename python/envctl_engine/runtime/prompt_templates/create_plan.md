@@ -38,6 +38,8 @@ Do not implement code. Only research and write the plan file.
 6. Review relevant config/env keys and any related docs.
 7. Capture evidence (file paths + function names) to ground the plan.
 
+Use the fastest appropriate code-intelligence layer while researching: use `rg` for exact strings such as flags, env keys, log messages, and docs prose; use Serena for symbol definitions, references, call paths, and semantic edit planning; use CodeGraphContext (`cgc`) for repo-wide ownership, coupling, impact, hotspot, and dead-code questions. Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl.
+
 ## Context intake (ask if missing)
 Before finalizing the plan, request any missing inputs that materially affect the solution:
 - User-facing goal and acceptance criteria (what must be true when done).

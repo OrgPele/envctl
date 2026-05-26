@@ -163,6 +163,10 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("Codex skills and envctl validation helpers", codex)
         self.assertIn("$browser", codex)
         self.assertNotIn("$browser-use", codex)
+        self.assertIn("use `rg` for exact strings", codex)
+        self.assertIn("use Serena for symbol definitions, references, call sites, and semantic edits", codex)
+        self.assertIn("use CodeGraphContext (`cgc`) for repo-wide ownership", codex)
+        self.assertIn("Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl", codex)
         self.assertIn("envctl endpoints --project <actual-project-name> --json", codex)
         self.assertIn("envctl qa-user ensure --project <actual-project-name>", codex)
         self.assertIn("envctl playwright --project <actual-project-name> -- <executable> [args...]", codex)
@@ -198,6 +202,10 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("envctl playwright --project <current-worktree-name> -- <command>", finalize_prompt.body)
         self.assertIn("$browser", finalize_prompt.body)
         self.assertNotIn("$browser-use", finalize_prompt.body)
+        self.assertIn("`rg` for exact strings", finalize_prompt.body)
+        self.assertIn("Serena for symbol definitions/references/semantic edits", finalize_prompt.body)
+        self.assertIn("CodeGraphContext (`cgc`) for repo-wide ownership", finalize_prompt.body)
+        self.assertIn("Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl", finalize_prompt.body)
         self.assertIn('Run `envctl ship -m "<message>"` from inside the current generated worktree', finalize_prompt.body)
         self.assertIn("Run bare `envctl ship` from inside the current worktree/project directory", finalize_prompt.body)
         self.assertIn('`envctl ship --project <current-worktree-name> -m "<message>"`', finalize_prompt.body)
@@ -274,6 +282,10 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
 
         plan_prompt = _load_template("create_plan")
         self.assertNotIn("Changelog entry appended.", plan_prompt.body)
+        self.assertIn("use `rg` for exact strings", plan_prompt.body)
+        self.assertIn("use Serena for symbol definitions, references, call paths", plan_prompt.body)
+        self.assertIn("use CodeGraphContext (`cgc`) for repo-wide ownership", plan_prompt.body)
+        self.assertIn("Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl", plan_prompt.body)
         self.assertIn("envctl --headless --plan <selector>", plan_prompt.body)
         self.assertIn(
             "cd <repo> && envctl --plan <selector> --tmux --opencode",
