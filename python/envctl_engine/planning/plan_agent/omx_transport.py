@@ -1,42 +1,72 @@
 from __future__ import annotations
 
-# ruff: noqa: F401,F403,F405
 import json
 import subprocess
-import threading
 import time
-from importlib import resources
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Mapping
 
-from envctl_engine.planning import planning_feature_name
-from envctl_engine.config import EngineConfig, _apply_plan_agent_aliases
 from envctl_engine.runtime.codex_tmux_support import (
-    _attach_interactive,
-    _completed_process_error_text as _tmux_completed_process_error_text,
     _run_probe as _run_tmux_probe,
-    _sanitize_name as _sanitize_tmux_name,
     _tmux_session_exists,
 )
-from envctl_engine.runtime.prompt_install_support import (
-    resolve_codex_direct_prompt_body,
-    resolve_opencode_direct_prompt_body,
-)
-from envctl_engine.state.models import RunState
-from envctl_engine.shared.parsing import parse_bool, parse_int_or_none
 
-from envctl_engine.planning.plan_agent.constants import *
-from envctl_engine.planning.plan_agent.models import *
-from envctl_engine.planning.plan_agent.config import *
-from envctl_engine.planning.plan_agent.workflow import *
-from envctl_engine.planning.plan_agent.terminal_screen import *
-from envctl_engine.planning.plan_agent.recovery import *
-from envctl_engine.planning.plan_agent.tmux_session import *
 from envctl_engine.planning.plan_agent import omx_attach_support
 from envctl_engine.planning.plan_agent import omx_launch_support
 from envctl_engine.planning.plan_agent import omx_lock_support
 from envctl_engine.planning.plan_agent import omx_spawn_support
 from envctl_engine.planning.plan_agent import omx_validation_support
+from envctl_engine.planning.plan_agent.config import _guidance_attach_command
+from envctl_engine.planning.plan_agent.constants import (
+    _OMX_SESSION_READY_POLL_INTERVAL_SECONDS,
+    _OMX_SESSION_READY_TIMEOUT_SECONDS,
+    _OMX_TMUX_LOCK_STALE_SECONDS as _OMX_TMUX_LOCK_STALE_SECONDS,  # noqa: F401
+    _WORKTREE_PROVENANCE_PATH,
+)
+from envctl_engine.planning.plan_agent.models import (
+    CreatedPlanWorktree,
+    PlanAgentAttachTarget,
+    PlanAgentAttachValidation,
+    PlanAgentLaunchConfig,
+    PlanAgentLaunchResult,
+    _OmxSessionRecord,
+    _PlanAgentWorkflow,
+)
+from envctl_engine.planning.plan_agent.recovery import (
+    _new_session_command_for_route,
+    _persist_runtime_events_snapshot,
+    _plan_agent_recovery_command_text,
+    _print_launch_summary,
+    _summarize_failed_launch_outcomes,
+    plan_agent_native_recovery_command,
+)
+from envctl_engine.planning.plan_agent.tmux_session import (
+    _prompt_existing_tmux_session_action,
+    _should_prompt_existing_tmux_session,
+    _tmux_active_pane_id,
+    _tmux_display_message_succeeds,
+)
+
+_cleanup_stale_omx_tmux_locks = omx_lock_support.cleanup_stale_omx_tmux_locks
+_cleanup_stale_omx_tmux_locks_under_root = omx_lock_support.cleanup_stale_omx_tmux_locks_under_root
+_utc_timestamp_from_epoch = omx_spawn_support.utc_timestamp_from_epoch
+_bounded_process_output_excerpt = omx_spawn_support.bounded_process_output_excerpt
+_omx_spawn_metadata_payload = omx_spawn_support.omx_spawn_metadata_payload
+_retained_omx_spawn_process = omx_spawn_support.retained_omx_spawn_process
+_retained_omx_spawn_returncode = omx_spawn_support.retained_omx_spawn_returncode
+_retained_omx_spawn_event_payload = omx_spawn_support.retained_omx_spawn_event_payload
+_deterministic_omx_root_for_worktree = omx_spawn_support.deterministic_omx_root_for_worktree
+_omx_spawn_failure_text = omx_spawn_support.omx_spawn_failure_text
+_sanitize_omx_tmux_token = omx_spawn_support.sanitize_omx_tmux_token
+_omx_launch_env = omx_spawn_support.omx_launch_env
+_retain_omx_spawn_process = omx_spawn_support.retain_omx_spawn_process
+_omx_session_state_path_for_root = omx_attach_support.omx_session_state_path_for_root
+_omx_session_state_path = omx_attach_support.omx_session_state_path
+_read_omx_session_payload_from_path = omx_attach_support.read_omx_session_payload_from_path
+_read_omx_session_payload = omx_attach_support.read_omx_session_payload
+_read_omx_session_payload_from_root = omx_attach_support.read_omx_session_payload_from_root
+_record_cwd_matches_worktree = omx_attach_support.record_cwd_matches_worktree
+_combined_omx_tmux_exclusions = omx_attach_support.combined_omx_tmux_exclusions
 
 
 def _launch_plan_agent_omx_terminals(
@@ -77,74 +107,6 @@ def _launch_plan_agent_omx_terminals(
         plan_agent_native_recovery_command_fn=plan_agent_native_recovery_command,
         plan_agent_recovery_command_text_fn=_plan_agent_recovery_command_text,
     )
-
-
-def _cleanup_stale_omx_tmux_locks(runtime: Any, *, worktree_root: Path, omx_root: Path | None = None) -> None:
-    return omx_lock_support.cleanup_stale_omx_tmux_locks(runtime, worktree_root=worktree_root, omx_root=omx_root)
-
-
-def _cleanup_stale_omx_tmux_locks_under_root(root: Path) -> bool:
-    return omx_lock_support.cleanup_stale_omx_tmux_locks_under_root(root)
-
-
-def _utc_timestamp_from_epoch(value: float | None = None) -> str:
-    return omx_spawn_support.utc_timestamp_from_epoch(value)
-
-
-def _bounded_process_output_excerpt(value: object) -> str:
-    return omx_spawn_support.bounded_process_output_excerpt(value)
-
-
-def _omx_spawn_metadata_payload(
-    *,
-    process: object,
-    command: tuple[str, ...],
-    popen_command: tuple[str, ...],
-    worktree: CreatedPlanWorktree,
-    omx_root: Path,
-    started_at: str,
-    madmax: bool,
-) -> dict[str, object]:
-    return omx_spawn_support.omx_spawn_metadata_payload(
-        process=process,
-        command=command,
-        popen_command=popen_command,
-        worktree=worktree,
-        omx_root=omx_root,
-        started_at=started_at,
-        madmax=madmax,
-    )
-
-
-def _retained_omx_spawn_process(record: object) -> object:
-    return omx_spawn_support.retained_omx_spawn_process(record)
-
-
-def _retained_omx_spawn_returncode(record: object) -> object:
-    return omx_spawn_support.retained_omx_spawn_returncode(record)
-
-
-def _retained_omx_spawn_event_payload(
-    record: object,
-    *,
-    session_name: str,
-    worktree: CreatedPlanWorktree | None,
-    returncode: object,
-) -> dict[str, object]:
-    return omx_spawn_support.retained_omx_spawn_event_payload(
-        record,
-        session_name=session_name,
-        worktree=worktree,
-        returncode=returncode,
-    )
-
-
-def _deterministic_omx_root_for_worktree(worktree: CreatedPlanWorktree) -> Path:
-    return omx_spawn_support.deterministic_omx_root_for_worktree(worktree)
-
-
-def _omx_spawn_failure_text(*, returncode: object, stdout: str, stderr: str) -> str:
-    return omx_spawn_support.omx_spawn_failure_text(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 def _omx_attach_target_state_check(
@@ -232,36 +194,12 @@ def _omx_runtime_root_for_worktree(runtime: Any, worktree: CreatedPlanWorktree) 
     return _deterministic_omx_root_for_worktree(worktree)
 
 
-def _omx_session_state_path_for_root(omx_root: Path) -> Path:
-    return omx_attach_support.omx_session_state_path_for_root(omx_root)
-
-
-def _omx_session_state_path(worktree_root: Path) -> Path:
-    return omx_attach_support.omx_session_state_path(worktree_root)
-
-
-def _read_omx_session_payload_from_path(path: Path) -> dict[str, object] | None:
-    return omx_attach_support.read_omx_session_payload_from_path(path)
-
-
-def _read_omx_session_payload(worktree_root: Path) -> dict[str, object] | None:
-    return omx_attach_support.read_omx_session_payload(worktree_root)
-
-
-def _read_omx_session_payload_from_root(omx_root: Path) -> dict[str, object] | None:
-    return omx_attach_support.read_omx_session_payload_from_root(omx_root)
-
-
 def _omx_session_records_for_worktree(runtime: Any, worktree: CreatedPlanWorktree) -> list[_OmxSessionRecord]:
     return omx_attach_support.omx_session_records_for_worktree(
         runtime,
         worktree,
         omx_runtime_root_for_worktree_fn=_omx_runtime_root_for_worktree,
     )
-
-
-def _record_cwd_matches_worktree(record: _OmxSessionRecord, worktree: CreatedPlanWorktree) -> bool:
-    return omx_attach_support.record_cwd_matches_worktree(record, worktree)
 
 
 def _read_omx_session_payload_for_worktree(runtime: Any, worktree: CreatedPlanWorktree) -> dict[str, object] | None:
@@ -307,10 +245,6 @@ def _previous_omx_tmux_session_names_for_worktree(
         previous_session_id=previous_session_id,
         previous_session_ids=previous_session_ids,
     )
-
-
-def _combined_omx_tmux_exclusions(*groups: tuple[str, ...]) -> tuple[str, ...]:
-    return omx_attach_support.combined_omx_tmux_exclusions(*groups)
 
 
 def _omx_worktree_tmux_prefixes(worktree: CreatedPlanWorktree) -> tuple[str, ...]:
@@ -391,10 +325,6 @@ def _omx_attach_discovery_diagnostics(runtime: Any, worktree: CreatedPlanWorktre
     )
 
 
-def _sanitize_omx_tmux_token(value: str) -> str:
-    return omx_spawn_support.sanitize_omx_tmux_token(value)
-
-
 def _git_branch_name(cwd: Path) -> str | None:
     result = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -440,14 +370,6 @@ def _omx_tmux_session_name(worktree_root: Path, session_id: str) -> str:
     prefix_budget = max(4, 120 - len(session_token) - 1)
     trimmed_prefix = prefix[:prefix_budget].rstrip("-")
     return f"{trimmed_prefix}-{session_token}"[:120]
-
-
-def _omx_launch_env(runtime: Any) -> dict[str, str]:
-    return omx_spawn_support.omx_launch_env(runtime)
-
-
-def _retain_omx_spawn_process(runtime: Any, record: object) -> None:
-    omx_spawn_support.retain_omx_spawn_process(runtime, record)
 
 
 def _find_existing_omx_attach_target(

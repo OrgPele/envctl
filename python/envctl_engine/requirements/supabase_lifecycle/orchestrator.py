@@ -4,7 +4,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
-from envctl_engine.requirements.common import ContainerStartResult
+from envctl_engine.requirements.common_contracts import ContainerStartResult
 from envctl_engine.requirements.supabase_lifecycle.auth_flow import complete_supabase_auth_startup
 from envctl_engine.requirements.supabase_lifecycle.config import (
     _native_db_start_enabled,

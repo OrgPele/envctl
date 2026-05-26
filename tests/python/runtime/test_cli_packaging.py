@@ -443,6 +443,30 @@ class CliPackagingTests(unittest.TestCase):
         self.assertEqual(parity.only_in_requirements, ())
         self.assertEqual(parity.only_in_pyproject, ())
 
+    def test_runtime_dependency_manifest_rejects_non_string_pyproject_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            (repo_root / "python").mkdir(parents=True, exist_ok=True)
+            (repo_root / "python" / "requirements.txt").write_text("rich>=13.7\n", encoding="utf-8")
+            (repo_root / "pyproject.toml").write_text(
+                "\n".join(
+                    [
+                        "[project]",
+                        'name = "envctl-test"',
+                        'version = "0.0.1"',
+                        "dependencies = [",
+                        '  "rich>=13.7",',
+                        "  123,",
+                        "]",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "project.dependencies entries must be strings"):
+                runtime_dependency_manifest_parity(repo_root)
+
     def test_pyproject_declares_release_validation_dev_extra(self) -> None:
         payload = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         dev_dependencies = set(payload["project"]["optional-dependencies"]["dev"])

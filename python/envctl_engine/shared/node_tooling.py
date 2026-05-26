@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 
 CommandExists = Callable[[str], bool]
+
+
+class PythonBinDetector(Protocol):
+    def __call__(self, *roots: Path) -> str | None: ...
 
 
 def load_package_json(path: Path) -> dict[str, object] | None:

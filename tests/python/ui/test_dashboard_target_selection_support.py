@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
@@ -7,6 +8,7 @@ from envctl_engine.dashboard_metadata import DASHBOARD_PROJECT_CONFIGURED_SERVIC
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.dashboard import target_selection_support
+from envctl_engine.ui.dashboard.target_service_catalog import DashboardServiceCatalog
 from envctl_engine.ui.target_selector import TargetSelection
 
 
@@ -198,6 +200,25 @@ class _Runtime:
 
 
 class DashboardTargetSelectionSupportTests(unittest.TestCase):
+    def test_dashboard_preselected_projects_uses_explicit_tree_dependency(self) -> None:
+        calls: list[tuple[object, list[object]]] = []
+        projects = [SimpleNamespace(name="feature-a-1")]
+        runtime = SimpleNamespace(startup_orchestrator=object())
+
+        def preselect(*, runtime: object, project_contexts: list[object]) -> list[str]:
+            calls.append((runtime, project_contexts))
+            return ["feature-a-1"]
+
+        result = target_selection_support.dashboard_preselected_projects(
+            state=_state(mode="trees"),
+            projects=projects,
+            runtime=runtime,
+            tree_preselected_projects_fn=preselect,
+        )
+
+        self.assertEqual(result, ["feature-a-1"])
+        self.assertEqual(calls, [(runtime, projects)])
+
     def test_select_dashboard_projects_defaults_single_project_without_selector(self) -> None:
         runtime = _Runtime()
         owner = _Owner()
@@ -250,6 +271,28 @@ class DashboardTargetSelectionSupportTests(unittest.TestCase):
         )
 
         self.assertEqual(result, ["backend", "frontend"])
+
+    def test_service_catalog_owns_dashboard_service_projection(self) -> None:
+        state = _state(
+            services={
+                "Main Backend": SimpleNamespace(name="Main Backend", project="Main", type="backend"),
+                "Other Backend": SimpleNamespace(name="Other Backend", project="Other", type="backend"),
+            },
+            metadata={
+                DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY: {
+                    "Main": ["frontend"],
+                },
+            },
+        )
+        catalog = DashboardServiceCatalog(state, _Runtime(), project_names=["Main"])
+
+        self.assertEqual(catalog.available_service_types(), ["backend", "frontend"])
+        self.assertEqual(catalog.service_names_for_types(["backend", "frontend"]), ["Main Backend", "Main Frontend"])
+
+        source = Path("python/envctl_engine/ui/dashboard/target_selection_support.py").read_text(encoding="utf-8")
+        self.assertIn("from envctl_engine.ui.dashboard.target_service_catalog import DashboardServiceCatalog", source)
+        self.assertNotIn("dashboard_configured_missing_services_by_project", source)
+        self.assertNotIn("dashboard_project_configured_services", source)
 
     def test_restart_service_type_parsing_preserves_order_and_dedupes(self) -> None:
         result = target_selection_support.restart_service_types_from_service_names(

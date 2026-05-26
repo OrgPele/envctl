@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from envctl_engine.requirements.common import ContainerStartResult
+from envctl_engine.requirements.common_contracts import ContainerStartResult
 from envctl_engine.requirements.supabase_lifecycle.gateway import (
     _format_gateway_port_mismatch,
     _gateway_public_port_mismatch,

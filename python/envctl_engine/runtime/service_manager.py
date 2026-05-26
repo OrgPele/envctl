@@ -7,8 +7,9 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from envctl_engine.requirements.common_contracts import is_bind_conflict
+from envctl_engine.shared.services import service_display_name
 from envctl_engine.state.models import ServiceRecord
-from envctl_engine.requirements.common import is_bind_conflict
 
 
 class ServiceStartError(RuntimeError):
@@ -62,7 +63,7 @@ class ServiceManager:
                     if detect_actual is not None:
                         actual_port = detect_actual(pid, current_port)
                     return ServiceRecord(
-                        name=f"{project} {_service_display_name(service_type)}",
+                        name=f"{project} {service_display_name(service_type)}",
                         type=service_type,
                         cwd=cwd,
                         pid=pid,
@@ -162,7 +163,7 @@ class ServiceManager:
                 if descriptor.critical:
                     raise
                 record = ServiceRecord(
-                    name=f"{project} {_service_display_name(descriptor.service_type)}",
+                    name=f"{project} {service_display_name(descriptor.service_type)}",
                     type=descriptor.service_type,
                     cwd=descriptor.cwd,
                     requested_port=descriptor.requested_port if descriptor.listener_expected else None,
@@ -222,10 +223,6 @@ def _is_retryable_error(error: str | None) -> bool:
     if "address already in use" in normalized:
         return True
     return False
-
-
-def _service_display_name(service_type: str) -> str:
-    return " ".join(part.capitalize() for part in str(service_type).replace("_", "-").split("-") if part)
 
 
 def _terminate_pid(pid: int | None, *, process_runner: object | None = None) -> None:

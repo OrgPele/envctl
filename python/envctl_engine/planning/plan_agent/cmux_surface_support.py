@@ -18,10 +18,11 @@ from envctl_engine.planning.plan_agent.terminal_screen import (
     _screen_looks_ready,
 )
 from envctl_engine.planning.plan_agent.cmux_workspace_support import surface_id_from_output
+from envctl_engine.runtime.runtime_context import resolve_process_runtime
 
 
 def create_surface(runtime: Any, *, workspace_id: str) -> tuple[str | None, str | None]:
-    result = runtime.process_runner.run(
+    result = resolve_process_runtime(runtime).run(
         ["cmux", "new-surface", "--workspace", workspace_id],
         cwd=runtime.config.base_dir,
         env=getattr(runtime, "env", {}),
@@ -125,7 +126,7 @@ def run_cmux_command(
     emit_failure_event: bool = True,
     failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
-    result = runtime.process_runner.run(
+    result = resolve_process_runtime(runtime).run(
         command,
         cwd=runtime.config.base_dir,
         env=getattr(runtime, "env", {}),
@@ -171,7 +172,7 @@ def wait_for_cli_ready(
 
 
 def read_surface_screen(runtime: Any, *, workspace_id: str, surface_id: str) -> str:
-    result = runtime.process_runner.run(
+    result = resolve_process_runtime(runtime).run(
         [
             "cmux",
             "read-screen",

@@ -1,465 +1,62 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
-import hashlib
-import json
-import os
-import re
-import subprocess
 import sys
-import tempfile
-import threading
-from collections.abc import Mapping
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Callable, Iterator
 
-from envctl_engine.debug.debug_utils import file_lock
-from envctl_engine.shared.protocols import CommandResult, ProcessRuntime
+from envctl_engine.requirements.common_contracts import (
+    ContainerStartResult,
+    RetryResult,
+    build_container_name,
+    is_bind_conflict,
+    run_with_retry,
+)
+from envctl_engine.requirements.container_state_support import (
+    container_exists,
+    container_host_port,
+    container_state_error,
+    container_status,
+    is_missing_port_mapping_error,
+    stop_and_remove_container,
+)
+from envctl_engine.requirements.docker_image_support import (
+    docker_image_exists,
+    docker_image_pull_policy,
+    ensure_docker_image_present,
+)
+from envctl_engine.requirements.docker_runtime import (
+    _docker_port_publish_lock_default_enabled,
+    _docker_port_publish_lock_enabled,
+    _env_bool,
+    _env_float,
+    _env_value,
+    _parse_env_bool,
+    docker_port_publish_lock,
+    run_docker,
+    run_result_error,
+)
 
-_DOCKER_PORT_PUBLISH_THREAD_LOCK = threading.RLock()
-
-
-@dataclass(slots=True)
-class RetryResult:
-    success: bool
-    port: int
-    attempts: int
-    failure: str | None = None
-
-
-@dataclass(slots=True)
-class ContainerStartResult:
-    success: bool
-    container_name: str
-    error: str | None = None
-    reason_code: str | None = None
-    failure_class: str | None = None
-    stage_events: list[dict[str, object]] | None = None
-    stage_durations_ms: dict[str, float] | None = None
-    command_timings: list[dict[str, object]] | None = None
-    probe_attempts: list[dict[str, object]] | None = None
-    docker_command_count: int = 0
-    probe_attempt_count: int = 0
-    listener_wait_ms: float = 0.0
-    container_reused: bool = False
-    container_recreated: bool = False
-    effective_port: int | None = None
-    port_adopted: bool = False
-    port_mismatch_requested_port: int | None = None
-    port_mismatch_existing_port: int | None = None
-    port_mismatch_action: str | None = None
-
-
-def is_bind_conflict(error: str | None) -> bool:
-    if not error:
-        return False
-    lower = error.lower()
-    return (
-        "address already in use" in lower
-        or "bind" in lower
-        or "port is already allocated" in lower
-        or "published host port missing" in lower
-        or "host port binding incomplete" in lower
-    )
-
-
-def run_with_retry(
-    *,
-    initial_port: int,
-    start: Callable[[int], tuple[bool, str | None]],
-    reserve_next: Callable[[int], int],
-    max_retries: int = 3,
-) -> RetryResult:
-    port = initial_port
-    attempts = 0
-    while attempts < max_retries:
-        attempts += 1
-        success, error = start(port)
-        if success:
-            return RetryResult(success=True, port=port, attempts=attempts)
-        if not is_bind_conflict(error):
-            return RetryResult(success=False, port=port, attempts=attempts, failure=error or "unknown")
-        port = reserve_next(port + 1)
-    return RetryResult(success=False, port=port, attempts=attempts, failure="retry_limit")
-
-
-def build_container_name(*, prefix: str, project_root: Path, project_name: str) -> str:
-    normalized = re.sub(r"[^a-zA-Z0-9]+", "-", project_name).strip("-").lower() or "project"
-    digest = hashlib.sha1(str(project_root).encode("utf-8")).hexdigest()[:8]
-    separator = "-"
-    suffix = f"{separator}{digest}"
-    base_prefix = f"{prefix}{separator}"
-    max_len = 63
-    available = max_len - len(base_prefix) - len(suffix)
-    if available <= 0:
-        return f"{prefix[: max_len - len(suffix)].rstrip(separator)}{suffix}".rstrip(separator)
-    trimmed = normalized[:available].rstrip(separator) or "project"
-    return f"{base_prefix}{trimmed}{suffix}"[:max_len].rstrip(separator)
-
-
-def run_docker(
-    process_runner: ProcessRuntime,
-    args: list[str],
-    *,
-    cwd: Path | None = None,
-    env: Mapping[str, str] | None = None,
-    timeout: float = 60.0,
-) -> tuple[CommandResult | None, str | None]:
-    try:
-        result = process_runner.run(
-            ["docker", *args],
-            cwd=cwd,
-            env=env,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired as exc:
-        return (
-            None,
-            "Command timed out after "
-            f"{timeout:.1f}s: "
-            f"{' '.join(exc.cmd if isinstance(exc.cmd, list) else ['docker', *args])}",
-        )
-    except OSError as exc:
-        return None, f"docker unavailable: {exc}"
-    return result, None
-
-
-def _env_value(env: Mapping[str, str] | None, key: str) -> str | None:
-    raw = (env or {}).get(key)
-    if raw is None:
-        raw = os.environ.get(key)
-    return raw
-
-
-def _parse_env_bool(raw: str | None, default: bool) -> bool:
-    if raw is None:
-        return default
-    normalized = str(raw).strip().lower()
-    if not normalized:
-        return default
-    return normalized not in {"0", "false", "no", "off", "disable", "disabled"}
-
-
-def _env_bool(env: Mapping[str, str] | None, key: str, default: bool) -> bool:
-    return _parse_env_bool(_env_value(env, key), default)
-
-
-def _env_float(env: Mapping[str, str] | None, key: str, default: float, *, minimum: float) -> float:
-    raw = _env_value(env, key)
-    try:
-        parsed = float(str(raw).strip()) if raw is not None else default
-    except ValueError:
-        parsed = default
-    return max(parsed, minimum)
-
-
-def _docker_port_publish_lock_default_enabled() -> bool:
-    # Docker Desktop for macOS can reserve published ports without making them reachable
-    # when several port-publishing container operations race each other.
-    return sys.platform == "darwin"
-
-
-def _docker_port_publish_lock_enabled(env: Mapping[str, str] | None) -> bool:
-    raw = _env_value(env, "ENVCTL_DOCKER_PORT_PUBLISH_LOCK")
-    normalized = str(raw).strip().lower() if raw is not None else ""
-    if not normalized or normalized == "auto":
-        return _docker_port_publish_lock_default_enabled()
-    return _parse_env_bool(raw, default=True)
-
-
-def docker_image_pull_policy(
-    env: Mapping[str, str] | None,
-    key: str,
-    *,
-    default: str = "missing",
-    legacy_bool_key: str | None = None,
-) -> str:
-    raw = _env_value(env, key)
-    if raw is not None:
-        normalized = str(raw).strip().lower().replace("_", "-")
-        if normalized in {"always", "missing", "if-missing", "never"}:
-            return "missing" if normalized == "if-missing" else normalized
-        if normalized in {"1", "true", "yes", "on", "enable", "enabled"}:
-            return "always"
-        if normalized in {"0", "false", "no", "off", "disable", "disabled"}:
-            return "never"
-
-    if legacy_bool_key is not None:
-        legacy_raw = _env_value(env, legacy_bool_key)
-        if legacy_raw is not None:
-            return "always" if _parse_env_bool(legacy_raw, default=True) else "never"
-
-    normalized_default = default.strip().lower().replace("_", "-")
-    if normalized_default == "if-missing":
-        return "missing"
-    if normalized_default in {"always", "missing", "never"}:
-        return normalized_default
-    return "missing"
-
-
-def docker_image_exists(
-    process_runner: ProcessRuntime,
-    *,
-    image: str,
-    cwd: Path | None = None,
-    env: Mapping[str, str] | None = None,
-    timeout: float = 10.0,
-) -> tuple[bool, str | None]:
-    result, error = run_docker(
-        process_runner,
-        ["image", "inspect", image],
-        cwd=cwd,
-        env=env,
-        timeout=timeout,
-    )
-    if result is None:
-        return False, error
-    return getattr(result, "returncode", 1) == 0, None
-
-
-def ensure_docker_image_present(
-    process_runner: ProcessRuntime,
-    *,
-    image: str,
-    cwd: Path | None = None,
-    env: Mapping[str, str] | None = None,
-    pull_policy_key: str,
-    legacy_bool_key: str | None = None,
-    inspect_timeout: float = 10.0,
-    pull_timeout: float = 300.0,
-) -> str | None:
-    pull_policy = docker_image_pull_policy(env, pull_policy_key, legacy_bool_key=legacy_bool_key)
-    if pull_policy == "never":
-        return None
-    if pull_policy == "missing":
-        exists, exists_error = docker_image_exists(
-            process_runner,
-            image=image,
-            cwd=cwd,
-            env=env,
-            timeout=inspect_timeout,
-        )
-        if exists_error is not None:
-            return exists_error
-        if exists:
-            return None
-
-    result, error = run_docker(
-        process_runner,
-        ["pull", image],
-        cwd=cwd,
-        env=env,
-        timeout=pull_timeout,
-    )
-    if result is None:
-        return error
-    if getattr(result, "returncode", 1) != 0:
-        return run_result_error(result, f"failed pulling image {image}")
-    return None
-
-
-@contextmanager
-def docker_port_publish_lock(env: Mapping[str, str] | None) -> Iterator[None]:
-    if not _docker_port_publish_lock_enabled(env):
-        yield
-        return
-    runtime_root = (
-        (env or {}).get("RUN_SH_RUNTIME_DIR")
-        or os.environ.get("RUN_SH_RUNTIME_DIR")
-        or str(Path(tempfile.gettempdir()) / "envctl-runtime")
-    )
-    lock_timeout = _env_float(env, "ENVCTL_DOCKER_PORT_PUBLISH_LOCK_TIMEOUT_SECONDS", 180.0, minimum=1.0)
-    with _DOCKER_PORT_PUBLISH_THREAD_LOCK:
-        with file_lock(Path(runtime_root) / "docker-port-publish.lock", timeout=lock_timeout):
-            yield
-
-
-def run_result_error(result: CommandResult, fallback: str) -> str:
-    stderr = result.stderr
-    stdout = result.stdout
-    returncode = result.returncode
-    text = (stderr or stdout or f"exit:{returncode}").strip()
-    return text or fallback
-
-
-def container_exists(
-    process_runner: ProcessRuntime,
-    *,
-    container_name: str,
-    cwd: Path | None = None,
-    env: Mapping[str, str] | None = None,
-) -> tuple[bool, str | None]:
-    result, error = run_docker(
-        process_runner,
-        ["ps", "-a", "--filter", f"name=^/{container_name}$", "--format", "{{.Names}}"],
-        cwd=cwd,
-        env=env,
-    )
-    if result is None:
-        return False, error
-    if getattr(result, "returncode", 1) != 0:
-        return False, run_result_error(result, "failed listing container")
-    output = (getattr(result, "stdout", "") or "").strip()
-    return output == container_name, None
-
-
-def container_status(
-    process_runner: ProcessRuntime,
-    *,
-    container_name: str,
-    cwd: Path | None = None,
-    env: Mapping[str, str] | None = None,
-) -> tuple[str | None, str | None]:
-    result, error = run_docker(
-        process_runner,
-        ["inspect", "-f", "{{.State.Status}}", container_name],
-        cwd=cwd,
-        env=env,
-    )
-    if result is None:
-        return None, error
-    if getattr(result, "returncode", 1) != 0:
-        return None, run_result_error(result, "failed inspecting container")
-    status = (getattr(result, "stdout", "") or "").strip()
-    return status or None, None
-
-
-def container_state_error(
-    process_runner: ProcessRuntime,
-    *,
-    container_name: str,
-    cwd: Path | None = None,
-    env: Mapping[str, str] | None = None,
-) -> tuple[str | None, str | None]:
-    result, error = run_docker(
-        process_runner,
-        ["inspect", "-f", "{{.State.Error}}", container_name],
-        cwd=cwd,
-        env=env,
-    )
-    if result is None:
-        return None, error
-    if getattr(result, "returncode", 1) != 0:
-        return None, run_result_error(result, "failed inspecting container state error")
-    state_error = (getattr(result, "stdout", "") or "").strip()
-    return state_error or None, None
-
-
-def container_host_port(
-    process_runner: ProcessRuntime,
-    *,
-    container_name: str,
-    container_port: int,
-    cwd: Path | None = None,
-    env: Mapping[str, str] | None = None,
-) -> tuple[int | None, str | None]:
-    def _parse_port_binding_json(raw_payload: str) -> int | None:
-        payload = raw_payload.strip()
-        if not payload:
-            return None
-        try:
-            decoded = json.loads(payload)
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(decoded, dict):
-            return None
-        binding = decoded.get(f"{container_port}/tcp")
-        if not isinstance(binding, list) or not binding:
-            return None
-        first = binding[0]
-        if not isinstance(first, dict):
-            return None
-        host_port = str(first.get("HostPort", "")).strip()
-        if not host_port:
-            return None
-        try:
-            return int(host_port)
-        except ValueError:
-            return None
-
-    inspect_result, inspect_error = run_docker(
-        process_runner,
-        ["inspect", "-f", "{{json .HostConfig.PortBindings}}", container_name],
-        cwd=cwd,
-        env=env,
-        timeout=10.0,
-    )
-    if inspect_result is not None and getattr(inspect_result, "returncode", 1) == 0:
-        inspected = _parse_port_binding_json(str(getattr(inspect_result, "stdout", "") or ""))
-        if inspected is not None:
-            return inspected, None
-
-    result, error = run_docker(
-        process_runner,
-        ["port", container_name, str(container_port)],
-        cwd=cwd,
-        env=env,
-        timeout=10.0,
-    )
-    if result is None:
-        return None, error
-    if getattr(result, "returncode", 1) != 0:
-        port_error = run_result_error(result, "failed reading container port mapping")
-        if not is_missing_port_mapping_error(port_error):
-            return None, port_error
-
-        if inspect_result is None:
-            return None, inspect_error
-        if getattr(inspect_result, "returncode", 1) != 0:
-            return None, port_error
-        return None, None
-    raw = (getattr(result, "stdout", "") or "").strip()
-    if not raw:
-        return None, None
-    first = raw.splitlines()[0].strip()
-    if ":" not in first:
-        return None, None
-    try:
-        return int(first.rsplit(":", 1)[1]), None
-    except ValueError:
-        return None, None
-
-
-def is_missing_port_mapping_error(error: str | None) -> bool:
-    if not error:
-        return False
-    normalized = error.lower()
-    tokens = (
-        "no public port",
-        "not published",
-        "port is not exposed",
-        "no host port",
-    )
-    return any(token in normalized for token in tokens)
-
-
-def stop_and_remove_container(
-    process_runner,
-    *,
-    container_name: str,
-    cwd: Path | None = None,
-    env: Mapping[str, str] | None = None,
-) -> str | None:
-    stop_result, stop_error = run_docker(
-        process_runner,
-        ["stop", container_name],
-        cwd=cwd,
-        env=env,
-    )
-    if stop_result is None:
-        return stop_error
-    if getattr(stop_result, "returncode", 0) not in {0, 1}:
-        return run_result_error(stop_result, "failed stopping container")
-
-    rm_result, rm_error = run_docker(
-        process_runner,
-        ["rm", "-f", container_name],
-        cwd=cwd,
-        env=env,
-    )
-    if rm_result is None:
-        return rm_error
-    if getattr(rm_result, "returncode", 1) != 0:
-        return run_result_error(rm_result, "failed removing container")
-    return None
+__all__ = [
+    "ContainerStartResult",
+    "RetryResult",
+    "_docker_port_publish_lock_default_enabled",
+    "_docker_port_publish_lock_enabled",
+    "_env_bool",
+    "_env_float",
+    "_env_value",
+    "_parse_env_bool",
+    "build_container_name",
+    "container_exists",
+    "container_host_port",
+    "container_state_error",
+    "container_status",
+    "docker_image_exists",
+    "docker_image_pull_policy",
+    "docker_port_publish_lock",
+    "ensure_docker_image_present",
+    "is_bind_conflict",
+    "is_missing_port_mapping_error",
+    "run_docker",
+    "run_result_error",
+    "run_with_retry",
+    "stop_and_remove_container",
+    "sys",
+]

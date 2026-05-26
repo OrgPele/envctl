@@ -179,9 +179,23 @@ def _manifest_is_complete(payload: dict[str, Any]) -> bool:
 
 
 def _int_value(raw: object) -> int:
+    if isinstance(raw, bool):
+        return int(raw)
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str):
+        value = raw.strip()
+        if not value:
+            return 0
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    if isinstance(raw, float):
+        return int(raw)
     try:
-        return int(raw)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+        return int(str(raw).strip())
+    except ValueError:
         return 0
 
 

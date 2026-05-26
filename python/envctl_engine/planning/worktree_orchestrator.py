@@ -56,7 +56,7 @@ class PlanningWorktreeOrchestrator:
         self,
         planning_files: list[str],
         raw_projects: list[tuple[str, Path]],
-    ) -> dict[str, int]:
+    ) -> dict[str, int] | None:
         return self._prompt_planning_selection(planning_files, raw_projects)
 
     def initial_plan_selected_counts(

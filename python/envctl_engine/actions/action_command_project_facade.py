@@ -22,13 +22,13 @@ from envctl_engine.actions.action_project_report_owner import (
     project_action_failure_handler as project_action_failure_handler_impl,
     project_action_success_handler as project_action_success_handler_impl,
 )
-from envctl_engine.actions.project_action_env_support import (
+from envctl_engine.actions.project_action_support import (
     action_env as action_env_impl,
     action_extra_env as action_extra_env_impl,
     action_replacements as action_replacements_impl,
     migrate_action_env as migrate_action_env_impl,
+    run_project_action as run_project_action_impl,
 )
-from envctl_engine.actions.project_action_execution_support import run_project_action as run_project_action_impl
 from envctl_engine.actions.action_output_support import (
     action_colors_enabled as action_colors_enabled_impl,
     colorize_action_text as colorize_action_text_impl,
