@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 import inspect
 from pathlib import Path
 import subprocess
-import sys
 import time
 from typing import Any, Callable
 
@@ -17,6 +16,8 @@ from envctl_engine.actions.action_ship_conflicts import (
     unmerged_stage_entries,
 )
 from envctl_engine.actions.action_ship_contract import (
+    emit_ship_commit_progress,
+    emit_ship_progress,
     parse_ship_json_output,
     print_ship_result,
     ship_payload,
@@ -137,20 +138,19 @@ class ShipWorkflowRunner:
 
         commit_code = self.dependencies.run_commit_action(self.context)
         state.after_sha = self.dependencies.git_output(state.git_root, ["rev-parse", "HEAD"]).strip()
-        state.committed = bool(state.after_sha and state.before_sha and state.after_sha != state.before_sha) or bool(
-            state.pre_commit_dirty and commit_code == 0
-        )
+        sha_changed = bool(state.after_sha and state.before_sha and state.after_sha != state.before_sha)
+        state.committed = sha_changed or bool(state.pre_commit_dirty and commit_code == 0)
         state.step_statuses.append("committed_pushed" if state.committed else "clean_no_changes")
         if commit_code == 0:
             if state.committed:
-                self._emit_commit_progress(state)
+                emit_ship_commit_progress(project_name=str(self.context.project_name), commit_sha=state.after_sha)
             return None
         return self._finish(state, status="commit_failed", ok=False, commit_sha=state.after_sha)
 
     def _run_pr_phase(self, state: ShipWorkflowState) -> int | None:
         if state.pr_url:
             state.step_statuses.append("pr_exists")
-            self._emit_phase_progress(f"ship: PR already exists for {self.context.project_name}: {state.pr_url}")
+            emit_ship_progress(f"ship: PR already exists for {self.context.project_name}: {state.pr_url}")
             return None
 
         pr_code = self.dependencies.run_pr_action(self.context)
@@ -161,7 +161,7 @@ class ShipWorkflowRunner:
         state.pr_created = bool(state.pr_url)
         state.step_statuses.append("pr_created" if state.pr_created else "pr_unresolved")
         if state.pr_created:
-            self._emit_phase_progress(f"ship: PR created for {self.context.project_name}: {state.pr_url}")
+            emit_ship_progress(f"ship: PR created for {self.context.project_name}: {state.pr_url}")
         return None
 
     def _reject_predicted_merge_conflicts(self, state: ShipWorkflowState) -> int | None:
@@ -197,7 +197,7 @@ class ShipWorkflowRunner:
             "expected_head_sha": state.after_sha,
         }
         if _callable_accepts_keyword(checks_fn, "progress_callback"):
-            check_kwargs["progress_callback"] = self._emit_check_progress
+            check_kwargs["progress_callback"] = emit_ship_progress
         checks = checks_fn(state.git_root, **check_kwargs)
         status = str(checks.get("state") or ("pr_created" if state.pr_created else "pr_exists"))
         if status:
@@ -213,21 +213,6 @@ class ShipWorkflowRunner:
             checks=checks,
             merge_conflicts=state.merge_conflicts,
         )
-
-    @staticmethod
-    def _emit_check_progress(message: str) -> None:
-        print(message, file=sys.stderr)
-
-    def _emit_commit_progress(self, state: ShipWorkflowState) -> None:
-        project_name = str(self.context.project_name)
-        sha_suffix = f" ({state.after_sha})." if state.after_sha else "."
-        self._emit_phase_progress(f"ship: add succeeded for {project_name}.")
-        self._emit_phase_progress(f"ship: commit succeeded for {project_name}{sha_suffix}")
-        self._emit_phase_progress(f"ship: push succeeded for {project_name}.")
-
-    @staticmethod
-    def _emit_phase_progress(message: str) -> None:
-        print(message, file=sys.stderr)
 
     def _finish(
         self,

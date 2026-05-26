@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 import time
 from typing import Any, Callable, Mapping
 
@@ -18,6 +19,17 @@ def ship_protected_paths(
     status_output = git_output(git_root, ["status", "--porcelain", "--untracked-files=all"])
     partition = partition_envctl_protected_paths(status_output)
     return ordered_unique_paths(partition.protected_staged_paths, partition.protected_skipped_paths)
+
+
+def emit_ship_progress(message: str) -> None:
+    print(message, file=sys.stderr)
+
+
+def emit_ship_commit_progress(*, project_name: str, commit_sha: str) -> None:
+    sha_suffix = f" ({commit_sha})." if commit_sha else "."
+    emit_ship_progress(f"ship: add succeeded for {project_name}.")
+    emit_ship_progress(f"ship: commit succeeded for {project_name}{sha_suffix}")
+    emit_ship_progress(f"ship: push succeeded for {project_name}.")
 
 
 def ship_payload(
@@ -161,6 +173,8 @@ def parse_ship_json_output(context: Any) -> bool:
 
 
 __all__ = [
+    "emit_ship_commit_progress",
+    "emit_ship_progress",
     "GitOutput",
     "parse_ship_json_output",
     "print_ship_result",
