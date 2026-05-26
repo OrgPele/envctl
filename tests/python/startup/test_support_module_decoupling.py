@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from contextlib import nullcontext
 import hashlib
 from pathlib import Path
@@ -517,6 +518,50 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         )
 
         self.assertEqual(result, ["Feature", "Main"])
+
+    def test_tree_preselected_projects_preserves_plan_file_order_for_plan_fallback(self) -> None:
+        planning_dir = Path("/tmp/repo/todo/plans")
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(planning_dir=planning_dir),
+            _try_load_existing_state=lambda **kwargs: None,
+        )
+        project_contexts = [
+            SimpleNamespace(name="Feature B-1", root=Path("/tmp/repo/trees/feature-b/1")),
+            SimpleNamespace(name="Feature A-1", root=Path("/tmp/repo/trees/feature-a/1")),
+        ]
+
+        def select_projects(*, projects, plan_counts):
+            self.assertEqual(
+                projects,
+                [
+                    ("Feature B-1", Path("/tmp/repo/trees/feature-b/1")),
+                    ("Feature A-1", Path("/tmp/repo/trees/feature-a/1")),
+                ],
+            )
+            self.assertIsInstance(plan_counts, OrderedDict)
+            self.assertEqual(list(plan_counts.items()), [("feature-b.md", 1), ("feature-a.md", 2)])
+            return [("Feature B-1", Path("/tmp/repo/trees/feature-b/1"))]
+
+        with (
+            mock.patch(
+                "envctl_engine.startup.startup_selection_support.list_planning_files",
+                return_value=["feature-b.md", "unused.md", "feature-a.md"],
+            ),
+            mock.patch(
+                "envctl_engine.startup.startup_selection_support.planning_existing_counts",
+                return_value={"feature-a.md": 2, "feature-b.md": 1, "unused.md": 0},
+            ),
+            mock.patch(
+                "envctl_engine.startup.startup_selection_support.select_projects_for_plan_files",
+                side_effect=select_projects,
+            ),
+        ):
+            result = _tree_preselected_projects_from_state(
+                runtime=runtime,
+                project_contexts=project_contexts,
+            )
+
+        self.assertEqual(result, ["Feature B-1"])
 
     def test_maybe_prewarm_docker_does_not_require_orchestrator_wrapper_methods(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
