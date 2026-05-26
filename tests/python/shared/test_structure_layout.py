@@ -599,6 +599,8 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def test_action_extra_env", env_text)
         self.assertIn("def migrate_action_env", env_text)
         execution_text = execution_owner.read_text(encoding="utf-8")
+        self.assertIn("class ProjectActionRunnerConfig", execution_text)
+        self.assertIn("class ProjectActionRunnerDependencies", execution_text)
         self.assertIn("class ProjectActionRunner", execution_text)
         self.assertIn("def run_project_action", execution_text)
         self.assertIn("def resolve_command", execution_text)
