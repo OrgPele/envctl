@@ -230,7 +230,7 @@ def _load_state(runtime: Any, route: Route) -> RunState | None:
     return state if isinstance(state, RunState) else None
 
 
-def _emit_payload(payload: dict[str, object], *, json_output: bool, ok: bool) -> int:
+def _emit_payload(payload: Mapping[str, object], *, json_output: bool, ok: bool) -> int:
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
     elif ok:
@@ -240,7 +240,7 @@ def _emit_payload(payload: dict[str, object], *, json_output: bool, ok: bool) ->
     return 0 if ok else 1
 
 
-def _human_endpoints(payload: dict[str, object]) -> str:
+def _human_endpoints(payload: Mapping[str, object]) -> str:
     lines = [f"project: {payload.get('project')}", f"run_id: {payload.get('run_id')}"]
     for label in ("frontend", "backend"):
         endpoint = payload.get(label)
