@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Callable, cast
 
@@ -56,12 +57,17 @@ def run_dir_path(runtime: object, run_id: str | None) -> Path:
     raw_run_id = str(run_id or "run")
     legacy_resolver = getattr(runtime, "_run_dir_path", None)
     if callable(legacy_resolver):
-        return Path(legacy_resolver(raw_run_id))
+        legacy_path = _path_from_candidate(legacy_resolver(raw_run_id))
+        if legacy_path is not None:
+            return legacy_path
     repository = optional_state_repository(runtime)
     repository_resolver = getattr(repository, "run_dir_path", None)
     if callable(repository_resolver):
-        return Path(repository_resolver(raw_run_id))
-    return Path(getattr(runtime, "runtime_root", ".")) / "runs" / raw_run_id
+        repository_path = _path_from_candidate(repository_resolver(raw_run_id))
+        if repository_path is not None:
+            return repository_path
+    runtime_root = _path_from_candidate(getattr(runtime, "runtime_root", ".")) or Path(".")
+    return runtime_root / "runs" / raw_run_id
 
 
 def test_results_dir_path(runtime: object, run_id: str | None) -> Path:
@@ -69,7 +75,9 @@ def test_results_dir_path(runtime: object, run_id: str | None) -> Path:
     repository = optional_state_repository(runtime)
     repository_resolver = getattr(repository, "test_results_dir_path", None)
     if callable(repository_resolver):
-        return Path(repository_resolver(raw_run_id))
+        repository_path = _path_from_candidate(repository_resolver(raw_run_id))
+        if repository_path is not None:
+            return repository_path
     return run_dir_path(runtime, raw_run_id) / "test-results"
 
 
@@ -92,3 +100,15 @@ def _optional_runtime_dependency(runtime: object, context_attr: str, legacy_attr
     if candidate is None:
         candidate = getattr(runtime, legacy_attr, None)
     return candidate
+
+
+def _path_from_candidate(candidate: object) -> Path | None:
+    if isinstance(candidate, Path):
+        return candidate
+    if isinstance(candidate, str):
+        return Path(candidate)
+    if isinstance(candidate, os.PathLike):
+        raw = candidate.__fspath__()
+        if isinstance(raw, str):
+            return Path(raw)
+    return None
