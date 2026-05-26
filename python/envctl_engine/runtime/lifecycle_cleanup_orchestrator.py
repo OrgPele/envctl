@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from collections.abc import Iterable
+from typing import Any, Callable, Mapping, cast
 
 from envctl_engine.runtime.lifecycle_blast_support import LifecycleBlastCleanupSupport
 from envctl_engine.runtime.engine_runtime_lifecycle_support import release_requirement_ports
@@ -126,11 +127,7 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
 
             if not state.services and not state.requirements:
                 if preserve_stopped_dashboard_state and self._has_dashboard_stopped_services(state):
-                    self._state_repository(self.runtime).save_selected_stop_state(  # type: ignore[attr-defined]
-                        state=state,
-                        emit=self.runtime._emit,  # type: ignore[attr-defined]
-                        runtime_map_builder=build_runtime_map,
-                    )
+                    self._save_selected_stop_state(state)
                     if selected and selected_dependencies:
                         print("Stopped selected services and dependencies.")
                     elif selected_dependencies:
@@ -142,11 +139,7 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
                 print("Stopped runtime state.")
                 return 0
 
-            self._state_repository(self.runtime).save_selected_stop_state(  # type: ignore[attr-defined]
-                state=state,
-                emit=self.runtime._emit,  # type: ignore[attr-defined]
-                runtime_map_builder=build_runtime_map,
-            )
+            self._save_selected_stop_state(state)
             if selected and selected_dependencies:
                 print("Stopped selected services and dependencies.")
             elif selected_dependencies:
@@ -196,27 +189,36 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
 
     def _select_services_for_stop(self, state: RunState, route: Route) -> set[str]:
         selectors_from_passthrough = getattr(self.runtime, "_selectors_from_passthrough", None)
+
+        def selectors_from_passthrough_args(args: list[str]) -> Iterable[str]:
+            if not callable(selectors_from_passthrough):
+                return set()
+            result = selectors_from_passthrough(args)
+            if isinstance(result, str):
+                return {result}
+            if isinstance(result, Iterable):
+                return cast(Iterable[str], result)
+            return set()
+
+        def selected_services_from_ui_selection(selection: object, selected_state: RunState) -> set[str]:
+            return self._services_from_selection(cast(TargetSelection, selection), selected_state)
+
         return select_services_for_stop(
             state,
             route,
             project_name_from_service_fn=lambda service_name: self.runtime._project_name_from_service(  # type: ignore[attr-defined]
                 service_name
             ),
-            selectors_from_passthrough_fn=(
-                selectors_from_passthrough if callable(selectors_from_passthrough) else lambda _args: set()
-            ),
+            selectors_from_passthrough_fn=selectors_from_passthrough_args,
             interactive_stop_selection_fn=self._interactive_stop_selection,
-            services_from_selection_fn=self._services_from_selection,
+            services_from_selection_fn=selected_services_from_ui_selection,
         )
 
     def _execute_stop_dependencies(self, route: Route, state: RunState) -> int:
         def operation() -> int:
             if not state.requirements:
                 if not state.services:
-                    self._state_repository(self.runtime).purge(aggressive=False)
-                    release_port_session = getattr(self.runtime, "_release_port_session", None)
-                    if callable(release_port_session):
-                        release_port_session()
+                    self._purge_runtime_state(aggressive=False)
                 print("No dependencies found.")
                 return 0
 
@@ -225,16 +227,9 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
                 state.requirements.pop(project, None)
 
             if state.services:
-                self._state_repository(self.runtime).save_selected_stop_state(
-                    state=state,
-                    emit=self.runtime._emit,  # type: ignore[attr-defined]
-                    runtime_map_builder=build_runtime_map,
-                )
+                self._save_selected_stop_state(state)
             else:
-                self._state_repository(self.runtime).purge(aggressive=False)
-                release_port_session = getattr(self.runtime, "_release_port_session", None)
-                if callable(release_port_session):
-                    release_port_session()
+                self._purge_runtime_state(aggressive=False)
 
             print("Stopped dependencies.")
             return 0
@@ -337,13 +332,25 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
             removed = self.blast_all_docker_cleanup(route=volume_route)
             rt._emit("cleanup.stop_all.remove_volumes.finish", removed=removed)  # type: ignore[attr-defined]
 
+        self._purge_runtime_state(aggressive=aggressive)
+        if aggressive:
+            self.blast_all_purge_legacy_state_artifacts()
+
+    def _save_selected_stop_state(self, state: RunState) -> None:
+        self._state_repository(self.runtime).save_selected_stop_state(
+            state=state,
+            emit=self.runtime._emit,  # type: ignore[attr-defined]
+            runtime_map_builder=lambda raw_state: build_runtime_map(cast(RunState, raw_state)),
+        )
+
+    def _purge_runtime_state(self, *, aggressive: bool) -> None:
         if aggressive:
             self.release_all_runtime_ports()
         else:
-            rt._release_port_session()  # type: ignore[attr-defined]
-        self._state_repository(rt).purge(aggressive=aggressive)  # type: ignore[attr-defined]
-        if aggressive:
-            self.blast_all_purge_legacy_state_artifacts()
+            release_port_session = getattr(self.runtime, "_release_port_session", None)
+            if callable(release_port_session):
+                release_port_session()
+        self._state_repository(self.runtime).purge(aggressive=aggressive)
 
     def _run_spinner_operation(
         self,
@@ -371,65 +378,71 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
         ):
             if spinner_policy.enabled:
                 active_spinner.start()
-                rt._emit(  # type: ignore[attr-defined]
-                    "ui.spinner.lifecycle",
-                    component="lifecycle_cleanup",
-                    command=route.command,
-                    op_id=op_id,
-                    state="start",
-                    message=message,
-                )
+                self._emit_spinner_lifecycle(route=route, op_id=op_id, state="start", message=message)
             try:
                 code = operation()
             except Exception:
                 if spinner_policy.enabled:
-                    active_spinner.fail("Cleanup failed")
-                    rt._emit(  # type: ignore[attr-defined]
-                        "ui.spinner.lifecycle",
-                        component="lifecycle_cleanup",
-                        command=route.command,
+                    self._finish_spinner_operation(
+                        active_spinner,
+                        route=route,
                         op_id=op_id,
-                        state="fail",
-                        message="Cleanup failed",
-                    )
-                    rt._emit(  # type: ignore[attr-defined]
-                        "ui.spinner.lifecycle",
-                        component="lifecycle_cleanup",
-                        command=route.command,
-                        op_id=op_id,
-                        state="stop",
+                        success=False,
                     )
                 raise
 
             if spinner_policy.enabled:
-                if code == 0:
-                    active_spinner.succeed("Cleanup completed")
-                    rt._emit(  # type: ignore[attr-defined]
-                        "ui.spinner.lifecycle",
-                        component="lifecycle_cleanup",
-                        command=route.command,
-                        op_id=op_id,
-                        state="success",
-                        message="Cleanup completed",
-                    )
-                else:
-                    active_spinner.fail("Cleanup failed")
-                    rt._emit(  # type: ignore[attr-defined]
-                        "ui.spinner.lifecycle",
-                        component="lifecycle_cleanup",
-                        command=route.command,
-                        op_id=op_id,
-                        state="fail",
-                        message="Cleanup failed",
-                    )
-                rt._emit(  # type: ignore[attr-defined]
-                    "ui.spinner.lifecycle",
-                    component="lifecycle_cleanup",
-                    command=route.command,
+                self._finish_spinner_operation(
+                    active_spinner,
+                    route=route,
                     op_id=op_id,
-                    state="stop",
+                    success=(code == 0),
                 )
             return code
+
+    def _finish_spinner_operation(
+        self,
+        active_spinner: object,
+        *,
+        route: Route,
+        op_id: str,
+        success: bool,
+    ) -> None:
+        if success:
+            active_spinner.succeed("Cleanup completed")  # type: ignore[attr-defined]
+            self._emit_spinner_lifecycle(
+                route=route,
+                op_id=op_id,
+                state="success",
+                message="Cleanup completed",
+            )
+        else:
+            active_spinner.fail("Cleanup failed")  # type: ignore[attr-defined]
+            self._emit_spinner_lifecycle(
+                route=route,
+                op_id=op_id,
+                state="fail",
+                message="Cleanup failed",
+            )
+        self._emit_spinner_lifecycle(route=route, op_id=op_id, state="stop")
+
+    def _emit_spinner_lifecycle(
+        self,
+        *,
+        route: Route,
+        op_id: str,
+        state: str,
+        message: str | None = None,
+    ) -> None:
+        payload: dict[str, object] = {
+            "component": "lifecycle_cleanup",
+            "command": route.command,
+            "op_id": op_id,
+            "state": state,
+        }
+        if message is not None:
+            payload["message"] = message
+        self.runtime._emit("ui.spinner.lifecycle", **payload)  # type: ignore[attr-defined]
 
     @staticmethod
     def _state_repository(runtime: object) -> StateRepository:
