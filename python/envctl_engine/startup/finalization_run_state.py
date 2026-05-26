@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from typing import cast
 
 from envctl_engine.dashboard_metadata import (
@@ -112,6 +113,7 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
                 {
                     "worktree_name": str(getattr(outcome, "worktree_name", "")).strip(),
                     "worktree_root": str(getattr(outcome, "worktree_root", "")).strip(),
+                    "workspace_id": getattr(outcome, "workspace_id", None),
                     "surface_id": getattr(outcome, "surface_id", None),
                     "status": str(getattr(outcome, "status", "")).strip(),
                     "reason": getattr(outcome, "reason", None),
@@ -119,6 +121,41 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
             )
         if launch_outcomes:
             metadata["plan_agent_launch_outcomes"] = launch_outcomes
+        route = session.effective_route
+        route_transport = (
+            "omx" if bool(route.flags.get("omx")) else ("tmux" if bool(route.flags.get("tmux")) else "cmux")
+        )
+        metadata["plan_agent_launch_transport"] = route_transport
+        if route_transport == "cmux":
+            workspace_ids = tuple(
+                dict.fromkeys(
+                    str(outcome.get("workspace_id") or "").strip()
+                    for outcome in launch_outcomes
+                    if str(outcome.get("workspace_id") or "").strip()
+                )
+            )
+            surface_ids = tuple(
+                dict.fromkeys(
+                    str(outcome.get("surface_id") or "").strip()
+                    for outcome in launch_outcomes
+                    if str(outcome.get("surface_id") or "").strip()
+                )
+            )
+            focus_commands = [
+                (
+                    f"cmux select-workspace --workspace {shlex.quote(str(outcome['workspace_id']))} "
+                    f"&& cmux move-surface --workspace {shlex.quote(str(outcome['workspace_id']))} "
+                    f"--surface {shlex.quote(str(outcome['surface_id']))} --focus true"
+                )
+                for outcome in launch_outcomes
+                if str(outcome.get("workspace_id") or "").strip() and str(outcome.get("surface_id") or "").strip()
+            ]
+            if workspace_ids:
+                metadata["plan_agent_cmux_workspace_ids"] = list(workspace_ids)
+            if surface_ids:
+                metadata["plan_agent_cmux_surface_ids"] = list(surface_ids)
+            if focus_commands:
+                metadata["plan_agent_cmux_focus_commands"] = focus_commands
     if session.plan_agent_handoff_degraded or session.local_startup_failures:
         metadata["plan_agent_handoff_degraded"] = bool(session.plan_agent_handoff_degraded)
         metadata["implementation_session_running"] = bool(session.plan_agent_session_started)

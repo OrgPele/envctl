@@ -510,6 +510,7 @@ or actionable review comments.
 - if that handoff fails, envctl records structured diagnostics that distinguish spawn failure, missing `session.json`, wrong-worktree state, tmux candidate mismatch, prompt bootstrap failure, stale final attach targets, exited OMX sessions, and removed worktrees
 - OMX-managed plan launches revalidate the final tmux attach target before headless output prints `attach:` guidance; stale or exited OMX sessions are reported as failed/degraded handoffs with diagnostic metadata instead of stale attach commands
 - when an OMX handoff is stale, unavailable, exited, or tied to a removed worktree, envctl does not silently start native tmux in the same command; it prints a `recovery:` command that switches the same plan selector to envctl-owned `--tmux`, preserves relevant scope/headless flags, includes `--new-session`, and omits OMX-only workflow flags such as `--ultragoal`, `--ralph`, and `--team`
+- cmux plan-agent launches are not tmux-attachable; headless and degraded handoff output reports `launch: launched via cmux` plus the recorded workspace, surface, and focus guidance when envctl opened a cmux surface
 - `ENVCTL_PLAN_AGENT_CLI=codex|opencode` selects the AI CLI for envctl-owned cmux/tmux launches; OMX launches always use Codex
 - `ENVCTL_PLAN_AGENT_PRESET=implement_task` selects the prompt preset name by default
 - `ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE=true` submits Codex `/goal` session framing before the initial implementation prompt; local Superset Codex launches use an envctl Superset host-agent wrapper that types `/goal`, presses Enter, waits for `Goal active`, then submits the implementation prompt; `--goal`/`--codex-goal` enable it and `--no-goal`/`--no-codex-goal` disable it for one launch
@@ -546,7 +547,7 @@ Degraded plan-agent handoff:
 
 - `envctl --plan <selector> --tmux --headless`, `envctl --import <branch> --tmux --headless`, and their `--omx` variants can still succeed when the implementation AI session starts but local backend/frontend startup cannot resolve a service command
 - if startup revalidation finds that an OMX-managed attach target is stale or exited, headless output suppresses stale `attach:` guidance and prints a native fallback such as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system --headless --new-session`
-- this path prints `Implementation session is running, but local app startup failed.`, then an `AI session:` section with copy-pastable `attach:` and `kill:` guidance when a tmux session is known
+- this path prints `Implementation session is running, but local app startup failed.`, then an `AI session:` section with copy-pastable `attach:` and `kill:` guidance when a tmux session is known, or cmux workspace/surface/focus guidance when the launch used cmux
 - the `Local app startup:` section names the worktree, preserves the raw startup error, and points to `ENVCTL_BACKEND_START_CMD` / `ENVCTL_FRONTEND_START_CMD` when services should run locally
 - plain `start`, `restart`, `resume`, dashboard, or `--plan` runs without a running implementation session keep normal fatal `Startup failed:` semantics
 

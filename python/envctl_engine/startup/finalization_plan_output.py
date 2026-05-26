@@ -130,6 +130,51 @@ def plan_session_summary_lines(
     return lines
 
 
+def cmux_plan_session_summary_lines(session: StartupSession) -> list[str]:
+    route = session.effective_route
+    if getattr(route, "command", "") != "plan":
+        return []
+    if bool(route.flags.get("tmux")) or bool(route.flags.get("omx")):
+        return []
+    if not (bool(route.flags.get("cmux")) or session.plan_agent_launch_result is not None):
+        return []
+    launch_result = session.plan_agent_launch_result
+    if launch_result is None:
+        return []
+    outcomes = tuple(getattr(launch_result, "outcomes", ()) or ())
+    launched_outcomes = tuple(
+        outcome for outcome in outcomes if str(getattr(outcome, "status", "")).strip().lower() == "launched"
+    )
+    launch_status = str(getattr(launch_result, "status", "")).strip().lower()
+    if launch_status not in {"launched", "running", "partial"} and not launched_outcomes:
+        return []
+    lines = ["status: running", "launch: launched via cmux"]
+    workspace_ids = tuple(
+        dict.fromkeys(
+            str(getattr(outcome, "workspace_id", "") or "").strip()
+            for outcome in launched_outcomes
+            if str(getattr(outcome, "workspace_id", "") or "").strip()
+        )
+    )
+    for workspace_id in workspace_ids:
+        lines.append(f"workspace: {workspace_id}")
+    for outcome in launched_outcomes:
+        surface_id = str(getattr(outcome, "surface_id", "") or "").strip()
+        worktree_name = str(getattr(outcome, "worktree_name", "") or "").strip()
+        workspace_id = str(getattr(outcome, "workspace_id", "") or "").strip()
+        if surface_id:
+            suffix = f" ({worktree_name})" if worktree_name else ""
+            lines.append(f"surface: {surface_id}{suffix}")
+        if workspace_id and surface_id:
+            lines.append(
+                "focus: "
+                f"cmux select-workspace --workspace {shlex.quote(workspace_id)} "
+                f"&& cmux move-surface --workspace {shlex.quote(workspace_id)} "
+                f"--surface {shlex.quote(surface_id)} --focus true"
+            )
+    return lines
+
+
 def headless_plan_session_summary_lines(
     session: StartupSession,
     *,
@@ -142,6 +187,9 @@ def headless_plan_session_summary_lines(
         if "No local app system is configured" in warning
     )
     if attach_target is not None or session.plan_agent_attach_target is not None:
+        return lines
+    lines = cmux_plan_session_summary_lines(session)
+    if lines:
         return lines
     reason = str(session.plan_agent_handoff_validation_reason or "").strip()
     if not reason:
@@ -207,6 +255,8 @@ def plan_agent_degraded_handoff_text(session: StartupSession) -> str:
         "AI session:",
     ]
     session_lines = plan_session_summary_lines(session)
+    if not session_lines:
+        session_lines = cmux_plan_session_summary_lines(session)
     if session_lines:
         lines.extend(f"  {line}" for line in session_lines)
     else:

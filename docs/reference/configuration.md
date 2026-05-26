@@ -390,6 +390,8 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_PLAN_AGENT_SUPERSET_DESKTOP_VERIFY_TIMEOUT` | `5` | Seconds to wait for the Superset desktop cache to receive the returned workspace id before treating the Superset handoff as failed. |
 
 Enabled plan-agent launches prepare backend/frontend dependencies in the selected worktree before prompt submission.
+Cmux handoff output uses recorded workspace and surface metadata rather than tmux attach commands; tmux and OMX-managed
+launches continue to report attach guidance when a valid tmux target is known.
 This reuses the normal backend/frontend bootstrap logic, skips migrations, and does not start services. Configured backend
 commands that begin with generic Python (`python`, `python3`, or `python3.12`) are resolved through the prepared Poetry
 runner or backend virtualenv when available.

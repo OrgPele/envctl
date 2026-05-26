@@ -155,16 +155,43 @@ class PlanAgentHandoffTests(unittest.TestCase):
                     {
                         "command": "plan",
                         "mode": "trees",
+                        "route_transport": "tmux",
                         "status": "partial",
                         "reason": "one_failed",
                         "launched_worktrees": ["feature-a-1"],
                         "failed_worktrees": ["feature-a-2"],
+                        "launched_surface_ids": [],
+                        "launched_workspace_ids": [],
                         "session_name": "envctl-plan",
                         "implementation_session_running": True,
                     },
                 )
             ],
         )
+
+    def test_emit_plan_agent_launch_state_includes_cmux_surface_details(self) -> None:
+        session = _session(args=["plan", "--cmux"])
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(_emit=lambda event, **payload: events.append((event, payload)))
+        launch_result = PlanAgentLaunchResult(
+            status="launched",
+            reason="launched",
+            outcomes=(
+                PlanAgentLaunchOutcome(
+                    worktree_name="feature-a-1",
+                    worktree_root=Path("/tmp/feature-a-1"),
+                    workspace_id="workspace:6",
+                    surface_id="surface:74",
+                    status="launched",
+                ),
+            ),
+        )
+
+        emit_plan_agent_launch_state(runtime, session, launch_result)
+
+        self.assertEqual(events[0][1]["route_transport"], "cmux")
+        self.assertEqual(events[0][1]["launched_surface_ids"], ["surface:74"])
+        self.assertEqual(events[0][1]["launched_workspace_ids"], ["workspace:6"])
 
     def test_should_fail_for_plan_agent_launch_result_requires_plan_request_and_no_attach(self) -> None:
         failed_result = SimpleNamespace(status="failed", attach_target=None, outcomes=())

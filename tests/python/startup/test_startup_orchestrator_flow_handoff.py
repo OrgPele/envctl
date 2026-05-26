@@ -512,6 +512,93 @@ class StartupOrchestratorFlowHandoffTests(StartupOrchestratorFlowTestCase):
             self.assertEqual(degraded_events[-1].get("reason"), "missing_service_start_command")
             self.assertEqual(degraded_events[-1].get("route_transport"), "tmux")
 
+    def test_headless_cmux_plan_agent_handoff_prints_surface_guidance_when_local_startup_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime)
+            context = self._tree_context(
+                repo,
+                "feature-a-1",
+                "feature-a/1",
+                backend_port=8200,
+                frontend_port=9200,
+            )
+            launch_result = PlanAgentLaunchResult(
+                status="launched",
+                reason="launched",
+                outcomes=(
+                    PlanAgentLaunchOutcome(
+                        worktree_name=context.name,
+                        worktree_root=Path(context.root),
+                        workspace_id="workspace:6",
+                        surface_id="surface:74",
+                        status="launched",
+                    ),
+                ),
+            )
+            captured: dict[str, object] = {}
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_select_plan_projects", return_value=[context]),
+                patch.object(
+                    engine.planning_worktree_orchestrator,
+                    "last_plan_selection_result",
+                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                ),
+                patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", return_value=launch_result),
+                patch.object(
+                    engine,
+                    "_start_project_context",
+                    side_effect=RuntimeError("missing_service_start_command: autodetect_failed_backend"),
+                ),
+                patch.object(
+                    engine,
+                    "_write_artifacts",
+                    side_effect=lambda state, contexts, *, errors: captured.update(
+                        {"state": state, "contexts": list(contexts), "errors": list(errors)}
+                    ),
+                ),
+                patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+            ):
+                out = StringIO()
+                with redirect_stdout(out):
+                    code = engine.dispatch(
+                        parse_route(
+                            ["--plan", "feature-a", "--cmux", "--headless"],
+                            env={"ENVCTL_DEFAULT_MODE": "trees"},
+                        )
+                    )
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("Implementation session is running, but local app startup failed.", rendered)
+            self.assertIn("launch: launched via cmux", rendered)
+            self.assertIn("workspace: workspace:6", rendered)
+            self.assertIn("surface: surface:74 (feature-a-1)", rendered)
+            self.assertIn("focus: cmux select-workspace --workspace workspace:6", rendered)
+            self.assertNotIn("attach guidance unavailable for this launch transport", rendered)
+            state = cast(RunState, captured["state"])
+            self.assertEqual(state.metadata["plan_agent_launch_transport"], "cmux")
+            self.assertEqual(state.metadata["plan_agent_cmux_workspace_ids"], ["workspace:6"])
+            self.assertEqual(state.metadata["plan_agent_cmux_surface_ids"], ["surface:74"])
+            self.assertEqual(
+                state.metadata["plan_agent_cmux_focus_commands"],
+                [
+                    "cmux select-workspace --workspace workspace:6 && cmux move-surface "
+                    "--workspace workspace:6 --surface surface:74 --focus true"
+                ],
+            )
+            self.assertNotIn("plan_agent_attach_command", state.metadata)
+            self.assertEqual(state.metadata["plan_agent_launch_outcomes"][0]["workspace_id"], "workspace:6")
+            launch_events = [event for event in engine.events if event.get("event") == "startup.plan_agent_launch_state"]
+            self.assertTrue(launch_events)
+            self.assertEqual(launch_events[-1].get("route_transport"), "cmux")
+            self.assertEqual(launch_events[-1].get("launched_surface_ids"), ["surface:74"])
+            self.assertEqual(launch_events[-1].get("launched_workspace_ids"), ["workspace:6"])
+
     def test_headless_opencode_launch_failure_does_not_print_ready_attach_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

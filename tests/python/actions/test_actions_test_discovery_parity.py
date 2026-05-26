@@ -446,10 +446,13 @@ class ActionsTestDiscoveryParityTests(_ActionsParityTestCase):
 
             self.assertEqual(code, 0)
             self.assertTrue(fake_runner.run_calls)
-            self.assertEqual(fake_runner.run_calls[0][0][:5], ("pnpm", "run", "test", "--", "src"))
-            if len(fake_runner.run_calls[0][0]) > 5:
-                self.assertEqual(fake_runner.run_calls[0][0][5], "--reporter=default")
-                self.assertTrue(fake_runner.run_calls[0][0][6].startswith("--reporter="))
+            frontend_calls = [call for call in fake_runner.run_calls if call[0][:3] == ("pnpm", "run", "test")]
+            self.assertEqual(len(frontend_calls), 1, msg=fake_runner.run_calls)
+            command = frontend_calls[0][0]
+            self.assertEqual(command[:5], ("pnpm", "run", "test", "--", "src"))
+            if len(command) > 5:
+                self.assertEqual(command[5], "--reporter=default")
+                self.assertTrue(command[6].startswith("--reporter="))
 
     def test_test_action_normalizes_repo_relative_frontend_test_path_for_configured_frontend_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -495,10 +498,13 @@ class ActionsTestDiscoveryParityTests(_ActionsParityTestCase):
 
             self.assertEqual(code, 0)
             self.assertTrue(fake_runner.run_calls)
-            self.assertEqual(fake_runner.run_calls[0][0][:5], ("pnpm", "run", "test", "--", "src"))
-            if len(fake_runner.run_calls[0][0]) > 5:
-                self.assertEqual(fake_runner.run_calls[0][0][5], "--reporter=default")
-                self.assertTrue(fake_runner.run_calls[0][0][6].startswith("--reporter="))
+            frontend_calls = [call for call in fake_runner.run_calls if call[0][:3] == ("pnpm", "run", "test")]
+            self.assertEqual(len(frontend_calls), 1, msg=fake_runner.run_calls)
+            command = frontend_calls[0][0]
+            self.assertEqual(command[:5], ("pnpm", "run", "test", "--", "src"))
+            if len(command) > 5:
+                self.assertEqual(command[5], "--reporter=default")
+                self.assertTrue(command[6].startswith("--reporter="))
 
     def test_configured_backend_and_frontend_test_commands_keep_runner_suite_labels(self) -> None:
         target = action_test_support_module.TestTargetContext(

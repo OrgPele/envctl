@@ -31,8 +31,8 @@ from envctl_engine.startup.finalization import (
     render_plan_agent_degraded_handoff_for_terminal,
     restart_port_rebound_summary_lines,
 )
+from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanAgentLaunchOutcome, PlanAgentLaunchResult
 from envctl_engine.startup.finalization_failure import StartupFailureFinalizer
-from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
 from envctl_engine.startup.session import LocalStartupFailure, StartupSession
 from envctl_engine.state.models import RunState
 
@@ -411,6 +411,43 @@ class StartupFinalizationTests(unittest.TestCase):
         self.assertIn("  error: missing_service_start_command: backend", text)
         self.assertIn("  next: configure ENVCTL_BACKEND_START_CMD / ENVCTL_FRONTEND_START_CMD", text)
 
+    def test_plan_agent_degraded_handoff_text_includes_cmux_surface_guidance(self) -> None:
+        session = _session(contexts=[])
+        session.effective_route = parse_route(["plan", "--cmux", "--headless"], env={})
+        session.plan_agent_launch_result = PlanAgentLaunchResult(
+            status="launched",
+            reason="launched",
+            outcomes=(
+                PlanAgentLaunchOutcome(
+                    worktree_name="feature-a-1",
+                    worktree_root=Path("/repo/trees/feature-a/1"),
+                    workspace_id="workspace:6",
+                    surface_id="surface:74",
+                    status="launched",
+                ),
+            ),
+        )
+        session.local_startup_failures.append(
+            LocalStartupFailure(
+                project="feature-a-1",
+                error="missing_service_start_command: backend",
+                reason="missing_service_start_command",
+            )
+        )
+
+        text = plan_agent_degraded_handoff_text(session)
+
+        self.assertIn("  status: running", text)
+        self.assertIn("  launch: launched via cmux", text)
+        self.assertIn("  workspace: workspace:6", text)
+        self.assertIn("  surface: surface:74 (feature-a-1)", text)
+        self.assertIn(
+            "  focus: cmux select-workspace --workspace workspace:6 && cmux move-surface "
+            "--workspace workspace:6 --surface surface:74 --focus true",
+            text,
+        )
+        self.assertNotIn("attach guidance unavailable for this launch transport", text)
+
     def test_headless_plan_session_summary_includes_no_system_continuation_warning(self) -> None:
         session = _session(contexts=[])
         session.plan_agent_attach_target = SimpleNamespace(
@@ -471,6 +508,43 @@ class StartupFinalizationTests(unittest.TestCase):
                 "recovery: envctl plan --omx --new-session",
             ],
         )
+
+    def test_headless_plan_session_summary_lines_include_cmux_surface_without_workspace(self) -> None:
+        session = _session(contexts=[])
+        session.effective_route = parse_route(["plan", "--cmux", "--headless"], env={})
+        session.plan_agent_launch_result = PlanAgentLaunchResult(
+            status="launched",
+            reason="launched",
+            outcomes=(
+                PlanAgentLaunchOutcome(
+                    worktree_name="feature-a-1",
+                    worktree_root=Path("/repo/trees/feature-a/1"),
+                    workspace_id=None,
+                    surface_id="surface:74",
+                    status="launched",
+                ),
+            ),
+        )
+
+        lines = headless_plan_session_summary_lines(session)
+
+        self.assertEqual(
+            lines,
+            [
+                "status: running",
+                "launch: launched via cmux",
+                "surface: surface:74 (feature-a-1)",
+            ],
+        )
+
+    def test_headless_plan_session_summary_lines_include_cmux_launch_without_surface_metadata(self) -> None:
+        session = _session(contexts=[])
+        session.effective_route = parse_route(["plan", "--cmux", "--headless"], env={})
+        session.plan_agent_launch_result = PlanAgentLaunchResult(status="launched", reason="launched")
+
+        lines = headless_plan_session_summary_lines(session)
+
+        self.assertEqual(lines, ["status: running", "launch: launched via cmux"])
 
     def test_print_headless_plan_session_summary_validates_when_no_attach_target_override(self) -> None:
         session = _session(contexts=[])

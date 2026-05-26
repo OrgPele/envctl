@@ -115,7 +115,11 @@ def main_repo_root_for_worktree(*, worktree_root: Path, runtime: Any, trees_dir_
         return repo_root_from_layout
 
     process_runtime = resolve_process_runtime(raw_runtime)
-    completed = process_runtime.run(
+    run = getattr(process_runtime, "run", None)
+    if not callable(run):
+        return None
+
+    completed = run(
         ["git", "rev-parse", "--show-toplevel"],
         cwd=worktree_root,
         timeout=10.0,
@@ -124,7 +128,7 @@ def main_repo_root_for_worktree(*, worktree_root: Path, runtime: Any, trees_dir_
         return None
     top_level = Path(str(getattr(completed, "stdout", "") or "").strip()).resolve()
 
-    common = process_runtime.run(
+    common = run(
         ["git", "rev-parse", "--git-common-dir"],
         cwd=worktree_root,
         timeout=10.0,

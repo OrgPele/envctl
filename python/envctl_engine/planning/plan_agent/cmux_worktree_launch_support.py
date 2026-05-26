@@ -39,6 +39,7 @@ def launch_single_worktree(
             surface_id=None,
             status="failed",
             reason=create_error or "surface_create_failed",
+            workspace_id=workspace_id,
         )
     runtime._emit(
         "planning.agent_launch.surface_created",
@@ -59,4 +60,5 @@ def launch_single_worktree(
         worktree_root=worktree.root,
         surface_id=surface_id,
         status="launched",
+        workspace_id=workspace_id,
     )
