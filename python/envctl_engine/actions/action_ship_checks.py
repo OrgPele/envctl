@@ -6,8 +6,16 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Mapping
 
+from envctl_engine.actions.action_ship_check_results import (
+    DEFAULT_CHECK_NAME_PREFIX,
+    FAILING_CHECK_STATES,
+    PASSING_CHECK_STATES,
+    normalize_github_pr_checks,
+    normalize_status_rollup_check as _normalize_status_rollup_check,
+    target_status_checks as _target_status_checks,
+)
 from envctl_engine.actions.action_ship_failure_logs import (
     DEFAULT_FAILURE_EXCERPT_CHARS,
     DEFAULT_FAILURE_EXCERPT_LINES,
@@ -16,14 +24,11 @@ from envctl_engine.actions.action_ship_failure_logs import (
     failure_log_excerpt,
 )
 
-FAILING_CHECK_STATES = {"FAILURE", "FAILED", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
-PASSING_CHECK_STATES = {"SUCCESS", "PASSED", "NEUTRAL", "SKIPPED"}
 TERMINAL_SHIP_CHECK_STATES = {"checks_passed", "checks_failed", "gh_unavailable", "no_checks_reported"}
 DEFAULT_CHECK_TIMEOUT_SECONDS = 120.0
 DEFAULT_CHECK_POLL_INTERVAL_SECONDS = 5.0
 DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS = 10.0
 DEFAULT_NO_CHECKS_GRACE_SECONDS = 10.0
-DEFAULT_CHECK_NAME_PREFIX = "tests"
 
 
 def github_pr_checks(
@@ -262,21 +267,6 @@ def _pending_expected_head_result(
     }
 
 
-def _normalize_status_rollup_check(check: Mapping[str, object]) -> dict[str, object]:
-    name = str(check.get("name") or check.get("context") or "check").strip()
-    status = str(check.get("status") or check.get("state") or "").strip().upper()
-    conclusion = str(check.get("conclusion") or "").strip().upper()
-    state = conclusion if status == "COMPLETED" and conclusion else status
-    link = str(check.get("detailsUrl") or check.get("targetUrl") or check.get("link") or "").strip()
-    workflow = str(check.get("workflowName") or check.get("workflow") or "").strip()
-    normalized: dict[str, object] = {"name": name, "state": state}
-    if workflow:
-        normalized["workflow"] = workflow
-    if link:
-        normalized["link"] = link
-    return normalized
-
-
 def _query_github_pr_checks(
     git_root: Path,
     *,
@@ -344,61 +334,6 @@ def _float_env(name: str) -> float | None:
         return float(raw)
     except ValueError:
         return None
-
-
-def normalize_github_pr_checks(
-    checks: Sequence[Mapping[str, object]],
-    *,
-    duration_seconds: float,
-) -> dict[str, object]:
-    failing: list[Mapping[str, object]] = []
-    passed: list[Mapping[str, object]] = []
-    pending: list[Mapping[str, object]] = []
-    for check in checks:
-        state = _normalized_check_state(check)
-        if state in FAILING_CHECK_STATES:
-            failing.append(check)
-        elif state in PASSING_CHECK_STATES:
-            passed.append(check)
-        else:
-            pending.append(check)
-    if failing:
-        state = "checks_failed"
-    elif pending:
-        state = "checks_pending_timeout"
-    else:
-        state = "checks_passed"
-    return {
-        "state": state,
-        "failing_checks": failing,
-        "passed_checks": passed,
-        "pending_checks": pending,
-        "duration_seconds": duration_seconds,
-    }
-
-
-def _normalized_check_state(check: Mapping[str, object]) -> str:
-    return str(check.get("state", "")).strip().upper()
-
-
-def _target_status_checks(checks: Sequence[object]) -> list[Mapping[str, object]]:
-    return [
-        check
-        for check in checks
-        if isinstance(check, Mapping) and _status_check_matches_default_target(check)
-    ]
-
-
-def _status_check_matches_default_target(check: Mapping[str, object]) -> bool:
-    return _status_check_display_name(check).casefold().startswith(DEFAULT_CHECK_NAME_PREFIX)
-
-
-def _status_check_display_name(check: Mapping[str, object]) -> str:
-    workflow = str(check.get("workflow") or check.get("workflowName") or "").strip()
-    name = str(check.get("name") or check.get("context") or "").strip()
-    if workflow and name:
-        return f"{workflow} / {name}"
-    return workflow or name
 
 
 __all__ = [
