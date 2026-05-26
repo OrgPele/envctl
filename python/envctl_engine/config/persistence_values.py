@@ -21,6 +21,7 @@ from envctl_engine.config import (
 from envctl_engine.config.profile_defaults import managed_dependency_default_enabled
 from envctl_engine.requirements.core import dependency_definitions, managed_enable_keys
 from envctl_engine.runtime.command_resolution import suggest_service_directory, suggest_service_start_command
+from envctl_engine.shared.parsing import bool_text as _bool_text
 from envctl_engine.shared.parsing import parse_int
 
 
@@ -271,9 +272,10 @@ def managed_values_from_payload(
     *,
     base_values: ManagedConfigValues | None = None,
 ) -> ManagedConfigValues:
-    from envctl_engine.config.persistence_payload import ConfigPayloadHydrator
+    from envctl_engine.config.persistence_payload_mapping import hydrate_payload_mapping
 
-    return ConfigPayloadHydrator(base_values=base_values).hydrate(payload)
+    mapping = managed_values_to_mapping(base_values or managed_values_from_mapping({}))
+    return managed_values_from_mapping(hydrate_payload_mapping(payload, mapping))
 
 
 def validate_managed_values(
@@ -403,10 +405,6 @@ def _parse_bool_value(raw: str | None, default: bool) -> bool:
     if value in {"0", "false", "no", "off"}:
         return False
     return default
-
-
-def _bool_text(value: bool) -> str:
-    return "true" if value else "false"
 
 
 def _resolved_ui_visual_host(values: dict[str, str]) -> str:

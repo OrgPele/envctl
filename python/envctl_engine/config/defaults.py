@@ -3,10 +3,7 @@ from __future__ import annotations
 from typing import Mapping, cast
 
 from envctl_engine.config.profile_defaults import default_profile_settings
-
-
-def _bool_text(value: bool) -> str:
-    return "true" if value else "false"
+from envctl_engine.shared.parsing import bool_text as _bool_text
 
 
 def _build_defaults() -> dict[str, str]:
@@ -130,4 +127,3 @@ MANAGED_CONFIG_KEYS: tuple[str, ...] = (
     "TREES_BACKEND_EXPECT_LISTENER",
     "TREES_FRONTEND_ENABLE",
 )
-

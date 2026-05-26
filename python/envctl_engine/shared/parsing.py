@@ -20,6 +20,10 @@ def parse_bool(value: object, default: bool) -> bool:
     return default
 
 
+def bool_text(value: bool) -> str:
+    return "true" if value else "false"
+
+
 def parse_int(value: object, default: int) -> int:
     if value is None:
         return default
