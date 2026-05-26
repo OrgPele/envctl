@@ -822,11 +822,14 @@ class StructureLayoutTests(unittest.TestCase):
         runner = shared / "process_runner.py"
         launch_owner = shared / "process_launch_support.py"
         lifecycle_owner = shared / "process_lifecycle_probe.py"
+        streaming_owner = shared / "process_streaming_support.py"
 
         self.assertTrue(launch_owner.is_file())
         self.assertTrue(lifecycle_owner.is_file())
+        self.assertTrue(streaming_owner.is_file())
         launch_text = launch_owner.read_text(encoding="utf-8")
         lifecycle_text = lifecycle_owner.read_text(encoding="utf-8")
+        streaming_text = streaming_owner.read_text(encoding="utf-8")
         runner_text = runner.read_text(encoding="utf-8")
         self.assertIn("class LaunchRecord", launch_text)
         self.assertIn("class ProcessLaunchMixin", launch_text)
@@ -836,8 +839,11 @@ class StructureLayoutTests(unittest.TestCase):
         self.assertIn("def wait_for_port", lifecycle_text)
         self.assertIn("def process_tree_listener_pids", lifecycle_text)
         self.assertIn("def terminate_process_group", lifecycle_text)
+        self.assertIn("class ProcessStreamingMixin", streaming_text)
+        self.assertIn("def run_streaming", streaming_text)
         self.assertIn("ProcessLaunchMixin", runner_text)
         self.assertIn("ProcessLifecycleProbeMixin", runner_text)
+        self.assertIn("ProcessStreamingMixin", runner_text)
         self.assertLessEqual(len(runner_text.splitlines()), 340)
 
     def test_debug_bundle_diagnostics_has_selector_and_startup_owners(self) -> None:
