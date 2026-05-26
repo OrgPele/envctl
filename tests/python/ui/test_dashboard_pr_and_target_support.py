@@ -112,6 +112,40 @@ def _dirty(project_name: str = "Main") -> DirtyWorktreeReport:
 
 
 class DashboardPrAndTargetSupportTests(unittest.TestCase):
+    def test_dirty_pr_reports_uses_explicit_dependencies(self) -> None:
+        calls: list[tuple[Path, Path, str]] = []
+
+        def probe(project_root: Path, repo_root: Path, *, project_name: str) -> DirtyWorktreeReport:
+            calls.append((project_root, repo_root, project_name))
+            return DirtyWorktreeReport(
+                project_name=project_name,
+                project_root=project_root,
+                git_root=project_root,
+                staged=True,
+                unstaged=False,
+                untracked=False,
+            )
+
+        dependencies = pr_and_target_support.DashboardPrDependencies(
+            probe_dirty_worktree=probe,
+            launch_review_agent_terminal=lambda *args, **kwargs: None,
+            review_agent_launch_readiness=lambda *args, **kwargs: None,
+            run_selector=lambda *args, **kwargs: None,
+        )
+        runtime = SimpleNamespace(config=SimpleNamespace(base_dir=Path("/repo")))
+        state = _state(metadata={"project_roots": {"Main": "apps/main"}})
+
+        reports = pr_and_target_support.dirty_pr_reports(
+            _Owner(),
+            _route(projects=["Main"]),
+            state,
+            runtime,
+            dependencies=dependencies,
+        )
+
+        self.assertEqual([report.project_name for report in reports], ["Main"])
+        self.assertEqual(calls, [(Path("/repo/apps/main"), Path("/repo"), "Main")])
+
     def test_apply_pr_selection_records_base_and_body_after_target_flow(self) -> None:
         owner = _Owner()
         runtime = _Runtime()

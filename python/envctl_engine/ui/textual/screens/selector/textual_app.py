@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Callable
+from typing import Any, Callable
 
 from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.textual.list_controller import TextualListController
 from envctl_engine.ui.textual.list_row_styles import apply_selectable_list_index
-from envctl_engine.ui.textual.list_row_styles import focus_selectable_list
-from envctl_engine.ui.textual.list_row_styles import selectable_list_row_classes
-from envctl_engine.ui.textual.compat import handle_text_edit_key_alias
+from envctl_engine.ui.textual.screens.selector import selection_state
 from envctl_engine.ui.textual.screens.selector.textual_app_chrome import (
     SELECTOR_BINDINGS,
     SELECTOR_CSS,
@@ -17,10 +15,28 @@ from envctl_engine.ui.textual.screens.selector.textual_app_chrome import (
 from envctl_engine.ui.textual.screens.selector.textual_app_lifecycle import (
     apply_selector_mount,
 )
+from envctl_engine.ui.textual.screens.selector.textual_app_initial_navigation import (
+    SelectorInitialNavigationRunner,
+)
+from envctl_engine.ui.textual.screens.selector.textual_app_focus_actions import SelectorFocusActions
+from envctl_engine.ui.textual.screens.selector.textual_app_runtime import (
+    SelectorEventController,
+    SelectorFocusController,
+    SelectorStatusController,
+)
+from envctl_engine.ui.textual.screens.selector.textual_app_key_trace import emit_app_key_trace
+from envctl_engine.ui.textual.screens.selector.textual_app_key_actions import SelectorKeyActions
+from envctl_engine.ui.textual.screens.selector.textual_app_navigation_actions import (
+    SelectorNavigationActions,
+)
+from envctl_engine.ui.textual.screens.selector.textual_app_selection_actions import (
+    SelectorSelectionActions,
+    selector_row_model_index_from_widget,
+)
+from envctl_engine.ui.textual.screens.selector.textual_key_telemetry import SelectorKeyTelemetry
 from envctl_engine.ui.textual.screens.selector.support import (
     _RowRef,
     _emit,
-    _emit_selector_debug,
     _selector_driver_thread_snapshot,
 )
 
@@ -48,8 +64,11 @@ def create_selector_app(
     from textual.app import App, ComposeResult
     from textual.binding import Binding
     from textual.containers import Horizontal, Vertical
-    from textual.events import Click, Key
+    from textual.events import Click, Event, Key
     from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
+
+    def trace_key(**payload: Any) -> None:
+        emit_app_key_trace(emit=emit, deep_debug=deep_debug, selector_id=selector_id, **payload)
 
     class SelectorApp(App[list[str] | None]):
         ESCAPE_TO_MINIMIZE = False
@@ -61,39 +80,53 @@ def create_selector_app(
 
         def __init__(self) -> None:
             super().__init__()
-            self._rows: list[_RowRef] = []
-            self._initial_model_index: int | None = None
+            self._rows: list[_RowRef]
+            self._initial_model_index: int | None
             self._last_focused_model_index: int | None = None
             self._last_user_model_index: int | None = None
-            for idx, item in enumerate(options):
-                selected = str(item.token).strip() in initial_token_set
-                if selected and self._initial_model_index is None:
-                    self._initial_model_index = idx
-                if selected and not multi:
-                    selected = self._initial_model_index == idx
-                self._rows.append(_RowRef(item=item, selected=selected, visible=True))
+            self._rows, self._initial_model_index = selection_state.build_selector_rows(
+                options,
+                initial_token_set,
+                multi=multi,
+            )
             self._last_user_model_index = self._initial_model_index
             self._controller = TextualListController(
                 self._rows,
                 initial_model_index=self._initial_model_index,
             )
             self._render_lock = asyncio.Lock()
-            self._last_focus_widget_id = "selector-list"
+            self._focus_controller = SelectorFocusController(
+                emit=emit,
+                deep_debug=deep_debug,
+                selector_id=selector_id,
+                initial_widget_id="selector-list",
+            )
+            self._event_controller = SelectorEventController(
+                emit=emit,
+                deep_debug=deep_debug,
+                selector_id=selector_id,
+                prompt=prompt,
+                option_count=len(options),
+                multi=multi,
+            )
             self._explicit_cancel = False
-            self._nav_event_counter = 0
-            self._last_nav_key = ""
-            self._edge_hint = ""
-            self._handled_key_counts: dict[str, int] = {}
-            self._raw_key_counts: dict[str, int] = {}
+            self._key_telemetry = SelectorKeyTelemetry(enabled=key_trace_enabled)
             self._allow_filter_focus = False
-            self._event_key_counts: dict[str, int] = {}
             self._key_snapshot_timer: object | None = None
-            self._last_nav_change_ns = time.monotonic_ns()
-            self._idle_snapshot_bucket = -1
-            self._last_driver_read_calls = -1
-            self._driver_idle_snapshot_bucket = -1
-            self._status_error_message = ""
-            self._status_error_timer: object | None = None
+            self._status_controller = SelectorStatusController(
+                timeout_seconds=status_error_timeout_seconds,
+                set_timer=self.set_timer,
+                sync_status=self._sync_status,
+            )
+            self._selection_actions = SelectorSelectionActions(
+                rows=self._rows,
+                prompt=prompt,
+                multi=multi,
+                exclusive_token=exclusive_token,
+                emit=emit,
+                render_rows=self._render_rows,
+                focus_list=self.action_focus_list,
+            )
             self._suppress_list_selected_once = False
 
         def compose(self) -> ComposeResult:
@@ -133,58 +166,23 @@ def create_selector_app(
 
         @staticmethod
         def _row_text(row: _RowRef) -> str:
-            marker = "●" if row.selected else "○"
-            badge = str(row.item.kind or "").replace("_", " ").strip()
-            if not badge:
-                return f"{marker} {row.item.label}"
-            return f"{marker} {row.item.label}  ({badge})"
+            return selection_state.selector_row_text(row)
 
         @staticmethod
         def _row_classes(row: _RowRef) -> str:
-            base_classes = selectable_list_row_classes("selector-row", selected=row.selected)
-            kind = str(row.item.kind or "").replace("_", "-").strip("-")
-            if not kind:
-                return base_classes
-            return f"{base_classes} kind-{kind}"
+            return selection_state.selector_row_classes(row)
 
         def _focused_model_index(self) -> int | None:
             return self._controller.focused_model_index(self._list().index)
 
         def _focused_widget_id(self) -> str:
-            try:
-                focused = getattr(self, "focused", None)
-            except Exception:
-                return "unknown"
-            focused_id = str(getattr(focused, "id", "") or "").strip()
-            if focused_id:
-                return focused_id
-            if self._list().has_focus:
-                return "selector-list"
-            if self.query_one("#selector-filter", Input).has_focus:
-                return "selector-filter"
-            return "unknown"
+            return self._focus_actions().focused_widget_id()
 
         def _focus_order(self) -> tuple[str, ...]:
-            focus_order = ["selector-filter", "selector-list", "btn-cancel"]
-            if not self.query_one("#btn-run", Button).disabled:
-                focus_order.append("btn-run")
-            return tuple(focus_order)
+            return self._focus_actions().focus_order()
 
         def _emit_focus(self, *, reason: str) -> None:
-            current = self._focused_widget_id()
-            previous = self._last_focus_widget_id
-            if current == previous:
-                return
-            self._last_focus_widget_id = current
-            _emit_selector_debug(
-                emit,
-                enabled=deep_debug,
-                event="ui.selector.focus",
-                selector_id=selector_id,
-                reason=reason,
-                from_widget_id=previous,
-                to_widget_id=current,
-            )
+            self._focus_actions()._emit_focus(reason=reason)
 
         async def _render_rows(self) -> None:
             async with self._render_lock:
@@ -213,16 +211,16 @@ def create_selector_app(
                 self._controller.finish_render()
                 self._initial_model_index = None
                 self._sync_status()
-                self._sync_confirm_state()
+                self.query_one("#btn-run", Button).disabled = not bool(self._controller.index_map)
                 if not checkpoint.filter_has_focus:
                     self.action_focus_list()
 
         def _sync_status(self) -> None:
-            visible = sum(1 for row in self._rows if row.visible)
-            selected = sum(1 for row in self._rows if row.visible and row.selected)
+            visible, selected = selection_state.selector_visibility_counts(self._rows)
             if selected:
-                self._clear_status_error()
-            focus_text = "focus: -"
+                self._status_controller.clear_error()
+            focused_view_index: int | None = None
+            focused_label: str | None = None
             focused_view_index = self._list().index
             if (
                 focused_view_index is not None
@@ -232,214 +230,69 @@ def create_selector_app(
                 focused_model_index = self._controller.index_map[focused_view_index]
                 self._last_focused_model_index = focused_model_index
                 focused_row = self._rows[focused_model_index]
-                focus_text = (
-                    f"focus: {focused_view_index + 1}/{len(self._controller.index_map)} {focused_row.item.label}"
-                )
-            status = f"{selected} selected • {visible} visible • {len(self._rows)} total • {focus_text}"
-            if deep_debug and self._nav_event_counter > 0:
-                status += f" • key#{self._nav_event_counter}:{self._last_nav_key}"
-                if self._edge_hint:
-                    status += f" • {self._edge_hint}"
-            if self._status_error_message:
-                status = self._status_error_message
+                focused_label = focused_row.item.label
+            else:
+                focused_view_index = None
+            status = self._status_controller.status_text(
+                visible_count=visible,
+                selected_count=selected,
+                total_count=len(self._rows),
+                focused_view_index=focused_view_index,
+                focused_label=focused_label,
+                focusable_count=len(self._controller.index_map),
+                deep_debug=deep_debug,
+                nav_event_counter=self._key_telemetry.nav_event_counter,
+                last_nav_key=self._key_telemetry.last_nav_key,
+                edge_hint=self._key_telemetry.edge_hint,
+            )
             status_widget = self._status()
-            status_widget.set_class(bool(self._status_error_message), "selector-status-error")
+            status_widget.set_class(self._status_controller.has_error, "selector-status-error")
             status_widget.update(status)
 
-        def _clear_status_error(self) -> None:
-            if not self._status_error_message:
-                return
-            self._status_error_message = ""
-            timer = self._status_error_timer
-            if timer is not None:
-                try:
-                    timer.stop()  # type: ignore[union-attr]
-                except Exception:
-                    pass
-                self._status_error_timer = None
-            try:
-                self._sync_status()
-            except Exception:
-                pass
-
-        def _schedule_status_error_clear(self) -> None:
-            timer = self._status_error_timer
-            if timer is not None:
-                try:
-                    timer.stop()  # type: ignore[union-attr]
-                except Exception:
-                    pass
-            self._status_error_timer = self.set_timer(status_error_timeout_seconds, self._clear_status_error)
-
-        def _touch_status_error_timeout(self) -> None:
-            if not self._status_error_message:
-                return
-            self._schedule_status_error_clear()
-
         def _show_status_error(self, message: str) -> None:
-            self._status_error_message = message.strip()
-            self._schedule_status_error_clear()
-            self._sync_status()
-
-        def _sync_confirm_state(self) -> None:
-            run_button = self.query_one("#btn-run", Button)
-            run_button.disabled = not bool(self._controller.index_map)
+            self._status_controller.show_error(message)
 
         def _apply_initial_navigation(self) -> None:
-            if not initial_navigation:
-                return
-            self.action_focus_list(reason="initial_navigation")
-            submit_requested = False
-            selection_changed = False
-            for action in initial_navigation:
-                list_index_before = self._controller.ensure_list_index(self._list().index)
-                if action == "down":
-                    target_index = self._controller.cursor_down(list_index_before)
-                    apply_selectable_list_index(self._list(), target_index)
-                    self._nav_event_counter += 1
-                    self._last_nav_key = "down"
-                elif action == "up":
-                    target_index = self._controller.cursor_up(list_index_before)
-                    apply_selectable_list_index(self._list(), target_index)
-                    self._nav_event_counter += 1
-                    self._last_nav_key = "up"
-                elif action == "submit":
-                    submit_requested = True
-                    continue
-                else:
-                    continue
-                model_index = self._focused_model_index()
-                if model_index is not None:
-                    self._last_user_model_index = model_index
-                if not multi and model_index is not None and 0 <= model_index < len(self._rows):
-                    for idx, row in enumerate(self._rows):
-                        selected = idx == model_index
-                        if row.selected != selected:
-                            row.selected = selected
-                            selection_changed = True
-                self._last_nav_change_ns = time.monotonic_ns()
-                self._idle_snapshot_bucket = -1
-            self._sync_status()
-            if selection_changed:
-                self.call_after_refresh(lambda: asyncio.create_task(self._render_rows()))
-            if submit_requested:
-                self.call_after_refresh(
-                    lambda: asyncio.create_task(self.action_submit(cause="initial_navigation_submit"))
-                )
+            SelectorInitialNavigationRunner(
+                actions=initial_navigation,
+                rows=self._rows,
+                multi=multi,
+                controller=self._controller,
+                list_view=self._list(),
+                focus_list=self.action_focus_list,
+                mark_navigation=self._key_telemetry.mark_navigation,
+                focused_model_index=self._focused_model_index,
+                set_last_user_model_index=lambda index: setattr(self, "_last_user_model_index", index),
+                sync_status=self._sync_status,
+                schedule_render=self._schedule_initial_navigation_render,
+                schedule_submit=self._schedule_initial_navigation_submit,
+            ).apply()
 
-        def _focused_row(self) -> _RowRef | None:
-            return self._controller.focused_row(self._list().index)
+        def _schedule_initial_navigation_render(self) -> None:
+            self.call_after_refresh(lambda: asyncio.create_task(self._render_rows()))
+
+        def _schedule_initial_navigation_submit(self) -> None:
+            self.call_after_refresh(
+                lambda: asyncio.create_task(self.action_submit(cause="initial_navigation_submit"))
+            )
 
         async def _sync_single_select_focus_selection(self, *, reason: str) -> None:
-            if multi:
-                return
-            model_index = self._focused_model_index()
-            if model_index is None or model_index < 0 or model_index >= len(self._rows):
-                return
-            changed = False
-            for idx, row in enumerate(self._rows):
-                selected = idx == model_index
-                if row.selected != selected:
-                    row.selected = selected
-                    changed = True
-            if not changed:
-                return
-            await self._render_rows()
-            self.action_focus_list(reason=reason)
+            await self._navigation_actions().sync_single_select_focus_selection(reason=reason)
 
         async def _toggle_model_index(self, model_index: int) -> None:
-            if model_index < 0 or model_index >= len(self._rows):
-                return
-            row = self._rows[model_index]
-            row_token = str(row.item.token)
-            if not multi:
-                for candidate in self._rows:
-                    candidate.selected = False
-            row.selected = not row.selected if multi else True
-            if multi and row.selected and exclusive_token:
-                if row_token == exclusive_token:
-                    for idx, candidate in enumerate(self._rows):
-                        if idx != model_index:
-                            candidate.selected = False
-                else:
-                    for candidate in self._rows:
-                        if str(candidate.item.token) == exclusive_token:
-                            candidate.selected = False
-            _emit(
-                emit,
-                "ui.selection.interaction",
-                prompt=prompt,
-                action="toggle",
-                multi=multi,
-                model_index=model_index,
-                token=row.item.token,
-                selected=row.selected,
-            )
-            _emit(emit, "ui.selection.toggle", token=row.item.token, selected=row.selected)
-            await self._render_rows()
-            self.action_focus_list(reason="toggle")
+            await self._selection_actions.toggle_model_index(model_index)
 
         async def _select_model_index(self, model_index: int) -> None:
-            if model_index < 0 or model_index >= len(self._rows):
-                return
-            row = self._rows[model_index]
-            if row.selected and not multi:
-                return
-            if not multi:
-                for candidate in self._rows:
-                    candidate.selected = False
-            row.selected = True
-            _emit(
-                emit,
-                "ui.selection.interaction",
-                prompt=prompt,
-                action="select",
-                multi=multi,
-                model_index=model_index,
-                token=row.item.token,
-                selected=True,
-            )
-            _emit(emit, "ui.selection.toggle", token=row.item.token, selected=True)
-            await self._render_rows()
+            await self._selection_actions.select_model_index(model_index)
 
-        async def action_toggle(self) -> None:
+        async def action_toggle(self, attribute_name: str | None = None) -> None:
             model_index = self._focused_model_index()
             if model_index is None:
                 return
             await self._toggle_model_index(model_index)
 
         async def action_toggle_visible(self) -> None:
-            if multi and exclusive_token:
-                visible_indexes = [idx for idx, row in enumerate(self._rows) if row.visible]
-                selectable_indexes = [
-                    idx for idx in visible_indexes if str(self._rows[idx].item.token) != exclusive_token
-                ]
-                if not selectable_indexes:
-                    selectable_indexes = visible_indexes
-                should_select = any(not self._rows[idx].selected for idx in selectable_indexes)
-                for idx in visible_indexes:
-                    self._rows[idx].selected = should_select and idx in selectable_indexes
-                _emit(emit, "ui.selection.toggle", token="__VISIBLE__", selected=should_select)
-                await self._render_rows()
-                self.action_focus_list(reason="toggle_visible")
-                return
-            should_select = self._controller.apply_visible_toggle(
-                is_visible=lambda row: row.visible,
-                is_active=lambda row: row.selected,
-                activate=lambda row: setattr(row, "selected", True),
-                deactivate=lambda row: setattr(row, "selected", False),
-            )
-            if should_select is None:
-                return
-            _emit(emit, "ui.selection.toggle", token="__VISIBLE__", selected=should_select)
-            await self._render_rows()
-            self.action_focus_list(reason="toggle_visible")
-
-        def action_cursor_up(self) -> None:
-            self._list().index = self._controller.cursor_up(self._list().index)
-
-        def action_cursor_down(self) -> None:
-            self._list().index = self._controller.cursor_down(self._list().index)
+            await self._selection_actions.toggle_visible()
 
         def _emit_key_debug(
             self,
@@ -449,14 +302,12 @@ def create_selector_app(
             list_index_before: int | None,
             handled: bool,
         ) -> None:
-            if key_trace_enabled:
-                self._handled_key_counts[key] = self._handled_key_counts.get(key, 0) + 1
+            self._key_telemetry.record_handled_key(key)
             if not key_trace_enabled or not key_trace_verbose:
                 return
-            _emit_selector_debug(
-                emit,
-                enabled=deep_debug,
-                event="ui.selector.key",
+            self._key_telemetry.emit_verbose_key(
+                emit=emit,
+                deep_debug=deep_debug,
                 selector_id=selector_id,
                 key=key,
                 focused_widget_id=focus_before,
@@ -466,321 +317,125 @@ def create_selector_app(
             )
 
         async def action_nav_up(self) -> None:
-            list_index_before = self._controller.ensure_list_index(self._list().index)
-            focus_before = self._focused_widget_id()
-            if not self._list().has_focus:
-                target_index = self._controller.cursor_up(list_index_before)
-                self.action_focus_list(reason="key_recover", target_index=target_index)
-            else:
-                self.action_cursor_up()
-            list_index_after = self._list().index
-            focused_model_index = self._focused_model_index()
-            if focused_model_index is not None:
-                self._last_user_model_index = focused_model_index
-            await self._sync_single_select_focus_selection(reason="nav_up")
-            self._nav_event_counter += 1
-            self._last_nav_change_ns = time.monotonic_ns()
-            self._idle_snapshot_bucket = -1
-            self._last_nav_key = "up"
-            self._edge_hint = (
-                "top boundary" if list_index_before is not None and list_index_after == list_index_before == 0 else ""
-            )
-            self._sync_status()
-            self._emit_key_debug(
-                key="up",
-                focus_before=focus_before,
-                list_index_before=list_index_before,
-                handled=True,
-            )
+            await self._navigation_actions().nav_up()
 
         async def action_nav_down(self) -> None:
-            list_index_before = self._controller.ensure_list_index(self._list().index)
-            focus_before = self._focused_widget_id()
-            if not self._list().has_focus:
-                target_index = self._controller.cursor_down(list_index_before)
-                self.action_focus_list(reason="key_recover", target_index=target_index)
-            else:
-                self.action_cursor_down()
-            list_index_after = self._list().index
-            focused_model_index = self._focused_model_index()
-            if focused_model_index is not None:
-                self._last_user_model_index = focused_model_index
-            await self._sync_single_select_focus_selection(reason="nav_down")
-            self._nav_event_counter += 1
-            self._last_nav_change_ns = time.monotonic_ns()
-            self._idle_snapshot_bucket = -1
-            self._last_nav_key = "down"
-            max_view_index = len(self._controller.index_map) - 1
-            self._edge_hint = (
-                "bottom boundary"
-                if (
-                    list_index_before is not None
-                    and max_view_index >= 0
-                    and list_index_after == list_index_before == max_view_index
-                )
-                else ""
-            )
-            self._sync_status()
-            self._emit_key_debug(
-                key="down",
-                focus_before=focus_before,
-                list_index_before=list_index_before,
-                handled=True,
-            )
+            await self._navigation_actions().nav_down()
 
         def action_ignore_escape(self) -> None:
-            list_index_before = self._list().index
-            focus_before = self._focused_widget_id()
-            if not self._list().has_focus:
-                self.action_focus_list(reason="escape_recover")
-            self._emit_key_debug(
-                key="escape",
-                focus_before=focus_before,
-                list_index_before=list_index_before,
-                handled=True,
+            self._navigation_actions().ignore_escape()
+
+        def _navigation_actions(self) -> SelectorNavigationActions:
+            return SelectorNavigationActions(
+                rows=self._rows,
+                multi=multi,
+                controller=self._controller,
+                list_view=self._list(),
+                render_rows=self._render_rows,
+                focus_list=self.action_focus_list,
+                focused_widget_id=self._focused_widget_id,
+                set_last_user_model_index=lambda index: setattr(self, "_last_user_model_index", index),
+                mark_navigation=self._key_telemetry.mark_navigation,
+                sync_status=self._sync_status,
+                emit_key_debug=self._emit_key_debug,
+            )
+
+        def _key_actions(self) -> SelectorKeyActions:
+            return SelectorKeyActions(
+                key_telemetry=self._key_telemetry,
+                key_trace_verbose=key_trace_verbose,
+                trace_key=trace_key,
+                focused_widget_id=self._focused_widget_id,
+                list_index=lambda: self._list().index,
+                filter_input=lambda: self.query_one("#selector-filter", Input),
+                cycle_focus=self.action_cycle_focus,
+                submit=self.action_submit,
+                focus_filter=self.action_focus_filter,
+                focus_list=self.action_focus_list,
+                nav_up=self.action_nav_up,
+                nav_down=self.action_nav_down,
+                toggle=self.action_toggle,
+                suppress_list_selected_once=lambda value: setattr(self, "_suppress_list_selected_once", value),
+            )
+
+        def _focus_actions(self) -> SelectorFocusActions:
+            def current_focused() -> object | None:
+                try:
+                    return getattr(self, "focused", None)
+                except Exception:
+                    return None
+
+            return SelectorFocusActions(
+                app=self,
+                controller=self._controller,
+                focus_controller=self._focus_controller,
+                list_view=self._list,
+                filter_input=lambda: self.query_one("#selector-filter", Input),
+                button=lambda button_id: self.query_one(f"#{button_id}", Button),
+                run_button=lambda: self.query_one("#btn-run", Button),
+                current_focused=current_focused,
+                set_allow_filter_focus=lambda value: setattr(self, "_allow_filter_focus", value),
             )
 
         def action_focus_filter(self, *, reason: str = "focus_filter") -> None:
-            filter_input = self.query_one("#selector-filter", Input)
-            self._allow_filter_focus = True
-            filter_input.can_focus = True
-            filter_input.focus()
-            self._emit_focus(reason=reason)
+            self._focus_actions().focus_filter(reason=reason)
 
         def action_focus_list(self, *, reason: str = "focus_list", target_index: int | None = None) -> None:
-            list_view = self._list()
-            index = self._controller.ensure_list_index(target_index if target_index is not None else list_view.index)
-            apply_selectable_list_index(list_view, index)
-            self._allow_filter_focus = False
-            focus_selectable_list(self, list_view, index)
-            self._emit_focus(reason=reason)
+            self._focus_actions().focus_list(reason=reason, target_index=target_index)
 
         def action_focus_button(self, button_id: str, *, reason: str) -> None:
-            self._allow_filter_focus = False
-            self.query_one(f"#{button_id}", Button).focus()
-            self._emit_focus(reason=reason)
+            self._focus_actions().focus_button(button_id, reason=reason)
 
         def action_cycle_focus(self) -> None:
-            next_target = self._controller.cycle_focus_target(
-                current_target=self._focused_widget_id(),
-                focus_order=self._focus_order(),
-            )
-            if next_target == "selector-list":
-                self.action_focus_list(reason="tab_cycle")
-            elif next_target == "selector-filter":
-                self.action_focus_filter(reason="tab_cycle")
-            else:
-                self.action_focus_button(next_target, reason="tab_cycle")
-
-        def _selected_values(self) -> list[str]:
-            return [row.item.token for row in self._rows if row.selected and row.visible]
+            self._focus_actions().cycle_focus()
 
         async def action_submit(self, *, cause: str = "enter") -> None:
             if self.query_one("#selector-filter", Input).has_focus:
                 self.action_focus_list(reason="submit_from_filter")
-            values = self._selected_values()
-            if not values and not multi:
-                focused = self._focused_model_index()
-                if focused is not None and 0 <= focused < len(self._rows):
-                    row = self._rows[focused]
-                    if row.visible:
-                        values = [row.item.token]
-                        row.selected = True
+            values = self._selection_actions.submit_values(focused_index=self._focused_model_index())
             if not values:
                 self._show_status_error("No items were selected. Press Space or click to select at least one.")
-                _emit(
-                    emit,
-                    "ui.selection.confirm",
-                    prompt=prompt,
-                    multi=multi,
-                    selected_count=0,
-                    blocked=True,
-                )
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.submit",
-                    selector_id=selector_id,
-                    selected_count=0,
-                    blocked=True,
-                    cancelled=False,
-                    cause=cause,
-                )
+                self._event_controller.submit_blocked(cause=cause)
                 return
-            _emit(
-                emit,
-                "ui.selection.confirm",
-                prompt=prompt,
-                multi=multi,
-                selected_count=len(values),
-            )
-            _emit_selector_debug(
-                emit,
-                enabled=deep_debug,
-                event="ui.selector.submit",
-                selector_id=selector_id,
-                selected_count=len(values),
-                blocked=False,
-                cancelled=False,
-                cause=cause,
-            )
+            self._event_controller.submit_confirmed(selected_count=len(values), cause=cause)
             self.exit(values)
 
         def action_cancel(self, *, cause: str = "cancel_key") -> None:
             self._explicit_cancel = True
-            _emit(emit, "ui.selection.cancel", prompt=prompt, multi=multi)
-            _emit_selector_debug(
-                emit,
-                enabled=deep_debug,
-                event="ui.selector.submit",
-                selector_id=selector_id,
-                selected_count=0,
-                blocked=False,
-                cancelled=True,
-                cause=cause,
-            )
+            self._event_controller.cancel(cause=cause)
             self.exit(None)
 
         async def on_list_view_selected(self, event: ListView.Selected) -> None:
             if self._suppress_list_selected_once:
                 self._suppress_list_selected_once = False
                 return
-            _emit(
-                emit,
-                "ui.selection.interaction",
-                prompt=prompt,
-                action="list_selected",
-                multi=multi,
+            await self._selection_actions.handle_list_selection(
                 list_index=event.index,
+                index_map=self._controller.index_map,
             )
-            if event.index < 0 or event.index >= len(self._controller.index_map):
-                _emit(
-                    emit,
-                    "ui.selection.interaction",
-                    prompt=prompt,
-                    action="list_selected_out_of_range",
-                    multi=multi,
-                    list_index=event.index,
-                    visible_count=len(self._controller.index_map),
-                )
-                return
-            model_index = self._controller.index_map[event.index]
-            if multi:
-                await self._toggle_model_index(model_index)
-            else:
-                await self._select_model_index(model_index)
-            self.action_focus_list(reason="list_selected")
 
         async def on_click(self, event: Click) -> None:
             if multi:
                 return
-            widget = getattr(event, "widget", None)
-            while widget is not None:
-                widget_id = str(getattr(widget, "id", "") or "").strip()
-                if widget_id.startswith("selector-row-"):
-                    try:
-                        model_index = int(widget_id.rsplit("-", 1)[1])
-                    except (TypeError, ValueError):
-                        return
-                    if model_index < 0 or model_index >= len(self._rows):
-                        return
-                    event.stop()
-                    await self._select_model_index(model_index)
-                    await self.action_submit(cause="mouse_click")
-                    return
-                widget = getattr(widget, "parent", None)
+            model_index = selector_row_model_index_from_widget(
+                getattr(event, "widget", None),
+                row_count=len(self._rows),
+            )
+            if model_index is None:
+                return
+            event.stop()
+            await self._select_model_index(model_index)
+            await self.action_submit(cause="mouse_click")
 
         async def on_key(self, event: Key) -> None:
-            if key_trace_enabled:
-                self._raw_key_counts[event.key] = self._raw_key_counts.get(event.key, 0) + 1
-                if key_trace_verbose:
-                    _emit_selector_debug(
-                        emit,
-                        enabled=deep_debug,
-                        event="ui.selector.key.raw",
-                        selector_id=selector_id,
-                        key=event.key,
-                        focused_widget_id=self._focused_widget_id(),
-                        list_index_before=self._list().index,
-                        list_index_after=self._list().index,
-                        handled=False,
-                    )
-            focused_id = self._focused_widget_id()
-            filter_focused = focused_id == "selector-filter"
-            if event.key == "tab":
-                event.stop()
-                event.prevent_default()
-                self.action_cycle_focus()
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.key",
-                    selector_id=selector_id,
-                    key=event.key,
-                    focused_widget_id=focused_id,
-                    list_index_before=self._list().index,
-                    list_index_after=self._list().index,
-                    handled=True,
-                )
-                return
-            if filter_focused and handle_text_edit_key_alias(
-                widget=self.query_one("#selector-filter", Input), event=event
-            ):
-                return
-            if event.key == "enter":
-                event.stop()
-                event.prevent_default()
-                self._suppress_list_selected_once = True
-                await self.action_submit(cause="enter_key")
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.key",
-                    selector_id=selector_id,
-                    key=event.key,
-                    focused_widget_id=focused_id,
-                    list_index_before=self._list().index,
-                    list_index_after=self._list().index,
-                    handled=True,
-                )
-                return
-            if event.key == "slash" and not filter_focused:
-                event.stop()
-                event.prevent_default()
-                filter_input = self.query_one("#selector-filter", Input)
-                filter_input.value = ""
-                self.action_focus_filter(reason="slash_focus_filter")
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.key",
-                    selector_id=selector_id,
-                    key=event.key,
-                    focused_widget_id=focused_id,
-                    list_index_before=self._list().index,
-                    list_index_after=self._list().index,
-                    handled=True,
-                )
+            await self._key_actions().handle_key(event)
 
         async def _maybe_handle_filter_focus_key(self, event: Key) -> bool:
-            if self._focused_widget_id() != "selector-filter":
-                return False
-            if event.key not in {"up", "down", "j", "k", "w", "s", "space"}:
-                return False
-            event.stop()
-            event.prevent_default()
-            self.action_focus_list(reason="filter_key_recover")
-            if event.key in {"up", "k", "w"}:
-                await self.action_nav_up()
-            elif event.key in {"down", "j", "s"}:
-                await self.action_nav_down()
-            else:
-                await self.action_toggle()
-            return True
+            return await self._key_actions().handle_filter_focus_key(event)
 
-        async def on_event(self, event: object) -> None:
+        async def on_event(self, event: Event) -> None:
             if isinstance(event, Key) or event.__class__.__name__.startswith("Mouse"):
-                self._touch_status_error_timeout()
+                self._status_controller.touch_timeout()
             if not mouse_enabled and event.__class__.__name__.startswith("Mouse"):
                 stop = getattr(event, "stop", None)
                 if callable(stop):
@@ -789,26 +444,11 @@ def create_selector_app(
             if isinstance(event, Key) and await self._maybe_handle_filter_focus_key(event):
                 return
             if key_trace_enabled and isinstance(event, Key):
-                key = str(event.key)
-                self._event_key_counts[key] = self._event_key_counts.get(key, 0) + 1
-                if key_trace_verbose:
-                    _emit_selector_debug(
-                        emit,
-                        enabled=deep_debug,
-                        event="ui.selector.key.event",
-                        selector_id=selector_id,
-                        key=key,
-                        focused_widget_id=self._focused_widget_id(),
-                        list_index_before=self._list().index,
-                        list_index_after=self._list().index,
-                        handled=False,
-                    )
-            await super().on_event(event)  # type: ignore[misc]
+                self._key_actions().record_event_key(event)
+            await super().on_event(event)
 
         async def on_input_changed(self, event: Input.Changed) -> None:
-            query = str(event.value or "").strip().lower()
-            for row in self._rows:
-                row.visible = query in row.item.label.lower() if query else True
+            query = selection_state.apply_selector_filter(self._rows, event.value)
             _emit(emit, "ui.selection.filter.changed", prompt=prompt, query=query)
             await self._render_rows()
 
@@ -826,71 +466,41 @@ def create_selector_app(
             self._emit_focus(reason="focus_event")
 
         def on_unmount(self) -> None:
-            self._clear_status_error()
+            self._status_controller.dispose()
             timer = self._key_snapshot_timer
             if timer is not None:
                 try:
-                    timer.stop()  # type: ignore[union-attr]
+                    stop = getattr(timer, "stop", None)
+                    if callable(stop):
+                        stop()
                 except Exception:
                     pass
                 self._key_snapshot_timer = None
-            if key_trace_enabled:
-                self._emit_key_snapshot()
-            if key_trace_enabled:
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.key.summary",
-                    selector_id=selector_id,
-                    event_counts=dict(self._event_key_counts),
-                    handled_counts=dict(self._handled_key_counts),
-                    raw_counts=dict(self._raw_key_counts),
-                )
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.key.driver.thread.final",
-                    selector_id=selector_id,
-                    **_selector_driver_thread_snapshot(
-                        self.app,
-                        include_stack=thread_stack_enabled,
-                    ),
-                )
-            _emit(emit, "ui.screen.exit", screen="selector", prompt=prompt)
-            _emit_selector_debug(
-                emit,
-                enabled=deep_debug,
-                event="ui.selector.lifecycle",
+            self._emit_key_snapshot()
+            self._key_telemetry.emit_summary(
+                emit=emit,
+                deep_debug=deep_debug,
                 selector_id=selector_id,
-                prompt=prompt,
-                option_count=len(options),
-                multi=multi,
-                phase="exit",
-                ts_mono_ns=time.monotonic_ns(),
+                thread_snapshot=lambda: _selector_driver_thread_snapshot(
+                    self.app,
+                    include_stack=thread_stack_enabled,
+                ),
             )
+            self._event_controller.exit()
 
         @property
         def explicit_cancel(self) -> bool:
             return self._explicit_cancel
 
         def fallback_values(self) -> list[str]:
-            selected = self._selected_values()
-            if selected:
-                return selected
             try:
                 focused = self._focused_model_index()
             except Exception:
                 focused = None
-            if focused is None:
-                focused = self._last_user_model_index
-            if focused is None:
-                focused = self._last_focused_model_index
-            if focused is not None and focused < len(self._rows):
-                return [self._rows[focused].item.token]
-            visible = [row.item.token for row in self._rows if row.visible]
-            if visible:
-                return [visible[0]]
-            return []
+            return selection_state.fallback_selector_values(
+                self._rows,
+                focused_indexes=(focused, self._last_user_model_index, self._last_focused_model_index),
+            )
 
         def _emit_key_snapshot(self) -> None:
             if not key_trace_enabled:
@@ -904,84 +514,19 @@ def create_selector_app(
                 list_index = self._list().index
             except Exception:
                 list_index = None
-            _emit_selector_debug(
-                emit,
-                enabled=deep_debug,
-                event="ui.selector.key.snapshot",
+            self._key_telemetry.emit_snapshot(
+                emit=emit,
+                deep_debug=deep_debug,
                 selector_id=selector_id,
                 focused_widget_id=focused_widget_id,
                 list_index=list_index,
-                nav_event_counter=self._nav_event_counter,
-                event_counts=dict(self._event_key_counts),
-                raw_counts=dict(self._raw_key_counts),
-                handled_counts=dict(self._handled_key_counts),
-            )
-            if self._nav_event_counter > 0:
-                idle_ns = max(0, now_ns - int(self._last_nav_change_ns))
-                idle_ms = int(idle_ns / 1_000_000)
-                # Emit periodic stall evidence when selector had activity then goes idle.
-                if idle_ms >= 2000:
-                    bucket = idle_ms // 2000
-                    if bucket != self._idle_snapshot_bucket:
-                        self._idle_snapshot_bucket = bucket
-                        _emit_selector_debug(
-                            emit,
-                            enabled=deep_debug,
-                            event="ui.selector.key.idle_after_activity",
-                            selector_id=selector_id,
-                            idle_ms=idle_ms,
-                            focused_widget_id=focused_widget_id,
-                            list_index=list_index,
-                            nav_event_counter=self._nav_event_counter,
-                            event_counts=dict(self._event_key_counts),
-                            raw_counts=dict(self._raw_key_counts),
-                            handled_counts=dict(self._handled_key_counts),
-                        )
-            probe = driver_probe
-            if probe is not None:
-                snapshot = probe()
-                thread_snapshot = _selector_driver_thread_snapshot(
+                driver_snapshot=driver_probe,
+                thread_snapshot=lambda: _selector_driver_thread_snapshot(
                     self.app,
                     include_stack=thread_stack_enabled,
-                )
-                merged_snapshot = dict(snapshot)
-                merged_snapshot.update(thread_snapshot)
-                _emit_selector_debug(
-                    emit,
-                    enabled=deep_debug,
-                    event="ui.selector.key.driver.snapshot",
-                    selector_id=selector_id,
-                    **merged_snapshot,
-                )
-                read_calls = merged_snapshot.get("read_calls")
-                if isinstance(read_calls, int):
-                    if read_calls != self._last_driver_read_calls:
-                        self._last_driver_read_calls = read_calls
-                        self._driver_idle_snapshot_bucket = -1
-                    elif self._nav_event_counter > 0:
-                        idle_ns = max(0, now_ns - int(self._last_nav_change_ns))
-                        idle_ms = int(idle_ns / 1_000_000)
-                        if idle_ms >= 2000:
-                            bucket = idle_ms // 2000
-                            if bucket != self._driver_idle_snapshot_bucket:
-                                self._driver_idle_snapshot_bucket = bucket
-                                _emit_selector_debug(
-                                    emit,
-                                    enabled=deep_debug,
-                                    event="ui.selector.key.driver.idle_after_activity",
-                                    selector_id=selector_id,
-                                    idle_ms=idle_ms,
-                                    focused_widget_id=focused_widget_id,
-                                    list_index=list_index,
-                                    nav_event_counter=self._nav_event_counter,
-                                    read_calls=read_calls,
-                                    read_bytes=merged_snapshot.get("read_bytes"),
-                                    key_events_total=merged_snapshot.get("key_events_total"),
-                                    non_key_messages=merged_snapshot.get("non_key_messages"),
-                                    input_thread_alive=merged_snapshot.get("input_thread_alive"),
-                                    input_thread_stack=(
-                                        merged_snapshot.get("input_thread_stack") if thread_stack_enabled else None
-                                    ),
-                                )
+                ),
+                include_thread_stack=thread_stack_enabled,
+                now_ns=now_ns,
+            )
 
     return SelectorApp()

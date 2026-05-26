@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import _default_port_value
 from envctl_engine.shared.node_tooling import detect_package_manager, detect_python_bin, load_package_json
-from envctl_engine.shared.services import project_name_from_service_name
+from envctl_engine.shared.services import project_name_from_service_name, service_display_name
 from envctl_engine.shared.parsing import parse_bool, parse_float, parse_int, strip_quotes
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.ui.capabilities import (
@@ -80,10 +80,22 @@ class UtilityConsolidationContractTests(unittest.TestCase):
     def test_shared_domain_helpers_cover_services_ports_and_ansi(self) -> None:
         self.assertEqual(project_name_from_service_name("Main Backend"), "Main")
         self.assertEqual(project_name_from_service_name("Worker"), "Worker")
+        self.assertEqual(service_display_name("voice-runtime"), "Voice Runtime")
+        self.assertEqual(service_display_name("voice_runtime"), "Voice Runtime")
         self.assertEqual(_default_port_value("DB_PORT"), 5432)
         self.assertEqual(strip_ansi("\x1b[31mhello\x1b[0m"), "hello")
         self.assertEqual(strip_ansi("\x1b]22;default\x07hello\x1b[15;72H"), "hello")
         self.assertEqual(strip_ansi("\\x1b[48;2;39;39;39m hello \\x1b[0m"), " hello ")
+
+    def test_service_display_name_has_one_shared_owner(self) -> None:
+        for relative_path in (
+            "python/envctl_engine/dashboard_metadata.py",
+            "python/envctl_engine/runtime/service_manager.py",
+            "python/envctl_engine/state/runtime_map.py",
+        ):
+            raw = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+            self.assertNotIn("def _service_display_name", raw, relative_path)
+            self.assertNotIn("part.capitalize() for part in", raw, relative_path)
 
     def test_command_parsing_helpers_preserve_interactive_shell_behavior(self) -> None:
         self.assertEqual(sanitize_interactive_input("\x1b[A restart\r"), "restart")

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, TypeVar, cast
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
@@ -14,6 +17,22 @@ from envctl_engine.shared.process_runner import ProcessRunner
 from envctl_engine.state.repository import RuntimeStateRepository
 from envctl_engine.ui.command_parsing import tokens_set_mode as shared_tokens_set_mode
 from envctl_engine.ui.path_links import render_path_for_terminal
+
+
+@dataclass(slots=True)
+class _TrackedLog:
+    path: Path
+    offset: int
+
+
+_T = TypeVar("_T")
+
+
+def _engine_runtime_patch_point(name: str, default: _T) -> _T:
+    runtime_module = sys.modules.get("envctl_engine.runtime.engine_runtime")
+    if runtime_module is None:
+        return default
+    return cast(_T, getattr(runtime_module, name, default))
 
 
 def state_compat_mode(runtime: Any) -> str:
@@ -41,32 +60,15 @@ def release_port_session(runtime: Any) -> None:
 def build_process_probe_backend(runtime: Any) -> ProbeBackend:
     if not isinstance(runtime.process_runner, ProcessRunner):
         return ShellProbeBackend(runtime.process_runner)
-    psutil_available_fn = psutil_available
-    try:
-        from envctl_engine.runtime import engine_runtime as engine_runtime_module
-
-        psutil_available_fn = getattr(engine_runtime_module, "psutil_available", psutil_available_fn)
-    except Exception:
-        pass
+    psutil_available_fn = _engine_runtime_patch_point("psutil_available", psutil_available)
     if probe_psutil_enabled(runtime) and psutil_available_fn():
-        try:
-            from envctl_engine.runtime import engine_runtime as engine_runtime_module
-
-            backend_cls = getattr(engine_runtime_module, "PsutilProbeBackend", PsutilProbeBackend)
-        except Exception:
-            backend_cls = PsutilProbeBackend
+        backend_cls = _engine_runtime_patch_point("PsutilProbeBackend", PsutilProbeBackend)
         return backend_cls()
     return ShellProbeBackend(runtime.process_runner)
 
 
 def probe_psutil_enabled(runtime: Any) -> bool:
-    psutil_available_fn = psutil_available
-    try:
-        from envctl_engine.runtime import engine_runtime as engine_runtime_module
-
-        psutil_available_fn = getattr(engine_runtime_module, "psutil_available", psutil_available_fn)
-    except Exception:
-        pass
+    psutil_available_fn = _engine_runtime_patch_point("psutil_available", psutil_available)
     raw = runtime.env.get("ENVCTL_PROBE_PSUTIL")
     if raw is None:
         raw = os.environ.get("ENVCTL_PROBE_PSUTIL")
@@ -169,7 +171,7 @@ def print_logs(
     duration_seconds: float | None = None,
     no_color: bool = False,
 ) -> None:
-    tracked: list[dict[str, object]] = []
+    tracked: list[_TrackedLog] = []
     for service in state.services.values():
         if not service.log_path:
             print(f"{service.name}: log=n/a")
@@ -184,13 +186,7 @@ def print_logs(
         lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
         for line in lines[-tail:]:
             print(runtime._normalize_log_line(line, no_color=no_color))
-        tracked.append(
-            {
-                "name": service.name,
-                "path": log_path,
-                "offset": log_path.stat().st_size,
-            }
-        )
+        tracked.append(_TrackedLog(path=log_path, offset=log_path.stat().st_size))
 
     should_follow = follow or (duration_seconds is not None and duration_seconds > 0)
     if not should_follow or not tracked:
@@ -203,17 +199,17 @@ def print_logs(
                 break
             emitted = False
             for item in tracked:
-                path = item["path"]
-                if not isinstance(path, Path) or not path.is_file():
+                path = item.path
+                if not path.is_file():
                     continue
-                offset = int(item["offset"])
+                offset = item.offset
                 current_size = path.stat().st_size
                 if current_size <= offset:
                     continue
                 with path.open("r", encoding="utf-8", errors="replace") as handle:
                     handle.seek(offset)
                     chunk = handle.read()
-                    item["offset"] = handle.tell()
+                    item.offset = handle.tell()
                 if not chunk:
                     continue
                 emitted = True
@@ -249,6 +245,8 @@ def requirement_enabled(runtime: Any, service_name: str, *, mode: str, route: Ro
         flags_resolver = getattr(runtime, "_effective_main_requirement_flags", None)
         if callable(flags_resolver):
             flags = flags_resolver(route)
+            if not isinstance(flags, Mapping):
+                return False
             if normalized_service == "postgres":
                 return bool(flags.get("postgres_main_enable"))
             if normalized_service == "redis":

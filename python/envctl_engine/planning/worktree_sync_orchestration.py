@@ -6,103 +6,12 @@ from typing import Any
 
 from envctl_engine.planning import planning_feature_name
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanWorktreeSyncResult
+from envctl_engine.planning.worktree_spinner_support import WorktreeSpinnerLifecycle
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
-from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
+from envctl_engine.ui.spinner_service import resolve_spinner_policy
 
 
 RawProject = tuple[str, Path]
-
-
-def _spinner_update(
-    *,
-    emit: Callable[..., None] | None,
-    enabled: bool,
-    active_spinner: Any,
-    op_id: str,
-    message: str,
-    terminal_message: str | None = None,
-) -> None:
-    if enabled:
-        active_spinner.update(terminal_message or message)
-    if emit is not None:
-        emit(
-            "ui.spinner.lifecycle",
-            component="worktree_planning",
-            op_id=op_id,
-            state="update",
-            message=message,
-        )
-
-
-def _spinner_start(
-    *,
-    emit: Callable[..., None] | None,
-    enabled: bool,
-    active_spinner: Any,
-    op_id: str,
-    message: str,
-) -> None:
-    if enabled:
-        active_spinner.start()
-    if emit is not None:
-        emit(
-            "ui.spinner.lifecycle",
-            component="worktree_planning",
-            op_id=op_id,
-            state="start",
-            message=message,
-        )
-
-
-def _spinner_finish(
-    *,
-    emit: Callable[..., None] | None,
-    enabled: bool,
-    active_spinner: Any,
-    op_id: str,
-    message: str,
-) -> None:
-    if enabled:
-        active_spinner.succeed(message)
-    if emit is not None:
-        emit(
-            "ui.spinner.lifecycle",
-            component="worktree_planning",
-            op_id=op_id,
-            state="success",
-            message=message,
-        )
-
-
-def _spinner_fail(
-    *,
-    emit: Callable[..., None] | None,
-    enabled: bool,
-    active_spinner: Any,
-    op_id: str,
-    message: str,
-) -> None:
-    if enabled:
-        active_spinner.fail(message)
-    if emit is not None:
-        emit(
-            "ui.spinner.lifecycle",
-            component="worktree_planning",
-            op_id=op_id,
-            state="fail",
-            message=message,
-        )
-
-
-def _spinner_stop(*, emit: Callable[..., None] | None, enabled: bool, op_id: str) -> None:
-    if emit is not None:
-        emit(
-            "ui.spinner.lifecycle",
-            component="worktree_planning",
-            op_id=op_id,
-            state="stop",
-            enabled=enabled,
-        )
 
 
 def sync_plan_worktrees_from_plan_counts(
@@ -122,12 +31,14 @@ def sync_plan_worktrees_from_plan_counts(
     removed_worktrees: list[str] = []
     archived_plan_files: list[str] = []
     ensure_trees_root()
-    policy = resolve_spinner_policy(env)
-    emit_spinner_policy(
-        emit,
-        policy,
-        context={"component": "worktree_planning", "op_id": "worktree.sync"},
+    spinner_lifecycle = WorktreeSpinnerLifecycle(
+        env=env,
+        emit=emit,
+        emit_when_disabled=True,
+        include_stop_enabled=True,
+        policy_resolver=resolve_spinner_policy,
     )
+    policy = spinner_lifecycle.policy(op_id="worktree.sync")
     enabled = bool(policy.enabled)
 
     with (
@@ -138,8 +49,7 @@ def sync_plan_worktrees_from_plan_counts(
             start_immediately=False,
         ) as active_spinner,
     ):
-        _spinner_start(
-            emit=emit,
+        spinner_lifecycle.start(
             enabled=enabled,
             active_spinner=active_spinner,
             op_id="worktree.sync",
@@ -170,8 +80,7 @@ def sync_plan_worktrees_from_plan_counts(
                         archived_plan_files=tuple(archived_plan_files),
                         error=target_result.error,
                     )
-            _spinner_finish(
-                emit=emit,
+            spinner_lifecycle.finish(
                 enabled=enabled,
                 active_spinner=active_spinner,
                 op_id="worktree.sync",
@@ -184,8 +93,7 @@ def sync_plan_worktrees_from_plan_counts(
                 archived_plan_files=tuple(archived_plan_files),
             )
         except Exception:
-            _spinner_fail(
-                emit=emit,
+            spinner_lifecycle.fail(
                 enabled=enabled,
                 active_spinner=active_spinner,
                 op_id="worktree.sync",
@@ -193,7 +101,7 @@ def sync_plan_worktrees_from_plan_counts(
             )
             raise
         finally:
-            _spinner_stop(emit=emit, enabled=enabled, op_id="worktree.sync")
+            spinner_lifecycle.stop(enabled=enabled, op_id="worktree.sync")
 
 
 def sync_single_plan_worktree_target(

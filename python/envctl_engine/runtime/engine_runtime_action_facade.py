@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Mapping
+from typing import Iterable, Mapping, Sequence, cast
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_action_support import (
@@ -20,18 +20,20 @@ from envctl_engine.runtime.engine_runtime_action_support import (
     run_test_action as runtime_run_test_action,
     selectors_from_passthrough as runtime_selectors_from_passthrough,
 )
+from envctl_engine.startup.protocols import ProjectContextLike
 
-if TYPE_CHECKING:
-    from envctl_engine.runtime.engine_runtime import ProjectContext
+
+def _action_targets_as_objects(targets: Sequence[ProjectContextLike]) -> list[object]:
+    return cast("list[object]", list(targets))
 
 
 class RuntimeActionFacadeMixin:
     def _run_action_command(self, route: Route) -> int:
         return runtime_run_action_command(self, route)
 
-    def _resolve_action_targets(self, route: Route, *, trees_only: bool) -> tuple[list[ProjectContext], str | None]:
+    def _resolve_action_targets(self, route: Route, *, trees_only: bool) -> tuple[list[ProjectContextLike], str | None]:
         targets, error = runtime_resolve_action_targets(self, route, trees_only=trees_only)
-        return targets, error  # type: ignore[return-value]
+        return cast("list[ProjectContextLike]", targets), error
 
     @staticmethod
     def _selectors_from_passthrough(passthrough_args: Iterable[str]) -> set[str]:
@@ -41,25 +43,25 @@ class RuntimeActionFacadeMixin:
     def _project_name_from_service(service_name: str) -> str:
         return runtime_project_name_from_service(service_name)
 
-    def _run_test_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return runtime_run_test_action(self, route, targets)
+    def _run_test_action(self, route: Route, targets: Sequence[ProjectContextLike]) -> int:
+        return runtime_run_test_action(self, route, _action_targets_as_objects(targets))
 
-    def _run_pr_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return runtime_run_pr_action(self, route, targets)
+    def _run_pr_action(self, route: Route, targets: Sequence[ProjectContextLike]) -> int:
+        return runtime_run_pr_action(self, route, _action_targets_as_objects(targets))
 
-    def _run_commit_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return runtime_run_commit_action(self, route, targets)
+    def _run_commit_action(self, route: Route, targets: Sequence[ProjectContextLike]) -> int:
+        return runtime_run_commit_action(self, route, _action_targets_as_objects(targets))
 
-    def _run_analyze_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return runtime_run_analyze_action(self, route, targets)
+    def _run_analyze_action(self, route: Route, targets: Sequence[ProjectContextLike]) -> int:
+        return runtime_run_analyze_action(self, route, _action_targets_as_objects(targets))
 
-    def _run_migrate_action(self, route: Route, targets: list[ProjectContext]) -> int:
-        return runtime_run_migrate_action(self, route, targets)
+    def _run_migrate_action(self, route: Route, targets: Sequence[ProjectContextLike]) -> int:
+        return runtime_run_migrate_action(self, route, _action_targets_as_objects(targets))
 
     def _run_project_action(
         self,
         route: Route,
-        targets: list[ProjectContext],
+        targets: Sequence[ProjectContextLike],
         *,
         command_name: str,
         env_key: str,
@@ -71,7 +73,7 @@ class RuntimeActionFacadeMixin:
         return runtime_run_project_action(
             self,
             route,
-            targets,
+            _action_targets_as_objects(targets),
             command_name=command_name,
             env_key=env_key,
             default_command=default_command,
@@ -85,24 +87,24 @@ class RuntimeActionFacadeMixin:
 
     def _action_replacements(
         self,
-        targets: list[ProjectContext],
+        targets: Sequence[ProjectContextLike],
         *,
-        target: ProjectContext | None,
+        target: ProjectContextLike | None,
     ) -> dict[str, str]:
-        return runtime_action_replacements(self, targets, target=target)
+        return runtime_action_replacements(self, _action_targets_as_objects(targets), target=target)
 
     def _action_env(
         self,
         command_name: str,
-        targets: list[ProjectContext],
+        targets: Sequence[ProjectContextLike],
         *,
-        target: ProjectContext | None,
+        target: ProjectContextLike | None,
         extra: Mapping[str, str] | None = None,
     ) -> dict[str, str]:
         return runtime_action_env(
             self,
             command_name,
-            targets,
+            _action_targets_as_objects(targets),
             target=target,
             extra=extra,
         )

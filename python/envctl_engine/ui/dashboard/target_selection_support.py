@@ -1,27 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
 from envctl_engine.actions.actions_test import default_test_commands
-from envctl_engine.dashboard_metadata import normalize_dashboard_service_types
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.shared.services import (
-    project_name_from_service_name,
-    service_display_name,
-    service_project_name,
-    service_slug_from_record,
-)
 from envctl_engine.startup.startup_selection_support import (
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
 )
 from envctl_engine.state.models import RunState
 from envctl_engine.test_output.failure_summary import summary_excerpt_from_entry
-from envctl_engine.ui.dashboard.restart_selection_support import (
-    dashboard_configured_missing_services_by_project,
-    dashboard_project_configured_services,
-)
+from envctl_engine.ui.dashboard.target_service_catalog import DashboardServiceCatalog
 from envctl_engine.ui.selection_support import (
     project_names_from_state as selection_project_names_from_state,
     route_has_explicit_target as selection_route_has_explicit_target,
@@ -200,6 +191,7 @@ def dashboard_preselected_projects(
     state: RunState,
     projects: list[object],
     runtime: Any,
+    tree_preselected_projects_fn: Callable[..., list[str]] = _tree_preselected_projects_from_state_impl,
 ) -> list[str]:
     if str(state.mode).strip().lower() != "trees":
         return []
@@ -208,7 +200,7 @@ def dashboard_preselected_projects(
         return []
     try:
         return list(
-            _tree_preselected_projects_from_state_impl(
+            tree_preselected_projects_fn(
                 runtime=runtime,
                 project_contexts=cast(Any, projects),
             )
@@ -236,30 +228,10 @@ def select_dashboard_service_types(
         runtime,
         project_names=selected_projects,
     )
-    all_tests_available = command == "test" and owner._all_tests_scope_available(
-        state,
-        runtime,
-        project_names=selected_projects,
-    )
-    failed_scope_available = command == "test" and owner._failed_test_scope_available(
-        state,
-        project_names=selected_projects,
-    )
-    if (
-        len(available_types) <= 1
-        and not failed_scope_available
-        and not (all_tests_available and not available_types)
-    ):
+    if len(available_types) <= 1:
         return list(available_types)
     default_service_names = [service_type.title() for service_type in available_types]
     initial_service_names = list(default_service_names)
-    if all_tests_available and not available_types:
-        default_service_names.append("All tests")
-        initial_service_names.append("All tests")
-    if failed_scope_available:
-        default_service_names.append("All failed tests")
-        if not initial_service_names:
-            initial_service_names.append("All failed tests")
     selection = runtime._select_project_targets(
         prompt=owner._service_prompt(command),
         projects=[SimpleProject(name=label) for label in default_service_names],
@@ -274,12 +246,6 @@ def select_dashboard_service_types(
     for name in selection.project_names:
         normalized = name.strip().lower()
         if not normalized:
-            continue
-        if normalized == "all tests":
-            selected_types.append("all")
-            continue
-        if normalized == "all failed tests":
-            selected_types.append("failed")
             continue
         selected_types.append(normalized)
     return selected_types or list(available_types)
@@ -415,37 +381,7 @@ def available_service_types_for_projects(
     *,
     project_names: list[str],
 ) -> list[str]:
-    requested = {name.casefold() for name in project_names}
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for service_name, service in state.services.items():
-        project_name = service_project_name(service)
-        if not project_name:
-            project_name = str(runtime._project_name_from_service(service_name) or "").strip()
-        if not project_name:
-            project_name = str(project_name_from_service_name(str(service_name))).strip()
-        if requested and project_name.casefold() not in requested:
-            continue
-        service_type = service_slug_from_record(service) if service is not None else ""
-        if service_type and service_type not in seen:
-            seen.add(service_type)
-            ordered.append(service_type)
-    for project_name, service_types in dashboard_project_configured_services(state).items():
-        if requested and project_name.casefold() not in requested:
-            continue
-        for normalized in sorted(service_types):
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            ordered.append(normalized)
-    if ordered:
-        return ordered
-    for normalized in normalize_dashboard_service_types(state.metadata.get("dashboard_configured_service_types")):
-        if normalized in seen:
-            continue
-        seen.add(normalized)
-        ordered.append(normalized)
-    return ordered
+    return DashboardServiceCatalog(state, runtime, project_names=project_names).available_service_types()
 
 
 def service_names_for_projects_and_types(
@@ -455,35 +391,7 @@ def service_names_for_projects_and_types(
     project_names: list[str],
     service_types: list[str],
 ) -> list[str]:
-    requested_projects = {name.casefold() for name in project_names}
-    requested_types = {name.casefold() for name in service_types}
-    selected: list[str] = []
-    seen_names: set[str] = set()
-    for service_name, service in state.services.items():
-        project_name = service_project_name(service)
-        if not project_name:
-            project_name = str(runtime._project_name_from_service(service_name) or "").strip()
-        if not project_name:
-            project_name = str(project_name_from_service_name(str(service_name))).strip()
-        if requested_projects and project_name.casefold() not in requested_projects:
-            continue
-        service_type = service_slug_from_record(service) if service is not None else ""
-        if service_type and service_type.casefold() in requested_types:
-            selected.append(service_name)
-            seen_names.add(str(service_name))
-    configured_missing_services = dashboard_configured_missing_services_by_project(state)
-    for project_name, missing_service_types in configured_missing_services.items():
-        if requested_projects and project_name.casefold() not in requested_projects:
-            continue
-        for service_type in sorted(missing_service_types):
-            if service_type.casefold() not in requested_types:
-                continue
-            service_name = f"{project_name} {service_display_name(service_type)}"
-            if service_name in seen_names:
-                continue
-            selected.append(service_name)
-            seen_names.add(service_name)
-    return selected
+    return DashboardServiceCatalog(state, runtime, project_names=project_names).service_names_for_types(service_types)
 
 
 def worktree_prompt(command: str) -> str:

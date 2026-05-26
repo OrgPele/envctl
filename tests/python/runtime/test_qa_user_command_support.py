@@ -379,6 +379,24 @@ class QaUserCommandSupportTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(stdout.getvalue())["error"], "requested_project_not_running")
 
+    def test_invalid_loaded_state_fails_closed_before_project_resolution(self) -> None:
+        runtime = self._runtime()
+        runtime._try_load_existing_state = lambda **_kwargs: object()
+        route = Route(
+            command="qa-user",
+            mode="trees",
+            projects=["feature-a-1"],
+            passthrough_args=["ensure"],
+            flags={"json": True, "email": "qa@example.test", "password": "secret"},
+        )
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            code = run_qa_user_command(runtime, route)
+
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(stdout.getvalue())["error"], "state_not_found")
+
 
 if __name__ == "__main__":
     unittest.main()

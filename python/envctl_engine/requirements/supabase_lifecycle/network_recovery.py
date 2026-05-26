@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from ..adapter_base import env_bool
-from ..common import run_docker, run_result_error
+from ..docker_runtime import run_docker, run_result_error
 
 
 def _is_docker_address_pool_exhaustion(error: str | None) -> bool:
@@ -177,5 +177,4 @@ def _remove_empty_docker_networks(
         removed_count += 1
 
     return removed_count, "; ".join(cleanup_errors) if cleanup_errors else None
-
 

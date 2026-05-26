@@ -151,7 +151,7 @@ class PromptInstallSupportInstallFlowTests(PromptInstallSupportTestCase):
             for target in (claude_target,):
                 written = target.read_text(encoding="utf-8")
                 self.assertTrue(written.startswith("You are implementing real code, end-to-end."))
-                self.assertIn("Before any implementation work, run `git add .`", written)
+                self.assertIn("Do not run manual staging commands such as `git add .`", written)
             self.assertEqual(list(home.rglob("*.bak-*")), [])
 
     def test_install_prompts_overwrite_prompt_hyperlinks_existing_paths_when_enabled(self) -> None:
