@@ -49,6 +49,65 @@ def test_run_ship_workflow_reuses_existing_pr_and_reports_failed_checks() -> Non
     assert result.payload["checks_expected_head_sha"] == "abc123"
 
 
+def test_run_ship_workflow_pushes_clean_local_head_when_existing_pr_branch_is_stale() -> None:
+    with ship_workflow_fixture() as fixture:
+        run_git_calls: list[list[str]] = []
+        checks_expected_sha = ""
+
+        def run_git(_git_root: Path, args: list[str]):
+            run_git_calls.append(args)
+            if args == ["rev-parse", "--verify", "@{u}"]:
+                return SimpleNamespace(returncode=0, stdout="old123\n", stderr="", args=args)
+            if args == ["push", "-u", "origin", "feature/demo"]:
+                return SimpleNamespace(returncode=0, stdout="", stderr="", args=args)
+            return SimpleNamespace(returncode=0, stdout="", stderr="", args=args)
+
+        def github_pr_checks(
+            _git_root: Path,
+            *,
+            branch: str,
+            pr_url: str,
+            expected_head_sha: str,
+        ) -> dict[str, object]:
+            nonlocal checks_expected_sha
+            assert branch == "feature/demo"
+            assert pr_url == "https://github.com/acme/repo/pull/7"
+            checks_expected_sha = expected_head_sha
+            return {
+                "state": "checks_passed",
+                "passed_checks": [{"name": "pytest", "state": "SUCCESS"}],
+                "failing_checks": [],
+                "pending_checks": [],
+                "duration_seconds": 0.1,
+                "expected_head_sha": expected_head_sha,
+                "actual_head_sha": expected_head_sha,
+            }
+
+        result = fixture.run(run_git=run_git, github_pr_checks=github_pr_checks)
+
+    assert result.code == 0
+    assert ["push", "-u", "origin", "feature/demo"] in run_git_calls
+    assert checks_expected_sha == "abc123"
+    assert result.payload["status"] == "checks_passed"
+    assert result.payload["step_statuses"] == [
+        "clean_no_changes",
+        "pr_exists",
+        "pushed_existing_head",
+        "checks_passed",
+    ]
+    assert result.payload["operation_statuses"] == {
+        "checks": "checks_passed",
+        "commit": "no_changes",
+        "merge_conflicts": "none",
+        "pr": "existing",
+        "push": "success",
+    }
+    assert result.payload["committed"] is False
+    assert result.payload["pushed"] is True
+    assert result.payload["checks_expected_head_sha"] == "abc123"
+    assert result.payload["checks_actual_head_sha"] == "abc123"
+
+
 def test_run_ship_workflow_fails_on_detached_head() -> None:
     with ship_workflow_fixture() as fixture:
         commit_called = False

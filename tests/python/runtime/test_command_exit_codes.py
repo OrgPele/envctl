@@ -148,6 +148,44 @@ class CommandExitCodeTests(unittest.TestCase):
         self.assertEqual(seen.get("base_dir"), repo.resolve())
         self.assertEqual(seen.get("execution_root"), worktree.resolve())
 
+    def test_test_focused_from_managed_linked_worktree_does_not_bootstrap_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime = root / "runtime"
+            repo = root / "repo"
+            worktree = repo / "trees" / "feature-a" / "1"
+            gitdir = repo / ".git" / "worktrees" / "feature-a-1"
+            gitdir.mkdir(parents=True, exist_ok=True)
+            worktree.mkdir(parents=True, exist_ok=True)
+            (repo / ".git").mkdir(exist_ok=True)
+            (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+            provenance = worktree / ".envctl-state" / "worktree-provenance.json"
+            provenance.parent.mkdir(parents=True, exist_ok=True)
+            provenance.write_text('{"schema_version": 1}\n', encoding="utf-8")
+
+            seen: dict[str, object] = {}
+
+            def dispatcher(route, config):  # noqa: ANN001
+                seen["command"] = route.command
+                seen["base_dir"] = config.base_dir
+                seen["execution_root"] = config.execution_root
+                return 0
+
+            with patch(
+                "envctl_engine.runtime.cli.ensure_local_config",
+                side_effect=AssertionError("test-focused should not bootstrap config"),
+            ):
+                code = cli.run(
+                    ["test-focused", "--dry-run", "--json"],
+                    env={"RUN_REPO_ROOT": str(worktree), "RUN_SH_RUNTIME_DIR": str(runtime)},
+                    dispatcher=dispatcher,
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(seen.get("command"), "test-focused")
+        self.assertEqual(seen.get("base_dir"), repo.resolve())
+        self.assertEqual(seen.get("execution_root"), worktree.resolve())
+
     def test_cli_route_uses_default_mode_from_repo_config_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

@@ -79,6 +79,8 @@ class ShipWorkflowFixture:
 
     @staticmethod
     def run_git(_git_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args == ["rev-parse", "--verify", "@{u}"]:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="abc123\n", stderr="")
         return subprocess.CompletedProcess(args=args, returncode=0)
 
     @staticmethod

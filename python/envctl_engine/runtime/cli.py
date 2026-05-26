@@ -261,6 +261,7 @@ def _command_can_skip_local_config_bootstrap(route: Route) -> bool:
         "stop",
         "stop-all",
         "test",
+        "test-focused",
         "explain-startup",
         "preflight",
     }:

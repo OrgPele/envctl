@@ -294,8 +294,57 @@ class ProjectActionExecutionSupportTests(unittest.TestCase):
         completed = captured["completed"]
         self.assertEqual(completed.stdout, ship_output)
         self.assertFalse(captured["emit_success_output"])
-        self.assertFalse(captured["print_noninteractive_failures"])
+        self.assertTrue(captured["print_noninteractive_failures"])
         self.assertIn("checks_passed", captured["print_message"])
+
+    def test_failed_ship_subprocess_without_json_reports_actionable_diagnostics(self) -> None:
+        route = parse_route(["ship", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        target = SimpleNamespace(name="feature-a-1", root="/repo/trees/feature-a/1")
+        runner = _Runner()
+
+        def run_streaming(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            runner.streaming_calls.append({"command": command, **kwargs})
+            return subprocess.CompletedProcess(command, -1, stdout="", stderr="")
+
+        runner.run_streaming = run_streaming  # type: ignore[method-assign]
+        captured: dict[str, object] = {}
+
+        def execute_targeted_action_fn(**kwargs: object) -> int:
+            completed = kwargs["process_run"](["envctl", "ship", "--json"], Path("/repo"), {})
+            captured["completed"] = completed
+            captured["print_noninteractive_failures"] = kwargs["print_noninteractive_failures"]
+            return completed.returncode
+
+        runtime = SimpleNamespace(env={}, process_runner=runner)
+
+        code = run_project_action(
+            runtime=runtime,
+            route=route,
+            targets=[target],
+            command_name="ship",
+            env_key="ENVCTL_ACTION_SHIP_CMD",
+            default_command=["envctl", "ship", "--json"],
+            default_cwd=Path("/repo"),
+            default_append_project_path=False,
+            extra_env={},
+            action_replacements_builder=lambda _targets, target: {"project": target.name},
+            action_env_builder=lambda *_args, **_kwargs: {},
+            emit_status=lambda _message: None,
+            success_handler=lambda *_args, **_kwargs: None,
+            failure_handler=lambda *_args, **_kwargs: None,
+            stdout_is_live_terminal=lambda: False,
+            execute_targeted_action_fn=execute_targeted_action_fn,
+        )
+
+        self.assertEqual(code, -1)
+        self.assertTrue(captured["print_noninteractive_failures"])
+        diagnostic = captured["completed"].stderr
+        self.assertIn("ship subprocess failed without envctl.ship.v1 JSON", diagnostic)
+        self.assertIn("command: envctl ship --json", diagnostic)
+        self.assertIn("exit code: -1", diagnostic)
+        self.assertIn("stdout: <empty>", diagnostic)
+        self.assertIn("stderr: <empty>", diagnostic)
+        self.assertIn("Fallback: rerun `envctl ship --json`", diagnostic)
 
     def test_ship_action_uses_structured_status_success_messages(self) -> None:
         route = parse_route(["ship", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})

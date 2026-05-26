@@ -43,6 +43,7 @@ class ShipWorkflowState:
     after_sha: str = ""
     protected_paths: list[str] = field(default_factory=list)
     committed: bool = False
+    pushed: bool = False
     pr_url: str = ""
     pr_created: bool = False
     step_statuses: list[str] = field(default_factory=list)
@@ -80,6 +81,7 @@ class ShipWorkflowRunner:
             self._run_commit_phase,
             self._run_pr_phase,
             self._reject_predicted_merge_conflicts,
+            self._run_push_phase,
         ):
             result = phase(state)
             if result is not None:
@@ -140,6 +142,7 @@ class ShipWorkflowRunner:
         state.after_sha = self.dependencies.git_output(state.git_root, ["rev-parse", "HEAD"]).strip()
         sha_changed = bool(state.after_sha and state.before_sha and state.after_sha != state.before_sha)
         state.committed = sha_changed
+        state.pushed = state.committed
         state.step_statuses.append("committed_pushed" if state.committed else "clean_no_changes")
         if commit_code == 0:
             if state.committed:
@@ -168,7 +171,7 @@ class ShipWorkflowRunner:
             status="pr_unresolved",
             ok=False,
             commit_sha=state.after_sha,
-            pushed=state.committed,
+            pushed=state.pushed,
             pr_url="",
             pr_created=False,
         )
@@ -191,12 +194,50 @@ class ShipWorkflowRunner:
             status="merge_conflicts",
             ok=False,
             commit_sha=state.after_sha,
-            pushed=state.committed,
+            pushed=state.pushed,
             pr_url=state.pr_url,
             pr_created=state.pr_created,
             checks={"state": "merge_conflicts", "failing_checks": [], "pending_checks": []},
             merge_conflicts=state.merge_conflicts,
         )
+
+    def _run_push_phase(self, state: ShipWorkflowState) -> int | None:
+        if not state.after_sha or not state.pr_url:
+            return None
+        if state.committed:
+            return None
+        if not state.committed and not self._remote_branch_needs_push(state):
+            return None
+
+        remote = str(getattr(self.context, "env", {}).get("PR_REMOTE") or "origin").strip() or "origin"
+        result = self.dependencies.run_git(state.git_root, ["push", "-u", remote, state.branch])
+        if int(getattr(result, "returncode", 1) or 0) != 0:
+            state.step_statuses.append("push_failed")
+            return self._finish(
+                state,
+                status="push_failed",
+                ok=False,
+                commit_sha=state.after_sha,
+                pushed=False,
+                pr_url=state.pr_url,
+                pr_created=state.pr_created,
+                merge_conflicts=state.merge_conflicts,
+            )
+
+        state.pushed = True
+        if state.committed:
+            emit_ship_commit_progress(project_name=str(self.context.project_name), commit_sha=state.after_sha)
+        else:
+            emit_ship_progress(f"ship: push succeeded for {self.context.project_name}.")
+            state.step_statuses.append("pushed_existing_head")
+        return None
+
+    def _remote_branch_needs_push(self, state: ShipWorkflowState) -> bool:
+        upstream = self.dependencies.run_git(state.git_root, ["rev-parse", "--verify", "@{u}"])
+        if int(getattr(upstream, "returncode", 1) or 0) != 0:
+            return True
+        upstream_sha = str(getattr(upstream, "stdout", "") or "").strip()
+        return upstream_sha != state.after_sha
 
     def _run_checks_phase(self, state: ShipWorkflowState) -> int:
         checks_fn = self.dependencies.github_pr_checks or globals()["github_pr_checks"]
@@ -215,7 +256,7 @@ class ShipWorkflowRunner:
             status=status,
             ok=_ship_status_is_success(status),
             commit_sha=state.after_sha,
-            pushed=state.committed,
+            pushed=state.pushed,
             pr_url=state.pr_url,
             pr_created=state.pr_created,
             checks=checks,
