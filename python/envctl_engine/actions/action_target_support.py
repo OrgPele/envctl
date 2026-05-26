@@ -232,6 +232,8 @@ def execute_targeted_action(
     on_success: Callable[[ActionTargetContext, Any], None] | None = None,
     on_failure: Callable[[ActionTargetContext, str], None] | None = None,
     failure_status_formatter: Callable[[ActionTargetContext, str], str] | None = None,
+    success_print_formatter: Callable[[ActionTargetContext, Any], str] | None = None,
+    success_status_formatter: Callable[[ActionTargetContext, Any], str] | None = None,
     print_noninteractive_failures: bool = True,
     print_noninteractive_successes: bool = True,
 ) -> int:
@@ -285,7 +287,17 @@ def execute_targeted_action(
         if on_success is not None:
             on_success(context, completed)
         if not interactive_command and print_noninteractive_successes:
-            printer(f"{command_name} action succeeded for {context.name}.")
-        emit_status(f"{command_name} succeeded for {context.name}")
+            if success_print_formatter is not None:
+                message = success_print_formatter(context, completed)
+            else:
+                message = f"{command_name} action succeeded for {context.name}."
+            if message:
+                printer(message)
+        if success_status_formatter is not None:
+            status_message = success_status_formatter(context, completed)
+        else:
+            status_message = f"{command_name} succeeded for {context.name}"
+        if status_message:
+            emit_status(status_message)
 
     return 0 if failures == 0 else 1

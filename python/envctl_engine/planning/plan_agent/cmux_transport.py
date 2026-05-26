@@ -385,6 +385,8 @@ def _wait_for_codex_queue_ready(runtime: Any, *, workspace_id: str, surface_id: 
         workspace_id=workspace_id,
         surface_id=surface_id,
         read_surface_screen_fn=_read_surface_screen,
+        monotonic=time.monotonic,
+        sleep=time.sleep,
     )
 
 
@@ -404,6 +406,8 @@ def _queue_codex_message(
         require_text_match=require_text_match,
         read_surface_screen_fn=_read_surface_screen,
         send_surface_key_fn=_send_surface_key,
+        monotonic=time.monotonic,
+        sleep=time.sleep,
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -115,7 +116,46 @@ def first_output_line(output: object) -> str:
     return ""
 
 
+def ship_action_payload(output: object) -> dict[str, object]:
+    text = strip_ansi(str(output or ""))
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and parsed.get("contract_version") == "envctl.ship.v1":
+            return {str(key): value for key, value in parsed.items()}
+    return {}
+
+
+def ship_action_status(completed: Any) -> str:
+    payload = ship_action_payload(getattr(completed, "stdout", ""))
+    status = str(payload.get("status") or "").strip()
+    return status or "success"
+
+
+def ship_action_status_message(project_name: str, completed: Any) -> str:
+    payload = ship_action_payload(getattr(completed, "stdout", ""))
+    status = str(payload.get("status") or "").strip() or "success"
+    operation_statuses = payload.get("operation_statuses")
+    operation_parts: list[str] = []
+    if isinstance(operation_statuses, Mapping):
+        for key in ("commit", "push", "pr", "merge_conflicts", "checks"):
+            value = str(operation_statuses.get(key) or "").strip()
+            if value:
+                operation_parts.append(f"{key}={value}")
+    operations = f" ({', '.join(operation_parts)})" if operation_parts else ""
+    pr_url = str(payload.get("pr_url") or "").strip()
+    pr_suffix = f" {pr_url}" if pr_url else ""
+    return f"ship handoff status for {project_name}: {status}{operations}{pr_suffix}"
+
+
 def project_action_success_status(*, command_name: str, completed: Any) -> str:
+    if command_name == "ship":
+        return ship_action_status(completed)
     if command_name != "pr":
         return "success"
     output = strip_ansi(str(getattr(completed, "stdout", "") or ""))
@@ -136,7 +176,7 @@ def persist_project_action_result(
     migrate_env_contracts: Mapping[str, Mapping[str, object]],
     failure_summary_lines: Callable[..., list[str]],
     failure_headline: Callable[[str], str],
-    runtime_map_builder: Callable[..., object],
+    runtime_map_builder: Callable[[object], dict[str, object]],
     extra_entry: Mapping[str, object] | None = None,
 ) -> None:
     state = runtime.load_existing_state(mode=mode)

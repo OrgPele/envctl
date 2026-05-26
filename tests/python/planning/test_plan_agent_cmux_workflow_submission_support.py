@@ -6,9 +6,11 @@ from types import SimpleNamespace
 
 from envctl_engine.planning.plan_agent.cmux_workflow_submission_support import (
     launch_cli_bootstrap_commands,
+    queue_codex_message,
     queue_codex_workflow_steps,
     submit_direct_prompt_workflow_step,
     submit_prompt_workflow_step,
+    wait_for_codex_queue_ready,
 )
 from envctl_engine.planning.plan_agent.models import (
     CreatedPlanWorktree,
@@ -183,6 +185,59 @@ class PlanAgentCmuxWorkflowSubmissionSupportTests(unittest.TestCase):
         self.assertEqual(pasted, ["/goal goal text", "do the work"])
         self.assertEqual(queued, ["/goal goal text", "do the work"])
         self.assertEqual(events[0][0], "planning.agent_launch.workflow_queued")
+
+    def test_queue_codex_message_accepts_injected_clock_for_wrapper_compatibility(self) -> None:
+        sent_keys: list[str] = []
+        sleeps: list[float] = []
+        state = {"stage": "typed"}
+
+        def read_surface_screen_fn(_runtime, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+            if state["stage"] == "typed":
+                return "OpenAI Codex\n  queued body\n  tab to queue message\n"
+            return "OpenAI Codex\n• Queued follow-up messages\n"
+
+        def send_surface_key_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003, ANN202
+            sent_keys.append(kwargs["key"])
+            state["stage"] = "queued"
+            return None
+
+        queued = queue_codex_message(
+            SimpleNamespace(),
+            workspace_id="workspace:1",
+            surface_id="surface:2",
+            text="queued body",
+            read_surface_screen_fn=read_surface_screen_fn,
+            send_surface_key_fn=send_surface_key_fn,
+            monotonic=iter([0.0, 0.1, 0.2, 0.3]).__next__,
+            sleep=sleeps.append,
+        )
+
+        self.assertTrue(queued)
+        self.assertEqual(sent_keys, ["tab"])
+        self.assertEqual(sleeps, [0.1])
+
+    def test_wait_for_codex_queue_ready_accepts_injected_clock_for_wrapper_compatibility(self) -> None:
+        ready_screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+            "│ directory: ~/repo                                 │\n"
+            "› follow-up prompt\n"
+        )
+        screens = iter(["busy", "busy", ready_screen])
+        sleeps: list[float] = []
+
+        ready = wait_for_codex_queue_ready(
+            SimpleNamespace(),
+            workspace_id="workspace:1",
+            surface_id="surface:2",
+            read_surface_screen_fn=lambda _runtime, **_kwargs: next(screens),  # noqa: ANN001, ANN003
+            monotonic=iter([0.0, 0.1, 0.2, 0.3, 0.4]).__next__,
+            sleep=sleeps.append,
+        )
+
+        self.assertTrue(ready)
+        self.assertEqual(sleeps, [0.1, 0.1])
 
 
 if __name__ == "__main__":

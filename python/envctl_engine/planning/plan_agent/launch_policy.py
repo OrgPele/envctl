@@ -106,7 +106,7 @@ class PlanAgentLaunchPolicy:
             browser_e2e_followup_enable=self._bool_value("ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE", True),
             pr_review_comments_followup_enable=self._bool_value(
                 "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE",
-                True,
+                False,
             ),
             shell=self._string_value("ENVCTL_PLAN_AGENT_SHELL") or _DEFAULT_SHELL,
             require_cmux_context=self._bool_value("ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT", True),
