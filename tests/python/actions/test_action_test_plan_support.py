@@ -30,6 +30,13 @@ class ActionTestPlanSupportTests(unittest.TestCase):
         source = Path(action_test_plan_support.__file__).read_text(encoding="utf-8")
 
         self.assertIn("class OrchestratorTestPlanDependencies", source)
+        self.assertEqual(
+            {name for name in TestExecutionPlanner.__dataclass_fields__ if name != "__test__"},
+            {"request", "configuration", "dependencies"},
+        )
+        self.assertTrue(hasattr(action_test_plan_support, "TestExecutionPlanRequest"))
+        self.assertTrue(hasattr(action_test_plan_support, "TestExecutionPlanConfiguration"))
+        self.assertTrue(hasattr(action_test_plan_support, "TestExecutionPlanDependencies"))
         self.assertIn("class RuntimeSplitCommandAdapter", source)
         self.assertIn("class TestStatusRenderer", source)
         self.assertIn("class TestExecutionPolicy", source)
@@ -40,7 +47,7 @@ class ActionTestPlanSupportTests(unittest.TestCase):
         self.assertTrue(callable(TestExecutionPolicy.parallel_enabled))
 
     def test_status_rendering_matches_action_command_surface(self) -> None:
-        targets = [SimpleNamespace(name="api"), SimpleNamespace(name="web")]
+        targets: list[object] = [SimpleNamespace(name="api"), SimpleNamespace(name="web")]
 
         self.assertEqual(command_start_status("test", targets), "Running test for 2 targets...")
         self.assertEqual(
@@ -64,7 +71,7 @@ class ActionTestPlanSupportTests(unittest.TestCase):
     def test_run_test_plan_action_for_targets_builds_contexts_and_stops_on_failure(self) -> None:
         orchestrator = SimpleNamespace(runtime=SimpleNamespace(config=SimpleNamespace(base_dir=Path("/repo"))))
         route = parse_route(["test-focused", "--json"], env={})
-        targets = [
+        targets: list[object] = [
             SimpleNamespace(name="api", root=Path("/repo/trees/api/1")),
             SimpleNamespace(name="web", root=Path("/repo/trees/web/1")),
         ]
@@ -158,7 +165,16 @@ class ActionTestPlanSupportTests(unittest.TestCase):
 
     def test_failed_flag_delegates_to_failed_spec_builder(self) -> None:
         route = parse_route(["test", "--failed"], env={"ENVCTL_DEFAULT_MODE": "main"})
-        expected = [SimpleNamespace(index=1)]
+        expected = [
+            ExecutionSpec(
+                index=1,
+                spec=CommandSpec(source="failed", command=["python", "-m", "pytest"], cwd=Path("/repo")),
+                args=[],
+                resolved_source="failed",
+                project_name="Main",
+                project_root=Path("/repo"),
+            )
+        ]
 
         specs = build_test_execution_specs_for_route(
             route=route,
@@ -181,7 +197,16 @@ class ActionTestPlanSupportTests(unittest.TestCase):
 
     def test_additional_service_specs_win_before_default_test_detection(self) -> None:
         route = parse_route(["test", "--service", "voice-runtime"], env={"ENVCTL_DEFAULT_MODE": "trees"})
-        expected = [SimpleNamespace(index=1)]
+        expected = [
+            ExecutionSpec(
+                index=1,
+                spec=CommandSpec(source="service", command=["python", "-m", "pytest"], cwd=Path("/repo")),
+                args=[],
+                resolved_source="service",
+                project_name="voice-runtime",
+                project_root=Path("/repo"),
+            )
+        ]
 
         specs = build_test_execution_specs_for_route(
             route=route,
@@ -242,22 +267,28 @@ class ActionTestPlanSupportTests(unittest.TestCase):
         target = SimpleNamespace(name="feature-a-1", root="/repo/trees/feature-a/1")
         context = TargetContext(project_name="feature-a-1", project_root=Path(target.root), target_obj=target)
         planner = TestExecutionPlanner(
-            route=route,
-            targets=[target],
-            target_contexts=[context],
-            include_backend=True,
-            include_frontend=False,
-            run_all=False,
-            untested=True,
-            env={"ENVCTL_BACKEND_TEST_CMD": "pytest {project}"},
-            config=SimpleNamespace(raw={}, base_dir=Path("/repo"), frontend_test_path=""),
-            action_replacements_builder=lambda _targets, target: {"project": target.name},
-            split_command=lambda raw, replacements: [
-                token.replace("{project}", replacements["project"]) for token in raw.split()
-            ],
-            failed_spec_builder=lambda **_kwargs: [],
-            additional_service_spec_builder=lambda **_kwargs: [],
-            is_legacy_tree_test_script=lambda _command: False,
+            request=action_test_plan_support.TestExecutionPlanRequest(
+                route=route,
+                targets=[target],
+                target_contexts=[context],
+                include_backend=True,
+                include_frontend=False,
+                run_all=False,
+                untested=True,
+            ),
+            configuration=action_test_plan_support.TestExecutionPlanConfiguration(
+                env={"ENVCTL_BACKEND_TEST_CMD": "pytest {project}"},
+                config=SimpleNamespace(raw={}, base_dir=Path("/repo"), frontend_test_path=""),
+            ),
+            dependencies=action_test_plan_support.TestExecutionPlanDependencies(
+                action_replacements_builder=lambda _targets, target: {"project": target.name},
+                split_command=lambda raw, replacements: [
+                    token.replace("{project}", replacements["project"]) for token in raw.split()
+                ],
+                failed_spec_builder=lambda **_kwargs: [],
+                additional_service_spec_builder=lambda **_kwargs: [],
+                is_legacy_tree_test_script=lambda _command: False,
+            ),
         )
 
         specs = planner.build()
