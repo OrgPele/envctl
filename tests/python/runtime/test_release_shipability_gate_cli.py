@@ -122,6 +122,7 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
         python_bin.chmod(0o755)
 
     def _write_minimal_pyproject(self, repo: Path) -> None:
+        (repo / "README.md").write_text("# Shipability test\n", encoding="utf-8")
         (repo / "pyproject.toml").write_text(
             "\n".join(
                 [
@@ -132,6 +133,13 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
                     "[project]",
                     'name = "shipability-test"',
                     'version = "0.0.1"',
+                    'requires-python = ">=3.12"',
+                    "",
+                    "[project.optional-dependencies]",
+                    'dev = ["build", "pytest"]',
+                    "",
+                    "[tool.setuptools]",
+                    "packages = []",
                     "",
                 ]
             )
@@ -203,7 +211,6 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
             self._prepare_repo(repo)
-            self._write_repo_local_python(repo)
             self._write_minimal_pyproject(repo)
 
             result = subprocess.run(
@@ -223,7 +230,7 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stdout)
         self.assertEqual(result.stderr, "")
-        self.assertIn("packaging.command: .venv/bin/python -m build", result.stdout)
+        self.assertIn("packaging.command: uv run --extra dev python -m build", result.stdout)
         self.assertIn("shipability.passed: true", result.stdout)
 
     def test_release_shipability_script_reports_validation_lane_command_and_failure_quietly(self) -> None:
@@ -232,7 +239,8 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
             repo.mkdir(parents=True, exist_ok=True)
             self._init_repo(repo)
             self._prepare_repo(repo)
-            self._write_repo_local_python(repo, exit_code=2)
+            self._write_minimal_pyproject(repo)
+            (repo / "tests" / "python" / "test_stub.py").write_text("def test_broken(:\n", encoding="utf-8")
 
             result = subprocess.run(
                 [
@@ -252,8 +260,8 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stderr, "")
-        self.assertIn("validation.command: .venv/bin/python -m pytest -q", result.stdout)
-        self.assertIn("error: validation_lane_failed: .venv/bin/python -m pytest -q (exit 2)", result.stdout)
+        self.assertIn("validation.command: uv run --extra dev pytest -q", result.stdout)
+        self.assertIn("error: validation_lane_failed: uv run --extra dev pytest -q (exit 2)", result.stdout)
 
     def test_release_shipability_script_honors_global_excludes_fixture(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

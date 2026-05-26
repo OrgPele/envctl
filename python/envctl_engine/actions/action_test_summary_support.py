@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from envctl_engine.actions.action_test_summary_artifacts import (
+    FailedTestSummaryWriter,
+    TestSummaryArtifactPersistor,
     _project_roots_from_outcomes,
     _project_roots_from_targets,
     new_test_results_run_dir_path,
@@ -15,6 +19,8 @@ from envctl_engine.actions.action_test_summary_collection import (
     collect_generic_suite_failures,
     collect_suite_failure_contexts,
     resolve_failed_test_error,
+    summary_float,
+    summary_int,
     suite_display_name,
 )
 from envctl_engine.actions.action_test_summary_display import (
@@ -41,9 +47,9 @@ from envctl_engine.actions.action_test_summary_git import default_git_state_comp
 def write_failed_tests_summary_for_orchestrator(
     orchestrator: object,
     *,
-    run_dir,
+    run_dir: Path,
     project_name: str,
-    project_root,
+    project_root: Path,
     outcomes: list[dict[str, object]],
     previous_entry: dict[str, object] | None = None,
 ) -> dict[str, object]:
@@ -58,7 +64,6 @@ def write_failed_tests_summary_for_orchestrator(
         git_state_components=default_git_state_components,
     )
 
-
 __all__ = [
     "_project_roots_from_outcomes",
     "_project_roots_from_targets",
@@ -71,6 +76,7 @@ __all__ = [
     "default_git_state_components",
     "exception_body_block",
     "exception_context_markers",
+    "FailedTestSummaryWriter",
     "format_summary_error_lines",
     "is_captured_output_header",
     "is_exception_context_marker",
@@ -85,7 +91,10 @@ __all__ = [
     "resolve_failed_test_error",
     "short_failed_summary_path",
     "structured_summary_lines",
+    "summary_float",
+    "summary_int",
     "suite_display_name",
+    "TestSummaryArtifactPersistor",
     "user_code_frame_blocks",
     "write_failed_tests_summary",
     "write_failed_tests_summary_for_orchestrator",

@@ -198,10 +198,13 @@ class EngineRuntimeCommandParityHelpTests(EngineRuntimeCommandParityTestCase):
 
         output = buffer.getvalue()
         self.assertEqual(code, 0)
-        self.assertIn("opens a PR when needed and reuses an existing PR", output)
+        self.assertIn("creates a PR when needed and reuses or updates an existing PR", output)
         self.assertIn("predicts merge conflicts", output)
         self.assertIn("conflicting files, messages, and resolution steps", output)
+        self.assertIn("rendered names start with Tests", output)
         self.assertIn("failing_checks and pending_checks", output)
+        self.assertIn("JSON is the default", output)
+        self.assertIn("--human", output)
 
     def test_workflow_command_help_explains_when_headless_is_optional(self) -> None:
         runtime = self._runtime()

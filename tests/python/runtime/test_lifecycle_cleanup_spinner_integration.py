@@ -37,9 +37,10 @@ class _RuntimeStub:
         self.events: list[dict[str, object]] = []
         self.state_repository = _StateRepoStub()
         self.selection_calls: list[dict[str, object]] = []
+        self.port_planner: object | None = None
 
     def _emit(self, event: str, **payload: object) -> None:
-        entry = {"event": event}
+        entry: dict[str, object] = {"event": event}
         entry.update(payload)
         self.events.append(entry)
 
@@ -79,6 +80,29 @@ class _RuntimeStub:
             }
         )
         return TargetSelection(project_names=["Main"])
+
+
+class _RuntimeWithoutPortSessionHook:
+    def __init__(self) -> None:
+        self.env: dict[str, str] = {}
+        self.config = SimpleNamespace(raw={}, base_dir=Path("/tmp"))
+        self.events: list[dict[str, object]] = []
+        self.state_repository = _StateRepoStub()
+
+    def _emit(self, event: str, **payload: object) -> None:
+        entry: dict[str, object] = {"event": event}
+        entry.update(payload)
+        self.events.append(entry)
+
+    def _try_load_existing_state(self, *args, **kwargs):  # noqa: ANN001, ARG002
+        return None
+
+    @staticmethod
+    def _state_lookup_strict_mode_match(_route):  # noqa: ANN001
+        return False
+
+    def _terminate_services_from_state(self, *args, **kwargs):  # noqa: ANN001, ARG002
+        raise AssertionError("stop-all with no runtime state should not terminate services")
 
 
 class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
@@ -129,6 +153,17 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         self.assertTrue(any(item.get("event") == "ui.spinner.policy" for item in runtime.events))
         lifecycle = [item for item in runtime.events if item.get("event") == "ui.spinner.lifecycle"]
         self.assertTrue(any(item.get("state") == "success" for item in lifecycle))
+
+    def test_stop_all_tolerates_runtime_without_port_session_hook(self) -> None:
+        runtime = _RuntimeWithoutPortSessionHook()
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+        route = Route(command="stop-all", mode="main")
+
+        code = orchestrator.execute(route)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(runtime.state_repository.purge_calls, [False])
+        self.assertTrue(any(item.get("event") == "cleanup.stop_all" for item in runtime.events))
 
     def test_stop_selector_miss_does_not_start_spinner(self) -> None:
         runtime = _RuntimeStub()
@@ -306,8 +341,8 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         self.assertEqual(released, [6379])
         self.assertIn("Main Backend", state.services)
         self.assertIn("Main", state.requirements)
-        self.assertFalse(state.requirements["Main"].redis.get("enabled", False))
-        self.assertTrue(state.requirements["Main"].db.get("enabled", False))
+        self.assertFalse(getattr(state.requirements["Main"], "redis").get("enabled", False))
+        self.assertTrue(getattr(state.requirements["Main"], "db").get("enabled", False))
         self.assertEqual(runtime.state_repository.saved_states[0].services.keys(), {"Main Backend"})
 
     def test_stop_selected_services_can_leave_dependencies_running(self) -> None:

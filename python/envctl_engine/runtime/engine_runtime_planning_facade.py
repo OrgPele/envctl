@@ -76,7 +76,7 @@ class RuntimePlanningFacadeMixin:
         self,
         planning_files: list[str],
         raw_projects: list[tuple[str, Path]],
-    ) -> dict[str, int]:
+    ) -> dict[str, int] | None:
         return _planning_orchestrator(self).prompt_planning_selection(planning_files, raw_projects)
 
     def _initial_plan_selected_counts(

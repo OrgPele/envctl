@@ -1,25 +1,20 @@
 from __future__ import annotations
 
-import concurrent.futures
 import re
-import sys
-import threading
 import time
 from collections.abc import Callable
 
 from envctl_engine.requirements.core import dependency_definitions
-from envctl_engine.requirements.external import (
-    dependency_external_mode,
-    external_dependency_outcome,
-    external_dependency_resources,
-    external_dependency_url,
-)
-from envctl_engine.requirements.orchestrator import RequirementOutcome
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.runtime.runtime_context import resolve_port_allocator
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
-from envctl_engine.startup.startup_progress import report_progress as report_progress_impl
+from envctl_engine.startup.requirements_project_startup import (
+    REQUIREMENTS_PROGRESS_PROJECT_FLAG as _REQUIREMENTS_PROGRESS_PROJECT_FLAG,
+    format_requirements_progress_message as _format_requirements_progress_message,
+    requirements_parallel_enabled as _requirements_parallel_enabled,
+    requirements_parallel_platform_default as _requirements_parallel_platform_default,
+    start_requirements_for_project as _start_requirements_for_project_impl,
+)
 from envctl_engine.startup.startup_progress import suppress_timing_output
 from envctl_engine.startup.startup_selection_support import restart_include_requirements
 from envctl_engine.state.models import RequirementsResult
@@ -28,41 +23,10 @@ _DOCKER_SOCKET_PATTERNS = (
     re.compile(r"unix://(?P<path>[^\s;]+docker\.sock)"),
     re.compile(r"dial unix (?P<path>[^\s:;]+docker\.sock)"),
 )
-REQUIREMENTS_PROGRESS_PROJECT_FLAG = "_requirements_progress_project"
-
-
-def requirements_parallel_platform_default() -> bool:
-    return sys.platform != "darwin"
-
-
-def requirements_parallel_enabled(
-    orchestrator: StartupOrchestratorLike,
-    *,
-    route: Route | None,
-    enabled_count: int,
-) -> bool:
-    if enabled_count <= 1:
-        return False
-    if route is not None:
-        route_value = route.flags.get("requirements_parallel")
-        if isinstance(route_value, bool):
-            return route_value
-    rt = orchestrator.runtime
-    raw_parallel = rt.env.get("ENVCTL_REQUIREMENTS_PARALLEL") or rt.config.raw.get("ENVCTL_REQUIREMENTS_PARALLEL")
-    return parse_bool(raw_parallel, requirements_parallel_platform_default())
-
-
-def format_requirements_progress_message(*, active: set[str], pending: set[str]) -> str:
-    active_list = sorted(str(name).strip() for name in active if str(name).strip())
-    pending_list = sorted(str(name).strip() for name in pending if str(name).strip())
-    if active_list:
-        message = "Loading requirements: " + ", ".join(active_list)
-        if pending_list:
-            message += " | queued: " + ", ".join(pending_list)
-        return message
-    if pending_list:
-        return "Preparing requirements: " + ", ".join(pending_list)
-    return "Preparing requirements..."
+REQUIREMENTS_PROGRESS_PROJECT_FLAG = _REQUIREMENTS_PROGRESS_PROJECT_FLAG
+format_requirements_progress_message = _format_requirements_progress_message
+requirements_parallel_enabled = _requirements_parallel_enabled
+requirements_parallel_platform_default = _requirements_parallel_platform_default
 
 
 def requirements_failure_message(project_name: str, requirements: RequirementsResult) -> str:
@@ -125,295 +89,14 @@ def start_requirements_for_project(
     report_progress_fn: Callable[..., None] | None = None,
     suppress_timing_output_fn: Callable[[Route | None], bool] = suppress_timing_output,
 ) -> RequirementsResult:
-    rt = orchestrator.runtime
-    port_allocator = resolve_port_allocator(rt)
-    failures: list[str] = []
-    timing_enabled = requirements_timing_enabled(orchestrator, route)
-    requirements_started = time.monotonic()
-    component_timings_ms: dict[str, float] = {}
-    definitions = dependency_definitions()
-    reserve_lock = threading.Lock()
-    progress_state_lock = threading.Lock()
-
-    definition_ports = {
-        definition.id: context.ports[definition.resources[0].legacy_port_key] for definition in definitions
-    }
-
-    def plan_for_dependency(dependency_id: str) -> object:
-        return definition_ports[dependency_id]
-
-    def resources_for_definition(definition, outcome=None) -> dict[str, int]:  # noqa: ANN001
-        resources: dict[str, int] = {}
-        for resource in definition.resources:
-            plan = context.ports.get(resource.legacy_port_key)
-            if plan is None:
-                continue
-            value = getattr(plan, "final", None)
-            if isinstance(value, int) and value > 0:
-                resources[resource.name] = value
-        if outcome is not None and definition.resources:
-            primary_name = definition.resources[0].name
-            final_port = getattr(outcome, "final_port", None)
-            if isinstance(final_port, int) and final_port > 0:
-                resources[primary_name] = final_port
-                resources["primary"] = final_port
-                resources["requested"] = int(getattr(outcome, "requested_port", final_port) or final_port)
-        return resources
-
-    skip_infrastructure_hooks = route is not None and route.flags.get("launch_dependencies") is False
-    if not skip_infrastructure_hooks:
-        setup_hook = rt._invoke_envctl_hook(context=context, hook_name="envctl_setup_infrastructure")
-        if setup_hook.found and not setup_hook.success:
-            failures.append(f"setup_hook:{setup_hook.error or 'failed'}")
-            components = {}
-            for definition in definitions:
-                plan = plan_for_dependency(definition.id)
-                components[definition.id] = {
-                    "requested": plan.requested,
-                    "final": plan.final,
-                    "resources": resources_for_definition(definition),
-                    "retries": 0,
-                    "success": False,
-                    "simulated": False,
-                    "enabled": rt._requirement_enabled(definition.id, mode=mode, route=route),
-                }
-            return RequirementsResult(
-                project=context.name,
-                components=components,
-                health="degraded",
-                failures=failures,
-            )
-        if setup_hook.found and setup_hook.success:
-            payload = setup_hook.payload if isinstance(setup_hook.payload, dict) else {}
-            if bool(payload.get("skip_default_requirements")):
-                return rt._requirements_result_from_hook_payload(
-                    context=context,
-                    mode=mode,
-                    payload=payload,
-                )
-
-    def reserve_next(port: int) -> int:
-        with reserve_lock:
-            return port_allocator.reserve_next(port, owner=f"{context.name}:requirements")
-
-    enabled_lookup = {
-        definition.id: bool(rt._requirement_enabled(definition.id, mode=mode, route=route))
-        for definition in definitions
-    }
-    external_lookup = {
-        definition.id: bool(
-            enabled_lookup[definition.id] and dependency_external_mode(rt, definition.id, mode=mode, route=route)
-        )
-        for definition in definitions
-    }
-    enabled_definitions = [
-        definition for definition in definitions if enabled_lookup[definition.id] and not external_lookup[definition.id]
-    ]
-    pending_requirements = {definition.id for definition in enabled_definitions}
-    active_requirements: set[str] = set()
-
-    def emit_requirements_progress() -> None:
-        if not enabled_definitions:
-            return
-        if route is None:
-            return
-        progress_project_flag = route.flags.get(REQUIREMENTS_PROGRESS_PROJECT_FLAG) if route is not None else None
-        progress_project = str(progress_project_flag).strip() if progress_project_flag is not None else context.name
-        progress_message = format_requirements_progress_message(
-            active=active_requirements,
-            pending=pending_requirements,
-        )
-        if report_progress_fn is not None:
-            report_progress_fn(route, progress_message, project=progress_project or context.name)
-        else:
-            report_progress_impl(
-                rt,
-                route,
-                progress_lock=getattr(orchestrator, "_progress_lock"),
-                last_progress_message_by_project=getattr(orchestrator, "_last_progress_message_by_project"),
-                message=progress_message,
-                project=progress_project or context.name,
-            )
-
-    def run_component(component: str, plan: object, *, strict: bool = False) -> RequirementOutcome:
-        component_started = time.monotonic()
-        with progress_state_lock:
-            pending_requirements.discard(component)
-            active_requirements.add(component)
-            emit_requirements_progress()
-        try:
-            outcome = rt._start_requirement_component(
-                context,
-                component,
-                plan,
-                reserve_next,
-                strict=strict,
-                route=route,
-            )
-            duration_ms = round((time.monotonic() - component_started) * 1000.0, 2)
-            component_timings_ms[component] = duration_ms
-            rt._emit(
-                "requirements.timing.component",
-                project=context.name,
-                requirement=component,
-                duration_ms=duration_ms,
-                enabled=True,
-                success=bool(getattr(outcome, "success", False)),
-                retries=int(getattr(outcome, "retries", 0)),
-                final_port=getattr(outcome, "final_port", None),
-                failure_class=str(getattr(outcome, "failure_class", "")),
-            )
-            return outcome
-        finally:
-            with progress_state_lock:
-                active_requirements.discard(component)
-                emit_requirements_progress()
-
-    emit_requirements_progress()
-    outcomes: dict[str, RequirementOutcome] = {}
-    for definition in definitions:
-        if not external_lookup[definition.id]:
-            continue
-        outcome = external_dependency_outcome(
-            runtime=rt,
-            definition=definition,
-            plan=plan_for_dependency(definition.id),
-        )
-        component_timings_ms[definition.id] = 0.0
-        rt._emit(
-            "requirements.external",
-            project=context.name,
-            requirement=definition.id,
-            success=outcome.success,
-            url=external_dependency_url(rt, definition.id),
-            error=outcome.error,
-        )
-        rt._emit(
-            "requirements.timing.component",
-            project=context.name,
-            requirement=definition.id,
-            duration_ms=0.0,
-            enabled=True,
-            success=bool(getattr(outcome, "success", False)),
-            retries=0,
-            final_port=getattr(outcome, "final_port", None),
-            failure_class=str(getattr(outcome, "failure_class", "")),
-        )
-        outcomes[definition.id] = outcome
-    for definition in definitions:
-        if definition.id in outcomes:
-            continue
-        if definition.id in pending_requirements:
-            continue
-        outcome = rt._skipped_requirement(definition.id, plan_for_dependency(definition.id))
-        component_timings_ms[definition.id] = 0.0
-        rt._emit(
-            "requirements.timing.component",
-            project=context.name,
-            requirement=definition.id,
-            duration_ms=0.0,
-            enabled=False,
-            success=bool(getattr(outcome, "success", False)),
-            retries=int(getattr(outcome, "retries", 0)),
-            final_port=getattr(outcome, "final_port", None),
-            failure_class=str(getattr(outcome, "failure_class", "")),
-        )
-        outcomes[definition.id] = outcome
-    parallel_enabled = requirements_parallel_enabled(
+    return _start_requirements_for_project_impl(
         orchestrator,
+        context,
+        mode=mode,
         route=route,
-        enabled_count=len(enabled_definitions),
-    )
-    raw_workers = rt.env.get("ENVCTL_REQUIREMENTS_PARALLEL_MAX") or rt.config.raw.get(
-        "ENVCTL_REQUIREMENTS_PARALLEL_MAX"
-    )
-    worker_limit = max(parse_int(raw_workers, 4), 1)
-    worker_count = min(worker_limit, len(enabled_definitions)) if parallel_enabled else 1
-    rt._emit(
-        "requirements.execution",
-        project=context.name,
-        mode="parallel" if parallel_enabled and worker_count > 1 else "sequential",
-        workers=worker_count,
-        enabled=sorted(definition.id for definition in enabled_definitions),
-    )
-    if timing_enabled and not suppress_timing_output_fn(route):
-        print(
-            "Requirements execution for "
-            f"{context.name}: "
-            f"{'parallel' if parallel_enabled and worker_count > 1 else 'sequential'} "
-            f"(workers={worker_count})"
-        )
-
-    if parallel_enabled and worker_count > 1:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
-            future_map: dict[concurrent.futures.Future[RequirementOutcome], str] = {}
-            for definition in enabled_definitions:
-                strict = bool(definition.id == "n8n" and rt.config.strict_n8n_bootstrap)
-                future = executor.submit(
-                    run_component, definition.id, plan_for_dependency(definition.id), strict=strict
-                )
-                future_map[future] = definition.id
-            for future in concurrent.futures.as_completed(future_map):
-                definition_id = future_map[future]
-                outcomes[definition_id] = future.result()
-    else:
-        for definition in enabled_definitions:
-            strict = bool(definition.id == "n8n" and rt.config.strict_n8n_bootstrap)
-            outcomes[definition.id] = run_component(definition.id, plan_for_dependency(definition.id), strict=strict)
-
-    for outcome in outcomes.values():
-        if not outcome.success:
-            failures.append(f"{outcome.service_name}:{outcome.failure_class}:{outcome.error}")
-
-    health = "healthy" if not failures else "degraded"
-    total_duration_ms = round((time.monotonic() - requirements_started) * 1000.0, 2)
-    rt._emit(
-        "requirements.timing.summary",
-        project=context.name,
-        duration_ms=total_duration_ms,
-        components=component_timings_ms,
-        failures=len(failures),
-    )
-    if timing_enabled and not suppress_timing_output_fn(route):
-        component_parts = " ".join(
-            f"{name}={component_timings_ms.get(name, 0.0):.1f}ms"
-            for name in (definition.id for definition in definitions)
-        )
-        print(f"Requirements timing for {context.name}: {component_parts} total={total_duration_ms:.1f}ms")
-    components: dict[str, dict[str, object]] = {}
-    for definition in definitions:
-        outcome = outcomes[definition.id]
-        resources = (
-            external_dependency_resources(rt, definition)
-            if external_lookup[definition.id]
-            else resources_for_definition(definition, outcome)
-        )
-        components[definition.id] = {
-            "requested": outcome.requested_port,
-            "final": outcome.final_port,
-            "resources": resources,
-            "retries": outcome.retries,
-            "success": outcome.success,
-            "simulated": outcome.simulated,
-            "enabled": enabled_lookup[definition.id],
-            "reason_code": outcome.reason_code,
-            "failure_class": outcome.failure_class.value if getattr(outcome, "failure_class", None) else None,
-            "error": outcome.error,
-            "container_name": outcome.container_name,
-        }
-        if external_lookup[definition.id]:
-            components[definition.id].update(
-                {
-                    "external": True,
-                    "runtime_status": "healthy" if outcome.success else "unreachable",
-                    "external_url": external_dependency_url(rt, definition.id),
-                }
-            )
-    return RequirementsResult(
-        project=context.name,
-        components=components,
-        health=health,
-        failures=failures,
+        report_progress_fn=report_progress_fn,
+        suppress_timing_output_fn=suppress_timing_output_fn,
+        requirements_timing_enabled_fn=requirements_timing_enabled,
     )
 
 

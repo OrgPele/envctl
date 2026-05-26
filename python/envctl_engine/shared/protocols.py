@@ -78,6 +78,10 @@ class PortAllocator(Protocol):
 
 
 class StateRepository(Protocol):
+    runtime_root: Path
+
+    def tree_diffs_dir_path(self, run_id: str | None = None, name: str | None = None) -> Path: ...
+
     def save_run(
         self,
         *,

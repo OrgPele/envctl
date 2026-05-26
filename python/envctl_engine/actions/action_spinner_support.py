@@ -40,7 +40,10 @@ def install_action_spinner_status_bridge(
 
         remove = add_listener(listener)
         if callable(remove):
-            return remove
+            def restore_listener() -> None:
+                remove()
+
+            return restore_listener
         return noop_restore
 
     emit = getattr(runtime_raw, "_emit", None)

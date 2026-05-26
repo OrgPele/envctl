@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, cast
 
 from envctl_engine.runtime.command_router import list_supported_flag_tokens
 from envctl_engine.runtime.runtime_dependency_contract import (
@@ -31,9 +33,9 @@ DEFAULT_REQUIRED_SCOPES: tuple[str, ...] = (
 )
 
 CANONICAL_BOOTSTRAP_COMMANDS: tuple[str, ...] = CANONICAL_CONTRIBUTOR_BOOTSTRAP_COMMANDS
-CANONICAL_VALIDATION_COMMAND_DISPLAY = ".venv/bin/python -m pytest -q"
-CANONICAL_BUILD_COMMAND_DISPLAY = ".venv/bin/python -m build"
-CANONICAL_RELEASE_GATE_COMMAND = ".venv/bin/python scripts/release_shipability_gate.py --repo ."
+CANONICAL_VALIDATION_COMMAND_DISPLAY = "uv run --extra dev pytest -q"
+CANONICAL_BUILD_COMMAND_DISPLAY = "uv run --extra dev python -m build"
+CANONICAL_RELEASE_GATE_COMMAND = "uv run --extra dev python scripts/release_shipability_gate.py --repo ."
 CANONICAL_RELEASE_GATE_WITH_TESTS_COMMAND = f"{CANONICAL_RELEASE_GATE_COMMAND} --check-tests"
 
 
@@ -187,11 +189,11 @@ def canonical_repo_python(repo_root: Path) -> Path:
 
 
 def canonical_validation_command(repo_root: Path) -> list[str]:
-    return [str(canonical_repo_python(repo_root)), "-m", "pytest", "-q"]
+    return ["uv", "run", "--extra", "dev", "pytest", "-q"]
 
 
 def canonical_packaging_command(repo_root: Path) -> list[str]:
-    return [str(canonical_repo_python(repo_root)), "-m", "build"]
+    return ["uv", "run", "--extra", "dev", "python", "-m", "build"]
 
 
 def format_command(args: Sequence[str]) -> str:
@@ -241,9 +243,16 @@ def _runtime_dependency_parity_applicable(repo_root: Path) -> bool:
 
 
 def _runtime_parity_is_complete() -> bool:
-    from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
-
-    return len(PythonEngineRuntime.PARTIAL_COMMANDS) == 0
+    runtime_module = sys.modules.get("envctl_engine.runtime.engine_runtime")
+    runtime_class = getattr(runtime_module, "PythonEngineRuntime", None) if runtime_module is not None else None
+    raw_partial_commands = getattr(runtime_class, "PARTIAL_COMMANDS", ())
+    if isinstance(raw_partial_commands, str):
+        return raw_partial_commands == ""
+    try:
+        partial_commands = tuple(cast(Sequence[object], raw_partial_commands))
+    except TypeError:
+        return False
+    return len(partial_commands) == 0
 
 
 def _manifest_freshness_is_valid(
@@ -365,9 +374,13 @@ def _run_cmd(repo_root: Path, args: Sequence[str], *, shell: bool = False) -> in
 
 
 def _run_cmd_capture(repo_root: Path, args: Sequence[str]) -> CommandExecution:
+    env = dict(os.environ)
+    env.pop("VIRTUAL_ENV", None)
+    env.setdefault("UV_LINK_MODE", "copy")
     completed = subprocess.run(
         list(args),
         cwd=repo_root,
+        env=env,
         text=True,
         capture_output=True,
         check=False,

@@ -30,7 +30,7 @@ Notes:
 - `--dry-run` shows what would be written without mutating anything
 - `envctl install-prompts --help` prints command-specific usage, examples, and Codex guidance
 - this command is intentionally unavailable inside dashboard interactive mode
-- the installed implementation-oriented presets tell agents to append structured work summaries to `.envctl-commit-message.md` and preserve a single `### Envctl pointer ###` marker for default `envctl commit` messages
+- the installed implementation-oriented presets tell agents to prefer inline `envctl ship -m "<message>"` / `envctl commit -m "<message>"` messages and use `.envctl-commit-message.md` only as the fallback default-message ledger with a single `### Envctl pointer ###` marker
 - broad staging during implementation is tolerated by `envctl commit`; envctl-local task/control artifacts stay local and are unstaged before the normal commit is created
 - Codex installs explicit-only skills under `~/.codex/skills/envctl-*` by default; `--with-codex-skills` remains accepted as a compatibility no-op for older scripts
 - envctl-managed `--plan` launches submit the rendered workflow automatically; the `$envctl-*` skill names are for direct manual Codex/OMX use
@@ -102,7 +102,7 @@ ENVCTL_PLAN_AGENT_CLI=codex
 ENVCTL_PLAN_AGENT_PRESET=implement_task
 ENVCTL_PLAN_AGENT_CODEX_CYCLES=2
 ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true
-ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true
+ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false
 ```
 
 Shorthand aliases:
@@ -135,20 +135,21 @@ Superset project or workspace config selects the Superset transport unless `ENVC
 
 Codex TUI cycle mode:
 
-- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, which queues an `envctl ship` handoff follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
+- default/unset behavior is `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2`, which queues an `envctl ship` handoff follow-up after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E, and any explicitly enabled PR review-comments follow-up
 - `CYCLES=<n>` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` submits the single implementation prompt and queues enabled browser-E2E and PR review-comments follow-ups for Codex/OMX surfaces
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues an `envctl ship` handoff after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E and PR review-comments follow-ups
-- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` is the maximum: it keeps that first `ship` handoff, uses `ship`-first follow-ups in the middle, and reserves `finalize_task` plus enabled browser-E2E and PR review-comments follow-ups for the last round
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=0` submits the single implementation prompt and queues enabled browser-E2E plus any explicitly enabled PR review-comments follow-up for Codex/OMX surfaces
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=1` queues `implement_task`, `finalize_task`, enabled browser-E2E, and any explicitly enabled PR review-comments follow-up
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=2` queues an `envctl ship` handoff after the first pass, then `continue_task`, `implement_task`, `finalize_task`, enabled browser-E2E, and any explicitly enabled PR review-comments follow-up
+- `ENVCTL_PLAN_AGENT_CODEX_CYCLES=3` is the maximum: it keeps that first `ship` handoff, uses `ship`-first follow-ups in the middle, and reserves `finalize_task` plus enabled browser-E2E and any explicitly enabled PR review-comments follow-up for the last round
 - OpenCode keeps the existing one-shot flow even when the cycle count is set
 - Superset keeps a one-shot Codex prompt even when the cycle count is set
 - create-plan prompts and lower-level runtime parsing use the same `0` through `3` scale; values above `3` are bounded to `3`, and `3` is reserved for genuinely complex work
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` disables the `$browser` E2E follow-up when browser validation is not applicable
-- `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false` disables the final PR review-comments follow-up when comment handling is manual
+- `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` opts in to the final PR review-comments follow-up when comment handling should run as a dedicated pass
 - canonical `ENVCTL_PLAN_AGENT_*` values win if both canonical and shorthand env vars are set
 - `CYCLES` does not enable plan-agent launch by itself; use `--cmux`, `CMUX=true`, `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE=true`, or a cmux workspace override to enable launch
 - envctl only appends messages in this mode; Codex still runs `envctl ship` or the fallback commit, push, and PR flow itself
+- when `ship` is delegated to a real background/subagent lane, successful completion is silent; the worker reports back only for commit/push/PR failures, merge conflicts, failed checks, pending timeouts, no-checks-reported status, or actionable review comments
 
 Then run:
 

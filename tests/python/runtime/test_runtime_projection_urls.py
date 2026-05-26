@@ -204,6 +204,27 @@ class RuntimeProjectionUrlsTests(unittest.TestCase):
         self.assertEqual(service["public_url"], "http://127.0.0.1:8019")
         self.assertEqual(runtime_map["service_to_public_url"]["Main Voice Runtime"], "http://127.0.0.1:8019")
 
+    def test_runtime_map_derives_project_name_from_shared_service_display_name(self) -> None:
+        state = RunState(
+            run_id="run-7c",
+            mode="main",
+            services={
+                "Tree Alpha Voice Runtime": ServiceRecord(
+                    name="Tree Alpha Voice Runtime",
+                    type="voice_runtime",
+                    cwd="/tmp/tree-alpha/voice-runtime",
+                    requested_port=8010,
+                    actual_port=8010,
+                    status="running",
+                ),
+            },
+        )
+
+        runtime_map = build_runtime_map(state)
+
+        self.assertIn("Tree Alpha", runtime_map["projects"])
+        self.assertNotIn("Tree Alpha Voice", runtime_map["projects"])
+
     def test_runtime_map_exposes_generic_project_service_projection(self) -> None:
         state = RunState(
             run_id="run-7",
