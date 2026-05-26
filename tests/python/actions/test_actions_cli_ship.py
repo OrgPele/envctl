@@ -136,9 +136,15 @@ class ActionsCliShipTests(unittest.TestCase):
                     return "abc123\n"
                 return ""
 
+            def fake_run_git(_git_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+                if args == ["rev-parse", "--verify", "@{u}"]:
+                    return subprocess.CompletedProcess(args, 0, stdout="abc123\n", stderr="")
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
             with (
                 patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/gh"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
                 patch("envctl_engine.actions.project_action_domain.run_commit_action", return_value=0) as commit_action,
                 patch("envctl_engine.actions.project_action_domain.run_pr_action", return_value=0) as pr_action,
                 patch(

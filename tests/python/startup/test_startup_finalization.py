@@ -411,6 +411,28 @@ class StartupFinalizationTests(unittest.TestCase):
         self.assertIn("  error: missing_service_start_command: backend", text)
         self.assertIn("  next: configure ENVCTL_BACKEND_START_CMD / ENVCTL_FRONTEND_START_CMD", text)
 
+    def test_headless_plan_session_summary_includes_no_system_continuation_warning(self) -> None:
+        session = _session(contexts=[])
+        session.plan_agent_attach_target = SimpleNamespace(
+            attach_command=("tmux", "attach", "-t", "envctl-plan"),
+            new_session_command=(),
+            session_name="envctl-plan",
+        )
+        session.warnings.append(
+            "No local app system is configured for this repo/worktree; envctl is continuing "
+            "with the implementation session only. --entire-system was honored, but there was "
+            "nothing configured to start."
+        )
+
+        lines = headless_plan_session_summary_lines(session)
+
+        rendered = "\n".join(lines)
+        self.assertIn("No local app system is configured for this repo/worktree", rendered)
+        self.assertIn("continuing with the implementation session only", rendered)
+        self.assertIn("--entire-system was honored", rendered)
+        self.assertNotIn("local app startup failed", rendered)
+        self.assertNotIn("missing_service_start_command", rendered)
+
     def test_render_plan_agent_degraded_handoff_for_terminal_prints_rendered_text(self) -> None:
         session = _session(contexts=[])
         session.plan_agent_attach_target = SimpleNamespace(

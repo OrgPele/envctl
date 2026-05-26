@@ -3,9 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import inspect
 from pathlib import Path
+import shlex
 import subprocess
 from typing import Any, Callable, Mapping
 
+from envctl_engine.actions.action_ship_contract import ship_action_payload
 from envctl_engine.actions.action_target_support import ActionCommandResolution
 from envctl_engine.actions.project_action_report_support import ship_action_status_message
 from envctl_engine.runtime.command_router import Route
@@ -100,7 +102,7 @@ class ProjectActionRunner:
             on_failure=self.failure_handler,
             success_print_formatter=self.success_print_message if self.command_name == "ship" else None,
             success_status_formatter=self.success_status_message if self.command_name == "ship" else None,
-            print_noninteractive_failures=not (self.command_name == "ship" and self.stream_action_output),
+            print_noninteractive_failures=True,
         )
 
     def resolve_command(self, context: object) -> ActionCommandResolution:
@@ -151,17 +153,23 @@ class ProjectActionRunner:
                 command,
                 **stream_kwargs,
             )
-            return subprocess.CompletedProcess(
-                args=command,
-                returncode=completed.returncode,
-                stdout=self._streamed_stdout(completed),
-                stderr=str(getattr(completed, "stderr", "") or ""),
+            return self._with_actionable_ship_failure(
+                command,
+                subprocess.CompletedProcess(
+                    args=command,
+                    returncode=completed.returncode,
+                    stdout=self._streamed_stdout(completed),
+                    stderr=str(getattr(completed, "stderr", "") or ""),
+                ),
             )
-        return process_runtime.run(
+        return self._with_actionable_ship_failure(
             command,
-            cwd=cwd,
-            env=dict(env),
-            timeout=300.0,
+            process_runtime.run(
+                command,
+                cwd=cwd,
+                env=dict(env),
+                timeout=300.0,
+            ),
         )
 
     def success_print_message(self, context: object, completed: Any) -> str:
@@ -196,6 +204,44 @@ class ProjectActionRunner:
         if self.command_name == "review" and int(getattr(completed, "returncode", 1) or 0) == 0:
             return ""
         return stdout
+
+    def _with_actionable_ship_failure(
+        self,
+        command: list[str],
+        completed: subprocess.CompletedProcess[str],
+    ) -> subprocess.CompletedProcess[str]:
+        if self.command_name != "ship" or int(getattr(completed, "returncode", 0) or 0) == 0:
+            return completed
+        stdout = str(getattr(completed, "stdout", "") or "")
+        stderr = str(getattr(completed, "stderr", "") or "")
+        if ship_action_payload(stdout) or ship_action_payload(stderr):
+            return completed
+        return subprocess.CompletedProcess(
+            args=completed.args,
+            returncode=completed.returncode,
+            stdout=stdout,
+            stderr=_ship_subprocess_failure_diagnostic(command, completed.returncode, stdout, stderr),
+        )
+
+
+def _ship_subprocess_failure_diagnostic(
+    command: list[str],
+    returncode: int,
+    stdout: str,
+    stderr: str,
+) -> str:
+    rendered_command = shlex.join(command)
+    stdout_block = stdout.strip() or "<empty>"
+    stderr_block = stderr.strip() or "<empty>"
+    return (
+        "ship subprocess failed without envctl.ship.v1 JSON\n"
+        f"command: {rendered_command}\n"
+        f"exit code: {returncode}\n"
+        f"stdout: {stdout_block}\n"
+        f"stderr: {stderr_block}\n"
+        "Fallback: rerun `envctl ship --json` from the target worktree; "
+        "if it still fails before JSON output, inspect the printed stdout/stderr and rerun with uv from the repo."
+    )
 
 
 def _callable_accepts_keyword(callback: Callable[..., object], keyword: str) -> bool:

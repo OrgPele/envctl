@@ -14,6 +14,7 @@ from envctl_engine.runtime.runtime_context import resolve_process_runtime
 class CurrentWorktreeTargetResolver:
     runtime: Any
     require_configured_main_root: bool
+    require_configured_root_match: bool
     current_cwd: Callable[[], Path]
     discover_tree_projects: Callable[[Path, str], list[tuple[str, Path]]]
     main_repo_root_for_linked_worktree: Callable[[Path], Path | None]
@@ -61,7 +62,16 @@ class CurrentWorktreeTargetResolver:
             return repo_root
 
         resolver = self.git_main_repo_root_for_worktree or main_repo_root_for_worktree
-        return resolver(worktree_root=cwd, runtime=self.runtime, trees_dir_name=trees_dir_name)
+        repo_root = resolver(worktree_root=cwd, runtime=self.runtime, trees_dir_name=trees_dir_name)
+        if repo_root is None:
+            return None
+        if (
+            self.require_configured_root_match
+            and configured_root_path is not None
+            and repo_root.resolve() != configured_root_path
+        ):
+            return None
+        return repo_root
 
     def _matching_candidates(self, cwd: Path, *, repo_root: Path, trees_dir_name: str) -> list[object]:
         candidates = [
@@ -79,6 +89,7 @@ def resolve_current_worktree_target(
     *,
     runtime: Any,
     require_configured_main_root: bool = False,
+    require_configured_root_match: bool = False,
     current_cwd: Callable[[], Path] = Path.cwd,
     discover_tree_projects_fn: Callable[[Path, str], list[tuple[str, Path]]] = discover_tree_projects,
     main_repo_root_for_linked_worktree_fn: Callable[[Path], Path | None] = main_repo_root_for_linked_worktree,
@@ -87,6 +98,7 @@ def resolve_current_worktree_target(
     return CurrentWorktreeTargetResolver(
         runtime=runtime,
         require_configured_main_root=require_configured_main_root,
+        require_configured_root_match=require_configured_root_match,
         current_cwd=current_cwd,
         discover_tree_projects=discover_tree_projects_fn,
         main_repo_root_for_linked_worktree=main_repo_root_for_linked_worktree_fn,

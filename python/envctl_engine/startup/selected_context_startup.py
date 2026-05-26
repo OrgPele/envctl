@@ -26,6 +26,9 @@ def record_project_startup(
     session.requirements_by_project[context.name] = result.requirements
     session.services_by_project[context.name] = result.services
     session.started_context_names.append(context.name)
+    for warning in result.warnings:
+        if "No local app system is configured" in warning:
+            session.warnings.append(warning)
 
 
 def start_selected_contexts(

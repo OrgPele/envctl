@@ -352,6 +352,10 @@ envctl kill --backend --headless     # alias for stop --backend
 envctl kill-all --headless           # alias for stop-all
 ```
 
+For AI plan-agent launches, `--entire-system` starts configured or autodetected local app services. In a repo/worktree
+with no explicit backend, frontend, or additional-service configuration and no supported autodetectable app layout,
+envctl reports that no local app system is configured and continues without app services; the AI session still launches.
+
 Review branch-relative changes:
 
 ```bash

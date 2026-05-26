@@ -87,6 +87,29 @@ class ActionTargetSupportTests(unittest.TestCase):
         self.assertEqual(selected, [target])
         self.assertIsNone(error)
 
+    def test_resolve_action_targets_prefers_current_worktree_for_tree_mode_action_commands(self) -> None:
+        current = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
+        other = _Target(name="feature-b-1", root="/tmp/repo/trees/feature-b/1")
+        runtime = SimpleNamespace(
+            discover_projects=lambda mode: [current, other] if mode == "trees" else [],
+            selectors_from_passthrough=lambda _args: [],
+        )
+        route = parse_route(["test-focused"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        calls: list[dict[str, object]] = []
+
+        selected, error = resolve_action_targets(
+            runtime=runtime,
+            route=route,
+            trees_only=False,
+            resolve_current_worktree_target=lambda **kwargs: calls.append(kwargs) or current,
+            interactive_selection_allowed=lambda _route: False,
+            no_target_selected_message=lambda _route: "no target",
+        )
+
+        self.assertEqual(selected, [current])
+        self.assertIsNone(error)
+        self.assertEqual(calls, [{"require_configured_main_root": False, "require_configured_root_match": True}])
+
     def test_resolve_action_targets_applies_interactive_selection(self) -> None:
         target_a = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
         target_b = _Target(name="feature-b-1", root="/tmp/repo/trees/feature-b/1")

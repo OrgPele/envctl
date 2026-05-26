@@ -146,6 +146,8 @@ def _commit_status(*, status: str, committed: bool) -> str:
 
 
 def _push_status(*, status: str, committed: bool, pushed: bool) -> str:
+    if status == "push_failed":
+        return "failed"
     if status == "commit_failed":
         if pushed:
             return "success"
@@ -172,7 +174,7 @@ def _pr_status(*, status: str, pr_url: str, pr_created: bool) -> str:
 def _merge_conflict_status(*, status: str, merge_conflicts: Mapping[str, object] | None) -> str:
     if status == "merge_conflicts" or dict(merge_conflicts or {}).get("state") == "conflicts":
         return "conflicts"
-    if status in {"git_unavailable", "detached_head", "commit_failed", "pr_failed", "pr_unresolved"}:
+    if status in {"git_unavailable", "detached_head", "commit_failed", "push_failed", "pr_failed", "pr_unresolved"}:
         return "not_checked"
     return "none"
 
