@@ -10,6 +10,7 @@ from envctl_engine.actions.action_test_command_support import ConfiguredTestSpec
 from envctl_engine.actions.action_test_command_support import ActionTestExecutionSpecBuilder
 from envctl_engine.actions.action_test_command_support import SharedTestCommandPlanner
 from envctl_engine.actions.action_test_command_support import build_test_execution_specs
+from envctl_engine.actions.action_test_command_support import is_legacy_tree_test_script
 from envctl_engine.actions.action_test_command_support import normalize_backend_python_test_command
 from envctl_engine.actions.action_test_support_models import TestTargetContext as TargetContext
 
@@ -57,6 +58,12 @@ class ActionTestCommandSupportTests(unittest.TestCase):
         self.assertEqual(specs[0].spec.cwd, repo)
         self.assertEqual(specs[0].args, ["projects=feature-a-1", "untested=true"])
 
+    def test_legacy_tree_script_detection_accepts_absolute_bash_path(self) -> None:
+        self.assertTrue(is_legacy_tree_test_script(["bash", "scripts/test-all-trees.sh"]))
+        self.assertTrue(is_legacy_tree_test_script(["/bin/bash", "/repo/scripts/test-all-trees.sh"]))
+        self.assertFalse(is_legacy_tree_test_script(["zsh", "/repo/scripts/test-all-trees.sh"]))
+        self.assertFalse(is_legacy_tree_test_script(["/bin/bash", "/repo/scripts/test-one-tree.sh"]))
+
     def test_shared_frontend_package_command_normalizes_target_and_all_target_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -90,6 +97,76 @@ class ActionTestCommandSupportTests(unittest.TestCase):
         self.assertEqual(specs[0].spec.cwd, frontend)
         self.assertEqual(specs[0].spec.command, ["pnpm", "run", "test", "--", "src"])
         self.assertEqual(specs[0].spec.source, "frontend_package_test")
+
+    def test_package_test_aliases_are_treated_as_frontend_package_test_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            feature = repo / "trees" / "feature-a" / "1"
+            frontend = feature / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text('{"scripts":{"test":"vitest"}}', encoding="utf-8")
+            target = TargetContext(
+                project_name="feature-a-1",
+                project_root=feature,
+                target_obj=SimpleNamespace(name="feature-a-1"),
+            )
+
+            for manager in ("npm", "pnpm", "bun"):
+                with self.subTest(manager=manager):
+                    specs = build_test_execution_specs(
+                        shared_raw_command=f"{manager} test",
+                        backend_raw_command=None,
+                        frontend_raw_command=None,
+                        target_contexts=[target],
+                        repo_root=repo,
+                        include_backend=False,
+                        include_frontend=True,
+                        frontend_test_path="frontend/src/App.test.tsx",
+                        run_all=False,
+                        untested=False,
+                        split_command=lambda raw, _replacements: raw.split(),
+                        replacements_for_target=lambda _target: {},
+                        is_legacy_tree_test_script=lambda _command: False,
+                    )
+
+                    self.assertEqual(len(specs), 1)
+                    self.assertEqual(specs[0].spec.cwd, frontend)
+                    self.assertEqual(specs[0].spec.command, [manager, "test", "--", "src/App.test.tsx"])
+                    self.assertEqual(specs[0].spec.source, "frontend_package_test")
+
+    def test_configured_frontend_path_is_normalized_against_resolved_command_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            feature = repo / "trees" / "feature-a" / "1"
+            frontend = feature / "frontend"
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text('{"scripts":{"test":"vitest"}}', encoding="utf-8")
+            target = TargetContext(
+                project_name="feature-a-1",
+                project_root=feature,
+                target_obj=SimpleNamespace(name="feature-a-1"),
+            )
+            resolver = ConfiguredTestSpecResolver(
+                repo_root=repo,
+                frontend_test_path="frontend/src/App.test.tsx",
+                split_command=lambda raw, _replacements: raw.split(),
+                replacements_for_target=lambda _target: {},
+                normalize_backend_command=lambda command, _root: list(command),
+                default_test_commands=lambda **_kwargs: [],
+            )
+
+            spec = resolver.resolve(
+                raw_command="npm test",
+                target=target,
+                include_backend=False,
+                include_frontend=True,
+                configured_test_command_cwd_fn=lambda project_root: project_root,
+            )
+
+        self.assertIsNotNone(spec)
+        assert spec is not None
+        self.assertEqual(spec.cwd, feature)
+        self.assertEqual(spec.command, ["npm", "test", "--", "frontend/src/App.test.tsx"])
 
     def test_backend_python_normalization_uses_poetry_project_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

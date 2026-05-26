@@ -428,12 +428,24 @@ class StructureLayoutTests(unittest.TestCase):
     def test_action_test_planning_uses_explicit_planner_objects(self) -> None:
         plan_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_plan_support.py"
         service_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_service_support.py"
+        status_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_status_support.py"
+        policy_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_policy_support.py"
+        command_owner = REPO_ROOT / "python" / "envctl_engine" / "actions" / "action_test_command_support.py"
 
         plan_text = plan_owner.read_text(encoding="utf-8")
         service_text = service_owner.read_text(encoding="utf-8")
+        status_text = status_owner.read_text(encoding="utf-8")
+        policy_text = policy_owner.read_text(encoding="utf-8")
+        command_text = command_owner.read_text(encoding="utf-8")
         self.assertIn("class TestExecutionPlanner", plan_text)
-        self.assertIn("class TestStatusRenderer", plan_text)
-        self.assertIn("class TestExecutionPolicy", plan_text)
+        self.assertIn("from envctl_engine.actions.action_test_status_support import", plan_text)
+        self.assertIn("from envctl_engine.actions.action_test_policy_support import", plan_text)
+        self.assertIn("from envctl_engine.actions.action_test_command_support import", plan_text)
+        self.assertNotIn("class TestStatusRenderer", plan_text)
+        self.assertNotIn("class TestExecutionPolicy", plan_text)
+        self.assertIn("class TestStatusRenderer", status_text)
+        self.assertIn("class TestExecutionPolicy", policy_text)
+        self.assertIn("def is_legacy_tree_test_script", command_text)
         self.assertIn("def build(self) -> list[TestExecutionSpec]", plan_text)
         self.assertIn("class AdditionalServiceTestPlanner", service_text)
         self.assertIn("def build(self) -> list[TestExecutionSpec]", service_text)

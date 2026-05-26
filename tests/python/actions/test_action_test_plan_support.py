@@ -6,18 +6,16 @@ from unittest.mock import patch
 import unittest
 
 from envctl_engine.actions import action_test_plan_support
+from envctl_engine.actions import action_test_policy_support
+from envctl_engine.actions import action_test_status_support
+from envctl_engine.actions import action_test_command_support
 from envctl_engine.actions.action_test_plan_support import OrchestratorTestPlanDependencies
 from envctl_engine.actions.action_test_plan_support import RuntimeSplitCommandAdapter
 from envctl_engine.actions.action_test_plan_support import TestExecutionPolicy
 from envctl_engine.actions.action_test_plan_support import TestExecutionPlanner
 from envctl_engine.actions.action_test_plan_support import TestStatusRenderer
 from envctl_engine.actions.action_test_plan_support import build_test_execution_specs_for_route
-from envctl_engine.actions.action_test_plan_support import command_start_status
-from envctl_engine.actions.action_test_plan_support import parallel_test_worker_count, parallel_tests_enabled
-from envctl_engine.actions.action_test_plan_support import render_test_execution_status
-from envctl_engine.actions.action_test_plan_support import render_test_scope_status
 from envctl_engine.actions.action_test_plan_support import run_test_plan_action_for_targets
-from envctl_engine.actions.action_test_plan_support import suite_spinner_policy_enabled
 from envctl_engine.actions.action_test_plan_support import is_legacy_tree_test_script, select_test_services
 from envctl_engine.actions.action_test_support import TestExecutionSpec as ExecutionSpec
 from envctl_engine.actions.action_test_support import TestTargetContext as TargetContext
@@ -28,6 +26,9 @@ from envctl_engine.runtime.command_router import parse_route
 class ActionTestPlanSupportTests(unittest.TestCase):
     def test_orchestrator_test_plan_wiring_uses_named_dependency_adapters(self) -> None:
         source = Path(action_test_plan_support.__file__).read_text(encoding="utf-8")
+        status_source = Path(action_test_status_support.__file__).read_text(encoding="utf-8")
+        policy_source = Path(action_test_policy_support.__file__).read_text(encoding="utf-8")
+        command_source = Path(action_test_command_support.__file__).read_text(encoding="utf-8")
 
         self.assertIn("class OrchestratorTestPlanDependencies", source)
         self.assertEqual(
@@ -38,35 +39,19 @@ class ActionTestPlanSupportTests(unittest.TestCase):
         self.assertTrue(hasattr(action_test_plan_support, "TestExecutionPlanConfiguration"))
         self.assertTrue(hasattr(action_test_plan_support, "TestExecutionPlanDependencies"))
         self.assertIn("class RuntimeSplitCommandAdapter", source)
-        self.assertIn("class TestStatusRenderer", source)
-        self.assertIn("class TestExecutionPolicy", source)
+        self.assertIn("from envctl_engine.actions.action_test_status_support import", source)
+        self.assertIn("from envctl_engine.actions.action_test_policy_support import", source)
+        self.assertIn("from envctl_engine.actions.action_test_command_support import", source)
+        self.assertNotIn("class TestStatusRenderer", source)
+        self.assertNotIn("class TestExecutionPolicy", source)
+        self.assertIn("class TestStatusRenderer", status_source)
+        self.assertIn("class TestExecutionPolicy", policy_source)
+        self.assertIn("def is_legacy_tree_test_script", command_source)
         self.assertNotIn("split_command=lambda", source)
         self.assertTrue(callable(OrchestratorTestPlanDependencies.failed_specs))
         self.assertTrue(callable(RuntimeSplitCommandAdapter.__call__))
         self.assertTrue(callable(TestStatusRenderer.execution_status))
         self.assertTrue(callable(TestExecutionPolicy.parallel_enabled))
-
-    def test_status_rendering_matches_action_command_surface(self) -> None:
-        targets: list[object] = [SimpleNamespace(name="api"), SimpleNamespace(name="web")]
-
-        self.assertEqual(command_start_status("test", targets), "Running test for 2 targets...")
-        self.assertEqual(
-            render_test_scope_status(["api"], run_all=False, untested=False, failed=True),
-            "Rerunning failed tests for api...",
-        )
-        self.assertEqual(
-            render_test_execution_status(["python", "-m", "pytest"], args=[], source="default", cwd=Path("/repo")),
-            "Running pytest suite at tests...",
-        )
-        self.assertEqual(
-            render_test_execution_status(
-                ["bash", "/repo/scripts/test-all-trees.sh"],
-                args=["projects=api,web"],
-                source="default",
-                cwd=Path("/repo"),
-            ),
-            "Running tree test matrix for 2 selected project(s)...",
-        )
 
     def test_run_test_plan_action_for_targets_builds_contexts_and_stops_on_failure(self) -> None:
         orchestrator = SimpleNamespace(runtime=SimpleNamespace(config=SimpleNamespace(base_dir=Path("/repo"))))
@@ -86,69 +71,6 @@ class ActionTestPlanSupportTests(unittest.TestCase):
 
         self.assertEqual(code, 3)
         self.assertEqual(calls, [("api", Path("/repo/trees/api/1"), True, False)])
-
-    def test_test_parallel_policy_uses_flags_env_config_and_legacy_tree_safety(self) -> None:
-        route = parse_route(["test"], env={"ENVCTL_DEFAULT_MODE": "trees"})
-        specs = [
-            ExecutionSpec(
-                index=1,
-                spec=CommandSpec(source="backend_pytest", command=["python", "-m", "pytest"], cwd=Path("/repo")),
-                args=[],
-                resolved_source="default",
-                project_name="Main",
-                project_root=Path("/repo"),
-            ),
-            ExecutionSpec(
-                index=2,
-                spec=CommandSpec(source="frontend_package", command=["npm", "run", "test"], cwd=Path("/repo")),
-                args=[],
-                resolved_source="default",
-                project_name="Main",
-                project_root=Path("/repo"),
-            ),
-        ]
-
-        self.assertTrue(parallel_tests_enabled(route, specs=specs, env={}, config_raw={}))
-        forced_off = parse_route(["test", "--no-test-parallel"], env={"ENVCTL_DEFAULT_MODE": "trees"})
-        self.assertFalse(parallel_tests_enabled(forced_off, specs=specs, env={}, config_raw={}))
-        self.assertFalse(parallel_tests_enabled(route, specs=specs[:1], env={}, config_raw={}))
-        self.assertFalse(parallel_tests_enabled(route, specs=specs, env={"ENVCTL_ACTION_TEST_PARALLEL": "false"}, config_raw={}))
-        self.assertEqual(
-            parallel_test_worker_count(route, specs=specs, env={"ENVCTL_ACTION_TEST_PARALLEL_MAX": "9"}, config_raw={}),
-            2,
-        )
-
-        legacy_specs = [
-            ExecutionSpec(
-                index=1,
-                spec=CommandSpec(
-                    source="configured",
-                    command=["bash", "/repo/scripts/test-all-trees.sh"],
-                    cwd=Path("/repo"),
-                ),
-                args=[],
-                resolved_source="configured",
-                project_name="Main",
-                project_root=Path("/repo"),
-            ),
-            specs[1],
-        ]
-        self.assertFalse(parallel_tests_enabled(route, specs=legacy_specs, env={}, config_raw={}))
-
-    def test_spinner_policy_respects_env_and_spinner_reasons(self) -> None:
-        self.assertEqual(suite_spinner_policy_enabled(SimpleNamespace(reason="enabled"), env={}), (True, "enabled"))
-        self.assertEqual(
-            suite_spinner_policy_enabled(SimpleNamespace(reason="spinner_backend_missing"), env={}),
-            (False, "spinner_backend_missing"),
-        )
-        self.assertEqual(
-            suite_spinner_policy_enabled(SimpleNamespace(reason="non_tty"), env={}),
-            (True, "enabled"),
-        )
-        self.assertEqual(
-            suite_spinner_policy_enabled(SimpleNamespace(reason="enabled"), env={"ENVCTL_UI_SPINNER_MODE": "off"}),
-            (False, "spinner_mode_off"),
-        )
 
     def test_test_service_selection_uses_flags_and_additional_service_names(self) -> None:
         backend_route = parse_route(["test", "--service", "backend"], env={"ENVCTL_DEFAULT_MODE": "trees"})
@@ -261,6 +183,39 @@ class ActionTestPlanSupportTests(unittest.TestCase):
         self.assertEqual(specs[0].spec.command[:2], ["npm", "test"])
         self.assertEqual(specs[0].project_name, "feature-a-1")
         self.assertEqual(specs[0].spec.cwd, Path("/repo/trees/feature-a/1"))
+        self.assertEqual(specs[0].spec.command[-1], "src/App.test.tsx")
+
+    def test_frontend_test_path_env_overrides_configured_defaults(self) -> None:
+        route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        target = SimpleNamespace(name="feature-a-1", root="/repo/trees/feature-a/1")
+        context = TargetContext(project_name="feature-a-1", project_root=Path(target.root), target_obj=target)
+
+        specs = build_test_execution_specs_for_route(
+            route=route,
+            targets=[target],
+            target_contexts=[context],
+            include_backend=False,
+            include_frontend=True,
+            run_all=True,
+            untested=False,
+            env={
+                "ENVCTL_ACTION_TEST_CMD": "npm test",
+                "ENVCTL_FRONTEND_TEST_PATH": "src/env.test.tsx",
+            },
+            config=SimpleNamespace(
+                raw={"ENVCTL_FRONTEND_TEST_PATH": "src/raw.test.tsx"},
+                base_dir=Path("/repo"),
+                frontend_test_path="src/config.test.tsx",
+            ),
+            action_replacements_builder=lambda _targets, target: {"project": target.name},
+            split_command=lambda raw, replacements: raw.split(),
+            failed_spec_builder=lambda **_kwargs: [],
+            additional_service_spec_builder=lambda **_kwargs: [],
+            is_legacy_tree_test_script=lambda _command: False,
+        )
+
+        self.assertEqual(len(specs), 1)
+        self.assertEqual(specs[0].spec.command, ["npm", "test", "--", "src/env.test.tsx"])
 
     def test_test_execution_planner_reuses_route_dependencies_without_argument_sprawl(self) -> None:
         route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
