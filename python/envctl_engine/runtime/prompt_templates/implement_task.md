@@ -46,6 +46,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 
 ## Codex skills and envctl validation helpers
 - When this prompt is installed as a Codex skill or direct prompt, you may use available Codex skills named in the session, including `$browser` for browser validation when it is present. Follow the active AGENTS.md and skill instructions before invoking a skill.
+- Use the fastest appropriate code-intelligence layer instead of ritual searches: use `rg` for exact strings such as flags, env keys, log messages, and docs prose; use Serena for symbol definitions, references, call sites, and semantic edits; use CodeGraphContext (`cgc`) for repo-wide ownership, coupling, impact, hotspot, and dead-code questions. Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl.
 - Resolve the actual envctl project target before project-scoped helpers. Prefer `envctl list-targets --json`, `envctl show-state --json`, or `envctl endpoints --project <candidate> --json`; generated worktree directory names are not always valid project names.
 - Prefer `envctl endpoints --project <actual-project-name> --json` to discover the canonical frontend, backend, and dependency addresses for an already-running target instead of hand-composing URLs.
 - Use `envctl qa-user ensure --project <actual-project-name> --email <email> --password <password> --json` when browser or auth validation needs deterministic local QA credentials.

@@ -21,6 +21,11 @@ _PREFIX_TESTS: tuple[tuple[str, str, str], ...] = (
 
 _PROMPT_PREFIX = "python/envctl_engine/runtime/prompt_templates/"
 _PROMPT_TEST = "tests/python/runtime/test_prompt_install_support_templates.py"
+_DOC_TOOLING_PREFIXES = ("docs/", "README.md", "AGENTS.md", ".serena/")
+_DOC_TOOLING_TESTS = (
+    "tests/python/shared/test_validation_workflow_contract.py "
+    "tests/python/shared/test_serena_config.py"
+)
 
 
 def build_test_plan(
@@ -72,6 +77,15 @@ def build_test_plan(
             confidence="medium",
             reason="contract-affecting script or JSON change",
             files_for_reason=script_matches,
+        )
+
+    docs_matches = [path for path in files if path.startswith(_DOC_TOOLING_PREFIXES)]
+    if docs_matches:
+        add(
+            f"uv run --extra dev pytest -q {_DOC_TOOLING_TESTS}",
+            confidence="medium",
+            reason="documentation or agent tooling contract change",
+            files_for_reason=docs_matches,
         )
 
     ruff_files = [
