@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from envctl_engine.actions.action_command_support import (
     build_action_env,
@@ -12,6 +12,32 @@ from envctl_engine.actions.action_command_support import (
 from envctl_engine.actions.action_target_support import action_target_identity
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_state_repository
+
+
+class BackendEnvContract(Protocol):
+    @property
+    def env(self) -> dict[str, str]: ...
+
+    @property
+    def env_file_path(self) -> Path | None: ...
+
+    @property
+    def env_file_source(self) -> str: ...
+
+    @property
+    def override_requested(self) -> bool: ...
+
+    @property
+    def override_resolution(self) -> str: ...
+
+    @property
+    def override_authoritative(self) -> bool: ...
+
+    @property
+    def scrubbed_keys(self) -> Sequence[str]: ...
+
+    @property
+    def projected_keys(self) -> Sequence[str]: ...
 
 
 def action_replacements(
@@ -41,12 +67,12 @@ def action_env(
     state = runtime.load_existing_state(mode=route_mode) if isinstance(route_mode, str) else None
     run_id = getattr(state, "run_id", None)
     state_repository = resolve_state_repository(runtime)
-    tree_diffs_root = state_repository.tree_diffs_dir_path(run_id)  # type: ignore[attr-defined]
+    tree_diffs_root = state_repository.tree_diffs_dir_path(run_id)
     return build_action_env(
         process_env=os.environ if process_env is None else process_env,
         runtime_env=runtime.env,
         repo_root=runtime.config.base_dir,
-        runtime_root=state_repository.runtime_root,  # type: ignore[attr-defined]
+        runtime_root=state_repository.runtime_root,
         run_id=run_id,
         tree_diffs_root=tree_diffs_root,
         command_name=command_name,
@@ -112,7 +138,7 @@ def migrate_action_env(
     requirements_for_target: Callable[..., object | None],
     project_context_builder: Callable[..., object],
     contract_context_builder: Callable[..., object],
-    resolve_backend_env_contract: Callable[..., object],
+    resolve_backend_env_contract: Callable[..., BackendEnvContract],
     extra: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     env = base_env_builder(

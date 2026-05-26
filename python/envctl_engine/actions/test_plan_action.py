@@ -128,21 +128,23 @@ def run_test_plan_action(context: object, *, json_output: bool = False, dry_run:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         if not dry_run:
-            for result in payload.get("run", {}).get("results", []):
+            run_result = payload.get("run")
+            result_items = run_result.get("results") if isinstance(run_result, Mapping) else None
+            if not isinstance(result_items, list):
+                result_items = []
+            for result in result_items:
                 if isinstance(result, Mapping):
                     print(f"{result.get('status', 'unknown')}: {result.get('command', '')}")
         else:
-            for command in payload["commands"]:
-                if isinstance(command, Mapping):
-                    print(command.get("command", ""))
+            for command in _command_items(payload):
+                print(command.get("command", ""))
     return exit_code
 
 
 def _run_plan_commands(payload: Mapping[str, object], *, cwd: Path) -> tuple[dict[str, object], int]:
     commands = [
         str(item.get("command") or "").strip()
-        for item in payload.get("commands", [])
-        if isinstance(item, Mapping)
+        for item in _command_items(payload)
     ]
     results: list[dict[str, object]] = []
     exit_code = 0
@@ -174,6 +176,13 @@ def _run_plan_commands(payload: Mapping[str, object], *, cwd: Path) -> tuple[dic
         "results": results,
         "skipped_commands": [],
     }, exit_code
+
+
+def _command_items(payload: Mapping[str, object]) -> list[Mapping[str, object]]:
+    commands = payload.get("commands")
+    if not isinstance(commands, list):
+        return []
+    return [item for item in commands if isinstance(item, Mapping)]
 
 
 def _collect_changed_files(project_root: Path) -> tuple[str, ...]:

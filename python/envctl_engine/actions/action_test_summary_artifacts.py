@@ -5,10 +5,11 @@ from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Callable, ClassVar
+from typing import Any, Callable, ClassVar, Protocol
 
 from envctl_engine.shared.artifact_names import project_artifact_dir
 from envctl_engine.actions.action_target_support import action_target_identities
+from envctl_engine.actions.action_test_manifest_support import load_failed_test_manifest
 from envctl_engine.actions.action_test_summary_collection import (
     collect_failed_test_manifest_entries,
     collect_failed_tests,
@@ -17,7 +18,6 @@ from envctl_engine.actions.action_test_summary_collection import (
 )
 from envctl_engine.actions.action_test_summary_formatting import format_summary_error_lines
 from envctl_engine.actions.action_test_summary_git import default_git_state_components
-from envctl_engine.actions.action_test_support import load_failed_test_manifest
 from envctl_engine.runtime.runtime_context import save_resume_state, test_results_dir_path
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.test_output.failure_summary import extract_failure_summary_excerpt
@@ -30,11 +30,22 @@ def short_failed_summary_path(*, run_dir: Path, project_name: str) -> Path:
     return run_root / f"ft_{digest}.txt"
 
 
+class TestSummaryRuntime(Protocol):
+    def load_existing_state(self, mode: object | None = None) -> object | None: ...
+
+    def emit(self, event: str, **payload: object) -> None: ...
+
+
+class TestSummaryOrchestrator(Protocol):
+    @property
+    def runtime(self) -> TestSummaryRuntime: ...
+
+
 @dataclass(frozen=True, slots=True)
 class TestSummaryArtifactPersistor:
     __test__: ClassVar[bool] = False
 
-    runtime: object
+    runtime: TestSummaryRuntime
     route: object
     targets: list[object]
     outcomes: list[dict[str, object]]
@@ -50,7 +61,7 @@ class TestSummaryArtifactPersistor:
         if not project_roots:
             return {}
 
-        state = self.runtime.load_existing_state(mode=getattr(self.route, "mode", None))  # type: ignore[attr-defined]
+        state = self.runtime.load_existing_state(mode=getattr(self.route, "mode", None))
         if state is None:
             return {}
 
@@ -113,7 +124,7 @@ class TestSummaryArtifactPersistor:
             state=state,
             runtime_map_builder=self.runtime_map_builder,
         )
-        self.runtime.emit(  # type: ignore[attr-defined]
+        self.runtime.emit(
             "test.summary.persisted",
             mode=getattr(self.route, "mode", None),
             projects=sorted(summaries),
@@ -123,7 +134,7 @@ class TestSummaryArtifactPersistor:
 
 def persist_test_summary_artifacts(
     *,
-    runtime: object,
+    runtime: TestSummaryRuntime,
     route: object,
     targets: list[object],
     outcomes: list[dict[str, object]],
@@ -392,19 +403,19 @@ def write_failed_tests_summary(
 
 
 def persist_test_summary_artifacts_for_orchestrator(
-    orchestrator: object,
+    orchestrator: TestSummaryOrchestrator,
     *,
     route: object,
     targets: list[object],
     outcomes: list[dict[str, object]],
 ) -> dict[str, dict[str, object]]:
     return persist_test_summary_artifacts(
-        runtime=orchestrator.runtime,  # type: ignore[attr-defined]
+        runtime=orchestrator.runtime,
         route=route,
         targets=targets,
         outcomes=outcomes,
         new_test_results_run_dir=lambda _runtime, run_id: new_test_results_run_dir_path(
-            orchestrator.runtime,  # type: ignore[attr-defined]
+            orchestrator.runtime,
             run_id,
         ),
         write_failed_tests_summary_fn=lambda **kwargs: write_failed_tests_summary_for_orchestrator(
@@ -424,9 +435,7 @@ def write_failed_tests_summary_for_orchestrator(
     outcomes: list[dict[str, object]],
     previous_entry: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    from envctl_engine.actions import action_test_summary_support
-
-    return action_test_summary_support.write_failed_tests_summary(
+    return write_failed_tests_summary(
         run_dir=run_dir,
         project_name=project_name,
         project_root=project_root,
