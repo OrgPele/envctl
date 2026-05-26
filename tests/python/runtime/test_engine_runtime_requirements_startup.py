@@ -729,6 +729,59 @@ class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
             self.assertEqual(skipped_events[-1].get("requested_scope"), "entire-system")
             self.assertEqual(skipped_events[-1].get("selected_default_services"), ["backend", "frontend"])
 
+    def test_entire_system_starts_autodetectable_app_services_instead_of_no_system_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            worktree = repo / "trees" / "feature-a" / "1"
+            backend = worktree / "backend"
+            frontend = worktree / "frontend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend / "app").mkdir(parents=True, exist_ok=True)
+            (backend / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (backend / "pyproject.toml").write_text("[project]\nname='demo-backend'\n", encoding="utf-8")
+            (backend / "app" / "main.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
+            (backend / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            frontend.mkdir(parents=True, exist_ok=True)
+            (frontend / "package.json").write_text(
+                '{"name":"demo-frontend","scripts":{"dev":"vite --host"}}',
+                encoding="utf-8",
+            )
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine._command_exists = lambda _command: True  # type: ignore[method-assign]
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 0)
+            self.assertNotIn("No local app system is configured", rendered)
+            self.assertNotIn("missing_service_start_command", rendered)
+            no_system_skips = [
+                event
+                for event in engine.events
+                if event.get("event") == "service.attach.skipped" and event.get("reason") == "no_system_configured"
+            ]
+            self.assertEqual(no_system_skips, [])
+            self.assertGreaterEqual(len(fake_runner.start_background_calls), 2)
+            launched_cwds = {Path(cwd).resolve() for _cmd, cwd in fake_runner.start_background_calls}
+            self.assertIn(backend.resolve(), launched_cwds)
+            self.assertIn(frontend.resolve(), launched_cwds)
+
     def test_entire_system_keeps_missing_command_failure_for_explicit_app_enablement(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
