@@ -337,7 +337,7 @@ envctl --frontend --headless         # dependencies + frontend service only
 envctl --fullstack --headless        # dependencies + backend + frontend
 envctl --both --headless             # alias for --fullstack
 envctl --dependencies --headless     # dependencies only; no app services
-envctl --entire-system --headless    # dependencies + all configured app services
+envctl --entire-system --headless    # dependencies + configured/autodetected app services
 envctl --trees --only-backend         # worktree backend only; skip frontend and dependencies
 envctl --trees --no-deps             # worktree app services only; skip managed dependencies/prep
 envctl --trees --no-infra            # worktree state/AI only; skip backend, frontend, and dependencies
@@ -351,6 +351,8 @@ envctl stop --entire-system --headless
 envctl kill --backend --headless     # alias for stop --backend
 envctl kill-all --headless           # alias for stop-all
 ```
+
+When `--entire-system` is used in a repo with no explicit backend/frontend commands, no explicit app service config, and no autodetectable backend/frontend layout, envctl continues without app services and reports that no local app system is configured. This is different from a broken explicit service configuration, which still fails with actionable command-resolution guidance.
 
 Review branch-relative changes:
 

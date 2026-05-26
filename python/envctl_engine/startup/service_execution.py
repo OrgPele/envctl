@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import time
 
+from envctl_engine.runtime.command_resolution import suggest_service_start_command
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_process_runtime
 from envctl_engine.startup.startup_selection_support import _restart_service_types_for_project
@@ -190,6 +191,33 @@ def start_project_services(
             mode=effective_mode,
             reason="all_services_disabled",
         )
+        return {}
+
+    if _no_local_app_system_configured(
+        rt,
+        command=str(route.command or "") if route is not None else "",
+        mode=effective_mode,
+        project_root=context.root,
+        requested_scope=str(route.flags.get("runtime_scope") or "") if route is not None else "",
+        selected_service_types=selected_service_types,
+        configured_additional_services=configured_additional_services,
+    ):
+        requested_scope = str(route.flags.get("runtime_scope") or "") if route is not None else ""
+        rt._emit(
+            "service.attach.skipped",
+            project=context.name,
+            mode=effective_mode,
+            reason="no_system_configured",
+            requested_scope=requested_scope or None,
+            selected_service_types=sorted(selected_service_types),
+        )
+        warning = (
+            "No local app system is configured for this repo/worktree; envctl is continuing without local "
+            "app services. --entire-system was honored, but there was nothing configured to start."
+        )
+        record_warning = getattr(rt, "_record_project_startup_warning", None)
+        if callable(record_warning):
+            record_warning(context.name, warning)
         return {}
 
     service_started = time.monotonic()
@@ -841,3 +869,110 @@ def start_project_services(
     )
     _ = backend_command_source, frontend_command_source, launched_runtimes
     return records
+
+
+def _no_local_app_system_configured(
+    rt: object,
+    *,
+    command: str,
+    mode: str,
+    project_root: Path,
+    requested_scope: str,
+    selected_service_types: set[str],
+    configured_additional_services: tuple[object, ...],
+) -> bool:
+    if str(command).strip().lower() != "plan":
+        return False
+    normalized_scope = str(requested_scope).strip().lower()
+    if normalized_scope and normalized_scope != "entire-system":
+        return False
+    if not selected_service_types:
+        return False
+    if not selected_service_types <= {"backend", "frontend"}:
+        return False
+    if configured_additional_services:
+        return False
+    config = getattr(rt, "config", None)
+    if config is None:
+        return False
+    if _has_explicit_local_app_system_signal(config, mode=mode):
+        return False
+    env = getattr(rt, "env", None)
+    if isinstance(env, dict) and _has_explicit_local_app_system_env_signal(env, mode=mode):
+        return False
+    command_exists = getattr(rt, "_command_exists", None)
+    command_exists_fn = (lambda command: bool(command_exists(command))) if callable(command_exists) else None
+    for service_name in sorted(selected_service_types):
+        if suggest_service_start_command(
+            service_name=service_name,
+            project_root=project_root,
+            command_exists=command_exists_fn,
+        ):
+            return False
+    return True
+
+
+def _has_explicit_local_app_system_signal(config: object, *, mode: str) -> bool:
+    explicit_keys = {str(key).strip().upper() for key in getattr(config, "explicit_keys", ())}
+    normalized_mode = str(mode).strip().upper() or "MAIN"
+    explicit_start_commands = (
+        ("ENVCTL_BACKEND_START_CMD", "backend_start_cmd"),
+        ("ENVCTL_FRONTEND_START_CMD", "frontend_start_cmd"),
+    )
+    for key, attr in explicit_start_commands:
+        if key in explicit_keys and str(getattr(config, attr, "") or "").strip():
+            return True
+    explicit_app_dirs = (
+        ("BACKEND_DIR", "backend_dir_name"),
+        ("FRONTEND_DIR", "frontend_dir_name"),
+    )
+    for key, attr in explicit_app_dirs:
+        if key not in explicit_keys:
+            continue
+        value = str(getattr(config, attr, "") or "").strip()
+        if value and value != ".":
+            return True
+    explicit_startup_keys = {
+        f"{normalized_mode}_STARTUP_ENABLE",
+        f"{normalized_mode}_BACKEND_ENABLE",
+        f"{normalized_mode}_FRONTEND_ENABLE",
+    }
+    if explicit_keys & explicit_startup_keys:
+        return True
+    for section_map_attr in ("service_dependency_env_section_present", "mode_service_dependency_env_section_present"):
+        section_map = getattr(config, section_map_attr, None)
+        if not isinstance(section_map, dict):
+            continue
+        for key, present in section_map.items():
+            if not present:
+                continue
+            if isinstance(key, tuple):
+                if len(key) >= 2 and str(key[0]).strip().lower() == normalized_mode.lower() and str(
+                    key[1]
+                ).strip().lower() in {"backend", "frontend"}:
+                    return True
+            elif str(key).strip().lower() in {"backend", "frontend"}:
+                return True
+    additional_services = tuple(getattr(config, "additional_services", ()) or ())
+    return bool(additional_services)
+
+
+def _has_explicit_local_app_system_env_signal(env: dict[str, str], *, mode: str) -> bool:
+    normalized_mode = str(mode).strip().upper() or "MAIN"
+    start_command_keys = {"ENVCTL_BACKEND_START_CMD", "ENVCTL_FRONTEND_START_CMD"}
+    for key in start_command_keys:
+        if str(env.get(key, "") or "").strip():
+            return True
+    app_dir_keys = {"BACKEND_DIR", "FRONTEND_DIR"}
+    for key in app_dir_keys:
+        value = str(env.get(key, "") or "").strip()
+        if value and value != ".":
+            return True
+    startup_keys = {
+        f"{normalized_mode}_STARTUP_ENABLE",
+        f"{normalized_mode}_BACKEND_ENABLE",
+        f"{normalized_mode}_FRONTEND_ENABLE",
+    }
+    if any(key in env for key in startup_keys):
+        return True
+    return False

@@ -358,6 +358,8 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_ACTION_TEST_PARALLEL` | `true` | Run backend/frontend test suites in parallel when both suites are detected. |
 | `ENVCTL_ACTION_TEST_PARALLEL_MAX` | `4` | Max concurrently running test suites when parallel test mode is enabled. |
 
+Backend/frontend startup profile defaults are selection defaults, not proof that a repo has an explicit local app system. A repo only becomes explicitly configured for local app startup when it sets backend/frontend commands, non-default app directories, enable/startup keys, additional services, or when envctl can autodetect a supported backend/frontend layout. Dependency launch-env sections by themselves only project requirement values into a process once one exists; they do not require app startup when no app service is configured.
+
 ## Plan Agent Launch
 | Variable | Default | Purpose |
 | --- | --- | --- |
