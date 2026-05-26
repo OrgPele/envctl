@@ -10,6 +10,14 @@ from envctl_engine.runtime.runtime_context import optional_process_runtime
 __all__ = ["TestSuiteInterruptRegistry"]
 
 
+@dataclass(frozen=True, slots=True)
+class _ActiveSuiteEntry:
+    index: int
+    suite: str
+    project_name: str
+    pid: int
+
+
 @dataclass
 class TestSuiteInterruptRegistry:
     __test__ = False
@@ -21,7 +29,7 @@ class TestSuiteInterruptRegistry:
     sleep_fn: Callable[[float], None] = time.sleep
     interrupt_received: bool = False
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
-    _active_suites: dict[int, dict[str, object]] = field(default_factory=dict, init=False)
+    _active_suites: dict[int, _ActiveSuiteEntry] = field(default_factory=dict, init=False)
     _termination_results: dict[int, bool] = field(default_factory=dict, init=False)
 
     @property
@@ -32,9 +40,9 @@ class TestSuiteInterruptRegistry:
     def clear_by_index(self, suite_index: int, *, pid: int | None = None) -> None:
         with self._lock:
             current = self._active_suites.get(suite_index)
-            if not isinstance(current, dict):
+            if current is None:
                 return
-            current_pid = int(current.get("pid", 0) or 0)
+            current_pid = current.pid
             if pid is not None and current_pid != int(pid):
                 return
             self._active_suites.pop(suite_index, None)
@@ -63,13 +71,14 @@ class TestSuiteInterruptRegistry:
         normalized_pid = int(pid or 0)
         if normalized_pid <= 0:
             return
-        suite_index = int(getattr(execution, "index", 0) or 0)
-        suite_entry = {
-            "index": suite_index,
-            "suite": str(getattr(execution.spec, "source", "")),
-            "project_name": str(getattr(execution, "project_name", "")),
-            "pid": normalized_pid,
-        }
+        suite_index = _coerce_int(getattr(execution, "index", 0))
+        suite_spec = getattr(execution, "spec", None)
+        suite_entry = _ActiveSuiteEntry(
+            index=suite_index,
+            suite=str(getattr(suite_spec, "source", "")),
+            project_name=str(getattr(execution, "project_name", "")),
+            pid=normalized_pid,
+        )
         with self._lock:
             self._active_suites[suite_index] = suite_entry
         if self.interrupt_received and self.terminate_pid(normalized_pid):
@@ -80,7 +89,7 @@ class TestSuiteInterruptRegistry:
         cleanup_started = self.monotonic_fn()
         self.emit_status("Interrupt received, stopping active test suites...")
         with self._lock:
-            active_snapshot = [dict(entry) for entry in self._active_suites.values()]
+            active_snapshot = list(self._active_suites.values())
 
         self.runtime._emit(
             "test.interrupt.received",
@@ -95,20 +104,20 @@ class TestSuiteInterruptRegistry:
             if pass_index > 0:
                 self.sleep_fn(0.05)
             with self._lock:
-                pending_entries = [dict(entry) for entry in self._active_suites.values()]
+                pending_entries = list(self._active_suites.values())
             for entry in pending_entries:
-                pid = int(entry.get("pid", 0) or 0)
+                pid = entry.pid
                 if pid <= 0 or pid in signaled_pids:
                     continue
                 signaled_pids.add(pid)
                 if self.terminate_pid(pid):
-                    self.clear_by_index(int(entry.get("index", 0) or 0), pid=pid)
+                    self.clear_by_index(entry.index, pid=pid)
                 else:
                     survivors.add(pid)
 
         with self._lock:
             for entry in self._active_suites.values():
-                pid = int(entry.get("pid", 0) or 0)
+                pid = entry.pid
                 if pid > 0:
                     survivors.add(pid)
 
@@ -120,3 +129,18 @@ class TestSuiteInterruptRegistry:
             survivors=len(survivors),
             cleanup_duration_ms=round((self.monotonic_fn() - cleanup_started) * 1000.0, 1),
         )
+
+
+def _coerce_int(value: object, default: int = 0) -> int:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float, str)):
+        raw = value
+    else:
+        raw = str(value)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
