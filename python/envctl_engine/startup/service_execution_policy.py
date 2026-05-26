@@ -1,17 +1,72 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
+from typing import cast
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.startup.protocols import StartupOrchestratorLike
 from envctl_engine.startup.public_urls import resolve_public_host
 
+CommandEnvBuilder = Callable[..., dict[str, str]]
+EnvMappingResult = Mapping[str, str] | Iterable[tuple[str, str]] | None
+ServiceEnvOverlayBuilder = Callable[..., EnvMappingResult]
 
-def resolve_command_env_builder(rt: object):
+
+def coerce_env_mapping(raw: object, *, source: str) -> dict[str, str]:
+    if raw is None:
+        return {}
+    if isinstance(raw, Mapping):
+        return dict(cast(Mapping[str, str], raw))
+    try:
+        return dict(cast(Iterable[tuple[str, str]], raw))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"{source} must return an environment mapping") from exc
+
+
+def resolve_service_env_overlay_builder(rt: object) -> ServiceEnvOverlayBuilder | None:
+    builder = getattr(rt, "_service_env_overlays", None)
+    return cast(ServiceEnvOverlayBuilder, builder) if callable(builder) else None
+
+
+def apply_service_env_overlays(
+    *,
+    overlay_builder: ServiceEnvOverlayBuilder | None,
+    service_name: str,
+    target_env: dict[str, str],
+    base_env: Mapping[str, str],
+) -> None:
+    if overlay_builder is None:
+        return
+    target_env.update(
+        coerce_env_mapping(
+            overlay_builder(service_name=service_name, base_env=base_env),
+            source=f"{service_name} service env overlays",
+        )
+    )
+
+
+def resolve_project_service_env(
+    rt: object,
+    context: object,
+    *,
+    requirements: object,
+    route: Route | None,
+) -> dict[str, str]:
+    builder = getattr(rt, "_project_service_env_internal", None)
+    raw: object
+    if callable(builder):
+        raw = builder(context, requirements=requirements, route=route)
+    else:
+        raw = getattr(rt, "_project_service_env")(context, requirements=requirements, route=route)
+    return coerce_env_mapping(raw, source="project service env")
+
+
+def resolve_command_env_builder(rt: object) -> CommandEnvBuilder:
     builder = getattr(rt, "_command_env", None)
     if callable(builder):
-        return builder
+        return cast(CommandEnvBuilder, builder)
 
     def build_command_env(*, port: int, extra: dict[str, str] | None = None) -> dict[str, str]:
         _ = port
