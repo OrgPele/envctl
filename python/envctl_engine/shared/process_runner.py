@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import selectors
 import shutil as shutil
 import signal
 import socket as socket
@@ -151,6 +152,7 @@ class ProcessRunner(ProcessLaunchMixin, ProcessLifecycleProbeMixin):
         Returns:
             CompletedProcess with stdout, stderr, and returncode
         """
+        command = list(cmd)
         output_lines: list[str] = []
         start_time = time.time()
         env_map = dict(env) if env is not None else None
@@ -166,7 +168,7 @@ class ProcessRunner(ProcessLaunchMixin, ProcessLifecycleProbeMixin):
         ):
             try:
                 process = subprocess.Popen(
-                    list(cmd),
+                    command,
                     cwd=str(cwd) if cwd is not None else None,
                     env=env_map,
                     text=True,
@@ -187,44 +189,45 @@ class ProcessRunner(ProcessLaunchMixin, ProcessLifecycleProbeMixin):
                     if enabled:
                         active_spinner.fail("Unable to read command output")
                     return subprocess.CompletedProcess(
-                        args=list(cmd),
+                        args=command,
                         returncode=1,
                         stdout="",
                         stderr="",
                     )
 
-                # Read output line-by-line
-                for line in iter(process.stdout.readline, ""):
-                    if not line:
-                        break
-
-                    # Check timeout
-                    if timeout is not None:
-                        elapsed = time.time() - start_time
-                        if elapsed > timeout:
-                            process.terminate()
-                            try:
-                                process.wait(timeout=2.0)
-                            except subprocess.TimeoutExpired:
-                                process.kill()
-                            if enabled:
-                                active_spinner.fail("Command timed out")
-                            return subprocess.CompletedProcess(
-                                args=list(cmd),
-                                returncode=-1,
-                                stdout="\n".join(output_lines),
-                                stderr="",
+                selector = self._stdout_selector(process.stdout, timeout=timeout)
+                try:
+                    while True:
+                        if self._streaming_timeout_expired(
+                            selector=selector,
+                            timeout=timeout,
+                            start_time=start_time,
+                        ):
+                            return self._finish_streaming_timeout(
+                                process,
+                                command=command,
+                                timeout=timeout,
+                                output_lines=output_lines,
+                                active_spinner=active_spinner,
+                                spinner_enabled=enabled,
                             )
 
-                    line_stripped = self._normalize_output_line(line).rstrip("\n")
-                    output_lines.append(line_stripped)
-                    if callback is not None:
-                        try:
-                            callback(line_stripped)
-                        except Exception:
-                            pass
-                        if echo_output:
-                            print(line_stripped)
+                        line = process.stdout.readline()
+                        if not line:
+                            break
+
+                        line_stripped = self._normalize_output_line(line).rstrip("\n")
+                        output_lines.append(line_stripped)
+                        if callback is not None:
+                            try:
+                                callback(line_stripped)
+                            except Exception:
+                                pass
+                            if echo_output:
+                                print(line_stripped)
+                finally:
+                    if selector is not None:
+                        selector.close()
 
                 process.stdout.close()
                 returncode = process.wait()
@@ -240,11 +243,84 @@ class ProcessRunner(ProcessLaunchMixin, ProcessLifecycleProbeMixin):
                 raise
 
             return subprocess.CompletedProcess(
-                args=list(cmd),
+                args=command,
                 returncode=returncode,
                 stdout="\n".join(output_lines),
                 stderr="",
             )
+
+    @staticmethod
+    def _stdout_selector(stdout: Any, *, timeout: float | None) -> selectors.BaseSelector | None:
+        if timeout is None:
+            return None
+        selector = selectors.DefaultSelector()
+        try:
+            selector.register(stdout, selectors.EVENT_READ)
+        except (AttributeError, OSError, ValueError):
+            selector.close()
+            return None
+        return selector
+
+    @staticmethod
+    def _streaming_timeout_expired(
+        *,
+        selector: selectors.BaseSelector | None,
+        timeout: float | None,
+        start_time: float,
+    ) -> bool:
+        if timeout is None:
+            return False
+        remaining = timeout - (time.time() - start_time)
+        if remaining <= 0:
+            return True
+        if selector is None:
+            return False
+        return not bool(selector.select(remaining))
+
+    def _finish_streaming_timeout(
+        self,
+        process: subprocess.Popen[str],
+        *,
+        command: Sequence[str],
+        timeout: float | None,
+        output_lines: Sequence[str],
+        active_spinner: Any,
+        spinner_enabled: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        pid = int(getattr(process, "pid", 0) or 0)
+        if pid > 0:
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        else:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            if pid > 0:
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            else:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+        close_stdout = getattr(getattr(process, "stdout", None), "close", None)
+        if callable(close_stdout):
+            close_stdout()
+        if spinner_enabled:
+            active_spinner.fail("Command timed out")
+        return self._timeout_result(
+            command,
+            timeout=timeout,
+            stdout="\n".join(output_lines),
+        )
 
     def run_probe(
         self,
