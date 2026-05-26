@@ -5,10 +5,11 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, cast
 
 from envctl_engine.runtime.command_router import list_supported_flag_tokens
 from envctl_engine.runtime.runtime_dependency_contract import (
@@ -242,9 +243,16 @@ def _runtime_dependency_parity_applicable(repo_root: Path) -> bool:
 
 
 def _runtime_parity_is_complete() -> bool:
-    from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
-
-    return len(PythonEngineRuntime.PARTIAL_COMMANDS) == 0
+    runtime_module = sys.modules.get("envctl_engine.runtime.engine_runtime")
+    runtime_class = getattr(runtime_module, "PythonEngineRuntime", None) if runtime_module is not None else None
+    raw_partial_commands = getattr(runtime_class, "PARTIAL_COMMANDS", ())
+    if isinstance(raw_partial_commands, str):
+        return raw_partial_commands == ""
+    try:
+        partial_commands = tuple(cast(Sequence[object], raw_partial_commands))
+    except TypeError:
+        return False
+    return len(partial_commands) == 0
 
 
 def _manifest_freshness_is_valid(
