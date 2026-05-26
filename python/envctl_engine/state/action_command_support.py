@@ -121,19 +121,12 @@ class StateActionCommandRunner:
         )
 
     def _selected_services_for_logs(self, route: Route) -> set[str] | None:
-        assert self.state is not None
-        selected_services = self.orchestrator._resolve_selected_services(route, self.state)
-        self._emit_selection_filter(route, selected_services)
+        selected_services = self._resolve_service_selection(route)
         if selected_services is not None:
             return selected_services
 
-        selection = self.orchestrator._interactive_log_selection(route, self.state)
-        if selection is not None and selection.cancelled:
-            print(self.orchestrator._no_target_selected_message(route))
-            return set()
-        if selection is not None:
-            return self.orchestrator._services_from_selection(selection, self.state)
         if bool(route.flags.get("json")):
+            assert self.state is not None
             return set(self.state.services.keys())
         if not self.orchestrator._interactive_selection_allowed(route):
             print(self.orchestrator._no_target_selected_message(route))
@@ -142,25 +135,35 @@ class StateActionCommandRunner:
 
     def _selected_services_for_clear_logs(self, route: Route) -> set[str]:
         assert self.state is not None
-        selected_services = self.orchestrator._resolve_selected_services(route, self.state)
-        self._emit_selection_filter(route, selected_services)
-        if selected_services is None and bool(route.flags.get("interactive_command")):
-            selection = self.orchestrator._interactive_log_selection(route, self.state, prompt="Clear logs for")
-            if selection is not None and selection.cancelled:
-                print(self.orchestrator._no_target_selected_message(route))
-                return set()
-            if selection is not None:
-                selected_services = self.orchestrator._services_from_selection(selection, self.state)
+        selected_services = self._resolve_service_selection(
+            route,
+            prompt="Clear logs for",
+            require_interactive_command=True,
+        )
         return selected_services if selected_services is not None else set(self.state.services.keys())
 
     def _selected_services_for_errors(self, route: Route) -> set[str] | None:
+        return self._resolve_service_selection(route, prompt="Errors for")
+
+    def _resolve_service_selection(
+        self,
+        route: Route,
+        *,
+        prompt: str | None = None,
+        require_interactive_command: bool = False,
+    ) -> set[str] | None:
         assert self.state is not None
         selected_services = self.orchestrator._resolve_selected_services(route, self.state)
         self._emit_selection_filter(route, selected_services)
         if selected_services is not None:
             return selected_services
+        if require_interactive_command and not bool(route.flags.get("interactive_command")):
+            return None
 
-        selection = self.orchestrator._interactive_log_selection(route, self.state, prompt="Errors for")
+        if prompt is None:
+            selection = self.orchestrator._interactive_log_selection(route, self.state)
+        else:
+            selection = self.orchestrator._interactive_log_selection(route, self.state, prompt=prompt)
         if selection is not None and selection.cancelled:
             print(self.orchestrator._no_target_selected_message(route))
             return set()
