@@ -321,6 +321,33 @@ def test_github_pr_checks_ignores_non_test_checks_after_target_tests_pass(
     assert checks["pending_checks"] == []
 
 
+def test_github_pr_checks_ignores_malformed_check_items(tmp_path: Path, monkeypatch: Any) -> None:
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=json.dumps(
+                [
+                    "unexpected-check-item",
+                    {"name": "pytest", "workflow": "Tests", "state": "SUCCESS"},
+                ]
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(action_ship_checks.shutil, "which", lambda _name: "/usr/bin/gh")
+    monkeypatch.setattr(action_ship_checks.subprocess, "run", fake_run)
+
+    checks = action_ship_checks.github_pr_checks(
+        tmp_path,
+        branch="feature/demo",
+        pr_url="https://github.com/acme/repo/pull/7",
+    )
+
+    assert checks["state"] == "checks_passed"
+    assert checks["passed_checks"] == [{"name": "pytest", "workflow": "Tests", "state": "SUCCESS"}]
+
+
 def test_github_pr_checks_can_detect_success_before_next_progress_heartbeat(
     tmp_path: Path, monkeypatch: Any
 ) -> None:

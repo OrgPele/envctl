@@ -403,8 +403,12 @@ def normalize_github_pr_checks(
     }
 
 
-def _target_status_checks(checks: Sequence[Mapping[str, object]]) -> list[Mapping[str, object]]:
-    return [check for check in checks if _status_check_matches_default_target(check)]
+def _target_status_checks(checks: Sequence[object]) -> list[Mapping[str, object]]:
+    return [
+        check
+        for check in checks
+        if isinstance(check, Mapping) and _status_check_matches_default_target(check)
+    ]
 
 
 def _status_check_matches_default_target(check: Mapping[str, object]) -> bool:
