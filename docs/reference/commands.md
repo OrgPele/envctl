@@ -352,6 +352,12 @@ envctl kill --backend --headless     # alias for stop --backend
 envctl kill-all --headless           # alias for stop-all
 ```
 
+`--entire-system` starts configured or autodetected app services. When the
+selected repo/worktree has no local app system configured and only the default
+backend/frontend services were selected, envctl reports that no local app system
+is configured and continues without app services instead of treating startup as
+a local app failure.
+
 Review branch-relative changes:
 
 ```bash
@@ -506,6 +512,7 @@ Degraded plan-agent handoff:
 - if startup revalidation finds that an OMX-managed attach target is stale or exited, headless output suppresses stale `attach:` guidance and prints a native fallback such as `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n> envctl --plan <selector> --tmux --entire-system --headless --new-session`
 - this path prints `Implementation session is running, but local app startup failed.`, then an `AI session:` section with copy-pastable `attach:` and `kill:` guidance when a tmux session is known
 - the `Local app startup:` section names the worktree, preserves the raw startup error, and points to `ENVCTL_BACKEND_START_CMD` / `ENVCTL_FRONTEND_START_CMD` when services should run locally
+- the no-system default case is reported separately as a clean continuation: `--entire-system` is honored, no local app system is configured, and the implementation session continues without app services
 - plain `start`, `restart`, `resume`, dashboard, or `--plan` runs without a running implementation session keep normal fatal `Startup failed:` semantics
 
 Optional dashboard review-tab launch:

@@ -26,6 +26,7 @@ def record_project_startup(
     session.requirements_by_project[context.name] = result.requirements
     session.services_by_project[context.name] = result.services
     session.started_context_names.append(context.name)
+    session.warnings.extend(result.warnings)
 
 
 def start_selected_contexts(

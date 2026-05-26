@@ -37,6 +37,12 @@ Useful commands:
 
 `envctl` also supports user-owned launch env sections inside `.envctl`. These are env vars injected into the backend/frontend processes and configured additional app services that `envctl` starts.
 
+Backend/frontend startup-profile defaults do not by themselves mean a repo has
+a configured local app system. Explicit commands, service directories, enable
+keys, launch env sections, additional services, or an autodetectable app layout
+are local-system signals; without one of those, `--entire-system` can continue
+without app services and report that no local app system is configured.
+
 ```dotenv
 # >>> envctl backend launch env >>>
 DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}  # generic DB URL; e.g. postgresql://user:pass@host:5432/dbname
