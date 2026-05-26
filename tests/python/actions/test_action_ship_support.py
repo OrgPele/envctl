@@ -136,6 +136,80 @@ class ActionShipSupportTests(unittest.TestCase):
         self.assertEqual(checks_expected_sha, "abc123")
         self.assertEqual(payload["checks_expected_head_sha"], "abc123")
 
+    def test_run_ship_workflow_fails_on_detached_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            context = SimpleNamespace(
+                repo_root=repo_root,
+                project_root=repo_root,
+                project_name="Main",
+                env={"ENVCTL_ACTION_JSON": "true"},
+            )
+            commit_called = False
+            pr_called = False
+            checks_called = False
+
+            def git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "HEAD\n"
+                if args == ["rev-parse", "HEAD"]:
+                    return "abc123\n"
+                return ""
+
+            def run_commit_action(_context: object) -> int:
+                nonlocal commit_called
+                commit_called = True
+                return 0
+
+            def run_pr_action(_context: object) -> int:
+                nonlocal pr_called
+                pr_called = True
+                return 0
+
+            def github_pr_checks(*_args: object, **_kwargs: object) -> dict[str, object]:
+                nonlocal checks_called
+                checks_called = True
+                return {"state": "checks_passed", "failing_checks": [], "pending_checks": []}
+
+            with redirect_stdout(StringIO()) as stdout:
+                code = run_ship_workflow(
+                    context,
+                    resolve_git_root=lambda project_root, repo_root: project_root,
+                    git_available=True,
+                    git_output=git_output,
+                    run_git=lambda _git_root, args: subprocess.CompletedProcess(args=args, returncode=0),
+                    resolve_base_branch=lambda _context, _git_root: "main",
+                    resolve_base_ref=lambda _git_root, _base_branch: "origin/main",
+                    run_commit_action=run_commit_action,
+                    run_pr_action=run_pr_action,
+                    probe_dirty_worktree=lambda *_args, **_kwargs: SimpleNamespace(dirty=False),
+                    existing_pr_url=lambda _git_root, _branch: "",
+                    partition_envctl_protected_paths=lambda _status: SimpleNamespace(
+                        protected_staged_paths=[],
+                        protected_skipped_paths=[],
+                    ),
+                    ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
+                    github_pr_checks=github_pr_checks,
+                )
+
+        self.assertEqual(code, 1)
+        self.assertFalse(commit_called)
+        self.assertFalse(pr_called)
+        self.assertFalse(checks_called)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "detached_head")
+        self.assertEqual(
+            payload["operation_statuses"],
+            {
+                "checks": "not_run",
+                "commit": "not_run",
+                "merge_conflicts": "not_checked",
+                "pr": "not_run",
+                "push": "not_run",
+            },
+        )
+
     def test_run_ship_workflow_creates_pr_and_reports_check_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
@@ -474,7 +548,7 @@ class ActionShipSupportTests(unittest.TestCase):
         self.assertEqual(payload["step_statuses"], ["clean_no_changes", "pr_exists", "checks_unresolved"])
         self.assertEqual(payload["operation_statuses"]["checks"], "checks_unresolved")
 
-    def test_run_ship_workflow_returns_success_with_pending_status_when_checks_timeout(self) -> None:
+    def test_run_ship_workflow_returns_failure_with_pending_status_when_checks_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
             repo_root.mkdir()
@@ -520,7 +594,7 @@ class ActionShipSupportTests(unittest.TestCase):
                     },
                 )
 
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "checks_pending_timeout")
         self.assertEqual(payload["operation_statuses"]["checks"], "checks_pending_timeout")
@@ -593,7 +667,7 @@ class ActionShipSupportTests(unittest.TestCase):
         self.assertEqual(payload["protected_local_artifacts_skipped"], [".envctl-state/code-intelligence.json"])
         self.assertEqual(stderr.getvalue().splitlines(), ["ship: PR already exists for Main: https://github.com/acme/repo/pull/7"])
 
-    def test_run_ship_workflow_treats_no_checks_as_successful_ship_status(self) -> None:
+    def test_run_ship_workflow_returns_failure_when_no_checks_are_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
             repo_root.mkdir()
@@ -638,10 +712,60 @@ class ActionShipSupportTests(unittest.TestCase):
                     },
                 )
 
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "no_checks_reported")
         self.assertEqual(payload["operation_statuses"]["checks"], "no_checks_reported")
+
+    def test_run_ship_workflow_returns_failure_when_github_cli_is_unavailable_for_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            context = SimpleNamespace(
+                repo_root=repo_root,
+                project_root=repo_root,
+                project_name="Main",
+                env={"ENVCTL_ACTION_JSON": "true"},
+            )
+
+            def git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/demo\n"
+                if args == ["rev-parse", "HEAD"]:
+                    return "abc123\n"
+                return ""
+
+            with redirect_stdout(StringIO()) as stdout:
+                code = run_ship_workflow(
+                    context,
+                    resolve_git_root=lambda project_root, repo_root: project_root,
+                    git_available=True,
+                    git_output=git_output,
+                    run_git=lambda _git_root, args: subprocess.CompletedProcess(args=args, returncode=0),
+                    resolve_base_branch=lambda _context, _git_root: "main",
+                    resolve_base_ref=lambda _git_root, _base_branch: "origin/main",
+                    run_commit_action=lambda _context: 0,
+                    run_pr_action=lambda _context: 0,
+                    probe_dirty_worktree=lambda *_args, **_kwargs: SimpleNamespace(dirty=False),
+                    existing_pr_url=lambda _git_root, _branch: "https://github.com/acme/repo/pull/7",
+                    partition_envctl_protected_paths=lambda _status: SimpleNamespace(
+                        protected_staged_paths=[],
+                        protected_skipped_paths=[],
+                    ),
+                    ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
+                    github_pr_checks=lambda _git_root, *, branch, pr_url, expected_head_sha: {
+                        "state": "gh_unavailable",
+                        "failing_checks": [],
+                        "passed_checks": [],
+                        "pending_checks": [],
+                        "duration_seconds": 0.0,
+                    },
+                )
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "gh_unavailable")
+        self.assertEqual(payload["operation_statuses"]["checks"], "gh_unavailable")
 
 
 if __name__ == "__main__":
