@@ -776,6 +776,30 @@ class StartupFinalizationTests(unittest.TestCase):
             ],
         )
 
+    def test_render_project_startup_warnings_keeps_no_system_warning_out_of_degraded_handoff(self) -> None:
+        emitted: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(env={}, _emit=lambda event, **payload: emitted.append((event, payload)))
+        context = SimpleNamespace(name="feature-a-1")
+        warning = (
+            "No local app system is configured for feature-a-1; envctl is continuing with the "
+            "implementation session only. --entire-system was honored, but there was nothing configured to start."
+        )
+
+        render_project_startup_warnings(
+            runtime,
+            context=context,
+            warnings=[warning],
+            suppress_progress=True,
+            project_spinner_group=None,
+        )
+
+        self.assertEqual(emitted, [("ui.status", {"message": warning})])
+        rendered = emitted[0][1]["message"]
+        self.assertIn("No local app system is configured for feature-a-1", rendered)
+        self.assertIn("envctl is continuing with the implementation session only", rendered)
+        self.assertNotIn("Implementation session is running, but local app startup failed.", rendered)
+        self.assertNotIn("missing_service_start_command", rendered)
+
     def test_render_project_startup_warnings_for_route_resolves_suppression(self) -> None:
         emitted: list[tuple[str, dict[str, object]]] = []
         runtime = SimpleNamespace(env={}, _emit=lambda event, **payload: emitted.append((event, payload)))

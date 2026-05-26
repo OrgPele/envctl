@@ -97,8 +97,27 @@ def _has_explicit_local_app_signal(
             f"{mode_prefix}_STARTUP_ENABLE",
         } & explicit_keys:
             return True
+        if _explicit_service_env_signal(service_name=service_name, mode=normalized_mode, explicit_keys=explicit_keys):
+            return True
         if _explicit_service_directory(config, service_name=service_name, explicit_keys=explicit_keys):
             return True
+    return False
+
+
+def _explicit_service_env_signal(*, service_name: str, mode: str, explicit_keys: set[str]) -> bool:
+    service_prefix = service_name.upper()
+    if any(key.startswith(f"ENVCTL_{service_prefix}_ENV__") for key in explicit_keys):
+        return True
+    if service_name == "backend":
+        keys = {"BACKEND_ENV_FILE_OVERRIDE"}
+        if mode == "main":
+            keys.add("MAIN_ENV_FILE_PATH")
+        return bool(keys & explicit_keys)
+    if service_name == "frontend":
+        keys = {"FRONTEND_ENV_FILE_OVERRIDE"}
+        if mode == "main":
+            keys.add("MAIN_FRONTEND_ENV_FILE_PATH")
+        return bool(keys & explicit_keys)
     return False
 
 
