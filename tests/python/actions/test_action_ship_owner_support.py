@@ -8,6 +8,7 @@ from typing import Any
 
 from envctl_engine.actions import action_ship_checks
 from envctl_engine.actions.action_ship_checks import normalize_github_pr_checks as normalize_checks_from_owner
+from envctl_engine.actions.action_ship_failure_logs import failure_log_excerpt
 from envctl_engine.actions.action_ship_conflicts import parse_merge_tree_conflicts as parse_conflicts_from_owner
 from envctl_engine.actions.action_ship_contract import ship_payload as ship_payload_from_owner
 from envctl_engine.actions.action_ship_support import (
@@ -142,6 +143,22 @@ def test_github_check_normalization_treats_completed_without_conclusion_as_pendi
     assert checks["state"] == "checks_pending_timeout"
     assert checks["passed_checks"] == []
     assert checks["pending_checks"] == [{"name": "pytest", "workflow": "Tests", "state": "COMPLETED"}]
+
+
+def test_ship_failure_log_excerpt_starts_at_failure_section_and_strips_runner_prefixes() -> None:
+    excerpt, truncated = failure_log_excerpt(
+        "pytest\tRun pytest\t2026-05-25T20:00:00Z setup line\n"
+        "pytest\tRun pytest\t2026-05-25T20:00:01Z ================= FAILURES =================\n"
+        "pytest\tRun pytest\t2026-05-25T20:00:02Z FAILED tests/test_demo.py::test_demo - AssertionError\n"
+        "pytest\tRun pytest\t2026-05-25T20:00:03Z Error: Process completed with exit code 1.\n"
+    )
+
+    assert excerpt == (
+        "================= FAILURES =================\n"
+        "FAILED tests/test_demo.py::test_demo - AssertionError\n"
+        "Error: Process completed with exit code 1."
+    )
+    assert truncated is True
 
 
 def test_github_pr_checks_polls_until_pending_checks_finish(tmp_path: Path, monkeypatch: Any) -> None:
