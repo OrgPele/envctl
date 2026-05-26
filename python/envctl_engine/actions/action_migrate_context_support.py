@@ -75,11 +75,19 @@ def migrate_project_context(
 
 def migrate_component_port(component: Mapping[str, object]) -> int:
     for key in ("final", "requested", "assigned"):
-        raw = component.get(key)
-        try:
-            value = int(raw)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            continue
+        value = _positive_int(component.get(key))
         if value > 0:
             return value
     return 0
+
+
+def _positive_int(raw: object) -> int:
+    if raw is None or raw == "":
+        return 0
+    if isinstance(raw, bool):
+        return int(raw)
+    try:
+        value = int(raw if isinstance(raw, (int, float, str)) else str(raw))
+    except (TypeError, ValueError):
+        return 0
+    return value if value > 0 else 0
