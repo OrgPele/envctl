@@ -3,6 +3,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 import io
 import subprocess
+import sys
+import time
 import unittest
 from unittest.mock import patch
 
@@ -190,10 +192,30 @@ class ProcessRunnerSpinnerIntegrationTests(unittest.TestCase):
         ):
             completed = runner.run_streaming(["echo", "hello"], callback=None, show_spinner=False, timeout=1.0)
 
-        self.assertEqual(completed.returncode, -1)
+        self.assertEqual(completed.returncode, 124)
+        self.assertIn("Command timed out after 1.0s", completed.stderr)
         printed = [str(call.args[0]) for call in print_mock.call_args_list if call.args]
         self.assertFalse(any("Command timed out" in line for line in printed), msg=printed)
         self.assertFalse(any(line.startswith("! ") for line in printed), msg=printed)
+
+    def test_run_streaming_times_out_silent_process_before_exit(self) -> None:
+        runner = ProcessRunner()
+
+        start = time.monotonic()
+        completed = runner.run_streaming(
+            [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(1.5)",
+            ],
+            show_spinner=False,
+            timeout=0.2,
+        )
+        elapsed = time.monotonic() - start
+
+        self.assertEqual(completed.returncode, 124)
+        self.assertLess(elapsed, 1.0)
+        self.assertIn("Command timed out after 0.2s", completed.stderr)
 
     def test_run_streaming_passes_stdin_configuration_to_subprocess(self) -> None:
         runner = ProcessRunner()
