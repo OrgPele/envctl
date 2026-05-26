@@ -813,6 +813,89 @@ class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
             self.assertNotIn("No local app system is configured", rendered)
             self.assertEqual(fake_runner.start_background_calls, [])
 
+    def test_entire_system_keeps_explicit_service_directory_actionable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "BACKEND_DIR": "api",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 1)
+            self.assertIn("missing_service_start_command", rendered)
+            self.assertNotIn("No local app system is configured", rendered)
+            self.assertEqual(fake_runner.start_background_calls, [])
+
+    def test_entire_system_starts_autodetectable_default_services(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            tree_root = repo / "trees" / "feature-a" / "1"
+            backend = tree_root / "backend"
+            frontend = tree_root / "frontend"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (backend / "app").mkdir(parents=True, exist_ok=True)
+            (frontend).mkdir(parents=True, exist_ok=True)
+            (tree_root / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
+            (tree_root / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend / "pyproject.toml").write_text("[project]\nname='demo'\n", encoding="utf-8")
+            (backend / "app" / "main.py").write_text(
+                "from fastapi import FastAPI\napp = FastAPI()\n",
+                encoding="utf-8",
+            )
+            (frontend / "package.json").write_text(
+                '{"name":"demo","scripts":{"dev":"vite --host"}}',
+                encoding="utf-8",
+            )
+            (frontend / "bun.lockb").write_text("", encoding="utf-8")
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            engine._command_exists = lambda _command: True  # type: ignore[method-assign]
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 0)
+            self.assertNotIn("No local app system is configured", rendered)
+            self.assertNotIn("missing_service_start_command", rendered)
+            self.assertEqual(len(fake_runner.start_background_calls), 2)
+            launched_commands = [call[0] for call in fake_runner.start_background_calls]
+            self.assertTrue(any("uvicorn" in command for command in launched_commands))
+            self.assertTrue(any(command[:3] == ("bun", "run", "dev") for command in launched_commands))
+
     def test_runtime_env_overrides_forward_docker_and_setup_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
