@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Mapping
 
 from envctl_engine.requirements.component_ports import component_resource_ports, dependency_display_port, positive_int
@@ -24,7 +25,7 @@ def build_startup_env_projection(
         requirements = requirements_preview(runtime, context=context, mode=mode, route=route)
         project = str(getattr(context, "name", "") or "")
         dependency_ports = dependency_ports_payload(requirements)
-        services: dict[str, object] = {}
+        services: dict[str, dict[str, object]] = {}
         for service_name in ("backend", "frontend"):
             if not bool(runtime.config.service_enabled_for_mode(mode, service_name)):
                 continue
@@ -159,9 +160,10 @@ def command_source(runtime: Any, *, service_name: str, context: object, port: in
     if not callable(resolver):
         return None
     try:
-        return resolver(service_name=service_name, project_root=getattr(context, "root"), port=port)
+        result = resolver(service_name=service_name, project_root=getattr(context, "root"), port=port)
     except Exception:
         return None
+    return result if isinstance(result, str) else None
 
 
 def command_argv(runtime: Any, *, service_name: str, context: object, port: int) -> list[str]:
@@ -169,8 +171,13 @@ def command_argv(runtime: Any, *, service_name: str, context: object, port: int)
     if not callable(resolver):
         return []
     try:
-        argv, _source = resolver(service_name=service_name, project_root=getattr(context, "root"), port=port)
+        result = resolver(service_name=service_name, project_root=getattr(context, "root"), port=port)
     except Exception:
+        return []
+    if not isinstance(result, tuple) or len(result) < 1:
+        return []
+    argv = result[0]
+    if not isinstance(argv, Sequence) or isinstance(argv, (str, bytes)):
         return []
     return [str(part) for part in argv]
 

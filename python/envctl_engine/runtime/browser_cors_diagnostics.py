@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, TypedDict
 from urllib.parse import urlparse
 
 from envctl_engine.startup.public_urls import resolve_public_host
 from envctl_engine.state.models import ServiceRecord
+
+
+class CorsProjectionPreview(TypedDict):
+    env: dict[str, str]
+    diagnostics: dict[str, object]
 
 
 def cors_payload(
@@ -15,8 +20,12 @@ def cors_payload(
     config: Any | None,
     env: Mapping[str, str] | None,
 ) -> dict[str, object]:
-    if isinstance(backend_launch, Mapping) and isinstance(backend_launch.get("cors"), Mapping):
-        cors = dict(backend_launch["cors"])  # type: ignore[index]
+    if isinstance(backend_launch, Mapping):
+        raw_cors = backend_launch.get("cors")
+    else:
+        raw_cors = None
+    if isinstance(raw_cors, Mapping):
+        cors = {str(key): value for key, value in raw_cors.items()}
         origins = cors.get("origins")
         if not isinstance(origins, list):
             env_key = str(cors.get("env_key") or cors_env_key(config=config, env=env))
@@ -84,7 +93,7 @@ def cors_projection_preview(
     *,
     frontend_port: int | None,
     backend_env: Mapping[str, str],
-) -> dict[str, object]:
+) -> CorsProjectionPreview:
     env_key = cors_env_key(config=getattr(runtime, "config", None), env=getattr(runtime, "env", None))
     if not frontend_port:
         return {"env": {}, "diagnostics": {"projected": False, "env_key": env_key, "origins": []}}
