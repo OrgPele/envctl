@@ -7,6 +7,9 @@ from typing import Any, Callable
 
 __all__ = [
     "LiveTestProgressReporter",
+    "ParallelTestProgressCallbacks",
+    "ParallelTestProgressConfig",
+    "ParallelTestProgressState",
     "ParallelTestProgressTracker",
     "format_live_collection_status",
     "format_live_progress_status",
@@ -148,22 +151,37 @@ class LiveTestProgressReporter:
 
 
 @dataclass
-class ParallelTestProgressTracker:
-    __test__ = False
-
+class ParallelTestProgressConfig:
     enabled: bool
     total_suites: int
     max_workers: int
     multi_project: bool
     failed_only: bool
+
+
+@dataclass
+class ParallelTestProgressCallbacks:
     emit_status_callback: Callable[[str], None] | None = field(default=None, repr=False)
-    suite_display_name: Callable[[str, bool], str] | None = field(default=None, repr=False)
+    suite_display_name: Callable[..., str] | None = field(default=None, repr=False)
+
+
+@dataclass
+class ParallelTestProgressState:
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
-    _queued: int = field(init=False)
+    _queued: int = 0
     _running: int = field(default=0, init=False)
     _finished: int = field(default=0, init=False)
     _running_labels: set[str] = field(default_factory=set, init=False)
     _done_labels: deque[str] = field(default_factory=lambda: deque(maxlen=4), init=False)
+
+
+@dataclass(init=False)
+class ParallelTestProgressTracker:
+    __test__ = False
+
+    config: ParallelTestProgressConfig
+    callbacks: ParallelTestProgressCallbacks
+    state: ParallelTestProgressState
 
     def __init__(
         self,
@@ -176,59 +194,61 @@ class ParallelTestProgressTracker:
         emit_status: Callable[[str], None],
         suite_display_name: Callable[..., str],
     ) -> None:
-        self.enabled = bool(enabled)
-        self.total_suites = int(total_suites)
-        self.max_workers = int(max_workers)
-        self.multi_project = bool(multi_project)
-        self.failed_only = bool(failed_only)
-        self.emit_status_callback = emit_status
-        self.suite_display_name = suite_display_name
-        self._lock = threading.Lock()
-        self._queued = int(total_suites)
-        self._running = 0
-        self._finished = 0
-        self._running_labels = set()
-        self._done_labels = deque(maxlen=4)
+        self.config = ParallelTestProgressConfig(
+            enabled=bool(enabled),
+            total_suites=int(total_suites),
+            max_workers=int(max_workers),
+            multi_project=bool(multi_project),
+            failed_only=bool(failed_only),
+        )
+        self.callbacks = ParallelTestProgressCallbacks(
+            emit_status_callback=emit_status,
+            suite_display_name=suite_display_name,
+        )
+        self.state = ParallelTestProgressState(_queued=int(total_suites))
 
     def mark_running(self, execution: Any) -> None:
-        if not self.enabled:
+        if not self.config.enabled:
             return
-        with self._lock:
-            self._queued = max(0, self._queued - 1)
-            self._running += 1
-            self._running_labels.add(self._descriptor(execution))
+        with self.state._lock:
+            self.state._queued = max(0, self.state._queued - 1)
+            self.state._running += 1
+            self.state._running_labels.add(self._descriptor(execution))
             self._emit_status_locked(phase="running", execution=execution)
 
     def mark_finished(self, execution: Any, *, success: bool) -> None:
-        if not self.enabled:
+        if not self.config.enabled:
             return
-        with self._lock:
+        with self.state._lock:
             descriptor = self._descriptor(execution)
-            self._running = max(0, self._running - 1)
-            self._finished += 1
-            self._running_labels.discard(descriptor)
+            self.state._running = max(0, self.state._running - 1)
+            self.state._finished += 1
+            self.state._running_labels.discard(descriptor)
             done_status = "PASS" if success else "FAIL"
-            self._done_labels.append(f"{descriptor} ({done_status})")
-            self._queued = max(0, self.total_suites - self._running - self._finished)
+            self.state._done_labels.append(f"{descriptor} ({done_status})")
+            self.state._queued = max(
+                0,
+                self.config.total_suites - self.state._running - self.state._finished,
+            )
             self._emit_status_locked(phase="completed", execution=execution)
 
     def emit_status(self, *, phase: str, execution: Any | None = None) -> None:
-        if not self.enabled:
+        if not self.config.enabled:
             return
-        with self._lock:
+        with self.state._lock:
             self._emit_status_locked(phase=phase, execution=execution)
 
     def _emit_status_locked(self, *, phase: str, execution: Any | None = None) -> None:
-        emit_status = self.emit_status_callback
+        emit_status = self.callbacks.emit_status_callback
         if not callable(emit_status):
             return
         prefix = (
-            f"Tests progress: running {self._running}/{self.max_workers}, "
-            f"finished {self._finished}/{self.total_suites}, "
-            f"queued {self._queued}"
+            f"Tests progress: running {self.state._running}/{self.config.max_workers}, "
+            f"finished {self.state._finished}/{self.config.total_suites}, "
+            f"queued {self.state._queued}"
         )
-        running_labels_sorted = sorted(str(label) for label in self._running_labels)
-        done_labels_list = [str(label) for label in self._done_labels]
+        running_labels_sorted = sorted(str(label) for label in self.state._running_labels)
+        done_labels_list = [str(label) for label in self.state._done_labels]
         details = (
             f" • running: {_render_labels(running_labels_sorted, max_items=3)}"
             f" • done: {_render_labels(done_labels_list, max_items=3)}"
@@ -240,10 +260,10 @@ class ParallelTestProgressTracker:
 
     def _descriptor(self, execution: Any) -> str:
         source = str(getattr(execution.spec, "source", ""))
-        resolver = self.suite_display_name
+        resolver = self.callbacks.suite_display_name
         if callable(resolver):
-            suite_label = str(resolver(source, failed_only=self.failed_only))
+            suite_label = str(resolver(source, failed_only=self.config.failed_only))
         else:
             suite_label = source
         project_name = str(getattr(execution, "project_name", ""))
-        return f"{project_name} / {suite_label}" if self.multi_project else suite_label
+        return f"{project_name} / {suite_label}" if self.config.multi_project else suite_label

@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest import TestCase
 
+from envctl_engine.actions import action_test_runner_progress
 from envctl_engine.actions.action_test_runner_progress import LiveTestProgressReporter, ParallelTestProgressTracker
 
 
@@ -11,6 +12,14 @@ def _execution(*, index: int = 1, source: str = "backend", project_name: str = "
 
 
 class ParallelTestProgressTrackerTests(TestCase):
+    def test_parallel_tracker_groups_config_and_state(self) -> None:
+        self.assertTrue(hasattr(action_test_runner_progress, "ParallelTestProgressConfig"))
+        self.assertTrue(hasattr(action_test_runner_progress, "ParallelTestProgressState"))
+        public_fields = {
+            name for name, field in ParallelTestProgressTracker.__dataclass_fields__.items() if field.init
+        }
+        self.assertEqual(public_fields, {"config", "callbacks", "state"})
+
     def test_emit_status_renders_queued_running_and_completed_state(self) -> None:
         messages: list[str] = []
         tracker = ParallelTestProgressTracker(
