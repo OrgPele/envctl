@@ -29,6 +29,12 @@ RunGit = Callable[[Path, list[str]], subprocess.CompletedProcess[str]]
 ResolveBaseBranch = Callable[[Any, Path], str]
 ResolveBaseRef = Callable[[Path, str], str]
 GithubPrChecks = Callable[..., dict[str, object]]
+SUCCESSFUL_CHECK_PHASE_STATUSES = {
+    "checks_passed",
+    "checks_pending_timeout",
+    "gh_unavailable",
+    "no_checks_reported",
+}
 
 
 @dataclass(slots=True)
@@ -40,7 +46,6 @@ class ShipWorkflowState:
     before_sha: str = ""
     after_sha: str = ""
     protected_paths: list[str] = field(default_factory=list)
-    pre_commit_dirty: bool = False
     committed: bool = False
     pr_url: str = ""
     pr_created: bool = False
@@ -129,17 +134,17 @@ class ShipWorkflowRunner:
             partition_envctl_protected_paths=self.dependencies.partition_envctl_protected_paths,
             ordered_unique_paths=self.dependencies.ordered_unique_paths,
         )
-        state.pre_commit_dirty = self.dependencies.probe_dirty_worktree(
+        self.dependencies.probe_dirty_worktree(
             self.context.project_root,
             self.context.repo_root,
             project_name=self.context.project_name,
-        ).dirty
+        )
         state.pr_url = self.dependencies.existing_pr_url(state.git_root, state.branch)
 
         commit_code = self.dependencies.run_commit_action(self.context)
         state.after_sha = self.dependencies.git_output(state.git_root, ["rev-parse", "HEAD"]).strip()
         sha_changed = bool(state.after_sha and state.before_sha and state.after_sha != state.before_sha)
-        state.committed = sha_changed or bool(state.pre_commit_dirty and commit_code == 0)
+        state.committed = sha_changed
         state.step_statuses.append("committed_pushed" if state.committed else "clean_no_changes")
         if commit_code == 0:
             if state.committed:
@@ -162,7 +167,16 @@ class ShipWorkflowRunner:
         state.step_statuses.append("pr_created" if state.pr_created else "pr_unresolved")
         if state.pr_created:
             emit_ship_progress(f"ship: PR created for {self.context.project_name}: {state.pr_url}")
-        return None
+            return None
+        return self._finish(
+            state,
+            status="pr_unresolved",
+            ok=False,
+            commit_sha=state.after_sha,
+            pushed=state.committed,
+            pr_url="",
+            pr_created=False,
+        )
 
     def _reject_predicted_merge_conflicts(self, state: ShipWorkflowState) -> int | None:
         state.merge_conflicts = predicted_merge_conflict_report(
@@ -199,13 +213,12 @@ class ShipWorkflowRunner:
         if _callable_accepts_keyword(checks_fn, "progress_callback"):
             check_kwargs["progress_callback"] = emit_ship_progress
         checks = checks_fn(state.git_root, **check_kwargs)
-        status = str(checks.get("state") or ("pr_created" if state.pr_created else "pr_exists"))
-        if status:
-            state.step_statuses.append(status)
+        status = _check_phase_status(checks)
+        state.step_statuses.append(status)
         return self._finish(
             state,
             status=status,
-            ok=status not in {"checks_failed", "commit_failed", "pr_failed"},
+            ok=_ship_status_is_success(status),
             commit_sha=state.after_sha,
             pushed=state.committed,
             pr_url=state.pr_url,
@@ -254,6 +267,14 @@ def _callable_accepts_keyword(callback: Callable[..., object], keyword: str) -> 
     return keyword in parameters or any(
         parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
     )
+
+
+def _ship_status_is_success(status: str) -> bool:
+    return status in SUCCESSFUL_CHECK_PHASE_STATUSES
+
+
+def _check_phase_status(checks: Mapping[str, object]) -> str:
+    return str(checks.get("state") or "checks_unresolved")
 
 
 def run_ship_workflow(

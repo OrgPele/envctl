@@ -133,6 +133,17 @@ def test_github_check_normalization_reports_failed_pending_and_passed_states() -
     assert passed["passed_checks"] == [{"name": "ruff", "state": "SKIPPED"}]
 
 
+def test_github_check_normalization_treats_completed_without_conclusion_as_pending() -> None:
+    checks = normalize_github_pr_checks(
+        [{"name": "pytest", "workflow": "Tests", "state": "COMPLETED"}],
+        duration_seconds=0.25,
+    )
+
+    assert checks["state"] == "checks_pending_timeout"
+    assert checks["passed_checks"] == []
+    assert checks["pending_checks"] == [{"name": "pytest", "workflow": "Tests", "state": "COMPLETED"}]
+
+
 def test_github_pr_checks_polls_until_pending_checks_finish(tmp_path: Path, monkeypatch: Any) -> None:
     calls: list[list[str]] = []
     outputs = [
@@ -780,6 +791,21 @@ def test_ship_result_human_output_includes_pr_creation_state(tmp_path: Path, cap
 
     assert code == 0
     assert capsys.readouterr().out == "ship: checks_passed pr=created https://example.test/pr/1\n"
+
+
+def test_ship_result_human_output_tolerates_malformed_operation_statuses(capsys: Any) -> None:
+    code = print_ship_result(
+        {
+            "status": "checks_passed",
+            "operation_statuses": "malformed",
+            "pr_url": "https://example.test/pr/1",
+        },
+        json_output=False,
+        ok=True,
+    )
+
+    assert code == 0
+    assert capsys.readouterr().out == "ship: checks_passed https://example.test/pr/1\n"
 
 
 def test_ship_support_reexports_cohesive_owner_modules() -> None:

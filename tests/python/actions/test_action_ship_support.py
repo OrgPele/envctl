@@ -308,6 +308,172 @@ class ActionShipSupportTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(stdout.getvalue())["status"], "checks_passed")
 
+    def test_run_ship_workflow_fails_when_pr_action_succeeds_but_pr_url_is_unresolved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            context = SimpleNamespace(
+                repo_root=repo_root,
+                project_root=repo_root,
+                project_name="Main",
+                env={"ENVCTL_ACTION_JSON": "true"},
+            )
+            checks_called = False
+
+            def git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/demo\n"
+                if args == ["rev-parse", "HEAD"]:
+                    return "before\n" if not commit_called else "after\n"
+                return ""
+
+            commit_called = False
+
+            def run_commit_action(_context: object) -> int:
+                nonlocal commit_called
+                commit_called = True
+                return 0
+
+            def github_pr_checks(*_args: object, **_kwargs: object) -> dict[str, object]:
+                nonlocal checks_called
+                checks_called = True
+                return {"state": "checks_passed", "failing_checks": [], "pending_checks": []}
+
+            with redirect_stdout(StringIO()) as stdout:
+                code = run_ship_workflow(
+                    context,
+                    resolve_git_root=lambda project_root, repo_root: project_root,
+                    git_available=True,
+                    git_output=git_output,
+                    run_git=lambda _git_root, args: subprocess.CompletedProcess(args=args, returncode=0),
+                    resolve_base_branch=lambda _context, _git_root: "main",
+                    resolve_base_ref=lambda _git_root, _base_branch: "origin/main",
+                    run_commit_action=run_commit_action,
+                    run_pr_action=lambda _context: 0,
+                    probe_dirty_worktree=lambda *_args, **_kwargs: SimpleNamespace(dirty=True),
+                    existing_pr_url=lambda _git_root, _branch: "",
+                    partition_envctl_protected_paths=lambda _status: SimpleNamespace(
+                        protected_staged_paths=[],
+                        protected_skipped_paths=[],
+                    ),
+                    ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
+                    github_pr_checks=github_pr_checks,
+                )
+
+        self.assertEqual(code, 1)
+        self.assertFalse(checks_called)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "pr_unresolved")
+        self.assertEqual(payload["step_statuses"], ["committed_pushed", "pr_unresolved"])
+        self.assertEqual(
+            payload["operation_statuses"],
+            {
+                "checks": "not_run",
+                "commit": "success",
+                "merge_conflicts": "not_checked",
+                "pr": "unresolved",
+                "push": "success",
+            },
+        )
+        self.assertEqual(payload["commit_sha"], "after")
+        self.assertEqual(payload["pr_url"], "")
+
+    def test_run_ship_workflow_fails_closed_for_unknown_check_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            context = SimpleNamespace(
+                repo_root=repo_root,
+                project_root=repo_root,
+                project_name="Main",
+                env={"ENVCTL_ACTION_JSON": "true"},
+            )
+
+            def git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/demo\n"
+                if args == ["rev-parse", "HEAD"]:
+                    return "abc123\n"
+                return ""
+
+            with redirect_stdout(StringIO()) as stdout:
+                code = run_ship_workflow(
+                    context,
+                    resolve_git_root=lambda project_root, repo_root: project_root,
+                    git_available=True,
+                    git_output=git_output,
+                    run_git=lambda _git_root, args: subprocess.CompletedProcess(args=args, returncode=0),
+                    resolve_base_branch=lambda _context, _git_root: "main",
+                    resolve_base_ref=lambda _git_root, _base_branch: "origin/main",
+                    run_commit_action=lambda _context: 0,
+                    run_pr_action=lambda _context: 0,
+                    probe_dirty_worktree=lambda *_args, **_kwargs: SimpleNamespace(dirty=False),
+                    existing_pr_url=lambda _git_root, _branch: "https://github.com/acme/repo/pull/7",
+                    partition_envctl_protected_paths=lambda _status: SimpleNamespace(
+                        protected_staged_paths=[],
+                        protected_skipped_paths=[],
+                    ),
+                    ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
+                    github_pr_checks=lambda _git_root, *, branch, pr_url, expected_head_sha: {
+                        "state": "unexpected_check_state",
+                        "failing_checks": [],
+                        "passed_checks": [],
+                        "pending_checks": [],
+                        "duration_seconds": 0.1,
+                    },
+                )
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "unexpected_check_state")
+        self.assertEqual(payload["step_statuses"], ["clean_no_changes", "pr_exists", "unexpected_check_state"])
+        self.assertEqual(payload["operation_statuses"]["checks"], "unexpected_check_state")
+
+    def test_run_ship_workflow_fails_closed_when_check_payload_has_no_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            context = SimpleNamespace(
+                repo_root=repo_root,
+                project_root=repo_root,
+                project_name="Main",
+                env={"ENVCTL_ACTION_JSON": "true"},
+            )
+
+            def git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/demo\n"
+                if args == ["rev-parse", "HEAD"]:
+                    return "abc123\n"
+                return ""
+
+            with redirect_stdout(StringIO()) as stdout:
+                code = run_ship_workflow(
+                    context,
+                    resolve_git_root=lambda project_root, repo_root: project_root,
+                    git_available=True,
+                    git_output=git_output,
+                    run_git=lambda _git_root, args: subprocess.CompletedProcess(args=args, returncode=0),
+                    resolve_base_branch=lambda _context, _git_root: "main",
+                    resolve_base_ref=lambda _git_root, _base_branch: "origin/main",
+                    run_commit_action=lambda _context: 0,
+                    run_pr_action=lambda _context: 0,
+                    probe_dirty_worktree=lambda *_args, **_kwargs: SimpleNamespace(dirty=False),
+                    existing_pr_url=lambda _git_root, _branch: "https://github.com/acme/repo/pull/7",
+                    partition_envctl_protected_paths=lambda _status: SimpleNamespace(
+                        protected_staged_paths=[],
+                        protected_skipped_paths=[],
+                    ),
+                    ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
+                    github_pr_checks=lambda _git_root, *, branch, pr_url, expected_head_sha: {},
+                )
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "checks_unresolved")
+        self.assertEqual(payload["step_statuses"], ["clean_no_changes", "pr_exists", "checks_unresolved"])
+        self.assertEqual(payload["operation_statuses"]["checks"], "checks_unresolved")
+
     def test_run_ship_workflow_returns_success_with_pending_status_when_checks_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
@@ -360,6 +526,72 @@ class ActionShipSupportTests(unittest.TestCase):
         self.assertEqual(payload["operation_statuses"]["checks"], "checks_pending_timeout")
         self.assertEqual(payload["checks_timeout_seconds"], 30.0)
         self.assertEqual(payload["pending_checks"], [{"name": "pytest", "state": "QUEUED"}])
+
+    def test_run_ship_workflow_does_not_report_commit_success_when_dirty_artifacts_are_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            context = SimpleNamespace(
+                repo_root=repo_root,
+                project_root=repo_root,
+                project_name="Main",
+                env={"ENVCTL_ACTION_JSON": "true"},
+            )
+
+            def git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "feature/demo\n"
+                if args == ["rev-parse", "HEAD"]:
+                    return "abc123\n"
+                if args == ["status", "--porcelain", "--untracked-files=all"]:
+                    return "?? .envctl-state/code-intelligence.json\n"
+                return ""
+
+            with redirect_stdout(StringIO()) as stdout, redirect_stderr(StringIO()) as stderr:
+                code = run_ship_workflow(
+                    context,
+                    resolve_git_root=lambda project_root, repo_root: project_root,
+                    git_available=True,
+                    git_output=git_output,
+                    run_git=lambda _git_root, args: subprocess.CompletedProcess(args=args, returncode=0),
+                    resolve_base_branch=lambda _context, _git_root: "main",
+                    resolve_base_ref=lambda _git_root, _base_branch: "origin/main",
+                    run_commit_action=lambda _context: 0,
+                    run_pr_action=lambda _context: 0,
+                    probe_dirty_worktree=lambda *_args, **_kwargs: SimpleNamespace(dirty=True),
+                    existing_pr_url=lambda _git_root, _branch: "https://github.com/acme/repo/pull/7",
+                    partition_envctl_protected_paths=lambda _status: SimpleNamespace(
+                        protected_staged_paths=[],
+                        protected_skipped_paths=[".envctl-state/code-intelligence.json"],
+                    ),
+                    ordered_unique_paths=lambda *groups: [path for group in groups for path in group],
+                    github_pr_checks=lambda _git_root, *, branch, pr_url, expected_head_sha: {
+                        "state": "checks_passed",
+                        "failing_checks": [],
+                        "passed_checks": [{"name": "pytest", "state": "SUCCESS"}],
+                        "pending_checks": [],
+                        "duration_seconds": 0.1,
+                    },
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "checks_passed")
+        self.assertEqual(payload["step_statuses"], ["clean_no_changes", "pr_exists", "checks_passed"])
+        self.assertEqual(
+            payload["operation_statuses"],
+            {
+                "checks": "checks_passed",
+                "commit": "no_changes",
+                "merge_conflicts": "none",
+                "pr": "existing",
+                "push": "not_needed",
+            },
+        )
+        self.assertFalse(payload["committed"])
+        self.assertFalse(payload["pushed"])
+        self.assertEqual(payload["protected_local_artifacts_skipped"], [".envctl-state/code-intelligence.json"])
+        self.assertEqual(stderr.getvalue().splitlines(), ["ship: PR already exists for Main: https://github.com/acme/repo/pull/7"])
 
     def test_run_ship_workflow_treats_no_checks_as_successful_ship_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
