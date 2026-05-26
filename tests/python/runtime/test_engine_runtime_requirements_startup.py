@@ -662,7 +662,7 @@ class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
             self.assertEqual(code, 1)
             self.assertIn("Duplicate project identities detected", out.getvalue())
 
-    def test_startup_fails_with_actionable_error_when_no_real_service_commands_resolve(self) -> None:
+    def test_entire_system_plan_noops_app_services_when_no_local_system_is_configured(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -681,15 +681,57 @@ class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
             fake_runner.wait_for_port_result = True
             fake_runner.wait_for_pid_port_result = True
             engine.process_runner = fake_runner  # type: ignore[attr-defined]
-            route = parse_route(["--plan", "feature-a", "--batch"], env={})
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
 
             out = StringIO()
             with redirect_stdout(out):
                 code = engine.dispatch(route)
 
-            self.assertEqual(code, 1)
+            rendered = out.getvalue()
+            self.assertEqual(code, 0)
+            self.assertIn("no local app system is configured", rendered)
+            self.assertIn("--entire-system was honored", rendered)
             self.assertNotIn("missing_requirement_start_command", out.getvalue())
-            self.assertIn("missing_service_start_command", out.getvalue())
+            self.assertNotIn("missing_service_start_command", rendered)
+            self.assertNotIn("local app startup failed", rendered)
+            self.assertEqual(fake_runner.start_background_calls, [])
+
+            skipped_events = [event for event in engine.events if event.get("event") == "service.attach.skipped"]
+            self.assertTrue(skipped_events)
+            self.assertEqual(skipped_events[-1].get("reason"), "no_system_configured")
+            self.assertEqual(skipped_events[-1].get("requested_scope"), "entire-system")
+            self.assertEqual(skipped_events[-1].get("selected_service_types"), ["backend", "frontend"])
+
+    def test_explicit_tree_backend_enable_keeps_missing_command_failure_actionable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "TREES_BACKEND_ENABLE": "true",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            engine.port_planner.availability_checker = lambda _port: True
+            fake_runner = _FakeProcessRunner()
+            fake_runner.wait_for_port_result = True
+            fake_runner.wait_for_pid_port_result = True
+            engine.process_runner = fake_runner  # type: ignore[attr-defined]
+            route = parse_route(["--plan", "feature-a", "--entire-system", "--batch"], env={})
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            rendered = out.getvalue()
+            self.assertEqual(code, 1)
+            self.assertIn("missing_service_start_command", rendered)
+            self.assertNotIn("no local app system is configured", rendered)
             self.assertEqual(fake_runner.start_background_calls, [])
 
     def test_runtime_env_overrides_forward_docker_and_setup_flags(self) -> None:

@@ -352,6 +352,8 @@ envctl kill --backend --headless     # alias for stop --backend
 envctl kill-all --headless           # alias for stop-all
 ```
 
+`--entire-system` starts managed dependencies plus configured or autodetected local app services. In a repo/worktree with no explicit backend/frontend command, directory, enablement, launch env section, additional service, or supported autodetectable app layout, envctl keeps the AI/session flow running without app services and reports that no local app system is configured.
+
 Review branch-relative changes:
 
 ```bash

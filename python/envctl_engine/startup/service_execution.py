@@ -21,6 +21,10 @@ from envctl_engine.startup.service_execution_policy import (
     service_attach_parallel_enabled,
     service_prep_parallel_enabled,
 )
+from envctl_engine.startup.no_system_config import (
+    no_local_app_system_configured,
+    no_local_app_system_message,
+)
 from envctl_engine.startup.service_launch_diagnostics import record_runtime_launch_diagnostics
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
 from envctl_engine.startup.public_urls import browser_backend_url, resolve_public_host
@@ -190,6 +194,27 @@ def start_project_services(
             mode=effective_mode,
             reason="all_services_disabled",
         )
+        return {}
+    if no_local_app_system_configured(
+        config=rt.config,
+        env=rt.env,
+        route=route,
+        mode=effective_mode,
+        project_root=context.root,
+        selected_service_types=selected_service_types,
+        command_exists=getattr(rt, "_command_exists", None),
+    ):
+        rt._emit(
+            "service.attach.skipped",
+            project=context.name,
+            mode=effective_mode,
+            reason="no_system_configured",
+            requested_scope=route.flags.get("runtime_scope") if route is not None else None,
+            selected_service_types=sorted(selected_service_types),
+        )
+        record_warning = getattr(rt, "_record_project_startup_warning", None)
+        if callable(record_warning):
+            record_warning(context.name, no_local_app_system_message())
         return {}
 
     service_started = time.monotonic()
