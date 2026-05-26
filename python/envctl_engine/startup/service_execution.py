@@ -5,7 +5,9 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 import time
+from typing import cast
 
+from envctl_engine.runtime.command_resolution import CommandExists, suggest_service_start_command
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_process_runtime
 from envctl_engine.startup.startup_selection_support import _restart_service_types_for_project
@@ -46,6 +48,118 @@ class LaunchedServiceRuntime:
     actual_port: int
     pid: int | None
     log_path: str
+
+
+NO_LOCAL_APP_SYSTEM_WARNING = (
+    "No local app system is configured for this repo/worktree; envctl is continuing "
+    "with the implementation session only. --entire-system was honored, but there was "
+    "nothing configured to start."
+)
+
+
+def _mode_service_key(mode: str, service_name: str, suffix: str) -> str:
+    return f"{mode.upper()}_{service_name.upper()}_{suffix}"
+
+
+def _has_explicit_local_system_signal(
+    config: object,
+    *,
+    env: dict[str, str] | object,
+    mode: str,
+    service_names: set[str],
+) -> bool:
+    explicit_keys = {str(key).strip().upper() for key in getattr(config, "explicit_keys", ())}
+    if isinstance(env, dict):
+        explicit_keys.update(str(key).strip().upper() for key in env)
+    local_system_keys = {
+        "ENVCTL_BACKEND_START_CMD",
+        "ENVCTL_FRONTEND_START_CMD",
+        "ENVCTL_ADDITIONAL_SERVICES",
+        "BACKEND_DIR",
+        "FRONTEND_DIR",
+        f"{mode.upper()}_STARTUP_ENABLE",
+    }
+    for service_name in service_names:
+        local_system_keys.add(_mode_service_key(mode, service_name, "ENABLE"))
+    if explicit_keys.intersection(local_system_keys):
+        return True
+    if bool(getattr(config, "backend_dependency_env_section_present", False)):
+        return True
+    if bool(getattr(config, "frontend_dependency_env_section_present", False)):
+        return True
+    for service_name in service_names:
+        if bool(getattr(config, f"{mode}_{service_name}_dependency_env_section_present", False)):
+            return True
+    service_sections = getattr(config, "service_dependency_env_section_present", None)
+    if isinstance(service_sections, dict):
+        for service_name in service_names:
+            if bool(service_sections.get(service_name)):
+                return True
+    mode_service_sections = getattr(config, "mode_service_dependency_env_section_present", None)
+    if isinstance(mode_service_sections, dict):
+        for service_name in service_names:
+            if bool(mode_service_sections.get((mode, service_name))):
+                return True
+    return False
+
+
+def _selected_defaults_have_autodetectable_app(
+    rt: object,
+    *,
+    project_root: Path,
+    selected_service_types: set[str],
+) -> bool:
+    command_exists_candidate = getattr(rt, "_command_exists", None)
+    command_exists: CommandExists
+    if callable(command_exists_candidate):
+        command_exists = cast(CommandExists, command_exists_candidate)
+    else:
+        def command_missing(_: str) -> bool:
+            return False
+
+        command_exists = command_missing
+
+    for service_name in selected_service_types:
+        if service_name not in {"backend", "frontend"}:
+            continue
+        if (
+            suggest_service_start_command(
+                service_name=service_name,
+                project_root=project_root,
+                command_exists=command_exists,
+            )
+            is not None
+        ):
+            return True
+    return False
+
+
+def _no_local_app_system_configured(
+    rt: object,
+    *,
+    mode: str,
+    project_root: Path,
+    selected_service_types: set[str],
+    configured_additional_services: tuple[object, ...],
+) -> bool:
+    if not selected_service_types:
+        return False
+    if not selected_service_types <= {"backend", "frontend"}:
+        return False
+    if configured_additional_services:
+        return False
+    if _has_explicit_local_system_signal(
+        getattr(rt, "config"),
+        env=getattr(rt, "env", {}),
+        mode=mode,
+        service_names=selected_service_types,
+    ):
+        return False
+    return not _selected_defaults_have_autodetectable_app(
+        rt,
+        project_root=project_root,
+        selected_service_types=selected_service_types,
+    )
 
 
 def start_project_services(
@@ -190,6 +304,25 @@ def start_project_services(
             mode=effective_mode,
             reason="all_services_disabled",
         )
+        return {}
+    if route is not None and route.command == "plan" and _no_local_app_system_configured(
+        rt,
+        mode=effective_mode,
+        project_root=context.root,
+        selected_service_types=selected_service_types,
+        configured_additional_services=configured_additional_services,
+    ):
+        rt._emit(
+            "service.attach.skipped",
+            project=context.name,
+            mode=effective_mode,
+            reason="no_system_configured",
+            requested_scope=str(route.flags.get("runtime_scope")) if route is not None else None,
+            selected_service_types=sorted(selected_service_types),
+        )
+        record_warning = getattr(rt, "_record_project_startup_warning", None)
+        if callable(record_warning):
+            record_warning(context.name, NO_LOCAL_APP_SYSTEM_WARNING)
         return {}
 
     service_started = time.monotonic()

@@ -534,6 +534,12 @@ Supabase includes PostgreSQL, so treat them as alternative stacks per scope.
 | `BACKEND_ENV_FILE_OVERRIDE` | unset | Explicit backend env file path for non-Main backend startup/migrate flows. Relative paths can resolve from the target root or repo root; ambiguous dual matches are rejected. |
 | `MAIN_ENV_FILE_PATH` | unset | Explicit backend env file path for Main backend startup/migrate flows. Relative paths can resolve from the target root or repo root; ambiguous dual matches are rejected. |
 
+Default backend/frontend enablement keeps the standard startup profile ready, but it is not by itself an explicit local
+app-system configuration. During AI plan-agent launches, a repo with no backend/frontend command, no explicit service
+directories, no service launch env sections, no additional services, and no autodetectable app layout is reported as
+having no configured local app system; envctl then continues without app services instead of treating missing default
+commands as a startup failure.
+
 ## Optional Hooks (`.envctl.sh`)
 
 Use hooks only for advanced custom orchestration.
