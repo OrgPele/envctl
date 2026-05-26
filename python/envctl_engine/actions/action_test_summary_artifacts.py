@@ -273,7 +273,9 @@ def write_failed_tests_summary_for_orchestrator(
     outcomes: list[dict[str, object]],
     previous_entry: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    return write_failed_tests_summary(
+    from envctl_engine.actions import action_test_summary_support
+
+    return action_test_summary_support.write_failed_tests_summary(
         run_dir=run_dir,
         project_name=project_name,
         project_root=project_root,
