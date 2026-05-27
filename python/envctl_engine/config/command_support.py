@@ -86,6 +86,15 @@ def _run_headless_config_command(runtime: Any, route: Any) -> int:
     payload = {
         "saved": True,
         "path": str(save_result.path),
+        "agent_instructions": (
+            {
+                "path": str(save_result.agent_instructions_status.path),
+                "updated": save_result.agent_instructions_status.updated,
+                "warning": save_result.agent_instructions_status.warning,
+            }
+            if save_result.agent_instructions_status is not None
+            else None
+        ),
         "ignore_updated": save_result.ignore_updated,
         "ignore_warning": save_result.ignore_warning,
         "ignore_status": (
@@ -128,4 +137,10 @@ def _run_headless_config_command(runtime: Any, route: Any) -> int:
                     stream=sys.stdout,
                 )
             )
+        agent_status = save_result.agent_instructions_status
+        if agent_status is not None and agent_status.updated:
+            print("Updated agent instructions:")
+            print(render_path_for_terminal(agent_status.path, env=getattr(runtime, "env", {}), stream=sys.stdout))
+        if agent_status is not None and agent_status.warning:
+            print(f"Could not update agent instructions: {agent_status.warning}")
     return 0

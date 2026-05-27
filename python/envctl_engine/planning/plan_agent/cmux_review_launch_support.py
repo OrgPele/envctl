@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Callable
 
@@ -14,8 +15,8 @@ def resolve_review_agent_launch_readiness(
     runtime: Any,
     *,
     resolve_launch_config_fn: Callable[..., PlanAgentLaunchConfig],
-    missing_launch_commands_fn: Callable[..., tuple[str, ...]],
-    default_target_workspace_title_fn: Callable[..., str],
+    missing_launch_commands_fn: Callable[..., Iterable[str]],
+    default_target_workspace_title_fn: Callable[..., str | None],
     missing_required_cmux_context_fn: Callable[..., bool],
 ) -> ReviewAgentLaunchReadiness:
     launch_config = resolve_launch_config_fn(runtime.config, getattr(runtime, "env", {}))
@@ -53,7 +54,7 @@ def launch_cmux_review_agent_terminal(
     project_root: Path,
     review_bundle_path: Path | None,
     resolve_launch_config_fn: Callable[..., PlanAgentLaunchConfig],
-    missing_launch_commands_fn: Callable[..., tuple[str, ...]],
+    missing_launch_commands_fn: Callable[..., Iterable[str]],
     ensure_workspace_id_fn: Callable[..., Any],
     missing_required_cmux_context_fn: Callable[..., bool],
     create_surface_fn: Callable[..., tuple[str | None, str | None]],

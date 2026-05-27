@@ -25,6 +25,7 @@ from envctl_engine.runtime.engine_runtime_state_lookup import (
     try_load_existing_state as runtime_try_load_existing_state,
 )
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.runtime_readiness import RuntimeReadinessResult
 from envctl_engine.startup.requirements_startup_domain import (
     _requirement_listener_timeout_seconds as domain_requirement_listener_timeout_seconds,
     _start_requirement_component as domain_start_requirement_component,
@@ -203,7 +204,7 @@ class RuntimeStartupFacadeMixin:
         self,
         *,
         run_dir: Path | None = None,
-        readiness_result: object | None = None,
+        readiness_result: RuntimeReadinessResult | None = None,
     ) -> None:
         runtime_write_runtime_readiness_report(self, run_dir=run_dir, readiness_result=readiness_result)
 

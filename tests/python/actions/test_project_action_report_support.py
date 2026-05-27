@@ -12,6 +12,9 @@ from envctl_engine.actions.project_action_report_support import (
     persist_project_action_result,
     project_action_success_status,
     review_success_artifact_paths,
+    ship_action_payload,
+    ship_action_status,
+    ship_action_status_message,
     write_project_action_failure_report,
 )
 
@@ -32,11 +35,86 @@ class ProjectActionReportSupportTests(unittest.TestCase):
             },
         )
 
+    def test_review_success_artifact_paths_does_not_use_next_label_as_missing_value(self) -> None:
+        parsed = review_success_artifact_paths(
+            stdout="Output directory\nSummary file\n/tmp/summary.md\n",
+            stderr="Full review bundle\n/tmp/bundle.json\n",
+        )
+
+        self.assertEqual(
+            parsed,
+            {
+                "summary_path": "/tmp/summary.md",
+                "bundle_path": "/tmp/bundle.json",
+            },
+        )
+
     def test_project_action_success_status_marks_detached_pr_skip(self) -> None:
         completed = SimpleNamespace(stdout="Skipping PR creation for detached HEAD\nmore detail\n")
 
         self.assertEqual(project_action_success_status(command_name="pr", completed=completed), "skipped")
         self.assertEqual(project_action_success_status(command_name="review", completed=completed), "success")
+
+    def test_ship_action_status_reads_structured_output(self) -> None:
+        output = (
+            "Committed and pushed changes\n"
+            "{\n"
+            '  "branch": "feature-a",\n'
+            '  "contract_version": "envctl.ship.v1",\n'
+            '  "operation_statuses": {\n'
+            '    "checks": "pending",\n'
+            '    "commit": "success",\n'
+            '    "merge_conflicts": "none",\n'
+            '    "pr": "existing",\n'
+            '    "push": "success"\n'
+            "  },\n"
+            '  "pr_url": "https://github.test/acme/envctl/pull/12",\n'
+            '  "status": "checks_pending_timeout"\n'
+            "}\n"
+        )
+        completed = SimpleNamespace(stdout=output)
+
+        self.assertEqual(ship_action_payload(output)["status"], "checks_pending_timeout")
+        self.assertEqual(ship_action_status(completed), "checks_pending_timeout")
+        self.assertEqual(project_action_success_status(command_name="ship", completed=completed), "checks_pending_timeout")
+
+        message = ship_action_status_message("feature-a", completed)
+        self.assertTrue(message.startswith("ship handoff status for feature-a:"))
+        self.assertIn("checks_pending_timeout", message)
+        self.assertIn("commit=success", message)
+        self.assertIn("push=success", message)
+        self.assertIn("merge_conflicts=none", message)
+        self.assertIn("checks=pending", message)
+        self.assertIn("https://github.test/acme/envctl/pull/12", message)
+        self.assertNotIn("succeeded", message)
+
+    def test_ship_action_status_reads_structured_stderr_when_stdout_has_no_payload(self) -> None:
+        output = (
+            "ship: GitHub checks failed\n"
+            "{\n"
+            '  "contract_version": "envctl.ship.v1",\n'
+            '  "operation_statuses": {\n'
+            '    "checks": "failed",\n'
+            '    "commit": "success",\n'
+            '    "merge_conflicts": "none",\n'
+            '    "pr": "created",\n'
+            '    "push": "success"\n'
+            "  },\n"
+            '  "pr_url": "https://github.test/acme/envctl/pull/13",\n'
+            '  "status": "checks_failed"\n'
+            "}\n"
+        )
+        completed = SimpleNamespace(stdout="Running command...\n", stderr=output)
+
+        self.assertEqual(ship_action_status(completed), "checks_failed")
+        self.assertEqual(project_action_success_status(command_name="ship", completed=completed), "checks_failed")
+
+        message = ship_action_status_message("feature-b", completed)
+        self.assertIn("checks_failed", message)
+        self.assertIn("commit=success", message)
+        self.assertIn("pr=created", message)
+        self.assertIn("checks=failed", message)
+        self.assertIn("https://github.test/acme/envctl/pull/13", message)
 
     def test_build_project_action_success_handler_persists_review_artifacts_and_status(self) -> None:
         persisted: list[dict[str, object]] = []
@@ -120,13 +198,14 @@ class ProjectActionReportSupportTests(unittest.TestCase):
             report = write_project_action_failure_report(
                 runtime,
                 run_id="run-1",
-                project_name="Feature A",
+                project_name="Feature/A v2",
                 command_name="review",
                 output="boom",
             )
             report_text = report.read_text(encoding="utf-8")
 
-            self.assertEqual(report.name, "Feature_A_review.txt")
+            self.assertEqual(report.name, "Feature_A_v2_review.txt")
+            self.assertEqual(report.parent, repo / "runs" / "run-1")
         self.assertEqual(report_text, "boom\n")
 
     def test_persist_project_action_result_records_migrate_failure_report(self) -> None:

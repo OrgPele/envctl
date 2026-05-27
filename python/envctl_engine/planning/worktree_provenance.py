@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from envctl_engine.runtime.codex_tmux_support import _tmux_session_exists
+from envctl_engine.runtime.runtime_context import resolve_process_runtime
 from envctl_engine.shared.parsing import parse_bool
 
 
@@ -120,7 +121,7 @@ def detect_default_branch(self: Any) -> str:
 
 
 def git_command_output(self: Any, args: list[str]) -> str:
-    result = self.process_runner.run(
+    result = resolve_process_runtime(self).run(
         ["git", "-C", str(self.config.base_dir), *args],
         cwd=self.config.base_dir,
         env=self._command_env(port=0),

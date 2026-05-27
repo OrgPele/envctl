@@ -46,9 +46,26 @@ class _FakeRunner:
 
     def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
         _ = env, timeout
-        self.run_calls.append((tuple(cmd), str(cwd)))
+        command = tuple(str(part) for part in cmd)
+        if command == ("git", "rev-parse", "--show-toplevel"):
+            return SimpleNamespace(returncode=0, stdout=f"{self._repo_root_for_cwd(cwd)}\n", stderr="")
+        if command == ("git", "rev-parse", "--git-common-dir"):
+            return SimpleNamespace(returncode=0, stdout=f"{self._repo_root_for_cwd(cwd) / '.git'}\n", stderr="")
+
+        self.run_calls.append((command, str(cwd)))
         self.run_envs.append(dict(env) if isinstance(env, dict) else None)
         return SimpleNamespace(returncode=self.returncode, stdout=self.stdout, stderr=self.stderr)
+
+    @staticmethod
+    def _repo_root_for_cwd(cwd: object) -> Path:
+        resolved = Path(str(cwd or ".")).expanduser().resolve()
+        for candidate in (resolved, *resolved.parents):
+            if (candidate / ".git").exists():
+                return candidate
+        for candidate in (resolved, *resolved.parents):
+            if candidate.name == "trees":
+                return candidate.parent
+        return resolved
 
     def start(self, cmd, *, cwd=None, env=None):  # noqa: ANN001
         _ = cmd, cwd, env

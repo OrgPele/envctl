@@ -19,8 +19,10 @@ class _RuntimeStub:
         self.selected_plan_contexts: list[SimpleNamespace] | None = None
         self.last_plan_selection_result = SimpleNamespace(created_worktrees=())
         self.planning_worktree_orchestrator = SimpleNamespace(
-            last_plan_selection_result=lambda: self.last_plan_selection_result
+            last_plan_selection_result=lambda: self.last_plan_selection_result,
+            import_remote_branch_worktree=lambda *, branch_input: self.import_result,
         )
+        self.import_result = SimpleNamespace(raw_projects=[], created_worktrees=(), error=None)
 
     def _discover_projects(self, *, mode: str) -> list[SimpleNamespace]:
         self.discovered_mode = mode
@@ -37,6 +39,9 @@ class _RuntimeStub:
         if self.setup_selection_error is not None:
             raise self.setup_selection_error
         return list(project_contexts)
+
+    def _contexts_from_raw_projects(self, raw_projects: list[tuple[str, Path]]) -> list[SimpleNamespace]:
+        return [SimpleNamespace(name=name, root=root, ports={}) for name, root in raw_projects]
 
     def _duplicate_project_context_error(self, project_contexts: list[SimpleNamespace]) -> str | None:
         self.duplicate_checked = list(project_contexts)
@@ -132,6 +137,40 @@ class StartupContextSelectionTests(unittest.TestCase):
             session.pending_plan_agent_worktrees,
             (CreatedPlanWorktree(name="feature-a-1", root=context.root, plan_file=""),),
         )
+
+    def test_select_startup_contexts_imports_remote_branch_for_plan_agent_launch(self) -> None:
+        root = Path("/tmp/feature-foo")
+        created = CreatedPlanWorktree(name="feature-foo", root=root, plan_file="")
+        runtime = _RuntimeStub([])
+        runtime.import_result = SimpleNamespace(
+            raw_projects=[("feature-foo", root)],
+            created_worktrees=(created,),
+            error=None,
+        )
+        route = Route(
+            command="import",
+            mode="trees",
+            raw_args=[],
+            passthrough_args=["feature/foo"],
+            projects=[],
+            flags={"tmux": True},
+        )
+        session = self._session(route)
+
+        result = select_startup_contexts(
+            runtime=runtime,
+            session=session,
+            trees_start_selection_required=lambda _route, _mode: False,
+            select_start_tree_projects=lambda *, route, project_contexts: project_contexts,
+            apply_restart_ports=lambda _session, project_contexts: None,
+            emit_phase=lambda _session, phase, started_at, **extra: None,
+            emit_snapshot=lambda _session, checkpoint, **extra: None,
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual([context.name for context in session.selected_contexts], ["feature-foo"])
+        self.assertTrue(session.plan_agent_launch_requested)
+        self.assertEqual(session.pending_plan_agent_worktrees, (created,))
 
 
 if __name__ == "__main__":

@@ -6,11 +6,13 @@ from types import SimpleNamespace
 import unittest
 
 from envctl_engine.planning.plan_agent.models import (
+    CreatedPlanWorktree,
     PlanAgentAttachValidation,
     PlanAgentLaunchOutcome,
     PlanAgentLaunchResult,
 )
 from envctl_engine.runtime.command_router import parse_route
+from envctl_engine.startup.plan_agent_dependency_bootstrap import PlanAgentDependencyBootstrapper
 from envctl_engine.startup.plan_agent_handoff import (
     emit_plan_agent_launch_state,
     launch_plan_agent_terminals_with_spinner,
@@ -29,6 +31,7 @@ from envctl_engine.startup.plan_agent_handoff import (
     should_degrade_to_validated_plan_agent_handoff,
     validate_plan_agent_handoff,
 )
+from envctl_engine.startup.plan_agent_launch_spinner import PlanAgentLaunchSpinner
 from envctl_engine.startup.session import StartupSession
 
 
@@ -44,6 +47,10 @@ def _session(*, args: list[str] | None = None) -> StartupSession:
 
 
 class PlanAgentHandoffTests(unittest.TestCase):
+    def test_plan_agent_handoff_uses_named_launch_and_dependency_owners(self) -> None:
+        self.assertTrue(callable(PlanAgentLaunchSpinner.launch))
+        self.assertTrue(callable(PlanAgentDependencyBootstrapper.prepare))
+
     def test_local_startup_failure_reason_classifies_missing_start_command(self) -> None:
         self.assertEqual(
             local_startup_failure_reason("missing_service_start_command: backend"),
@@ -148,16 +155,43 @@ class PlanAgentHandoffTests(unittest.TestCase):
                     {
                         "command": "plan",
                         "mode": "trees",
+                        "route_transport": "tmux",
                         "status": "partial",
                         "reason": "one_failed",
                         "launched_worktrees": ["feature-a-1"],
                         "failed_worktrees": ["feature-a-2"],
+                        "launched_surface_ids": [],
+                        "launched_workspace_ids": [],
                         "session_name": "envctl-plan",
                         "implementation_session_running": True,
                     },
                 )
             ],
         )
+
+    def test_emit_plan_agent_launch_state_includes_cmux_surface_details(self) -> None:
+        session = _session(args=["plan", "--cmux"])
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(_emit=lambda event, **payload: events.append((event, payload)))
+        launch_result = PlanAgentLaunchResult(
+            status="launched",
+            reason="launched",
+            outcomes=(
+                PlanAgentLaunchOutcome(
+                    worktree_name="feature-a-1",
+                    worktree_root=Path("/tmp/feature-a-1"),
+                    workspace_id="workspace:6",
+                    surface_id="surface:74",
+                    status="launched",
+                ),
+            ),
+        )
+
+        emit_plan_agent_launch_state(runtime, session, launch_result)
+
+        self.assertEqual(events[0][1]["route_transport"], "cmux")
+        self.assertEqual(events[0][1]["launched_surface_ids"], ["surface:74"])
+        self.assertEqual(events[0][1]["launched_workspace_ids"], ["workspace:6"])
 
     def test_should_fail_for_plan_agent_launch_result_requires_plan_request_and_no_attach(self) -> None:
         failed_result = SimpleNamespace(status="failed", attach_target=None, outcomes=())
@@ -443,6 +477,64 @@ class PlanAgentHandoffTests(unittest.TestCase):
                 ("emit", launch_result),
             ],
         )
+
+    def test_prepare_and_launch_plan_agent_worktrees_accepts_import_routes(self) -> None:
+        session = _session(args=["--import", "feature/foo", "--tmux", "--entire-system"])
+        session.plan_agent_launch_requested = True
+        session.run_id = "run-import"
+        session.selected_contexts = [SimpleNamespace(name="feature-foo")]
+        session.pending_plan_agent_worktrees = (
+            CreatedPlanWorktree(name="feature-foo", root=Path("/tmp/feature-foo"), plan_file=""),
+        )
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(),
+            env={},
+            _emit=lambda event, **payload: events.append((event, payload)),
+        )
+        launch_result = PlanAgentLaunchResult(
+            status="launched",
+            reason="ok",
+            outcomes=(
+                PlanAgentLaunchOutcome(
+                    worktree_name="feature-foo",
+                    worktree_root=Path("/tmp/feature-foo"),
+                    surface_id="surface-import",
+                    status="launched",
+                ),
+            ),
+            attach_target=SimpleNamespace(session_name="s"),
+        )
+        calls: list[tuple[str, object]] = []
+
+        result = prepare_and_launch_plan_agent_worktrees(
+            runtime,
+            session,
+            resolve_launch_config_fn=lambda config, env, *, route: SimpleNamespace(enabled=True, cli="codex", transport="tmux"),
+            ensure_run_id=lambda sess: calls.append(("ensure_run_id", sess)),
+            report_progress=lambda *args, **kwargs: None,
+            prepare_dependencies_for_launch=lambda *args, **kwargs: calls.append(("prepare", kwargs["created_worktrees"])),
+            launch_with_spinner=lambda *args, **kwargs: calls.append(("launch", kwargs["created_worktrees"]))
+            or launch_result,
+            suppress_progress_output=lambda route: False,
+            validate_attach_target_fn=lambda *args, **kwargs: PlanAgentAttachValidation(True, "ok"),
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(session.effective_route.command, "import")
+        self.assertIs(session.plan_agent_launch_result, launch_result)
+        self.assertEqual(
+            calls,
+            [
+                ("ensure_run_id", session),
+                ("prepare", session.pending_plan_agent_worktrees),
+                ("launch", session.pending_plan_agent_worktrees),
+            ],
+        )
+        launch_events = [event for event in events if event[0] == "startup.plan_agent_launch_state"]
+        self.assertEqual(len(launch_events), 1)
+        self.assertEqual(launch_events[0][1]["command"], "import")
+        self.assertEqual(launch_events[0][1]["launched_worktrees"], ["feature-foo"])
 
     def test_prepare_and_launch_plan_agent_worktrees_raises_failed_launch_message(self) -> None:
         session = _session(args=["plan", "--tmux"])

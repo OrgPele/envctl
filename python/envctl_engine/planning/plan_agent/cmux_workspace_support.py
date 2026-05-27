@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from envctl_engine.planning.plan_agent.config import PlanAgentLaunchConfig
 from envctl_engine.planning.plan_agent.models import _WorkspaceLaunchTarget
+from envctl_engine.runtime.runtime_context import resolve_process_runtime
 
 
 def surface_id_from_output(raw: str) -> str | None:
@@ -131,7 +132,7 @@ def current_workspace_ref(runtime: Any, *, require_cmux_context: bool) -> str | 
     if require_cmux_context:
         return None
     try:
-        result = runtime.process_runner.run(
+        result = resolve_process_runtime(runtime).run(
             ["cmux", "current-workspace"],
             cwd=runtime.config.base_dir,
             env=getattr(runtime, "env", {}),
@@ -146,7 +147,7 @@ def current_workspace_ref(runtime: Any, *, require_cmux_context: bool) -> str | 
 
 def identify_workspace_ref(runtime: Any) -> str | None:
     try:
-        result = runtime.process_runner.run(
+        result = resolve_process_runtime(runtime).run(
             ["cmux", "identify"],
             cwd=runtime.config.base_dir,
             env=getattr(runtime, "env", {}),
@@ -232,7 +233,7 @@ def resolve_workspace_ref_by_title(runtime: Any, title: str) -> str | None:
 
 def list_workspaces(runtime: Any) -> tuple[tuple[str, str], ...]:
     try:
-        result = runtime.process_runner.run(
+        result = resolve_process_runtime(runtime).run(
             ["cmux", "list-workspaces"],
             cwd=runtime.config.base_dir,
             env=getattr(runtime, "env", {}),
@@ -275,7 +276,7 @@ def surface_ids_from_list_output(raw: str) -> tuple[str, ...]:
 
 def list_workspace_surfaces(runtime: Any, *, workspace_id: str) -> tuple[str, ...] | None:
     try:
-        result = runtime.process_runner.run(
+        result = resolve_process_runtime(runtime).run(
             ["cmux", "list-pane-surfaces", "--workspace", workspace_id],
             cwd=runtime.config.base_dir,
             env=getattr(runtime, "env", {}),
@@ -305,7 +306,8 @@ def create_named_workspace(
     title: str,
     event_prefix: str = "planning.agent_launch",
 ) -> tuple[_WorkspaceLaunchTarget | None, str | None]:
-    create_result = runtime.process_runner.run(
+    process_runtime = resolve_process_runtime(runtime)
+    create_result = process_runtime.run(
         ["cmux", "new-workspace", "--cwd", str(runtime.config.base_dir)],
         cwd=runtime.config.base_dir,
         env=getattr(runtime, "env", {}),
@@ -315,7 +317,7 @@ def create_named_workspace(
         return None, completed_process_error_text(create_result)
     workspace_ref = workspace_ref_from_command_output(str(getattr(create_result, "stdout", "")))
     if workspace_ref is None:
-        current_result = runtime.process_runner.run(
+        current_result = process_runtime.run(
             ["cmux", "current-workspace"],
             cwd=runtime.config.base_dir,
             env=getattr(runtime, "env", {}),
@@ -326,7 +328,7 @@ def create_named_workspace(
         workspace_ref = str(getattr(current_result, "stdout", "")).strip() or None
     if workspace_ref is None:
         return None, "workspace_create_failed"
-    rename_result = runtime.process_runner.run(
+    rename_result = process_runtime.run(
         ["cmux", "rename-workspace", "--workspace", workspace_ref, title],
         cwd=runtime.config.base_dir,
         env=getattr(runtime, "env", {}),

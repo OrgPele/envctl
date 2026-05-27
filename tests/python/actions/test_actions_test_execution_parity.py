@@ -307,6 +307,34 @@ class ActionsTestExecutionParityTests(_ActionsParityTestCase):
             self.assertIn("envctl_engine.test_output.unittest_runner", only_cmd)
             self.assertEqual(Path(only_cwd).resolve(), repo.resolve())
 
+    def test_test_action_emits_suite_spinner_policy_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "tests").mkdir(parents=True, exist_ok=True)
+
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                    "ENVCTL_DEFAULT_MODE": "main",
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            fake_runner = _FakeRunner(returncode=0, stdout="OK\n")
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(parse_route(["test", "--headless"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 0, msg=out.getvalue())
+            policy_events = [
+                event for event in engine.events if event.get("event") == "test.suite_spinner_group.policy"
+            ]
+            self.assertEqual(len(policy_events), 1, msg=policy_events)
+
     def test_headless_test_auto_selects_single_tree_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -330,4 +358,3 @@ class ActionsTestExecutionParityTests(_ActionsParityTestCase):
             self.assertIn("-m", only_cmd)
             self.assertIn("envctl_engine.test_output.unittest_runner", only_cmd)
             self.assertEqual(Path(only_cwd).resolve(), tree_root.resolve())
-

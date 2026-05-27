@@ -128,10 +128,10 @@ class PlanAgentLaunchOmxConfigTests(PlanAgentLaunchSupportTestCase):
                     self.assertIsNone(launch_config.codex_cycles_warning)
                     self.assertEqual(workflow.mode, "codex_cycles")
                     self.assertEqual(workflow.codex_cycles, 3)
-                    self.assertEqual(len(workflow.steps), 10)
+                    self.assertEqual(len(workflow.steps), 8)
                     self.assertEqual(workflow.steps[1].text, _first_cycle_completion_instruction_text())
-                    self.assertEqual(workflow.steps[-2].text, _browser_e2e_instruction_text())
-                    self.assertEqual(workflow.steps[-1].text, _pr_review_comments_instruction_text())
+                    self.assertNotIn(_browser_e2e_instruction_text(), [step.text for step in workflow.steps])
+                    self.assertNotIn(_pr_review_comments_instruction_text(), [step.text for step in workflow.steps])
 
     def test_resolve_plan_agent_launch_config_forces_codex_for_omx_when_env_prefers_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

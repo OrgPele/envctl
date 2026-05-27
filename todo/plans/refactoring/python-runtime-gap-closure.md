@@ -2,7 +2,7 @@
 
 ## Summary
 - Generated from `contracts/python_runtime_gap_report.json`.
-- Total inventoried features: 57
+- Total inventoried features: 58
 - Open gaps: 0
 - High or medium gaps: 0
 

@@ -53,6 +53,7 @@ class PlanAgentCmuxWorktreeLaunchSupportTests(unittest.TestCase):
 
         self.assertEqual(outcome.status, "failed")
         self.assertEqual(outcome.reason, "create failed")
+        self.assertEqual(outcome.workspace_id, "workspace-1")
         self.assertEqual(runtime.events[0][0], "planning.agent_launch.failed")
         self.assertEqual(runtime.events[0][1]["reason"], "surface_create_failed")
         self.assertEqual(runtime.events[0][1]["workspace_id"], "workspace-1")
@@ -74,6 +75,7 @@ class PlanAgentCmuxWorktreeLaunchSupportTests(unittest.TestCase):
 
         self.assertEqual(outcome.status, "launched")
         self.assertEqual(outcome.surface_id, "surface-1")
+        self.assertEqual(outcome.workspace_id, "workspace-1")
         self.assertEqual(create_calls, [])
         self.assertEqual(runtime.events[0][0], "planning.agent_launch.surface_created")
         self.assertEqual(runtime.events[0][1]["source"], "starter_reused")
@@ -95,6 +97,7 @@ class PlanAgentCmuxWorktreeLaunchSupportTests(unittest.TestCase):
 
         self.assertEqual(outcome.status, "launched")
         self.assertEqual(outcome.surface_id, "surface-2")
+        self.assertEqual(outcome.workspace_id, "workspace-1")
         self.assertEqual(runtime.events[0][1]["source"], "new_surface")
         self.assertEqual(bootstrap_calls[0]["workspace_id"], "workspace-1")
         self.assertEqual(bootstrap_calls[0]["surface_id"], "surface-2")

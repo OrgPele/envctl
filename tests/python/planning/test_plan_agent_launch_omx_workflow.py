@@ -62,7 +62,7 @@ class PlanAgentLaunchOmxWorkflowTests(PlanAgentLaunchSupportTestCase):
                     self.assertIsNone(error)
                     self.assertEqual(len(submitted), 1)
                     self.assertTrue(submitted[0].startswith(f"${workflow_name}"))
-                    self.assertEqual(queued, ["queue_direct_prompt", "queue_message", "queue_message"])
+                    self.assertEqual(queued, ["queue_direct_prompt"])
 
     def test_omx_goal_fallback_still_submits_ralph_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -105,21 +105,25 @@ OWNERSHIP_RULES = {
         ENGINE_ROOT / "ui" / "command_parsing.py",
         ENGINE_ROOT / "runtime" / "engine_runtime_ui_bridge.py",
         ENGINE_ROOT / "ui" / "dashboard" / "command_support.py",
+        ENGINE_ROOT / "ui" / "dashboard" / "command_input_support.py",
     },
     "recover_single_letter_command_from_escape_fragment": {
         ENGINE_ROOT / "ui" / "command_parsing.py",
         ENGINE_ROOT / "runtime" / "engine_runtime_ui_bridge.py",
         ENGINE_ROOT / "ui" / "dashboard" / "command_support.py",
+        ENGINE_ROOT / "ui" / "dashboard" / "command_input_support.py",
     },
     "parse_interactive_command": {
         ENGINE_ROOT / "ui" / "command_parsing.py",
         ENGINE_ROOT / "runtime" / "engine_runtime_ui_bridge.py",
         ENGINE_ROOT / "ui" / "dashboard" / "command_support.py",
+        ENGINE_ROOT / "ui" / "dashboard" / "command_input_support.py",
     },
     "tokens_set_mode": {
         ENGINE_ROOT / "ui" / "command_parsing.py",
         ENGINE_ROOT / "runtime" / "engine_runtime_misc_support.py",
         ENGINE_ROOT / "ui" / "dashboard" / "command_support.py",
+        ENGINE_ROOT / "ui" / "dashboard" / "command_input_support.py",
     },
     "_textual_importable": {
         ENGINE_ROOT / "ui" / "textual" / "screens" / "selector" / "support.py",
@@ -135,6 +139,7 @@ OWNERSHIP_RULES = {
         ENGINE_ROOT / "state" / "action_orchestrator.py",
         ENGINE_ROOT / "state" / "repository.py",
         ENGINE_ROOT / "ui" / "dashboard" / "orchestrator.py",
+        ENGINE_ROOT / "ui" / "dashboard" / "orchestrator_target_mixin.py",
     },
     "_services_from_selection": {
         ENGINE_ROOT / "runtime" / "lifecycle_cleanup_orchestrator.py",
@@ -142,6 +147,7 @@ OWNERSHIP_RULES = {
     },
     "start_requirements_for_project": {
         ENGINE_ROOT / "startup" / "requirements_execution.py",
+        ENGINE_ROOT / "startup" / "requirements_project_startup.py",
         ENGINE_ROOT / "startup" / "startup_orchestrator.py",
         ENGINE_ROOT / "startup" / "protocols.py",
     },
@@ -155,6 +161,7 @@ OWNERSHIP_RULES = {
     },
     "_build_plan_agent_workflow": {
         ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow_build.py",
     },
     "_spawn_omx_session_for_worktree": {
         ENGINE_ROOT / "planning" / "plan_agent" / "omx_transport.py",
@@ -173,9 +180,11 @@ OWNERSHIP_RULES = {
     },
     "_workflow_step_prompt_text": {
         ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow_prompt_support.py",
     },
     "_resolve_preset_submission_text": {
         ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow_prompt_support.py",
     },
     "_codex_queue_screen_looks_ready": {
         ENGINE_ROOT / "planning" / "plan_agent" / "terminal_screen.py",

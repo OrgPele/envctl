@@ -1,92 +1,33 @@
 from __future__ import annotations
 
-# ruff: noqa: F403,F405
 from typing import Any
 
-from envctl_engine.planning.plan_agent.config import *
-from envctl_engine.planning.plan_agent.workflow import *
-from envctl_engine.planning.plan_agent.terminal_screen import *
-from envctl_engine.planning.plan_agent.recovery import *
-from envctl_engine.planning.plan_agent.tmux_transport import *
-from envctl_engine.planning.plan_agent.cmux_transport import *
-from envctl_engine.planning.plan_agent.omx_transport import *
-from envctl_engine.planning.plan_agent.superset_transport import *
+from envctl_engine.planning.plan_agent.cmux_transport import (
+    _default_target_workspace_title,
+    _ensure_workspace_id,
+    _launch_single_worktree,
+)
+from envctl_engine.planning.plan_agent.config import (
+    _missing_launch_commands,
+)
+from envctl_engine.planning.plan_agent.constants import _PLAN_AGENT_WORKFLOW_CODEX_CYCLES
+from envctl_engine.planning.plan_agent.launch_evaluation import build_plan_agent_launch_evaluation
+from envctl_engine.planning.plan_agent.models import (
+    CreatedPlanWorktree,
+    PlanAgentLaunchOutcome,
+    PlanAgentLaunchResult,
+)
+from envctl_engine.planning.plan_agent.omx_transport import _launch_plan_agent_omx_terminals
+from envctl_engine.planning.plan_agent.recovery import _print_launch_summary
+from envctl_engine.planning.plan_agent.superset_transport import _launch_plan_agent_superset_workspaces
+from envctl_engine.planning.plan_agent.tmux_transport import (
+    _launch_plan_agent_tmux_terminals,
+    _run_tmux_existing_session_workflow,
+)
 
 
 def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, object]:
-    launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}), route=route)
-    workflow = _build_plan_agent_workflow(
-        cli=launch_config.cli,
-        preset=launch_config.preset,
-        codex_cycles=launch_config.codex_cycles if _codex_tui_queue_workflow_supported(launch_config) else 0,
-        direct_prompt_enabled=launch_config.direct_prompt_enabled,
-        browser_e2e_followup_enable=launch_config.browser_e2e_followup_enable,
-        pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
-    )
-    workspace_id = (
-        None
-        if launch_config.transport in {"tmux", "superset"}
-        else _resolve_workspace_id(runtime, launch_config)
-    )
-    configured_workspace = (
-        launch_config.superset_workspace
-        if launch_config.transport == "superset"
-        else (launch_config.cmux_workspace or _default_target_workspace_title(runtime, launch_config))
-    )
-    payload: dict[str, object] = {
-        "enabled": launch_config.enabled,
-        "transport": launch_config.transport,
-        "cli": launch_config.cli,
-        "preset": launch_config.preset,
-        "workflow_mode": workflow.mode,
-        "codex_cycles": launch_config.codex_cycles,
-        "omx_workflow": launch_config.omx_workflow or None,
-        "workflow_warning": launch_config.codex_cycles_warning,
-        "codex_goal_enable": launch_config.codex_goal_enable,
-        "shell": launch_config.shell,
-        "direct_prompt_enabled": launch_config.direct_prompt_enabled,
-        "ulw_loop_prefix": launch_config.ulw_loop_prefix,
-        "ulw_suffix": launch_config.ulw_suffix,
-        "browser_e2e_followup_enable": launch_config.browser_e2e_followup_enable,
-        "pr_review_comments_followup_enable": launch_config.pr_review_comments_followup_enable,
-        "require_cmux_context": launch_config.require_cmux_context,
-        "workspace_id": workspace_id,
-        "configured_workspace": configured_workspace or None,
-        "superset_project": launch_config.superset_project or None,
-        "superset_host": launch_config.superset_host or None,
-        "superset_local": launch_config.superset_local,
-        "superset_open": launch_config.superset_open,
-        "reason": "disabled",
-    }
-    if str(getattr(route, "command", "")).strip() != "plan":
-        payload["reason"] = "not_plan_command"
-        return payload
-    if bool(getattr(route, "flags", {}).get("planning_prs")):
-        payload["reason"] = "planning_prs_only"
-        return payload
-    if not launch_config.enabled:
-        return payload
-    if launch_config.surface_transport_warning:
-        payload["reason"] = launch_config.surface_transport_warning
-        return payload
-    if launch_config.transport == "omx" and launch_config.cli != "codex":
-        payload["reason"] = "unsupported_omx_cli"
-        return payload
-    if launch_config.transport == "superset":
-        if launch_config.cli != "codex":
-            payload["reason"] = "unsupported_superset_cli"
-            return payload
-        if not launch_config.superset_workspace and not launch_config.superset_project:
-            payload["reason"] = "missing_superset_project"
-            return payload
-    if _route_requests_ulw(route) and not _ulw_route_supported(launch_config=launch_config):
-        payload["reason"] = "unsupported_ulw_flag"
-        return payload
-    if launch_config.transport == "cmux" and _missing_required_cmux_context(runtime, launch_config):
-        payload["reason"] = "missing_cmux_context"
-        return payload
-    payload["reason"] = "awaiting_new_worktrees"
-    return payload
+    return build_plan_agent_launch_evaluation(runtime, route=route).inspection_payload()
 
 
 def launch_plan_agent_terminals(
@@ -95,29 +36,14 @@ def launch_plan_agent_terminals(
     route: object,
     created_worktrees: tuple[CreatedPlanWorktree, ...],
 ) -> PlanAgentLaunchResult:
-    launch_config = resolve_plan_agent_launch_config(runtime.config, getattr(runtime, "env", {}), route=route)
-    workflow = _build_plan_agent_workflow(
-        cli=launch_config.cli,
-        preset=launch_config.preset,
-        codex_cycles=launch_config.codex_cycles if _codex_tui_queue_workflow_supported(launch_config) else 0,
-        direct_prompt_enabled=launch_config.direct_prompt_enabled,
-        browser_e2e_followup_enable=launch_config.browser_e2e_followup_enable,
-        pr_review_comments_followup_enable=launch_config.pr_review_comments_followup_enable,
-    )
-    base_payload = {
-        "enabled": launch_config.enabled,
-        "cli": launch_config.cli,
-        "created_worktree_count": len(created_worktrees),
-        "workflow_mode": workflow.mode,
-        "codex_cycles": launch_config.codex_cycles,
-        "codex_goal_enable": launch_config.codex_goal_enable,
-        "browser_e2e_followup_enable": launch_config.browser_e2e_followup_enable,
-        "pr_review_comments_followup_enable": launch_config.pr_review_comments_followup_enable,
-    }
-    if str(getattr(route, "command", "")).strip() != "plan" or bool(getattr(route, "flags", {}).get("planning_prs")):
+    evaluation = build_plan_agent_launch_evaluation(runtime, route=route, include_workspace_details=False)
+    launch_config = evaluation.launch_config
+    workflow = evaluation.workflow
+    base_payload = evaluation.base_payload(created_worktree_count=len(created_worktrees))
+    if evaluation.route_inapplicable:
         runtime._emit("planning.agent_launch.skipped", reason="inapplicable_route", **base_payload)
         return PlanAgentLaunchResult(status="skipped", reason="inapplicable_route")
-    if not launch_config.enabled:
+    if evaluation.inspection_reason == "disabled":
         runtime._emit("planning.agent_launch.skipped", reason="disabled", **base_payload)
         return PlanAgentLaunchResult(status="skipped", reason="disabled")
     if launch_config.surface_transport_warning:
@@ -126,7 +52,7 @@ def launch_plan_agent_terminals(
         )
         runtime._emit("planning.agent_launch.failed", reason=launch_config.surface_transport_warning, **base_payload)
         return PlanAgentLaunchResult(status="failed", reason=launch_config.surface_transport_warning)
-    if _route_requests_ulw(route) and not _ulw_route_supported(launch_config=launch_config):
+    if evaluation.inspection_reason == "unsupported_ulw_flag":
         _print_launch_summary("Plan agent launch skipped: --ulw requires --opencode.")
         runtime._emit("planning.agent_launch.failed", reason="unsupported_ulw_flag", **base_payload)
         return PlanAgentLaunchResult(status="failed", reason="unsupported_ulw_flag")
@@ -134,7 +60,7 @@ def launch_plan_agent_terminals(
         _print_launch_summary("Plan agent launch skipped: no new worktrees were created.")
         runtime._emit("planning.agent_launch.skipped", reason="no_new_worktrees", **base_payload)
         return PlanAgentLaunchResult(status="skipped", reason="no_new_worktrees")
-    if launch_config.transport == "cmux" and _missing_required_cmux_context(runtime, launch_config):
+    if evaluation.inspection_reason == "missing_cmux_context":
         _print_launch_summary(
             "Plan agent launch skipped: no active cmux workspace context found. "
             "Fix by setting ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=<workspace-id>, "

@@ -17,6 +17,12 @@ from envctl_engine.planning.plan_agent.tmux_workflow_submission_support import (
     queue_tmux_codex_workflow_steps,
     submit_tmux_prompt_workflow_step,
 )
+from envctl_engine.planning.plan_agent.tmux_prompt_readiness_support import (
+    wait_for_tmux_prompt_accepted,
+)
+from envctl_engine.planning.plan_agent.tmux_workflow_queue_support import (
+    queue_tmux_codex_message,
+)
 
 
 def _launch_config(*, codex_goal_enable: bool = True, transport: str = "tmux") -> PlanAgentLaunchConfig:
@@ -155,6 +161,46 @@ class PlanAgentTmuxWorkflowSubmissionSupportTests(unittest.TestCase):
         self.assertEqual(queued, ["/goal goal text", "prompt text"])
         self.assertEqual(events[0][0], "planning.agent_launch.workflow_queued")
         self.assertEqual(events[0][1]["transport"], "tmux")
+
+    def test_queue_tmux_codex_message_tabs_only_after_text_is_visible(self) -> None:
+        sent_keys: list[str] = []
+        state = {"stage": "typed"}
+        queued_text = "Queued prompt body"
+        ready_screen = f"OpenAI Codex\n  {queued_text}\n  tab to queue message\n"
+        queued_screen = "OpenAI Codex\n• Queued follow-up messages\n"
+
+        def read_screen(_runtime, **_kwargs):  # noqa: ANN001, ANN003
+            return ready_screen if state["stage"] == "typed" else queued_screen
+
+        def send_key(_runtime, **kwargs):  # noqa: ANN001, ANN003
+            sent_keys.append(kwargs["key"])
+            state["stage"] = "queued"
+            return None
+
+        queued = queue_tmux_codex_message(
+            SimpleNamespace(),
+            session_name="envctl-session",
+            window_name="feature-a-1",
+            text=queued_text,
+            read_tmux_screen_fn=read_screen,
+            send_tmux_key_fn=send_key,
+        )
+
+        self.assertTrue(queued)
+        self.assertEqual(sent_keys, ["tab"])
+
+    def test_wait_for_tmux_prompt_accepted_skips_post_submit_check_for_codex(self) -> None:
+        result = wait_for_tmux_prompt_accepted(
+            SimpleNamespace(),
+            session_name="envctl-session",
+            window_name="feature-a-1",
+            cli="codex",
+            prompt_text="implement",
+            read_tmux_screen_fn=lambda *_args, **_kwargs: "",
+        )
+
+        self.assertTrue(result.ready)
+        self.assertEqual(result.reason, "post_submit_check_not_required")
 
 
 if __name__ == "__main__":

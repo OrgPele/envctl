@@ -1,24 +1,25 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-import subprocess
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from envctl_engine.actions.project_action_domain import (
     DirtyWorktreeReport,
-    detect_default_branch,
-    probe_dirty_worktree,
+    probe_dirty_worktree as default_probe_dirty_worktree,
     resolve_git_root,
 )
-from envctl_engine.planning.plan_agent.cmux_transport import launch_review_agent_terminal, review_agent_launch_readiness
+from envctl_engine.planning.plan_agent.cmux_transport import (
+    launch_review_agent_terminal as default_launch_review_agent_terminal,
+    review_agent_launch_readiness as default_review_agent_launch_readiness,
+)
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
-from envctl_engine.ui.dashboard.pr_flow import run_pr_flow
-from envctl_engine.ui.dashboard import review_tab_support
+from envctl_engine.ui.dashboard import pr_commit_support, pr_scope_support, pr_selection_support, review_tab_support
 from envctl_engine.ui.selection_support import (
     no_target_selected_message as selection_no_target_selected_message,
 )
-from envctl_engine.ui.selector_model import SelectorItem
 from envctl_engine.ui.textual.screens.selector import _run_selector_with_impl
 
 
@@ -28,236 +29,91 @@ _REVIEW_TAB_SKIP_TOKEN = "__REVIEW_TAB_SKIP__"
 _REVIEW_TAB_LAUNCH_FLAG = "dashboard_review_tab_launch"
 
 
-def apply_pr_selection(owner: Any, route: Route, state: RunState, rt: object) -> Route | None:
-    runtime_any = cast(Any, rt)
-    default_branch = owner._default_pr_base_branch(runtime_any)
-    if owner._route_has_explicit_target(route, runtime_any):
-        route.flags = {**route.flags, "pr_base": route.flags.get("pr_base") or default_branch}
-        return route
+@dataclass(frozen=True, slots=True)
+class DashboardPrDependencies:
+    probe_dirty_worktree: Callable[..., DirtyWorktreeReport]
+    launch_review_agent_terminal: Callable[..., object]
+    review_agent_launch_readiness: Callable[..., object]
+    run_selector: Callable[..., list[str] | None]
 
-    projects = owner._project_names_from_state(state, runtime_any)
-    single_project = owner._single_project_name(projects)
-    if single_project:
-        route.projects = [single_project]
-        runtime_any._emit(
-            "dashboard.target_scope.defaulted",
-            command="pr",
-            mode=state.mode,
-            scope="single_project",
-            project_count=1,
-            projects=[single_project],
-        )
-    selection_raw = owner._run_pr_selection_flow(
-        projects=projects,
-        initial_project_names=[single_project] if single_project else (),
-        default_branch=default_branch,
-        runtime=runtime_any,
-    )
-    if selection_raw is None:
-        print(owner._no_target_selected_message(route.command))
-        return None
-    selection = cast(Any, selection_raw)
-    if selection.cancelled:
-        if str(getattr(selection, "cancelled_step", "")).strip().lower() == "branch":
-            print("No PR base branch selected.")
-        else:
-            print(owner._no_target_selected_message(route.command))
-        return None
-    if selection.project_names:
-        route.projects = list(selection.project_names)
-    else:
-        print(owner._no_target_selected_message(route.command))
-        return None
-    if not isinstance(selection.base_branch, str) or not selection.base_branch.strip():
-        print("No PR base branch selected.")
-        return None
-    base_branch = selection.base_branch.strip()
-    route.flags = {**route.flags, "pr_base": base_branch}
-    runtime_any._emit(
-        "dashboard.pr_base.selected",
-        command="pr",
-        base_branch=base_branch,
-        explicit=base_branch != default_branch,
-    )
-    raw = owner._prompt_pr_message(runtime_any)
-    if raw is None:
-        print(owner._no_target_selected_message(route.command))
-        return None
-    message = str(raw).strip()
-    if message:
-        route.flags = {**route.flags, "pr_body": message}
-        runtime_any._emit(
-            "dashboard.pr_body.selected",
-            command="pr",
-            explicit=True,
-            length=len(message),
-        )
-    return route
 
-def maybe_prepare_pr_commit(owner: Any, route: Route, state: RunState, rt: object) -> tuple[Route | None, RunState]:
-    runtime_any = cast(Any, rt)
-    dirty_reports = owner._dirty_pr_reports(route, state, runtime_any)
-    dirty_targets = [report for report in dirty_reports if report.dirty]
-    runtime_any._emit(
-        "dashboard.pr_dirty_state",
-        command="pr",
-        selected_project_count=len(dirty_reports),
-        dirty_project_count=len(dirty_targets),
-        staged=any(report.staged for report in dirty_targets),
-        unstaged=any(report.unstaged for report in dirty_targets),
-        untracked=any(report.untracked for report in dirty_targets),
-    )
-    if not dirty_targets:
-        return route, state
+DEFAULT_DASHBOARD_PR_DEPENDENCIES = DashboardPrDependencies(
+    probe_dirty_worktree=default_probe_dirty_worktree,
+    launch_review_agent_terminal=default_launch_review_agent_terminal,
+    review_agent_launch_readiness=default_review_agent_launch_readiness,
+    run_selector=_run_selector_with_impl,
+)
 
-    prompt = dirty_pr_prompt(dirty_targets)
-    runtime_any._emit(
-        "dashboard.pr_dirty_commit.prompt",
-        command="pr",
-        dirty_project_count=len(dirty_targets),
-        staged=any(report.staged for report in dirty_targets),
-        unstaged=any(report.unstaged for report in dirty_targets),
-        untracked=any(report.untracked for report in dirty_targets),
-    )
-    decision = owner._prompt_dirty_pr_menu(
-        runtime_any,
-        title="Commit dirty changes before PR?",
-        prompt=prompt,
-    )
-    if decision == "cancel":
-        runtime_any._emit(
-            "dashboard.pr_dirty_commit.cancelled",
-            command="pr",
-            dirty_project_count=len(dirty_targets),
-        )
-        print("Cancelled PR creation.")
-        return None, state
-    if decision == "skip":
-        runtime_any._emit(
-            "dashboard.pr_dirty_commit.declined",
-            command="pr",
-            dirty_project_count=len(dirty_targets),
-        )
-        return route, state
 
-    runtime_any._emit("dashboard.pr_dirty_commit.accepted", command="pr", dirty_project_count=len(dirty_targets))
-    commit_route = Route(
-        command="commit",
-        mode=route.mode,
-        raw_args=["commit"],
-        passthrough_args=[],
-        projects=[report.project_name for report in dirty_targets],
-        flags={"batch": True, "interactive_command": True},
-    )
-    commit_route = owner._apply_commit_selection(commit_route, state, runtime_any)
-    if commit_route is None:
-        runtime_any._emit(
-            "dashboard.pr_dirty_commit.cancelled",
-            command="pr",
-            dirty_project_count=len(dirty_targets),
-        )
-        return None, state
-    code = runtime_any.dispatch(commit_route)
-    refreshed = runtime_any._try_load_existing_state(mode=state.mode, strict_mode_match=True)
-    next_state = refreshed if refreshed is not None else state
-    if code != 0:
-        runtime_any._emit("dashboard.pr_dirty_commit.failed", command="pr", dirty_project_count=len(dirty_targets))
-        owner._print_interactive_failure_details(commit_route, next_state, code=code)
-        return None, next_state
-    runtime_any._emit("dashboard.pr_dirty_commit.completed", command="pr", dirty_project_count=len(dirty_targets))
-    return route, next_state
+apply_pr_selection = pr_selection_support.apply_pr_selection
+maybe_prepare_pr_commit = pr_commit_support.maybe_prepare_pr_commit
 
-def dirty_pr_reports(owner: Any, route: Route, state: RunState, runtime: Any) -> list[DirtyWorktreeReport]:
-    repo_root = repo_root_from_runtime(runtime)
-    project_roots = project_roots_for_route(owner, route, state, runtime)
-    reports_by_git_root: dict[str, DirtyWorktreeReport] = {}
-    for project_name in route.projects or []:
-        project_root = project_roots.get(project_name)
-        if project_root is None:
-            continue
-        report = probe_dirty_worktree(project_root, repo_root, project_name=project_name)
-        git_root_key = str(report.git_root.resolve())
-        existing = reports_by_git_root.get(git_root_key)
-        if existing is None:
-            reports_by_git_root[git_root_key] = report
-    return list(reports_by_git_root.values())
+
+def dirty_pr_reports(
+    owner: Any,
+    route: Route,
+    state: RunState,
+    runtime: Any,
+    *,
+    dependencies: DashboardPrDependencies = DEFAULT_DASHBOARD_PR_DEPENDENCIES,
+) -> list[DirtyWorktreeReport]:
+    return pr_scope_support.dirty_pr_reports(
+        owner,
+        route,
+        state,
+        runtime,
+        probe_dirty_worktree_fn=dependencies.probe_dirty_worktree,
+    )
+
 
 def dedupe_route_projects_by_git_root(owner: Any, route: Route, state: RunState, rt: object) -> Route:
-    runtime_any = cast(Any, rt)
-    if len(route.projects) <= 1:
-        return route
-    repo_root = repo_root_from_runtime(runtime_any)
-    project_roots = project_roots_for_route(owner, route, state, runtime_any)
-    unique_projects: list[str] = []
-    seen_git_roots: set[str] = set()
-    collapsed = False
-    for project_name in route.projects:
-        project_root = project_roots.get(project_name)
-        if project_root is None:
-            unique_projects.append(project_name)
-            continue
-        git_root = resolve_git_root(project_root, repo_root)
-        git_root_key = str(git_root.resolve())
-        if git_root_key in seen_git_roots:
-            collapsed = True
-            continue
-        seen_git_roots.add(git_root_key)
-        unique_projects.append(project_name)
-    if collapsed:
-        route.projects = unique_projects
-        runtime_any._emit(
-            "dashboard.pr_target_scope.deduped_git_roots",
-            command="pr",
-            original_project_count=len(project_roots) if project_roots else len(route.projects),
-            deduped_project_count=len(unique_projects),
-            projects=list(unique_projects),
-        )
-    return route
+    return pr_scope_support.dedupe_route_projects_by_git_root(
+        owner,
+        route,
+        state,
+        rt,
+        resolve_git_root_fn=resolve_git_root,
+    )
 
-def repo_root_from_runtime(runtime: Any) -> Path:
-    base_dir = getattr(getattr(runtime, "config", None), "base_dir", Path.cwd())
-    return Path(str(base_dir)).resolve()
 
-def project_roots_for_route(owner: Any, route: Route, state: RunState, runtime: Any) -> dict[str, Path]:
-    repo_root = repo_root_from_runtime(runtime)
-    metadata = state.metadata if isinstance(state.metadata, dict) else {}
-    raw_project_roots = metadata.get("project_roots")
-    project_roots: dict[str, Path] = {}
-    if isinstance(raw_project_roots, dict):
-        for name, root in raw_project_roots.items():
-            project_name = str(name).strip()
-            root_raw = str(root or "").strip()
-            if not project_name or not root_raw:
-                continue
-            resolved = Path(root_raw)
-            if not resolved.is_absolute():
-                resolved = repo_root / resolved
-            project_roots[project_name] = resolved.resolve()
-    for project_name in route.projects or []:
-        if project_name in project_roots:
-            continue
-        if str(project_name).strip().casefold() == "main":
-            project_roots[project_name] = repo_root
-    return project_roots
+repo_root_from_runtime = pr_scope_support.repo_root_from_runtime
+project_roots_for_route = pr_scope_support.project_roots_for_route
 
-def maybe_offer_review_tab_launch(owner: Any, route: Route, state: RunState, rt: object) -> None:
+
+def maybe_offer_review_tab_launch(
+    owner: Any,
+    route: Route,
+    state: RunState,
+    rt: object,
+    *,
+    dependencies: DashboardPrDependencies = DEFAULT_DASHBOARD_PR_DEPENDENCIES,
+) -> None:
     return review_tab_support.maybe_offer_review_tab_launch(
         owner,
         route,
         state,
         rt,
-        launch_review_agent_terminal_fn=launch_review_agent_terminal,
+        launch_review_agent_terminal_fn=dependencies.launch_review_agent_terminal,
         repo_root_from_runtime_fn=repo_root_from_runtime,
     )
 
-def apply_review_tab_launch_selection(owner: Any, route: Route, state: RunState, rt: object) -> Route:
+
+def apply_review_tab_launch_selection(
+    owner: Any,
+    route: Route,
+    state: RunState,
+    rt: object,
+    *,
+    dependencies: DashboardPrDependencies = DEFAULT_DASHBOARD_PR_DEPENDENCIES,
+) -> Route:
     return review_tab_support.apply_review_tab_launch_selection(
         owner,
         route,
         state,
         rt,
-        review_agent_launch_readiness_fn=review_agent_launch_readiness,
+        review_agent_launch_readiness_fn=dependencies.review_agent_launch_readiness,
     )
+
 
 def review_tab_target(owner: Any, route: Route, state: RunState, runtime: Any) -> tuple[str, Path] | None:
     return review_tab_support.review_tab_target(
@@ -270,24 +126,23 @@ def review_tab_target(owner: Any, route: Route, state: RunState, runtime: Any) -
         resolve_git_root_fn=resolve_git_root,
     )
 
-def review_tab_unavailable_message(reason: str, missing: tuple[str, ...]) -> str:
-    return review_tab_support.review_tab_unavailable_message(reason, missing)
 
-def review_bundle_path(state: RunState, *, project_name: str) -> Path | None:
-    return review_tab_support.review_bundle_path(state, project_name=project_name)
+review_tab_unavailable_message = review_tab_support.review_tab_unavailable_message
+review_bundle_path = review_tab_support.review_bundle_path
+dirty_pr_prompt = pr_commit_support.dirty_pr_prompt
 
-def dirty_pr_prompt(dirty_targets: list[DirtyWorktreeReport]) -> str:
-    if len(dirty_targets) == 1:
-        target = dirty_targets[0]
-        return f"UNSTAGED CODE IN WORKTREE {target.project_name} - DO YOU WANT TO STAGE IT?"
-    return "UNSTAGED CODE IN SELECTED WORKTREES - DO YOU WANT TO STAGE IT?"
 
-def prompt_review_tab_menu(runtime: Any, *, project_name: str) -> DirtyPrDecision:
+def prompt_review_tab_menu(
+    runtime: Any,
+    *,
+    project_name: str,
+    dependencies: DashboardPrDependencies = DEFAULT_DASHBOARD_PR_DEPENDENCIES,
+) -> DirtyPrDecision:
     prompt = f"Open an origin-side AI review tab for {project_name}?"
     return review_tab_support.prompt_review_tab_menu(
         runtime,
         project_name=project_name,
-        run_selector_fn=_run_selector_with_impl,
+        run_selector_fn=dependencies.run_selector,
         prompt_yes_no_dialog_fn=lambda runtime_arg: prompt_yes_no_dialog(
             runtime_arg,
             title="Open origin review tab?",
@@ -295,130 +150,34 @@ def prompt_review_tab_menu(runtime: Any, *, project_name: str) -> DirtyPrDecisio
         ),
     )
 
-def dirty_categories(report: DirtyWorktreeReport) -> list[str]:
-    categories: list[str] = []
-    if bool(getattr(report, "staged", False)):
-        categories.append("staged changes")
-    if bool(getattr(report, "unstaged", False)):
-        categories.append("unstaged changes")
-    if bool(getattr(report, "untracked", False)):
-        categories.append("untracked files")
-    return categories
 
-def prompt_dirty_pr_menu(runtime: Any, *, title: str, prompt: str) -> DirtyPrDecision:
-    values = _run_selector_with_impl(
+dirty_categories = pr_commit_support.dirty_categories
+
+
+def prompt_dirty_pr_menu(
+    runtime: Any,
+    *,
+    title: str,
+    prompt: str,
+    dependencies: DashboardPrDependencies = DEFAULT_DASHBOARD_PR_DEPENDENCIES,
+) -> DirtyPrDecision:
+    return pr_commit_support.prompt_dirty_pr_menu(
+        runtime,
+        title=title,
         prompt=prompt,
-        options=[
-            SelectorItem(
-                id="dirty-pr:commit",
-                label="Commit",
-                kind="",
-                token="__DIRTY_PR_COMMIT__",
-                scope_signature=("dirty-pr:commit",),
-            ),
-            SelectorItem(
-                id="dirty-pr:skip",
-                label="Do nothing",
-                kind="",
-                token="__DIRTY_PR_SKIP__",
-                scope_signature=("dirty-pr:skip",),
-            ),
-        ],
-        multi=False,
-        initial_tokens=["__DIRTY_PR_COMMIT__"],
-        emit=getattr(runtime, "_emit", None),
+        run_selector_fn=dependencies.run_selector,
     )
-    if not values:
-        return "cancel"
-    chosen = str(values[0]).strip()
-    if chosen == "__DIRTY_PR_COMMIT__":
-        return "commit"
-    if chosen == "__DIRTY_PR_SKIP__":
-        return "skip"
-    return prompt_yes_no_dialog(runtime, title=title, prompt=prompt)
 
-def prompt_yes_no_dialog(runtime: Any, *, title: str, prompt: str) -> DirtyPrDecision:
-    confirm = getattr(runtime, "_prompt_yes_no", None)
-    if callable(confirm):
-        try:
-            result = confirm(title=title, prompt=prompt)
-        except TypeError:
-            result = confirm(prompt)
-        if result is None:
-            return "cancel"
-        return "commit" if bool(result) else "skip"
-    response = read_interactive_line(runtime, prompt).strip().lower()
-    if response in {"y", "yes"}:
-        return "commit"
-    if response in {"", "n", "no"}:
-        return "skip"
-    if response in {"c", "cancel", "q", "quit", "esc", "escape"}:
-        return "cancel"
-    return "skip"
 
-def read_interactive_line(runtime: Any, prompt: str) -> str:
-    reader = getattr(runtime, "_read_interactive_command_line", None)
-    if callable(reader):
-        return str(reader(prompt))
-    # This fallback is intentionally imported lazily so the owner module can be
-    # tested without importing terminal UI dependencies on selector-only paths.
-    from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
+prompt_yes_no_dialog = pr_commit_support.prompt_yes_no_dialog
+read_interactive_line = pr_commit_support.read_interactive_line
+default_pr_base_branch = pr_selection_support.default_pr_base_branch
+pr_base_branch_options = pr_selection_support.pr_base_branch_options
 
-    env = getattr(runtime, "env", {})
-    return str(RuntimeTerminalUI.read_interactive_command_line(prompt, env))
-
-def default_pr_base_branch(owner: Any, runtime: Any) -> str:
-    git_root = pr_git_root(owner, runtime)
-    try:
-        default_branch = detect_default_branch(git_root).strip()
-    except Exception:
-        default_branch = ""
-    return default_branch or "main"
-
-def pr_base_branch_options(owner: Any, runtime: Any, *, default_branch: str) -> list[SelectorItem]:
-    git_root = pr_git_root(owner, runtime)
-    command = ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads"]
-    listed = subprocess.run(
-        command,
-        cwd=str(git_root),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    branch_names = (
-        [line.strip() for line in listed.stdout.splitlines() if line.strip()] if listed.returncode == 0 else []
-    )
-    if default_branch and default_branch not in branch_names:
-        branch_names.append(default_branch)
-    if not branch_names:
-        branch_names = [default_branch or "main"]
-    seen: set[str] = set()
-    items: list[SelectorItem] = []
-    for branch_name in sorted(branch_names, key=str.casefold):
-        lowered = branch_name.casefold()
-        if lowered in seen:
-            continue
-        seen.add(lowered)
-        items.append(
-            SelectorItem(
-                id=f"branch:{branch_name}",
-                label=branch_name,
-                kind="branch",
-                token=branch_name,
-                scope_signature=(f"branch:{branch_name}",),
-                section="Branches",
-            )
-        )
-    return items
 
 def pr_git_root(owner: Any, runtime: Any) -> Path:
-    base_dir = getattr(getattr(runtime, "config", None), "base_dir", None)
-    if isinstance(base_dir, Path):
-        return resolve_git_root(base_dir, base_dir)
-    if isinstance(base_dir, str) and base_dir.strip():
-        candidate = Path(base_dir).resolve()
-        return resolve_git_root(candidate, candidate)
-    return Path.cwd()
+    return pr_scope_support.pr_git_root(owner, runtime, resolve_git_root_fn=resolve_git_root)
+
 
 def run_pr_selection_flow(
     owner: Any,
@@ -428,13 +187,14 @@ def run_pr_selection_flow(
     default_branch: str,
     runtime: Any,
 ):
-    return run_pr_flow(
+    return pr_selection_support.run_pr_selection_flow(
+        owner,
         projects=projects,
         initial_project_names=initial_project_names,
-        branch_options=pr_base_branch_options(owner, runtime, default_branch=default_branch),
         default_branch=default_branch,
-        emit=getattr(runtime, "_emit", None),
+        runtime=runtime,
     )
+
 
 def single_project_name(projects: list[object]) -> str:
     names = [
@@ -445,6 +205,7 @@ def single_project_name(projects: list[object]) -> str:
     if len(names) != 1:
         return ""
     return names[0]
+
 
 def interactive_target_prompt(command: str) -> str:
     label_map = {
@@ -460,6 +221,7 @@ def interactive_target_prompt(command: str) -> str:
         "blast-worktree": "Blast and delete worktree for",
     }
     return label_map.get(command, f"Select {command} target")
+
 
 def no_target_selected_message(command: str) -> str:
     return selection_no_target_selected_message(command, route=None, interactive_allowed=True)
