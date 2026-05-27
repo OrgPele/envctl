@@ -178,7 +178,7 @@ When `.envctl` is missing:
 - operational commands call `ensure_local_config()`
 - non-interactive environments fail with a clear error instead of guessing
 - source-checkout runtime dependency fixes use `python -m pip install -r python/requirements.txt`
-- contributor validation bootstrap still uses `.venv/bin/python -m pip install -e '.[dev]'`
+- contributor validation bootstrap uses `uv sync --extra dev --python 3.12`
 
 Current runtime dependency prereq boundary:
 

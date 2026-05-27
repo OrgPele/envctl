@@ -11,6 +11,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.actions.action_target_support import (  # noqa: E402
     ActionCommandResolution,
+    action_target_identities,
+    action_target_names,
+    action_target_names_with_roots,
     execute_targeted_action,
     emit_action_output,
     projects_for_services,
@@ -33,6 +36,20 @@ class _Target:
 
 
 class ActionTargetSupportTests(unittest.TestCase):
+    def test_action_target_identities_normalize_name_root_and_skip_invalid_targets(self) -> None:
+        targets = [
+            SimpleNamespace(name=" feature-a-1 ", root="/repo/trees/feature-a/1"),
+            SimpleNamespace(name="", root="/repo/trees/feature-b/1"),
+            SimpleNamespace(name="missing-root", root=""),
+        ]
+
+        identities = action_target_identities(targets, fallback_name_from_root=True)
+
+        self.assertEqual([identity.name for identity in identities], ["feature-a-1", "1"])
+        self.assertEqual([identity.root for identity in identities], [Path("/repo/trees/feature-a/1"), Path("/repo/trees/feature-b/1")])
+        self.assertEqual(action_target_names(targets), ["feature-a-1", "missing-root"])
+        self.assertEqual(action_target_names_with_roots(targets), ["feature-a-1"])
+
     def test_projects_for_services_resolves_from_state_and_deduplicates(self) -> None:
         state = SimpleNamespace(
             services={
@@ -69,6 +86,29 @@ class ActionTargetSupportTests(unittest.TestCase):
 
         self.assertEqual(selected, [target])
         self.assertIsNone(error)
+
+    def test_resolve_action_targets_prefers_current_worktree_for_tree_mode_action_commands(self) -> None:
+        current = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
+        other = _Target(name="feature-b-1", root="/tmp/repo/trees/feature-b/1")
+        runtime = SimpleNamespace(
+            discover_projects=lambda mode: [current, other] if mode == "trees" else [],
+            selectors_from_passthrough=lambda _args: [],
+        )
+        route = parse_route(["test-focused"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        calls: list[dict[str, object]] = []
+
+        selected, error = resolve_action_targets(
+            runtime=runtime,
+            route=route,
+            trees_only=False,
+            resolve_current_worktree_target=lambda **kwargs: calls.append(kwargs) or current,
+            interactive_selection_allowed=lambda _route: False,
+            no_target_selected_message=lambda _route: "no target",
+        )
+
+        self.assertEqual(selected, [current])
+        self.assertIsNone(error)
+        self.assertEqual(calls, [{"require_configured_main_root": False, "require_configured_root_match": True}])
 
     def test_resolve_action_targets_applies_interactive_selection(self) -> None:
         target_a = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
@@ -289,6 +329,39 @@ class ActionTargetSupportTests(unittest.TestCase):
             self.assertEqual(printed, [])
             self.assertEqual(seen, [("Main", "https://github.com/acme/supportopia/pull/123")])
             self.assertIn("pr succeeded for Main", emitted)
+
+    def test_execute_targeted_action_can_replace_generic_success_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = _Target(name="Main", root=tmpdir)
+            printed: list[str] = []
+            emitted: list[str] = []
+
+            code = execute_targeted_action(
+                targets=[target],
+                command_name="ship",
+                interactive_command=False,
+                resolve_command=lambda _context: ActionCommandResolution(command=["envctl", "ship"], cwd=Path(tmpdir)),
+                build_env=lambda _context: {},
+                process_run=lambda _command, _cwd, _env: _Completed(
+                    returncode=0,
+                    stdout='{"contract_version": "envctl.ship.v1", "status": "checks_pending_timeout"}\n',
+                ),
+                emit_status=emitted.append,
+                printer=printed.append,
+                emit_success_output=False,
+                success_print_formatter=lambda context, _completed: (
+                    f"ship handoff status for {context.name}: checks_pending_timeout"
+                ),
+                success_status_formatter=lambda context, _completed: (
+                    f"ship handoff status for {context.name}: checks_pending_timeout"
+                ),
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(printed, ["ship handoff status for Main: checks_pending_timeout"])
+            self.assertIn("ship handoff status for Main: checks_pending_timeout", emitted)
+            self.assertNotIn("ship action succeeded for Main.", printed)
+            self.assertNotIn("ship succeeded for Main", emitted)
 
 
 if __name__ == "__main__":

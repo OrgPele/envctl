@@ -73,3 +73,19 @@ CGC boundaries:
 - Keep `.cgcignore` repo-local so generated worktrees inherit CGC ignore
   behavior.
 - If CGC looks unhealthy, run `cgc doctor` before relying on graph results.
+
+## Envctl Workflow
+
+- During implementation, run `envctl test-focused` from inside the current
+  worktree for the normal validation loop. Use broader validation only when the
+  focused plan recommends it or the change is cross-cutting/risky.
+- For handoff, use `envctl ship -m "<message>"` from inside the current
+  worktree. `ship` stages intended files, commits, pushes, creates or updates
+  the PR, predicts merge conflicts, and waits for the target GitHub Tests
+  checks. Do not run separate raw `git`/`gh` commit, push, PR, or status-check
+  commands unless `ship` is unavailable or fails with actionable fallback
+  instructions.
+- If a real subagent or background-task tool is available, delegate
+  `envctl ship -m "<message>"` there. The shipping worker should report only
+  failures, merge conflicts, check failures/timeouts, no-checks-reported status,
+  or actionable review comments; a successful ship is silent.

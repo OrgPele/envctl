@@ -128,7 +128,13 @@ def _save_message(result: ConfigWizardResult, *, env: Mapping[str, str] | None =
             env=env,
             stream=sys.stdout,
         )
-        return message + f" ({warning})"
+        message += f" ({warning})"
+    agent_status = result.save_result.agent_instructions_status
+    if agent_status is not None and agent_status.updated:
+        rendered_path = render_path_for_terminal(agent_status.path, env=env, stream=sys.stdout)
+        message += f" (Updated agent instructions: {rendered_path})"
+    if agent_status is not None and agent_status.warning:
+        message += f" (Could not update agent instructions: {agent_status.warning})"
     return message
 
 

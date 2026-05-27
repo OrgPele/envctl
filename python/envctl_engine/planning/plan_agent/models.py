@@ -49,8 +49,8 @@ class PlanAgentLaunchConfig:
     direct_prompt_enabled: bool
     ulw_loop_prefix: bool
     ulw_suffix: bool
-    browser_e2e_followup_enable: bool = True
-    pr_review_comments_followup_enable: bool = True
+    browser_e2e_followup_enable: bool = False
+    pr_review_comments_followup_enable: bool = False
     omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
     codex_goal_enable: bool = True
     superset_project: str = ""
@@ -68,6 +68,7 @@ class PlanAgentLaunchOutcome:
     surface_id: str | None
     status: str
     reason: str | None = None
+    workspace_id: str | None = None
 
 
 @dataclass(slots=True)

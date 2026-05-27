@@ -639,9 +639,10 @@ class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
             with redirect_stdout(out):
                 code = engine.dispatch(route)
 
-            self.assertEqual(code, 1)
+            self.assertEqual(code, 0)
             self.assertNotIn("missing_requirement_start_command", out.getvalue())
-            self.assertIn("missing_service_start_command", out.getvalue())
+            self.assertNotIn("missing_service_start_command", out.getvalue())
+            self.assertIn("No local app system is configured", out.getvalue())
             self.assertTrue(any(call[0][:2] == ("docker", "ps") for call in fake_runner.run_calls))
 
     def test_start_fails_when_duplicate_project_identities_are_discovered(self) -> None:
@@ -662,7 +663,7 @@ class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
             self.assertEqual(code, 1)
             self.assertIn("Duplicate project identities detected", out.getvalue())
 
-    def test_startup_fails_with_actionable_error_when_no_real_service_commands_resolve(self) -> None:
+    def test_startup_continues_without_services_when_no_local_app_system_is_configured(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -687,9 +688,11 @@ class EngineRuntimeRequirementsStartupTests(_EngineRuntimeRealStartupTestCase):
             with redirect_stdout(out):
                 code = engine.dispatch(route)
 
-            self.assertEqual(code, 1)
+            self.assertEqual(code, 0)
             self.assertNotIn("missing_requirement_start_command", out.getvalue())
-            self.assertIn("missing_service_start_command", out.getvalue())
+            self.assertNotIn("missing_service_start_command", out.getvalue())
+            self.assertIn("No local app system is configured", out.getvalue())
+            self.assertIn("continuing with the implementation session only", out.getvalue())
             self.assertEqual(fake_runner.start_background_calls, [])
 
     def test_runtime_env_overrides_forward_docker_and_setup_flags(self) -> None:

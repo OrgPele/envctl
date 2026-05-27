@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
-from envctl_engine.requirements.common import build_container_name
+from envctl_engine.requirements.common_contracts import build_container_name
 from envctl_engine.requirements.component_ports import dependency_display_port
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.requirements.supabase import build_supabase_project_name

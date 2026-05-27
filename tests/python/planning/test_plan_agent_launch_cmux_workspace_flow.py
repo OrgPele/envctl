@@ -85,6 +85,8 @@ class PlanAgentLaunchCmuxWorkspaceFlowTests(PlanAgentLaunchSupportTestCase):
                 )
 
             self.assertEqual(result.status, "launched")
+            self.assertEqual(result.outcomes[0].workspace_id, "workspace:8")
+            self.assertEqual(result.outcomes[0].surface_id, "surface:12")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
             self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-surface", "--workspace", "workspace:8"])
             self.assertIn(
@@ -175,6 +177,8 @@ class PlanAgentLaunchCmuxWorkspaceFlowTests(PlanAgentLaunchSupportTestCase):
                 )
 
             self.assertEqual(result.status, "launched")
+            self.assertEqual(result.outcomes[0].workspace_id, "workspace:9")
+            self.assertEqual(result.outcomes[0].surface_id, "surface:77")
             self.assertEqual(rt.process_runner.calls[0], ["cmux", "list-workspaces"])
             self.assertEqual(rt.process_runner.calls[1], ["cmux", "new-workspace", "--cwd", str(repo.resolve())])
             self.assertEqual(rt.process_runner.calls[2], ["cmux", "current-workspace"])

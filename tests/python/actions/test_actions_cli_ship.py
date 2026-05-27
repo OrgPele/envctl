@@ -46,9 +46,9 @@ class ActionsCliShipTests(unittest.TestCase):
                 env={"ENVCTL_ACTION_JSON": "true"},
             )
 
-            git_outputs = {
+            head_sha = {"value": "abc123"}
+            git_outputs: dict[tuple[str, ...], str] = {
                 ("rev-parse", "--abbrev-ref", "HEAD"): "feature/demo\n",
-                ("rev-parse", "HEAD"): "abc123\n",
                 ("status", "--porcelain", "--untracked-files=all"): (
                     "?? app.py\n"
                     "?? .envctl-commit-message.md\n"
@@ -61,12 +61,21 @@ class ActionsCliShipTests(unittest.TestCase):
             }
 
             def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args == ["rev-parse", "HEAD"]:
+                    return f"{head_sha['value']}\n"
                 return git_outputs.get(tuple(args), "")
+
+            def fake_commit_action(_context: object) -> int:
+                head_sha["value"] = "def456"
+                return 0
 
             with (
                 patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/gh"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
-                patch("envctl_engine.actions.project_action_domain.run_commit_action", return_value=0) as commit_action,
+                patch(
+                    "envctl_engine.actions.project_action_domain.run_commit_action",
+                    side_effect=fake_commit_action,
+                ) as commit_action,
                 patch("envctl_engine.actions.project_action_domain.run_pr_action", return_value=0) as pr_action,
                 patch(
                     "envctl_engine.actions.project_action_domain.existing_pr_url",
@@ -91,6 +100,7 @@ class ActionsCliShipTests(unittest.TestCase):
         self.assertEqual(payload["branch"], "feature/demo")
         self.assertEqual(payload["pr_url"], "https://github.com/acme/repo/pull/7")
         self.assertTrue(payload["committed"])
+        self.assertEqual(payload["commit_sha"], "def456")
         self.assertTrue(payload["pr_created"])
         self.assertEqual(payload["step_statuses"], ["committed_pushed", "pr_created", "checks_passed"])
         self.assertEqual(
@@ -126,9 +136,15 @@ class ActionsCliShipTests(unittest.TestCase):
                     return "abc123\n"
                 return ""
 
+            def fake_run_git(_git_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+                if args == ["rev-parse", "--verify", "@{u}"]:
+                    return subprocess.CompletedProcess(args, 0, stdout="abc123\n", stderr="")
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
             with (
                 patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/gh"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
+                patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
                 patch("envctl_engine.actions.project_action_domain.run_commit_action", return_value=0) as commit_action,
                 patch("envctl_engine.actions.project_action_domain.run_pr_action", return_value=0) as pr_action,
                 patch(
@@ -269,6 +285,16 @@ class ActionsCliShipTests(unittest.TestCase):
         self.assertEqual(payload["merge_conflicts"]["state"], "conflicts")
         self.assertEqual(payload["merge_conflicts"]["type"], "unmerged_index")
         self.assertEqual(payload["merge_conflicts"]["conflicting_files"][0]["stages"], ["1", "2", "3"])
+        self.assertEqual(
+            payload["operation_statuses"],
+            {
+                "checks": "not_run",
+                "commit": "not_run",
+                "merge_conflicts": "conflicts",
+                "pr": "not_run",
+                "push": "not_run",
+            },
+        )
         commit_action.assert_not_called()
 
     def test_probe_dirty_worktree_classifies_porcelain_status(self) -> None:

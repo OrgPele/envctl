@@ -189,6 +189,41 @@ class ActionsGitParityTests(_ActionsParityTestCase):
             self.assertEqual(fake_runner.run_envs[0]["ENVCTL_ACTION_PROJECT"], "feature-a-1")
             self.assertEqual(fake_runner.run_envs[0]["ENVCTL_ACTION_PROJECT_ROOT"], str(target.resolve()))
 
+    def test_ship_without_project_infers_current_worktree_in_trees_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            target = repo / "trees" / "feature-a" / "1"
+            sibling = repo / "trees" / "feature-b" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            target.mkdir(parents=True, exist_ok=True)
+            sibling.mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime),
+                        "ENVCTL_DEFAULT_MODE": "trees",
+                    }
+                ),
+                env={
+                    "ENVCTL_INVOCATION_CWD": str(target),
+                    "ENVCTL_ACTION_SHIP_CMD": "sh -lc 'exit 0'",
+                },
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["ship"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(len(fake_runner.run_calls), 1)
+            self.assertEqual(fake_runner.run_calls[0][1], str(target.resolve()))
+            self.assertEqual(fake_runner.run_envs[0]["ENVCTL_ACTION_PROJECT"], "feature-a-1")
+            self.assertEqual(fake_runner.run_envs[0]["ENVCTL_ACTION_PROJECT_ROOT"], str(target.resolve()))
+
     def test_git_actions_use_python_native_defaults_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -438,4 +473,3 @@ class ActionsGitParityTests(_ActionsParityTestCase):
             self.assertEqual(code, 0)
             self.assertTrue(fake_runner.run_calls)
             self.assertEqual(fake_runner.run_calls[0][0][0], sys.executable)
-

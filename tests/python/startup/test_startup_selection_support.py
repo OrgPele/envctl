@@ -148,7 +148,7 @@ class StartupSelectionSupportTests(unittest.TestCase):
             runtime.selection = TargetSelection(project_names=["branch/alpha"])
 
             with unittest.mock.patch(
-                "envctl_engine.planning._branch_project_name_for_worktree",
+                "envctl_engine.planning.planning_tree_discovery._branch_project_name_for_worktree",
                 side_effect=["branch/alpha", "branch/beta"],
             ):
                 contexts = [

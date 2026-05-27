@@ -221,6 +221,65 @@ class PlanAgentOmxAttachDiscoveryTests(PlanAgentLaunchSupportTestCase):
                 assert attach_target is not None
                 self.assertEqual(attach_target.session_name, "new-native")
 
+    def test_omx_new_session_wait_checks_state_written_by_final_sleep(self) -> None:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                repo = Path(tmpdir) / "repo"
+                runtime = Path(tmpdir) / "runtime"
+                worktree_root = repo / "trees" / "feature-a" / "1"
+                worktree_root.mkdir(parents=True, exist_ok=True)
+                rt = self._runtime(repo, runtime)
+                worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md")
+                session_path = self._expected_omx_root(worktree) / ".omx" / "state" / "session.json"
+                session_path.parent.mkdir(parents=True, exist_ok=True)
+                session_path.write_text(
+                    json.dumps(
+                        {
+                            "session_id": "old-session",
+                            "native_session_id": "old-native",
+                            "cwd": str(worktree_root.resolve()),
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                clock_values = [0.0, 0.0, 1.0]
+
+                def _monotonic() -> float:
+                    if clock_values:
+                        return clock_values.pop(0)
+                    return 1.0
+
+                def _write_new_session(_seconds: float) -> None:
+                    session_path.write_text(
+                        json.dumps(
+                            {
+                                "session_id": "new-session",
+                                "native_session_id": "new-native",
+                                "cwd": str(worktree_root.resolve()),
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+
+                with (
+                    patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_TIMEOUT_SECONDS", 0.2),
+                    patch("envctl_engine.planning.plan_agent.omx_transport._OMX_SESSION_READY_POLL_INTERVAL_SECONDS", 0.001),
+                    patch("envctl_engine.planning.plan_agent.omx_transport.time.monotonic", side_effect=_monotonic),
+                    patch("envctl_engine.planning.plan_agent.omx_transport.time.sleep", side_effect=_write_new_session),
+                    patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
+                    patch("envctl_engine.planning.plan_agent.omx_transport._tmux_active_pane_id", return_value="%42"),
+                ):
+                    attach_target = omx_transport._wait_for_omx_attach_target(
+                        rt,
+                        repo_root=repo,
+                        worktree=worktree,
+                        previous_session_id="old-session",
+                        attach_via="attach-session",
+                    )
+
+                self.assertIsNotNone(attach_target)
+                assert attach_target is not None
+                self.assertEqual(attach_target.session_name, "new-native")
+
     def test_omx_wait_falls_back_to_legacy_worktree_session_state(self) -> None:
             with tempfile.TemporaryDirectory() as tmpdir:
                 repo = Path(tmpdir) / "repo"

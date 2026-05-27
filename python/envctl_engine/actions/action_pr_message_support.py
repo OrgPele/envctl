@@ -1,11 +1,109 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
 import re
 import tempfile
 from typing import Any, Callable
 
 GitOutput = Callable[[Path, list[str]], str]
+
+
+@dataclass(frozen=True, slots=True)
+class PullRequestMessageContext:
+    project_root: Path
+    project_name: str
+    env: Mapping[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class PullRequestMessageBuilder:
+    context: Any
+    git_root: Path
+    head_branch: str
+    base_branch: str = ""
+    git_output: GitOutput | None = None
+    max_chars: int = 48_000
+
+    def title(self) -> str:
+        explicit = normalize_title_text(str(self.context.env.get("ENVCTL_PR_TITLE", "")))
+        if explicit:
+            return self._truncate_title(explicit)
+
+        main_task_title = main_task_title_from_project(self.context.project_root)
+        if main_task_title:
+            return self._truncate_title(main_task_title)
+
+        subject = self._git_output(["log", "-1", "--pretty=%s"]).strip()
+        title = subject or f"{self.context.project_name}: {self.head_branch}"
+        title = " ".join(title.split())
+        return self._truncate_title(title)
+
+    def body(self) -> str:
+        explicit_body = normalize_text_block(str(self.context.env.get("ENVCTL_PR_BODY", "")))
+        if explicit_body:
+            return truncate_pr_body(explicit_body, max_chars=self.max_chars)
+
+        main_task = self.context.project_root / "MAIN_TASK.md"
+        if main_task.is_file() and file_has_text(main_task):
+            return truncate_pr_body(read_text(main_task), max_chars=self.max_chars)
+
+        commits = self.commit_messages()
+        if commits:
+            return truncate_pr_body(commits, max_chars=self.max_chars)
+        return ""
+
+    def commit_messages(self) -> str:
+        range_spec = self.commit_range()
+        raw = self._git_output(["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", range_spec])
+        entries = commit_message_entries(raw)
+        if not entries:
+            return ""
+        return truncate_recent_entries(
+            entries,
+            max_chars=self.max_chars - 8_000,
+            notice="[truncated to most recent commit messages]",
+        )
+
+    def diff_stat(self) -> str:
+        diff_args = ["diff", "--stat"]
+        if self.base_branch:
+            diff_args.append(self.compare_range())
+        diff_stat = self._git_output(diff_args).strip()
+        return truncate_pr_body(diff_stat, max_chars=8_000) if diff_stat else ""
+
+    def commit_range(self) -> str:
+        head_ref = self.head_branch or "HEAD"
+        if not self.base_branch:
+            return head_ref
+        base_ref = self.base_ref()
+        merge_base = self._git_output(["merge-base", head_ref, base_ref]).strip()
+        if merge_base:
+            return f"{merge_base}..{head_ref}"
+        return f"{base_ref}..{head_ref}"
+
+    def compare_range(self) -> str:
+        head_ref = self.head_branch or "HEAD"
+        if not self.base_branch:
+            return head_ref
+        return f"{self.base_ref()}...{head_ref}"
+
+    def base_ref(self) -> str:
+        remote_candidate = f"origin/{self.base_branch}"
+        if self._git_output(["rev-parse", "--verify", remote_candidate]).strip():
+            return remote_candidate
+        if self._git_output(["rev-parse", "--verify", self.base_branch]).strip():
+            return self.base_branch
+        return self.base_branch
+
+    def _truncate_title(self, value: str) -> str:
+        return value[: self.max_chars].rstrip() or self.head_branch
+
+    def _git_output(self, args: list[str]) -> str:
+        if self.git_output is None:
+            return ""
+        return self.git_output(self.git_root, args)
 
 
 def pr_title(
@@ -16,16 +114,13 @@ def pr_title(
     git_output: GitOutput,
     max_chars: int,
 ) -> str:
-    explicit = normalize_title_text(str(context.env.get("ENVCTL_PR_TITLE", "")))
-    if explicit:
-        return explicit[:max_chars].rstrip() or head_branch
-    main_task_title = main_task_title_from_project(context.project_root)
-    if main_task_title:
-        return main_task_title[:max_chars].rstrip() or head_branch
-    subject = git_output(git_root, ["log", "-1", "--pretty=%s"]).strip()
-    title = subject or f"{context.project_name}: {head_branch}"
-    title = " ".join(title.split())
-    return title[:max_chars].rstrip() or head_branch
+    return PullRequestMessageBuilder(
+        context=context,
+        git_root=git_root,
+        head_branch=head_branch,
+        git_output=git_output,
+        max_chars=max_chars,
+    ).title()
 
 
 def pr_body(
@@ -37,24 +132,14 @@ def pr_body(
     git_output: GitOutput,
     max_chars: int,
 ) -> str:
-    explicit_body = normalize_text_block(str(context.env.get("ENVCTL_PR_BODY", "")))
-    if explicit_body:
-        return truncate_pr_body(explicit_body, max_chars=max_chars)
-
-    main_task = context.project_root / "MAIN_TASK.md"
-    if main_task.is_file() and file_has_text(main_task):
-        return truncate_pr_body(read_text(main_task), max_chars=max_chars)
-
-    commits = pr_commit_messages(
-        git_root,
+    return PullRequestMessageBuilder(
+        context=context,
+        git_root=git_root,
         head_branch=head_branch,
         base_branch=base_branch,
         git_output=git_output,
         max_chars=max_chars,
-    )
-    if commits:
-        return truncate_pr_body(commits, max_chars=max_chars)
-    return ""
+    ).body()
 
 
 def pr_commit_messages(
@@ -65,8 +150,17 @@ def pr_commit_messages(
     git_output: GitOutput,
     max_chars: int,
 ) -> str:
-    range_spec = pr_commit_range(git_root, head_branch=head_branch, base_branch=base_branch, git_output=git_output)
-    raw = git_output(git_root, ["log", "--reverse", "--no-merges", "--format=%h%x1f%s%x1f%b%x1e", range_spec])
+    return PullRequestMessageBuilder(
+        context=_empty_message_context(git_root),
+        git_root=git_root,
+        head_branch=head_branch,
+        base_branch=base_branch,
+        git_output=git_output,
+        max_chars=max_chars,
+    ).commit_messages()
+
+
+def commit_message_entries(raw: str) -> list[str]:
     entries: list[str] = []
     for chunk in raw.split("\x1e"):
         normalized = chunk.strip()
@@ -86,11 +180,7 @@ def pr_commit_messages(
             entry_lines.append("")
             entry_lines.extend(f"  {line}" if line else "" for line in body.splitlines())
         entries.append("\n".join(entry_lines).strip())
-    if not entries:
-        return ""
-    return truncate_recent_entries(
-        entries, max_chars=max_chars - 8_000, notice="[truncated to most recent commit messages]"
-    )
+    return entries
 
 
 def pr_diff_stat(
@@ -100,46 +190,47 @@ def pr_diff_stat(
     base_branch: str,
     git_output: GitOutput,
 ) -> str:
-    diff_args = ["diff", "--stat"]
-    if base_branch:
-        diff_args.append(
-            pr_compare_range(
-                git_root,
-                head_branch=head_branch,
-                base_branch=base_branch,
-                git_output=git_output,
-            )
-        )
-    diff_stat = git_output(git_root, diff_args).strip()
-    return truncate_pr_body(diff_stat, max_chars=8_000) if diff_stat else ""
+    return PullRequestMessageBuilder(
+        context=_empty_message_context(git_root),
+        git_root=git_root,
+        head_branch=head_branch,
+        base_branch=base_branch,
+        git_output=git_output,
+    ).diff_stat()
 
 
 def pr_commit_range(git_root: Path, *, head_branch: str, base_branch: str, git_output: GitOutput) -> str:
-    head_ref = head_branch or "HEAD"
-    if not base_branch:
-        return head_ref
-    base_ref = pr_base_ref(git_root, base_branch, git_output=git_output)
-    merge_base = git_output(git_root, ["merge-base", head_ref, base_ref]).strip()
-    if merge_base:
-        return f"{merge_base}..{head_ref}"
-    return f"{base_ref}..{head_ref}"
+    return PullRequestMessageBuilder(
+        context=_empty_message_context(git_root),
+        git_root=git_root,
+        head_branch=head_branch,
+        base_branch=base_branch,
+        git_output=git_output,
+    ).commit_range()
 
 
 def pr_compare_range(git_root: Path, *, head_branch: str, base_branch: str, git_output: GitOutput) -> str:
-    head_ref = head_branch or "HEAD"
-    if not base_branch:
-        return head_ref
-    base_ref = pr_base_ref(git_root, base_branch, git_output=git_output)
-    return f"{base_ref}...{head_ref}"
+    return PullRequestMessageBuilder(
+        context=_empty_message_context(git_root),
+        git_root=git_root,
+        head_branch=head_branch,
+        base_branch=base_branch,
+        git_output=git_output,
+    ).compare_range()
 
 
 def pr_base_ref(git_root: Path, base_branch: str, *, git_output: GitOutput) -> str:
-    remote_candidate = f"origin/{base_branch}"
-    if git_output(git_root, ["rev-parse", "--verify", remote_candidate]).strip():
-        return remote_candidate
-    if git_output(git_root, ["rev-parse", "--verify", base_branch]).strip():
-        return base_branch
-    return base_branch
+    return PullRequestMessageBuilder(
+        context=_empty_message_context(git_root),
+        git_root=git_root,
+        head_branch="HEAD",
+        base_branch=base_branch,
+        git_output=git_output,
+    ).base_ref()
+
+
+def _empty_message_context(project_root: Path) -> PullRequestMessageContext:
+    return PullRequestMessageContext(project_root=project_root, project_name=project_root.name or "project", env={})
 
 
 def recent_text_excerpt(text: str, *, max_chars: int) -> str:

@@ -8,7 +8,12 @@ from types import SimpleNamespace
 import unittest
 
 from envctl_engine.actions.action_target_support import ActionCommandResolution
-from envctl_engine.actions.project_action_execution_support import run_project_action
+from envctl_engine.actions.project_action_execution_support import (
+    ProjectActionRunner,
+    ProjectActionRunnerConfig,
+    ProjectActionRunnerDependencies,
+    run_project_action,
+)
 from envctl_engine.runtime.command_router import parse_route
 
 
@@ -27,6 +32,42 @@ class _Runner:
 
 
 class ProjectActionExecutionSupportTests(unittest.TestCase):
+    def test_runner_accepts_grouped_config_and_dependencies(self) -> None:
+        route = parse_route(["review", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        target = SimpleNamespace(name="feature-a-1", root="/repo/trees/feature-a/1")
+        captured: dict[str, object] = {}
+
+        def execute_targeted_action_fn(**kwargs: object) -> int:
+            captured.update(kwargs)
+            return 41
+
+        runner = ProjectActionRunner(
+            config=ProjectActionRunnerConfig(
+                runtime=SimpleNamespace(env={}, process_runner=_Runner()),
+                route=route,
+                targets=[target],
+                command_name="review",
+                env_key="ENVCTL_ACTION_ANALYZE_CMD",
+                default_command=["review-tool"],
+                default_cwd=Path("/repo"),
+                default_append_project_path=False,
+                extra_env={},
+            ),
+            dependencies=ProjectActionRunnerDependencies(
+                action_replacements_builder=lambda _targets, target: {"project": target.name},
+                action_env_builder=lambda *_args, **_kwargs: {},
+                emit_status=lambda _message: None,
+                success_handler=lambda *_args, **_kwargs: None,
+                failure_handler=lambda *_args, **_kwargs: None,
+                stdout_is_live_terminal=lambda: False,
+                execute_targeted_action_fn=execute_targeted_action_fn,
+            ),
+        )
+
+        self.assertEqual(runner.run(), 41)
+        self.assertEqual(captured["command_name"], "review")
+        self.assertTrue(callable(captured["resolve_command"]))
+
     def test_missing_command_reports_configuration_gap(self) -> None:
         route = parse_route(["review"], env={"ENVCTL_DEFAULT_MODE": "main"})
         runtime = SimpleNamespace(env={})
@@ -97,7 +138,7 @@ class ProjectActionExecutionSupportTests(unittest.TestCase):
             emit_status=lambda _message: None,
             success_handler=lambda *_args, **_kwargs: "success-handler",
             failure_handler=lambda *_args, **_kwargs: "failure-handler",
-            stdout_is_live_terminal=lambda: False,
+            stdout_is_live_terminal=lambda: True,
             execute_targeted_action_fn=execute_targeted_action_fn,
         )
 
@@ -139,7 +180,7 @@ class ProjectActionExecutionSupportTests(unittest.TestCase):
             emit_status=lambda _message: None,
             success_handler=lambda *_args, **_kwargs: None,
             failure_handler=lambda *_args, **_kwargs: None,
-            stdout_is_live_terminal=lambda: False,
+            stdout_is_live_terminal=lambda: True,
             execute_targeted_action_fn=execute_targeted_action_fn,
         )
 
@@ -193,6 +234,170 @@ class ProjectActionExecutionSupportTests(unittest.TestCase):
         completed = captured["completed"]
         self.assertEqual(completed.stdout, "")
         self.assertFalse(captured["emit_success_output"])
+
+    def test_noninteractive_live_ship_streams_output_and_retains_stdout_for_status(self) -> None:
+        route = parse_route(["ship", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        target = SimpleNamespace(name="feature-a-1", root="/repo/trees/feature-a/1")
+        runner = _Runner()
+        ship_output = (
+            "ship: GitHub checks still running after 10s (pending=1, passed=0, failed=0, timeout=120s)\n"
+            "{\n"
+            '  "contract_version": "envctl.ship.v1",\n'
+            '  "operation_statuses": {"commit": "success", "push": "success", "pr": "existing", "merge_conflicts": "none", "checks": "checks_passed"},\n'
+            '  "status": "checks_passed"\n'
+            "}\n"
+        )
+
+        def run_streaming(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            runner.streaming_calls.append({"command": command, **kwargs})
+            return subprocess.CompletedProcess(command, 0, stdout=ship_output, stderr="")
+
+        runner.run_streaming = run_streaming  # type: ignore[method-assign]
+        captured: dict[str, object] = {}
+
+        def execute_targeted_action_fn(**kwargs: object) -> int:
+            context = SimpleNamespace(name="feature-a-1", root=target.root, target_obj=target)
+            completed = kwargs["process_run"](["envctl", "ship"], Path("/repo"), {})
+            captured["completed"] = completed
+            captured["emit_success_output"] = kwargs["emit_success_output"]
+            captured["print_noninteractive_failures"] = kwargs["print_noninteractive_failures"]
+            captured["print_message"] = kwargs["success_print_formatter"](context, completed)
+            return completed.returncode
+
+        runtime = SimpleNamespace(env={}, process_runner=runner)
+
+        code = run_project_action(
+            runtime=runtime,
+            route=route,
+            targets=[target],
+            command_name="ship",
+            env_key="ENVCTL_ACTION_SHIP_CMD",
+            default_command=["envctl", "ship"],
+            default_cwd=Path("/repo"),
+            default_append_project_path=False,
+            extra_env={},
+            action_replacements_builder=lambda _targets, target: {"project": target.name},
+            action_env_builder=lambda *_args, **_kwargs: {},
+            emit_status=lambda _message: None,
+            success_handler=lambda *_args, **_kwargs: None,
+            failure_handler=lambda *_args, **_kwargs: None,
+            stdout_is_live_terminal=lambda: False,
+            execute_targeted_action_fn=execute_targeted_action_fn,
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(runner.run_calls, [])
+        self.assertEqual(len(runner.streaming_calls), 1)
+        stream_call = runner.streaming_calls[0]
+        self.assertEqual(stream_call["command"], ["envctl", "ship"])
+        self.assertTrue(callable(stream_call["callback"]))
+        completed = captured["completed"]
+        self.assertEqual(completed.stdout, ship_output)
+        self.assertFalse(captured["emit_success_output"])
+        self.assertTrue(captured["print_noninteractive_failures"])
+        self.assertIn("checks_passed", captured["print_message"])
+
+    def test_failed_ship_subprocess_without_json_reports_actionable_diagnostics(self) -> None:
+        route = parse_route(["ship", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        target = SimpleNamespace(name="feature-a-1", root="/repo/trees/feature-a/1")
+        runner = _Runner()
+
+        def run_streaming(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            runner.streaming_calls.append({"command": command, **kwargs})
+            return subprocess.CompletedProcess(command, -1, stdout="", stderr="")
+
+        runner.run_streaming = run_streaming  # type: ignore[method-assign]
+        captured: dict[str, object] = {}
+
+        def execute_targeted_action_fn(**kwargs: object) -> int:
+            completed = kwargs["process_run"](["envctl", "ship", "--json"], Path("/repo"), {})
+            captured["completed"] = completed
+            captured["print_noninteractive_failures"] = kwargs["print_noninteractive_failures"]
+            return completed.returncode
+
+        runtime = SimpleNamespace(env={}, process_runner=runner)
+
+        code = run_project_action(
+            runtime=runtime,
+            route=route,
+            targets=[target],
+            command_name="ship",
+            env_key="ENVCTL_ACTION_SHIP_CMD",
+            default_command=["envctl", "ship", "--json"],
+            default_cwd=Path("/repo"),
+            default_append_project_path=False,
+            extra_env={},
+            action_replacements_builder=lambda _targets, target: {"project": target.name},
+            action_env_builder=lambda *_args, **_kwargs: {},
+            emit_status=lambda _message: None,
+            success_handler=lambda *_args, **_kwargs: None,
+            failure_handler=lambda *_args, **_kwargs: None,
+            stdout_is_live_terminal=lambda: False,
+            execute_targeted_action_fn=execute_targeted_action_fn,
+        )
+
+        self.assertEqual(code, -1)
+        self.assertTrue(captured["print_noninteractive_failures"])
+        diagnostic = captured["completed"].stderr
+        self.assertIn("ship subprocess failed without envctl.ship.v1 JSON", diagnostic)
+        self.assertIn("command: envctl ship --json", diagnostic)
+        self.assertIn("exit code: -1", diagnostic)
+        self.assertIn("stdout: <empty>", diagnostic)
+        self.assertIn("stderr: <empty>", diagnostic)
+        self.assertIn("Fallback: rerun `envctl ship --json`", diagnostic)
+
+    def test_ship_action_uses_structured_status_success_messages(self) -> None:
+        route = parse_route(["ship", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        target = SimpleNamespace(name="feature-a-1", root="/repo/trees/feature-a/1")
+        captured: dict[str, object] = {}
+
+        def execute_targeted_action_fn(**kwargs: object) -> int:
+            captured.update(kwargs)
+            context = SimpleNamespace(name="feature-a-1", root=target.root, target_obj=target)
+            completed = subprocess.CompletedProcess(
+                ["envctl", "ship"],
+                0,
+                stdout=(
+                    "{\n"
+                    '  "contract_version": "envctl.ship.v1",\n'
+                    '  "operation_statuses": {"commit": "success", "push": "success", "pr": "existing", "merge_conflicts": "none", "checks": "pending"},\n'
+                    '  "pr_url": "https://github.test/acme/envctl/pull/12",\n'
+                    '  "status": "checks_pending_timeout"\n'
+                    "}\n"
+                ),
+                stderr="",
+            )
+            captured["print_message"] = kwargs["success_print_formatter"](context, completed)
+            captured["status_message"] = kwargs["success_status_formatter"](context, completed)
+            return 0
+
+        runtime = SimpleNamespace(env={}, process_runner=_Runner())
+
+        code = run_project_action(
+            runtime=runtime,
+            route=route,
+            targets=[target],
+            command_name="ship",
+            env_key="ENVCTL_ACTION_SHIP_CMD",
+            default_command=["envctl", "ship"],
+            default_cwd=Path("/repo"),
+            default_append_project_path=False,
+            extra_env={},
+            action_replacements_builder=lambda _targets, target: {"project": target.name},
+            action_env_builder=lambda *_args, **_kwargs: {},
+            emit_status=lambda _message: None,
+            success_handler=lambda *_args, **_kwargs: None,
+            failure_handler=lambda *_args, **_kwargs: None,
+            stdout_is_live_terminal=lambda: False,
+            execute_targeted_action_fn=execute_targeted_action_fn,
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIn("success_print_formatter", captured)
+        self.assertIn("success_status_formatter", captured)
+        self.assertIn("checks_pending_timeout", captured["print_message"])
+        self.assertIn("checks_pending_timeout", captured["status_message"])
+        self.assertNotIn("succeeded", captured["print_message"])
 
 
 if __name__ == "__main__":

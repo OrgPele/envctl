@@ -153,8 +153,8 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                         "cli": "codex",
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 2,
-                        "queued_steps": 6,
-                        "queued_steps_confirmed": 6,
+                        "queued_steps": 4,
+                        "queued_steps_confirmed": 4,
                         "transport": "cmux",
                     }
                 ],
@@ -257,10 +257,9 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
         )
 
         self.assertIsNone(reason)
-        self.assertEqual(len(pasted_texts), 2)
-        self.assertTrue(pasted_texts[0].startswith("/goal "))
-        self.assertIn("You are finalizing an implementation", pasted_texts[1])
-        self.assertEqual(sent_keys, ["tab", "tab"])
+        self.assertEqual(len(pasted_texts), 1)
+        self.assertIn("You are finalizing an implementation", pasted_texts[0])
+        self.assertEqual(sent_keys, ["tab"])
 
     def test_cmux_codex_queue_fails_when_message_remains_in_textbox_after_tab(self) -> None:
         sent_keys: list[str] = []
@@ -458,9 +457,8 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                     "workflow_mode": "codex_cycles",
                     "codex_cycles": 3,
                     "codex_goal_enable": True,
-                    "browser_e2e_followup_enable": True,
-                    "pr_review_comments_followup_enable": True,
+                    "browser_e2e_followup_enable": False,
+                    "pr_review_comments_followup_enable": False,
                 }
             ],
         )
-

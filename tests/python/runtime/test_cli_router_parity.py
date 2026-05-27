@@ -221,6 +221,22 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertEqual(route.command, "commit")
         self.assertEqual(route.flags.get("commit_message"), "ship it")
 
+        route = parse_route(["commit", "-m", "ship it"], env={})
+        self.assertEqual(route.command, "commit")
+        self.assertEqual(route.flags.get("commit_message"), "ship it")
+
+        route = parse_route(["ship", "--project", "feature-a-1", "-m", "ship it", "--json"], env={})
+        self.assertEqual(route.command, "ship")
+        self.assertEqual(route.projects, ["feature-a-1"])
+        self.assertEqual(route.flags.get("commit_message"), "ship it")
+        self.assertTrue(route.flags.get("json"))
+
+        route = parse_route(["ship", "--project", "feature-a-1", "-m", "ship it", "--human"], env={})
+        self.assertEqual(route.command, "ship")
+        self.assertEqual(route.projects, ["feature-a-1"])
+        self.assertEqual(route.flags.get("commit_message"), "ship it")
+        self.assertTrue(route.flags.get("human"))
+
         route = parse_route(["ship", "--project", "feature-a-1", "--json"], env={})
         self.assertEqual(route.command, "ship")
         self.assertEqual(route.projects, ["feature-a-1"])
@@ -400,6 +416,54 @@ class CliRouterParityTests(unittest.TestCase):
             route.flags.get("setup_worktree"),
             [{"feature": "feature-c", "iteration": "2"}],
         )
+
+    def test_import_remote_branch_routes_accept_flag_inline_and_explicit_forms(self) -> None:
+        cases = (
+            (["--import", "feature/foo"], ["feature/foo"]),
+            (["--import=feature/foo"], ["feature/foo"]),
+            (["import", "feature/foo"], ["feature/foo"]),
+            (["import", "origin/feature/foo"], ["origin/feature/foo"]),
+        )
+        for args, passthrough in cases:
+            with self.subTest(args=args):
+                route = parse_route(list(args), env={})
+                self.assertEqual(route.command, "import")
+                self.assertEqual(route.mode, "trees")
+                self.assertEqual(route.passthrough_args, passthrough)
+
+    def test_import_remote_branch_preserves_plan_agent_and_runtime_flags(self) -> None:
+        route = parse_route(
+            [
+                "--import=feature/foo",
+                "--cmux",
+                "--tmux",
+                "--omx",
+                "--preset",
+                "implement_task",
+                "--headless",
+                "--new-session",
+                "--entire-system",
+                "--codex",
+            ],
+            env={},
+        )
+
+        self.assertEqual(route.command, "import")
+        self.assertEqual(route.mode, "trees")
+        self.assertEqual(route.passthrough_args, ["feature/foo"])
+        self.assertTrue(route.flags.get("cmux"))
+        self.assertTrue(route.flags.get("tmux"))
+        self.assertTrue(route.flags.get("omx"))
+        self.assertTrue(route.flags.get("batch"))
+        self.assertTrue(route.flags.get("new_session"))
+        self.assertTrue(route.flags.get("codex"))
+        self.assertEqual(route.flags.get("preset"), "implement_task")
+        self.assertEqual(route.flags.get("runtime_scope"), "entire-system")
+
+    def test_import_remote_branch_requires_branch_argument(self) -> None:
+        for args in (["--import"], ["import"], ["--import="]):
+            with self.subTest(args=args), self.assertRaises(RouteError):
+                parse_route(list(args), env={})
 
     def test_shell_compatibility_alias_flags_are_parsed(self) -> None:
         route = parse_route(

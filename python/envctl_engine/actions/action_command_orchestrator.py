@@ -82,16 +82,20 @@ class ActionCommandOrchestrator(ActionCommandProjectFacadeMixin, ActionCommandTe
     def run_self_destruct_worktree_action(self, route: Route) -> int:
         return run_self_destruct_worktree_action_impl(self, route)
 
-    def _resolve_current_worktree_target(self, *, require_configured_main_root: bool = False) -> object | None:
+    def _resolve_current_worktree_target(
+        self,
+        *,
+        require_configured_main_root: bool = False,
+        require_configured_root_match: bool = False,
+    ) -> object | None:
         return resolve_current_worktree_target_impl(
             runtime=self.runtime,
             require_configured_main_root=require_configured_main_root,
+            require_configured_root_match=require_configured_root_match,
             current_cwd=Path.cwd,
             discover_tree_projects_fn=discover_tree_projects,
             main_repo_root_for_linked_worktree_fn=main_repo_root_for_linked_worktree,
-            git_main_repo_root_for_worktree_fn=lambda worktree_root, trees_dir_name=None, **_kwargs: (
-                self._main_repo_root_for_worktree(worktree_root, trees_dir_name=trees_dir_name)
-            ),
+            git_main_repo_root_for_worktree_fn=self._main_repo_root_for_current_worktree,
         )
 
     def _main_repo_root_for_worktree(self, worktree_root: Path, *, trees_dir_name: str | None = None) -> Path | None:
@@ -100,6 +104,15 @@ class ActionCommandOrchestrator(ActionCommandProjectFacadeMixin, ActionCommandTe
             runtime=self.runtime,
             trees_dir_name=trees_dir_name,
         )
+
+    def _main_repo_root_for_current_worktree(
+        self,
+        *,
+        worktree_root: Path,
+        trees_dir_name: str | None = None,
+        **_kwargs: object,
+    ) -> Path | None:
+        return self._main_repo_root_for_worktree(worktree_root, trees_dir_name=trees_dir_name)
 
     @staticmethod
     def _repo_root_from_worktree_layout(worktree_root: Path, trees_dir_name: str) -> Path | None:

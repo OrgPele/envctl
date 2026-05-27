@@ -154,30 +154,38 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertEqual(config.backend_port_base, 8100)
 
     def test_load_config_exposes_plan_agent_pr_review_comment_followup_toggle(self) -> None:
+        default_config = load_config({"RUN_REPO_ROOT": tempfile.mkdtemp()})
+        self.assertFalse(default_config.plan_agent_pr_review_comments_enable)
+        self.assertEqual(default_config.raw["ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE"], "false")
+
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             (repo / ".envctl").write_text(
-                "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false\n",
+                "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true\n",
                 encoding="utf-8",
             )
 
             config = load_config({"RUN_REPO_ROOT": str(repo)})
 
-            self.assertFalse(config.plan_agent_pr_review_comments_enable)
-            self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE"], "false")
+            self.assertTrue(config.plan_agent_pr_review_comments_enable)
+            self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE"], "true")
 
     def test_load_config_exposes_plan_agent_browser_e2e_followup_toggle(self) -> None:
+        default_config = load_config({"RUN_REPO_ROOT": tempfile.mkdtemp()})
+        self.assertFalse(default_config.plan_agent_browser_e2e_enable)
+        self.assertEqual(default_config.raw["ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE"], "false")
+
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             (repo / ".envctl").write_text(
-                "ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false\n",
+                "ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true\n",
                 encoding="utf-8",
             )
 
             config = load_config({"RUN_REPO_ROOT": str(repo)})
 
-            self.assertFalse(config.plan_agent_browser_e2e_enable)
-            self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE"], "false")
+            self.assertTrue(config.plan_agent_browser_e2e_enable)
+            self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE"], "true")
 
     def test_load_config_exposes_plan_agent_codex_goal_default_and_false_toggle(self) -> None:
         default_config = load_config({"RUN_REPO_ROOT": tempfile.mkdtemp()})

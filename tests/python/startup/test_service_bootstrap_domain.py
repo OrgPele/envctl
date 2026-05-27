@@ -19,6 +19,7 @@ from envctl_engine.startup.service_bootstrap_domain import (
     _prepare_backend_runtime,
     _backend_migration_retry_env_for_async_driver_mismatch,
     _read_backend_bootstrap_state,
+    _read_backend_runtime_prep_state,
     _read_env_file_safe,
     _run_backend_migration_step,
     _rewrite_database_url_to_asyncpg,
@@ -443,6 +444,77 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
             self.assertTrue(
                 any(event.get("reason") == "poetry_environment_missing_dependencies" for event in runtime.events)
             )
+
+    def test_prepare_backend_runtime_records_pip_manager_for_pdm_project_even_when_poetry_exists(self) -> None:
+        class _Context:
+            def __init__(self, *, root: Path) -> None:
+                self.name = "Main"
+                self.root = root
+
+        class _RuntimeStub:
+            def __init__(self, repo_root: Path) -> None:
+                self.config = SimpleNamespace(base_dir=repo_root, raw={})
+                self.env: dict[str, str] = {}
+                self.events: list[dict[str, object]] = []
+                self.bootstrap_commands: list[list[str]] = []
+
+            def _command_exists(self, command: str) -> bool:
+                return command == "poetry"
+
+            def _command_env(self, *, port: int, extra=None):  # noqa: ANN001
+                _ = port, extra
+                return {}
+
+            def _command_override_value(self, key: str) -> str | None:
+                _ = key
+                return None
+
+            def _read_env_file_safe(self, path: Path) -> dict[str, str]:
+                return _read_env_file_safe(path)
+
+            def _sync_backend_env_file(self, path: Path, *, env):  # noqa: ANN001
+                _ = path, env
+
+            def _emit(self, event: str, **payload: object) -> None:
+                self.events.append({"event": event, **payload})
+
+            def _backend_has_migrations(self, backend_cwd: Path) -> bool:
+                _ = backend_cwd
+                return False
+
+            def _run_backend_bootstrap_command(self, **kwargs) -> None:  # noqa: ANN003
+                self.bootstrap_commands.append(list(kwargs["command"]))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            backend = repo / "backend"
+            (backend / "venv" / "bin").mkdir(parents=True)
+            (backend / "venv" / "bin" / "python").write_text("", encoding="utf-8")
+            (backend / "requirements.txt").write_text("fastapi==1.0.0\n", encoding="utf-8")
+            (backend / "pyproject.toml").write_text("[tool.pdm]\nname='x'\n", encoding="utf-8")
+            runtime = _RuntimeStub(repo)
+
+            _prepare_backend_runtime(
+                runtime,
+                context=_Context(root=repo),
+                backend_cwd=backend,
+                backend_log_path="",
+                project_env_base={},
+                route=None,
+                backend_env_file=None,
+                backend_env_is_default=False,
+            )
+
+            runtime_state = _read_backend_runtime_prep_state(backend)
+
+        self.assertIsNotNone(runtime_state)
+        assert runtime_state is not None
+        self.assertEqual(runtime_state["manager"], "pip")
+        self.assertIn(
+            [str(backend / "venv" / "bin" / "python"), "-m", "pip", "install", "-r", "requirements.txt"],
+            runtime.bootstrap_commands,
+        )
+        self.assertNotIn(["poetry", "install"], runtime.bootstrap_commands)
 
     def test_backend_bootstrap_state_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

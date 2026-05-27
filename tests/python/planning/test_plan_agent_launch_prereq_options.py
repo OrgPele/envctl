@@ -27,7 +27,14 @@ class PlanAgentLaunchPrereqOptionsTests(PlanAgentLaunchSupportTestCase):
                 repo = Path(tmpdir) / "repo"
                 runtime = Path(tmpdir) / "runtime"
                 repo.mkdir(parents=True, exist_ok=True)
-                rt = self._runtime(repo, runtime, env={"ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true"})
+                rt = self._runtime(
+                    repo,
+                    runtime,
+                    env={
+                        "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                        "ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT": "cmux",
+                    },
+                )
 
                 result = launch_plan_agent_terminals(
                     rt,
