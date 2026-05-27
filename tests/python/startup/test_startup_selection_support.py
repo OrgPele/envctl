@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from envctl_engine.runtime.command_router import Route, parse_route
+from envctl_engine.planning import discover_tree_projects
 from envctl_engine.startup.startup_selection_support import (
     restart_include_requirements,
     select_start_tree_projects,
@@ -132,6 +133,38 @@ class StartupSelectionSupportTests(unittest.TestCase):
                 runtime.selection_kwargs.get("initial_project_names"),
                 ["implementations_alpha-1", "implementations_gamma-1"],
             )
+
+    def test_select_start_tree_projects_prompts_with_imported_branch_projects_individually(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            imported = root / "trees" / "imported"
+            alpha = imported / "alpha-branch"
+            beta = imported / "beta-branch"
+            (alpha / ".git").parent.mkdir(parents=True, exist_ok=True)
+            (beta / ".git").parent.mkdir(parents=True, exist_ok=True)
+            (alpha / ".git").write_text("gitdir: /tmp/alpha\n", encoding="utf-8")
+            (beta / ".git").write_text("gitdir: /tmp/beta\n", encoding="utf-8")
+            runtime = _RuntimeStub(can_tty=True)
+            runtime.selection = TargetSelection(project_names=["branch/alpha"])
+
+            with unittest.mock.patch(
+                "envctl_engine.planning._branch_project_name_for_worktree",
+                side_effect=["branch/alpha", "branch/beta"],
+            ):
+                contexts = [
+                    SimpleNamespace(name=name, root=root)
+                    for name, root in discover_tree_projects(root, "trees")
+                ]
+            selected = select_start_tree_projects(runtime=runtime, route=self._trees_route(), project_contexts=contexts)
+
+            self.assertEqual([ctx.name for ctx in selected], ["branch/alpha"])
+            self.assertIsNotNone(runtime.selection_kwargs)
+            assert runtime.selection_kwargs is not None
+            self.assertEqual(
+                [project.name for project in runtime.selection_kwargs.get("projects", [])],
+                ["branch/alpha", "branch/beta"],
+            )
+            self.assertNotIn("imported", [project.name for project in runtime.selection_kwargs.get("projects", [])])
 
     def test_select_start_tree_projects_requires_explicit_selection_without_tty(self) -> None:
         runtime = _RuntimeStub(can_tty=False)

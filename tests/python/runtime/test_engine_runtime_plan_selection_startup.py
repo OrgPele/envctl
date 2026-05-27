@@ -87,7 +87,7 @@ class EngineRuntimePlanSelectionStartupTests(_EngineRuntimeRealStartupTestCase):
             )
             self.assertEqual(selected, {"backend/task-a.md": 2, "backend/task-b.md": 1})
 
-    def test_initial_plan_selected_counts_uses_memory_when_existing_missing(self) -> None:
+    def test_initial_plan_selected_counts_ignores_stale_memory_when_existing_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -103,7 +103,7 @@ class EngineRuntimePlanSelectionStartupTests(_EngineRuntimeRealStartupTestCase):
                 planning_files=["backend/task-a.md", "backend/task-b.md"],
                 existing_counts={},
             )
-            self.assertEqual(selected, {"backend/task-a.md": 3, "backend/task-b.md": 0})
+            self.assertEqual(selected, {"backend/task-a.md": 0, "backend/task-b.md": 0})
 
     def test_planning_menu_apply_key_supports_arrow_navigation_and_count_adjustment(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -202,4 +202,3 @@ class EngineRuntimePlanSelectionStartupTests(_EngineRuntimeRealStartupTestCase):
             self.assertNotIn("super-long-plan-name-01", plain)
             for line in lines:
                 self.assertLessEqual(len(line), 72)
-

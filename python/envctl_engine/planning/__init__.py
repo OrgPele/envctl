@@ -351,6 +351,9 @@ def _append_feature_projects(
             projects.append((project_name, iter_dir))
         return
 
+    if _append_direct_child_worktree_projects(projects, seen, feature_dir):
+        return
+
     if not _looks_like_tree_project_root(feature_dir):
         return
     dedupe_key = f"{feature_name}|{feature_dir.resolve()}"
@@ -358,6 +361,27 @@ def _append_feature_projects(
         return
     seen.add(dedupe_key)
     projects.append((feature_name, feature_dir))
+
+
+def _append_direct_child_worktree_projects(
+    projects: list[tuple[str, Path]],
+    seen: set[str],
+    feature_dir: Path,
+) -> bool:
+    appended = False
+    for child in sorted(path for path in feature_dir.iterdir() if path.is_dir() and not _is_ignored(path.name)):
+        if not (child / ".git").exists():
+            continue
+        if not _looks_like_tree_project_root(child):
+            continue
+        project_name = _branch_project_name_for_worktree(child) or child.name
+        dedupe_key = f"{project_name}|{child.resolve()}"
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        projects.append((project_name, child))
+        appended = True
+    return appended
 
 
 def _branch_project_name_for_worktree(worktree_root: Path) -> str | None:
