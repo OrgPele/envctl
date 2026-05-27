@@ -126,6 +126,26 @@ def _append_feature_projects(
             projects.append((project_name, iter_dir))
         return
 
+    direct_worktrees = sorted(
+        path
+        for path in feature_dir.iterdir()
+        if path.is_dir() and not _is_ignored(path.name) and (path / ".git").exists()
+    )
+    if direct_worktrees:
+        for worktree_dir in direct_worktrees:
+            if not _looks_like_tree_project_root(worktree_dir):
+                continue
+            project_name = _branch_project_name_for_worktree(worktree_dir) or worktree_project_name(
+                feature=feature_name,
+                iteration=worktree_dir.name,
+            )
+            dedupe_key = f"{project_name}|{worktree_dir.resolve()}"
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            projects.append((project_name, worktree_dir))
+        return
+
     if not _looks_like_tree_project_root(feature_dir):
         return
     dedupe_key = f"{feature_name}|{feature_dir.resolve()}"

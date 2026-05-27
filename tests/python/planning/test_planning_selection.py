@@ -21,6 +21,22 @@ from envctl_engine.planning import (
 
 
 class PlanningSelectionTests(unittest.TestCase):
+    def _init_git_repo(self, repo: Path) -> None:
+        repo.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+        (repo / "README.md").write_text("# repo\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+
+    def _add_worktree(self, repo: Path, branch: str, worktree: Path) -> None:
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "-b", branch, str(worktree)],
+            cwd=repo,
+            check=True,
+        )
+
     def test_generated_worktree_identity_keeps_project_branch_and_selector_identical(self) -> None:
         identity = generated_worktree_identity(feature="features_demo_task", iteration="2")
 
@@ -33,23 +49,37 @@ class PlanningSelectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             worktree = repo / "trees" / "features_demo" / "1"
-            repo.mkdir(parents=True, exist_ok=True)
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
-            subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
-            (repo / "README.md").write_text("# repo\n", encoding="utf-8")
-            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
-            subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
-            subprocess.run(
-                ["git", "worktree", "add", "-q", "-b", "features_demo_custom-7", str(worktree)],
-                cwd=repo,
-                check=True,
-            )
+            self._init_git_repo(repo)
+            self._add_worktree(repo, "features_demo_custom-7", worktree)
 
             projects = discover_tree_projects(repo, "trees")
 
         self.assertIn(("features_demo_custom-7", worktree), projects)
         self.assertNotIn(("features_demo-1", worktree), projects)
+
+    def test_discover_tree_projects_uses_branch_names_for_imported_worktrees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "imported" / "features-ai-answer-reliability-foundation"
+            self._init_git_repo(repo)
+            self._add_worktree(repo, "features_ai_answer_reliability_foundation-2", worktree)
+
+            projects = discover_tree_projects(repo, "trees")
+
+        self.assertIn(("features_ai_answer_reliability_foundation-2", worktree), projects)
+        self.assertNotIn(("imported", repo / "trees" / "imported"), projects)
+
+    def test_discover_tree_projects_preserves_slashes_in_imported_branch_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            worktree = repo / "trees" / "imported" / "vk-8e38-production-secre"
+            self._init_git_repo(repo)
+            self._add_worktree(repo, "vk/8e38-production-secre", worktree)
+
+            projects = discover_tree_projects(repo, "trees")
+
+        self.assertIn(("vk/8e38-production-secre", worktree), projects)
+        self.assertNotIn(("imported", repo / "trees" / "imported"), projects)
 
     def test_list_planning_files_excludes_done_readme_and_plan_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -203,6 +233,17 @@ class PlanningSelectionTests(unittest.TestCase):
         self.assertEqual(counts["backend/task.md"], 2)
         self.assertEqual(counts["frontend/task.md"], 1)
         self.assertEqual(counts["ops/missing.md"], 0)
+
+    def test_planning_existing_counts_ignores_stale_local_branches_without_worktrees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            self._init_git_repo(repo)
+            subprocess.run(["git", "branch", "backend_task-1"], cwd=repo, check=True)
+
+            projects = discover_tree_projects(repo, "trees")
+            counts = planning_existing_counts(projects=projects, planning_files=["backend/task.md"])
+
+        self.assertEqual(counts["backend/task.md"], 0)
 
 
 if __name__ == "__main__":

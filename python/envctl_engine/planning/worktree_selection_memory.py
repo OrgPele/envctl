@@ -63,6 +63,5 @@ def initial_plan_selected_counts(
     selected_counts: dict[str, int] = {}
     for plan_file in planning_files:
         existing = int(existing_counts.get(plan_file, 0))
-        remembered_value = int(remembered_counts.get(plan_file, 0))
-        selected_counts[plan_file] = existing if existing > 0 else max(remembered_value, 0)
+        selected_counts[plan_file] = max(existing, 0)
     return selected_counts
