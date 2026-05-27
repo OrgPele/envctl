@@ -90,14 +90,14 @@ class WorktreeSelectionMemoryTests(unittest.TestCase):
             self.assertEqual(list(current_payload["selected_counts"].items()), [("a.md", 1), ("z.md", 2)])
             self.assertIsInstance(current_payload["saved_at"], str)
 
-    def test_initial_plan_selected_counts_keeps_existing_counts_before_memory(self) -> None:
+    def test_initial_plan_selected_counts_uses_current_existing_counts_only(self) -> None:
         self.assertEqual(
             initial_plan_selected_counts(
                 planning_files=["feature/a.md", "feature/b.md", "feature/c.md"],
                 existing_counts={"feature/a.md": 2},
                 remembered_counts={"feature/a.md": 9, "feature/b.md": 4, "feature/c.md": -1},
             ),
-            {"feature/a.md": 2, "feature/b.md": 4, "feature/c.md": 0},
+            {"feature/a.md": 2, "feature/b.md": 0, "feature/c.md": 0},
         )
 
 

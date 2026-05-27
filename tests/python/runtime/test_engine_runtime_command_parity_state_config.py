@@ -104,6 +104,56 @@ class EngineRuntimeCommandParityStateConfigTests(EngineRuntimeCommandParityTestC
         self.assertFalse(feature["services_running"])
         self.assertFalse(feature["running"])
 
+    def test_list_trees_json_reports_imported_branch_worktrees_individually(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        runtime_root = Path(tmpdir.name) / "runtime"
+        imported_root = repo / "trees" / "imported"
+        first_tree = imported_root / "features-ai-answer-reliability-foundation"
+        second_tree = imported_root / "vk-8e38-production-secre"
+        repo.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+        (repo / "README.md").write_text("# repo\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "features_ai_answer_reliability_foundation-2",
+                str(first_tree),
+            ],
+            cwd=repo,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "-b", "vk/8e38-production-secre", str(second_tree)],
+            cwd=repo,
+            check=True,
+        )
+        config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime_root)})
+        runtime = PythonEngineRuntime(config, env={})
+
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            code = runtime.dispatch(parse_route(["--list-trees", "--json"], env={}))
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buffer.getvalue())
+        names = [project["name"] for project in payload["projects"]]
+        roots_by_name = {project["name"]: project["root"] for project in payload["projects"]}
+        self.assertIn("features_ai_answer_reliability_foundation-2", names)
+        self.assertIn("vk/8e38-production-secre", names)
+        self.assertNotIn("imported", names)
+        self.assertEqual(roots_by_name["features_ai_answer_reliability_foundation-2"], str(first_tree.resolve()))
+        self.assertEqual(roots_by_name["vk/8e38-production-secre"], str(second_tree.resolve()))
+
     def test_show_config_json_prints_effective_payload(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)
