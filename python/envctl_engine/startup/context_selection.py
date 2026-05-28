@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 import time
 from typing import Protocol, cast
 
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanSelectionResult, PlanWorktreeSyncResult
+from envctl_engine.planning.worktree_import_commands import list_importable_origin_branches
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
@@ -34,7 +36,11 @@ def select_startup_contexts(
     if route.command == "plan":
         project_contexts = runtime._select_plan_projects(route, project_contexts)
     elif route.command == "import":
-        project_contexts = _select_imported_worktree(session, runtime=runtime)
+        project_contexts = _select_imported_worktree(
+            session,
+            runtime=runtime,
+            discovered_project_contexts=project_contexts,
+        )
         if not project_contexts:
             return 1
     elif trees_start_selection_required(route=route, runtime_mode=runtime_mode):
@@ -91,30 +97,111 @@ def _select_imported_worktree(
     session: StartupSession,
     *,
     runtime: StartupRuntime,
+    discovered_project_contexts: list[ProjectContextLike],
 ) -> list[ProjectContextLike]:
     route = session.effective_route
     branch_input = next((arg.strip() for arg in route.passthrough_args if arg.strip()), "")
     planning_orchestrator = getattr(runtime, "planning_worktree_orchestrator", None)
     importer = getattr(planning_orchestrator, "import_remote_branch_worktree", None)
-    if not branch_input or not callable(importer):
+    branch_inputs = [branch_input] if branch_input else []
+    if not branch_input:
+        selected_branches = _select_import_branches_from_tty(
+            runtime=runtime,
+            route=route,
+            discovered_project_contexts=discovered_project_contexts,
+        )
+        if selected_branches is None:
+            return []
+        branch_inputs = selected_branches
+    if not branch_inputs or not callable(importer):
         print("--import requires a remote branch argument.")
         return []
-    result = cast(PlanWorktreeSyncResult, importer(branch_input=branch_input))
-    if result.error:
-        print(result.error)
-        return []
-    project_contexts = runtime._contexts_from_raw_projects(list(result.raw_projects))
+    raw_projects: list[tuple[str, Path]] = []
+    created_worktrees: list[CreatedPlanWorktree] = []
+    for selected_branch in branch_inputs:
+        result = cast(PlanWorktreeSyncResult, importer(branch_input=selected_branch))
+        if result.error:
+            print(result.error)
+            return []
+        raw_projects.extend(list(result.raw_projects))
+        created_worktrees.extend(list(result.created_worktrees))
+    project_contexts = runtime._contexts_from_raw_projects(raw_projects)
     setattr(
         planning_orchestrator,
         "_last_plan_selection_result",
         PlanSelectionResult(
-            raw_projects=list(result.raw_projects),
+            raw_projects=list(raw_projects),
             selected_contexts=list(project_contexts),
-            created_worktrees=result.created_worktrees,
-            error=result.error,
+            created_worktrees=tuple(created_worktrees),
+            error=None,
         ),
     )
     return list(project_contexts)
+
+
+def _select_import_branches_from_tty(
+    *,
+    runtime: StartupRuntime,
+    route: Route,
+    discovered_project_contexts: list[ProjectContextLike],
+) -> list[str] | None:
+    if route.flags.get("batch") or not runtime._can_interactive_tty():
+        if route.flags.get("batch"):
+            print("--import requires a remote branch argument when running headless.")
+        else:
+            print("--import requires a remote branch argument.")
+        return None
+
+    repo_root = Path(runtime.config.base_dir)
+    branches = list_importable_origin_branches(
+        repo_root=repo_root,
+        trees_dir_name=str(getattr(runtime.config, "trees_dir_name", "trees")),
+        discovered_projects=discovered_project_contexts,
+    )
+    if not branches:
+        print("No importable origin branches found.")
+        return None
+
+    projects = cast(
+        list[ProjectContextLike],
+        [
+            SimpleNamespace(name=branch, root=repo_root / "refs" / "remotes" / "origin" / branch, ports={})
+            for branch in branches
+        ],
+    )
+    runtime._emit("planning.import.selector.prompt", discovered_count=len(branches))
+    selection = runtime._select_project_targets(
+        prompt="Import remote branch",
+        projects=projects,
+        allow_all=False,
+        allow_untested=False,
+        multi=True,
+        initial_project_names=None,
+    )
+    if selection.cancelled:
+        runtime._emit("planning.import.selector.cancelled", discovered_count=len(branches))
+        return None
+    selected = [str(name).strip() for name in selection.project_names if str(name).strip()]
+    if not selected:
+        runtime._emit("planning.import.selector.empty", discovered_count=len(branches))
+        return None
+    branch_names = set(branches)
+    missing = [branch for branch in selected if branch not in branch_names]
+    if missing:
+        runtime._emit(
+            "planning.import.selector.miss",
+            discovered_count=len(branches),
+            selected_branches=selected,
+            missing_branches=missing,
+        )
+        return None
+    runtime._emit(
+        "planning.import.selector.applied",
+        selected=selected[0],
+        selected_branches=selected,
+        selected_count=len(selected),
+    )
+    return selected
 
 
 def _prepare_plan_agent_worktrees(

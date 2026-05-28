@@ -48,7 +48,9 @@ def resolve_disabled_startup_mode(
         if hasattr(runtime.config, "startup_enabled_for_mode")
         else True
     )
-    allow_disabled_dashboard = not mode_runs_enabled and (route.command == "plan" or route_is_implicit_start(route))
+    allow_disabled_dashboard = not mode_runs_enabled and (
+        route.command in {"plan", "import"} or route_is_implicit_start(route)
+    )
     session.disabled_startup_mode = allow_disabled_dashboard
     if not allow_disabled_dashboard:
         return None
