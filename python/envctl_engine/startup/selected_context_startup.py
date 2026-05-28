@@ -45,7 +45,6 @@ def start_selected_contexts(
     project_spinner_group_factory: Callable[..., Any],
 ) -> None:
     route = session.effective_route
-    spinner_message = f"Starting {len(session.contexts_to_start)} project(s)..."
     spinner_policy = resolve_spinner_policy_fn(dict(runtime.env))
     use_startup_spinner = bool(spinner_policy.enabled) and not suppress_progress_output(route)
     emit_spinner_policy_fn(
@@ -64,6 +63,9 @@ def start_selected_contexts(
         workers=parallel_workers,
         projects=[context.name for context in session.contexts_to_start],
     )
+    if not session.contexts_to_start:
+        return
+    spinner_message = f"Starting {len(session.contexts_to_start)} project(s)..."
     route_for_execution = _execution_route(runtime=runtime, session=session)
     use_project_spinner_group = (
         parallel_enabled

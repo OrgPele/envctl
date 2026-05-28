@@ -34,7 +34,7 @@ from envctl_engine.startup.finalization import (
 )
 from envctl_engine.startup.finalization_failure import StartupFailureFinalizer
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
-from envctl_engine.startup.session import LocalStartupFailure, StartupSession
+from envctl_engine.startup.session import ImportedStartupContext, LocalStartupFailure, StartupSession
 from envctl_engine.state.models import RunState
 
 
@@ -170,6 +170,44 @@ class StartupFinalizationTests(unittest.TestCase):
             ),
             events,
         )
+
+    def test_finalize_failed_import_startup_appends_import_ready_failure_block(self) -> None:
+        context = SimpleNamespace(name="imported-feature-foo", root=Path("/tmp/repo/trees/imported/feature-foo"))
+        session = _session(contexts=[context], contexts_to_start=[context])
+        session.imported_startup_context = ImportedStartupContext(
+            remote_ref="origin/feature/foo",
+            local_branch="feature/foo",
+            project="imported-feature-foo",
+            worktree_root="/tmp/repo/trees/imported/feature-foo",
+            action="created",
+        )
+        printed: list[str] = []
+        runtime = _runtime_stub(
+            env={},
+            _emit=lambda *args, **kwargs: None,
+            _write_artifacts=lambda *args, **kwargs: None,
+            _terminate_started_services=lambda services: None,
+        )
+
+        result = StartupFailureFinalizer(
+            runtime=runtime,
+            session=session,
+            error="missing_service_start_command: autodetect_failed_backend",
+            ensure_run_id=lambda session: None,
+            port_allocator=lambda runtime: SimpleNamespace(release_session=lambda: None),
+            emit_phase=lambda *args, **kwargs: None,
+            render_final_failure_status=lambda runtime, session, error, *, interactive_tty: error,
+            print_fn=printed.append,
+        ).finalize()
+
+        self.assertEqual(result, 1)
+        rendered = "\n".join(printed)
+        self.assertIn("Startup failed: missing_service_start_command: autodetect_failed_backend", rendered)
+        self.assertIn("Imported worktree is ready, but local app startup failed.", rendered)
+        self.assertIn("project: imported-feature-foo", rendered)
+        self.assertIn("path: /tmp/repo/trees/imported/feature-foo", rendered)
+        self.assertIn("error: missing_service_start_command: autodetect_failed_backend", rendered)
+        self.assertIn("rerun import with --no-infra", rendered)
 
     def test_finalize_successful_startup_writes_artifacts_summary_snapshot_and_returns_zero(self) -> None:
         context = SimpleNamespace(name="Main")
@@ -411,6 +449,31 @@ class StartupFinalizationTests(unittest.TestCase):
         self.assertIn("  project: feature-a-1", text)
         self.assertIn("  error: missing_service_start_command: backend", text)
         self.assertIn("  next: configure ENVCTL_BACKEND_START_CMD / ENVCTL_FRONTEND_START_CMD", text)
+
+    def test_plan_agent_degraded_handoff_text_includes_import_ready_context(self) -> None:
+        session = _session(contexts=[])
+        session.imported_startup_context = ImportedStartupContext(
+            remote_ref="origin/feature/foo",
+            local_branch="feature/foo",
+            project="imported-feature-foo",
+            worktree_root="/tmp/repo/trees/imported/feature-foo",
+            action="created",
+        )
+        session.local_startup_failures.append(
+            LocalStartupFailure(
+                project="imported-feature-foo",
+                error="missing_service_start_command: backend",
+                reason="missing_service_start_command",
+            )
+        )
+
+        text = plan_agent_degraded_handoff_text(session)
+
+        self.assertIn("Imported worktree:", text)
+        self.assertIn("  project: imported-feature-foo", text)
+        self.assertIn("  path: /tmp/repo/trees/imported/feature-foo", text)
+        self.assertIn("  source: origin/feature/foo", text)
+        self.assertIn("  status: ready; local app startup failed afterward.", text)
 
     def test_render_plan_agent_degraded_handoff_for_terminal_prints_rendered_text(self) -> None:
         session = _session(contexts=[])

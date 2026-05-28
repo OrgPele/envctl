@@ -35,6 +35,7 @@ class PlanningWorktreeOrchestrator:
     def __init__(self, runtime: Any) -> None:
         self._runtime = runtime
         self._last_plan_selection_result = PlanSelectionResult(raw_projects=[], selected_contexts=[])
+        self._last_import_result: Any | None = None
         self._last_import_dry_run_result: Any | None = None
 
     def __getattr__(self, name: str) -> Any:
@@ -62,6 +63,9 @@ class PlanningWorktreeOrchestrator:
 
     def last_import_dry_run_result(self) -> Any | None:
         return self._last_import_dry_run_result
+
+    def last_import_result(self) -> Any | None:
+        return self._last_import_result
 
     def prompt_planning_selection(
         self,

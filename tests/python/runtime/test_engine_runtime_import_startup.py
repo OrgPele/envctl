@@ -59,15 +59,22 @@ class EngineRuntimeImportStartupTests(_EngineRuntimeRealStartupTestCase):
             )
 
             with patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals") as launch:
-                code = engine.dispatch(
-                    parse_route(
-                        ["--import", "feature/import-launch", "--headless", "--no-infra"],
-                        env={},
-                    )
-                )
+                with patch.object(engine, "_start_project_context") as start_project:
+                    output = StringIO()
+                    with redirect_stdout(output):
+                        code = engine.dispatch(
+                            parse_route(
+                                ["--import", "feature/import-launch", "--headless", "--no-infra"],
+                                env={},
+                            )
+                        )
+                    start_project.assert_not_called()
 
             assert code == 0
             launch.assert_not_called()
+            rendered = output.getvalue()
+            assert "Imported remote branch origin/feature/import-launch" in rendered
+            assert "Starting 1 project(s)..." not in rendered
 
     def test_import_cmux_hands_imported_worktree_to_plan_agent_launch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -145,3 +152,42 @@ class EngineRuntimeImportStartupTests(_EngineRuntimeRealStartupTestCase):
             assert "local_branch=feature/import-launch" in preview
             assert "project=imported-feature-import-launch" in preview
             assert "action=would create" in preview
+
+    def test_import_startup_failure_reports_import_ready_worktree_at_end(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            repo = _repo_with_remote_branch(tmp)
+            engine = PythonEngineRuntime(
+                self._config(
+                    repo,
+                    tmp / "runtime",
+                    extra={
+                        "ENVCTL_WORKTREE_CODE_INTELLIGENCE": "off",
+                        "TREES_POSTGRES_ENABLE": "false",
+                        "TREES_REDIS_ENABLE": "false",
+                        "TREES_N8N_ENABLE": "false",
+                    },
+                    include_commands=False,
+                ),
+                env={},
+            )
+            output = StringIO()
+
+            with redirect_stdout(output):
+                code = engine.dispatch(
+                    parse_route(
+                        ["--import", "feature/import-launch", "--headless"],
+                        env={},
+                    )
+                )
+
+            assert code == 1
+            rendered = output.getvalue()
+            worktree = repo / "trees" / "imported" / "feature-import-launch"
+            assert worktree.exists()
+            assert "Imported remote branch origin/feature/import-launch" in rendered
+            assert "Imported worktree is ready, but local app startup failed." in rendered
+            assert "project: imported-feature-import-launch" in rendered
+            assert f"path: {worktree.resolve()}" in rendered
+            assert "error: missing_service_start_command" in rendered
+            assert "rerun import with --no-infra" in rendered

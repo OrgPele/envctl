@@ -10,6 +10,7 @@ from typing import Any
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
 from envctl_engine.startup.session import StartupSession
 from envctl_engine.startup.finalization_run_state import _build_run_state
+from envctl_engine.startup.plan_agent_handoff import local_startup_failure_reason
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.path_links import local_paths_in_text, render_paths_in_terminal_text
@@ -99,6 +100,17 @@ class StartupFailureFinalizer:
                 interactive_tty=interactive_tty,
             )
         )
+        import_failure_text = imported_startup_failure_text(self.session, final_error)
+        if import_failure_text:
+            self.print_fn(
+                render_paths_in_terminal_text(
+                    import_failure_text,
+                    paths=local_paths_in_text(import_failure_text),
+                    env=self.runtime.env,
+                    stream=self.output_stream,
+                    interactive_tty=interactive_tty,
+                )
+            )
 
 
 def finalize_failed_startup(
@@ -142,6 +154,30 @@ def render_final_failure_status(
     if context_label and context_label not in rendered:
         rendered = f"{rendered} ({context_label})"
     return rendered
+
+
+def imported_startup_failure_text(session: StartupSession, final_error: str) -> str:
+    imported = session.imported_startup_context
+    if imported is None:
+        return ""
+    error = str(final_error or "")
+    if error.startswith("Startup failed:"):
+        error = error[len("Startup failed:") :].strip()
+    reason = local_startup_failure_reason(error)
+    lines = [
+        "",
+        "Imported worktree is ready, but local app startup failed.",
+        f"project: {imported.project}",
+        f"path: {imported.worktree_root}",
+        f"error: {error}",
+    ]
+    if reason and reason not in error:
+        lines.append(f"reason: {reason}")
+    lines.append(
+        "next: configure ENVCTL_BACKEND_START_CMD / ENVCTL_FRONTEND_START_CMD, or rerun import "
+        "with --no-infra when you only want the worktree."
+    )
+    return "\n".join(lines)
 
 
 def failure_context_label(session: StartupSession, final_error: str) -> str | None:

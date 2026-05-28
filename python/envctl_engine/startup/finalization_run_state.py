@@ -100,6 +100,8 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
         metadata["dashboard_shared_dependency_project"] = shared_dependency_project
     if session.warnings:
         metadata["warnings"] = list(session.warnings)
+    if session.imported_startup_context is not None:
+        metadata["imported_worktree"] = session.imported_startup_context.to_metadata()
     if session.plan_agent_launch_result is not None:
         launch_result = session.plan_agent_launch_result
         metadata["plan_agent_launch_status"] = str(getattr(launch_result, "status", "")).strip()

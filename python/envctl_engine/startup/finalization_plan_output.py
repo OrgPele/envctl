@@ -258,6 +258,18 @@ def plan_agent_degraded_handoff_text(session: StartupSession) -> str:
     failures = list(session.local_startup_failures)
     if failures:
         lines.append("")
+        if session.imported_startup_context is not None:
+            imported = session.imported_startup_context
+            lines.extend(
+                [
+                    "Imported worktree:",
+                    f"  project: {imported.project}",
+                    f"  path: {imported.worktree_root}",
+                    f"  source: {imported.remote_ref}",
+                    "  status: ready; local app startup failed afterward.",
+                    "",
+                ]
+            )
         if len(failures) == 1:
             failure = failures[0]
             lines.extend(

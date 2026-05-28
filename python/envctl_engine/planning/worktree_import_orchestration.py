@@ -45,6 +45,8 @@ def select_import_project(runtime: Any, route: object, project_contexts: list[An
     if planning_orchestrator is not None:
         if bool(getattr(route, "flags", {}).get("dry_run")):
             planning_orchestrator._last_import_dry_run_result = result
+        else:
+            planning_orchestrator._last_import_result = result
         planning_orchestrator._last_plan_selection_result = PlanSelectionResult(
             raw_projects=[(result.worktree.name, result.worktree.root)],
             selected_contexts=[],

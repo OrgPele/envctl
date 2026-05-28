@@ -37,6 +37,24 @@ class LocalStartupFailure:
         }
 
 
+@dataclass(slots=True, frozen=True)
+class ImportedStartupContext:
+    remote_ref: str
+    local_branch: str
+    project: str
+    worktree_root: str
+    action: str
+
+    def to_metadata(self) -> dict[str, str]:
+        return {
+            "remote_ref": self.remote_ref,
+            "local_branch": self.local_branch,
+            "project": self.project,
+            "worktree_root": self.worktree_root,
+            "action": self.action,
+        }
+
+
 @dataclass(slots=True)
 class StartupSession:
     requested_route: Route
@@ -76,6 +94,7 @@ class StartupSession:
     plan_agent_handoff_validation_reason: str = ""
     plan_agent_recovery_command: str = ""
     local_startup_failures: list[LocalStartupFailure] = field(default_factory=list)
+    imported_startup_context: ImportedStartupContext | None = None
 
     @property
     def merged_services(self) -> dict[str, ServiceRecord]:

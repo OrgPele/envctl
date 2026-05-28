@@ -459,6 +459,8 @@ worktree creation. This policy applies to `--plan`, `--import`, `--setup-worktre
 - updates imported worktrees with `git merge --ff-only origin/<branch>` and fails on dirty, diverged, stale, or wrong-branch targets
 - records import provenance with `resolution_reason=remote_branch_import`, `imported_branch`, `import_remote`, and `remote_ref`
 - does not create or seed a plan file or generated branch
+- starts local app services after a successful import unless `--no-infra` is supplied
+- leaves the imported worktree in place if that follow-on startup fails, then reports the startup diagnostics at the end of the command output
 - can feed the same plan-agent launch flow when you pass an explicit launch flag such as `--cmux`, `--tmux`, or `--omx`; a plain import does not force an AI launch
 
 Examples:

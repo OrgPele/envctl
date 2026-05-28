@@ -8,7 +8,7 @@ from typing import Protocol
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
-from envctl_engine.startup.session import StartupSession
+from envctl_engine.startup.session import ImportedStartupContext, StartupSession
 
 
 class SelectStartTreeProjects(Protocol):
@@ -81,7 +81,9 @@ def select_startup_contexts(
     if _plan_agent_worktree_handoff_requested(route) and not bool(route.flags.get("dry_run")):
         _prepare_plan_agent_worktrees(session, runtime=runtime, project_contexts=project_contexts)
     session.selected_contexts = list(project_contexts)
-    session.contexts_to_start = list(project_contexts)
+    if route.command == "import" and not bool(route.flags.get("dry_run")):
+        _record_imported_startup_context(session, runtime=runtime)
+    session.contexts_to_start = [] if _local_startup_disabled(route) else list(project_contexts)
     return None
 
 
@@ -93,6 +95,31 @@ def _plan_agent_worktree_handoff_requested(route: Route) -> bool:
     if route.command != "import":
         return False
     return any(bool(route.flags.get(flag_name)) for flag_name in ("cmux", "tmux", "omx", "codex", "opencode"))
+
+
+def _local_startup_disabled(route: Route) -> bool:
+    return (
+        route.flags.get("launch_backend") is False
+        and route.flags.get("launch_frontend") is False
+        and route.flags.get("launch_dependencies") is False
+    )
+
+
+def _record_imported_startup_context(session: StartupSession, *, runtime: StartupRuntime) -> None:
+    planning_orchestrator = getattr(runtime, "planning_worktree_orchestrator", None)
+    selection_getter = getattr(planning_orchestrator, "last_import_result", None)
+    result = selection_getter() if callable(selection_getter) else None
+    ref = getattr(result, "ref", None)
+    worktree = getattr(result, "worktree", None)
+    if ref is None or worktree is None:
+        return
+    session.imported_startup_context = ImportedStartupContext(
+        remote_ref=str(getattr(ref, "remote_ref", "") or ""),
+        local_branch=str(getattr(ref, "local_branch", "") or ""),
+        project=str(getattr(worktree, "name", "") or ""),
+        worktree_root=str(getattr(worktree, "root", "") or ""),
+        action=str(getattr(result, "action", "") or ""),
+    )
 
 
 def _prepare_plan_agent_worktrees(

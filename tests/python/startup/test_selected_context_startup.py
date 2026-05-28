@@ -148,6 +148,40 @@ class SelectedContextStartupTests(unittest.TestCase):
         self.assertEqual(session.services_by_project, {"Alpha": result.services})
         self.assertEqual(session.started_context_names, ["Alpha"])
 
+    def test_start_selected_contexts_with_empty_start_scope_does_not_create_spinner_or_start_services(self) -> None:
+        runtime = _RuntimeStub()
+        route = Route(
+            command="import",
+            mode="trees",
+            raw_args=["--import", "feature/foo", "--no-infra"],
+            passthrough_args=["feature/foo"],
+            projects=[],
+            flags={"launch_backend": False, "launch_frontend": False, "launch_dependencies": False},
+        )
+        session = self._session(route=route, contexts=[self._context("imported-feature-foo")])
+        session.contexts_to_start = []
+        spinner_factory = _SpinnerFactory()
+
+        start_selected_contexts(
+            runtime=runtime,
+            session=session,
+            suppress_progress_output=lambda route: False,
+            resolved_run_id=lambda session: "run-1",
+            record_project_startup=lambda session, context, result: None,
+            render_project_startup_warnings=lambda *, context, warnings, route, project_spinner_group: None,
+            should_degrade_to_plan_agent_handoff=lambda session, error: False,
+            record_plan_agent_handoff_local_startup_failure=lambda session, project_name, error: None,
+            spinner_factory=spinner_factory,
+            use_spinner_policy_fn=lambda policy: nullcontext(),
+            resolve_spinner_policy_fn=lambda env: SimpleNamespace(enabled=True, backend="rich"),
+            emit_spinner_policy_fn=lambda emit, policy, context: emit("spinner.policy", **context),
+            project_spinner_group_factory=lambda **kwargs: SimpleNamespace(),
+        )
+
+        self.assertEqual(runtime.start_calls, [])
+        self.assertEqual(spinner_factory.instances, [])
+        self.assertIn(("startup.execution", {"mode": "sequential", "workers": 1, "projects": []}), runtime.events)
+
     def test_start_selected_contexts_degrades_local_startup_failure_when_handoff_allowed(self) -> None:
         runtime = _RuntimeStub()
 
