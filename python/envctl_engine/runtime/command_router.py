@@ -422,8 +422,6 @@ def _handle_plan_flag(state: _ParserState, token: str) -> None:
 def _validate_import_branch_argument(state: _ParserState) -> None:
     if state.command != "import":
         return
-    if not any(str(arg).strip() for arg in state.passthrough):
-        raise RouteError("--import requires a remote branch argument.")
 
 
 def _phase_finalize(state: _ParserState, raw_argv: list[str]) -> Route:

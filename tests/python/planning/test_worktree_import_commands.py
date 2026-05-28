@@ -11,6 +11,7 @@ from envctl_engine.planning.worktree_import_commands import (
     build_import_worktree_add_command,
     build_update_imported_worktree_command,
     imported_branch_slug,
+    list_importable_origin_branches,
     normalize_import_branch_ref,
 )
 
@@ -99,6 +100,55 @@ class WorktreeImportCommandsTests(unittest.TestCase):
             build_update_imported_worktree_command(worktree_root=Path("/repo/trees/imported/feature-foo"), branch_ref=ref),
             ["git", "-C", "/repo/trees/imported/feature-foo", "merge", "--ff-only", "origin/feature/foo"],
         )
+
+    def test_list_importable_origin_branches_excludes_non_importable_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / "trees" / "imported" / "already-imported").mkdir(parents=True)
+            commands: list[list[str]] = []
+
+            def git_output(command: list[str]) -> str:
+                commands.append(command)
+                if "for-each-ref" in command:
+                    return "\n".join(
+                        [
+                            "origin/HEAD",
+                            "origin/main",
+                            "origin/feature/foo",
+                            "origin/checked-out",
+                            "origin/already-imported",
+                            "origin/generated-represented",
+                            "origin/feature/foo",
+                        ]
+                    )
+                if command[-2:] == ["list", "--porcelain"]:
+                    return "\n".join(
+                        [
+                            f"worktree {repo_root}",
+                            "HEAD abc123",
+                            "branch refs/heads/main",
+                            "",
+                            f"worktree {repo_root / 'trees' / 'checked-out'}",
+                            "HEAD def456",
+                            "branch refs/heads/checked-out",
+                        ]
+                    )
+                if command[-3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return "main\n"
+                raise AssertionError(command)
+
+            discovered = [type("Project", (), {"name": "generated-represented", "root": repo_root / "trees" / "x"})()]
+
+            self.assertEqual(
+                list_importable_origin_branches(
+                    repo_root=repo_root,
+                    discovered_projects=discovered,
+                    git_output=git_output,
+                ),
+                ["feature/foo"],
+            )
+            self.assertTrue(any("for-each-ref" in command for command in commands))
+            self.assertTrue(any(command[-3:] == ["worktree", "list", "--porcelain"] for command in commands))
 
     def test_git_backed_import_commands_create_tracking_worktree_and_fail_on_divergence(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

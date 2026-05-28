@@ -419,8 +419,10 @@ class CliRouterParityTests(unittest.TestCase):
 
     def test_import_remote_branch_routes_accept_flag_inline_and_explicit_forms(self) -> None:
         cases = (
+            (["--import"], []),
             (["--import", "feature/foo"], ["feature/foo"]),
             (["--import=feature/foo"], ["feature/foo"]),
+            (["import"], []),
             (["import", "feature/foo"], ["feature/foo"]),
             (["import", "origin/feature/foo"], ["origin/feature/foo"]),
         )
@@ -460,10 +462,9 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertEqual(route.flags.get("preset"), "implement_task")
         self.assertEqual(route.flags.get("runtime_scope"), "entire-system")
 
-    def test_import_remote_branch_requires_branch_argument(self) -> None:
-        for args in (["--import"], ["import"], ["--import="]):
-            with self.subTest(args=args), self.assertRaises(RouteError):
-                parse_route(list(args), env={})
+    def test_import_remote_branch_rejects_empty_inline_value(self) -> None:
+        with self.assertRaises(RouteError):
+            parse_route(["--import="], env={})
 
     def test_shell_compatibility_alias_flags_are_parsed(self) -> None:
         route = parse_route(

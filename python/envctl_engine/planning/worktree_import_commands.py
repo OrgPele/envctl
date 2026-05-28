@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import subprocess
+from typing import Protocol
+
+
+class ImportedBranchProjectLike(Protocol):
+    name: str
+    root: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +83,64 @@ def build_update_imported_worktree_command(*, worktree_root: Path, branch_ref: I
     return ["git", "-C", str(worktree_root), "merge", "--ff-only", branch_ref.remote_ref]
 
 
+def list_importable_origin_branches(
+    *,
+    repo_root: Path,
+    trees_dir_name: str = "trees",
+    discovered_projects: Iterable[ImportedBranchProjectLike] = (),
+    git_output: Callable[[list[str]], str] | None = None,
+) -> list[str]:
+    run_git = git_output or _git_output
+    try:
+        remote_refs = run_git(
+            ["git", "-C", str(repo_root), "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"]
+        )
+    except subprocess.CalledProcessError:
+        return []
+    try:
+        worktree_output = run_git(["git", "-C", str(repo_root), "worktree", "list", "--porcelain"])
+    except subprocess.CalledProcessError:
+        worktree_output = ""
+    try:
+        current_branch = run_git(["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    except subprocess.CalledProcessError:
+        current_branch = ""
+    checked_out_branches = _checked_out_worktree_branches(worktree_output)
+    if current_branch and current_branch != "HEAD":
+        checked_out_branches.add(current_branch)
+
+    trees_root = repo_root / str(trees_dir_name).strip().rstrip("/")
+    discovered = list(discovered_projects)
+    represented_names = {str(getattr(project, "name", "")).strip() for project in discovered}
+    represented_roots = {
+        Path(getattr(project, "root")).resolve()
+        for project in discovered
+        if getattr(project, "root", None)
+    }
+    importable: list[str] = []
+    seen: set[str] = set()
+    for line in remote_refs.splitlines():
+        remote_ref = line.strip()
+        if not remote_ref or remote_ref == "origin/HEAD" or not remote_ref.startswith("origin/"):
+            continue
+        branch = remote_ref.removeprefix("origin/")
+        try:
+            normalize_import_branch_ref(branch)
+        except ValueError:
+            continue
+        target = (trees_root / "imported" / imported_branch_slug(branch)).resolve()
+        if branch in checked_out_branches:
+            continue
+        if target.is_dir() or target in represented_roots:
+            continue
+        if branch in represented_names or imported_branch_slug(branch) in represented_names:
+            continue
+        if branch not in seen:
+            importable.append(branch)
+            seen.add(branch)
+    return importable
+
+
 def _validate_branch(branch: str, *, raw: str) -> None:
     if not branch:
         raise ValueError("Import branch is required.")
@@ -89,3 +155,19 @@ def _validate_branch(branch: str, *, raw: str) -> None:
         raise ValueError(f"Invalid import branch: {raw}")
     if _SHA_RE.fullmatch(branch):
         raise ValueError("Import requires a remote branch name, not a detached commit SHA.")
+
+
+def _checked_out_worktree_branches(porcelain: str) -> set[str]:
+    branches: set[str] = set()
+    for line in porcelain.splitlines():
+        value = line.strip()
+        if not value.startswith("branch "):
+            continue
+        branch_ref = value.removeprefix("branch ").strip()
+        if branch_ref.startswith("refs/heads/"):
+            branches.add(branch_ref.removeprefix("refs/heads/"))
+    return branches
+
+
+def _git_output(command: list[str]) -> str:
+    return subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL)
