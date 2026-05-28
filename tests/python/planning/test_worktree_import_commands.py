@@ -115,10 +115,21 @@ class WorktreeImportCommandsTests(unittest.TestCase):
                             "origin/HEAD",
                             "origin/main",
                             "origin/feature/foo",
+                            "origin/pr-277",
                             "origin/checked-out",
                             "origin/already-imported",
                             "origin/generated-represented",
                             "origin/feature/foo",
+                        ]
+                    )
+                if "ls-remote" in command:
+                    return "\n".join(
+                        [
+                            "abc123\trefs/heads/main",
+                            "abc124\trefs/heads/feature/foo",
+                            "abc125\trefs/heads/checked-out",
+                            "abc126\trefs/heads/already-imported",
+                            "abc127\trefs/heads/generated-represented",
                         ]
                     )
                 if command[-2:] == ["list", "--porcelain"]:

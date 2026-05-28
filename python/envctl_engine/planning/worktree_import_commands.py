@@ -98,6 +98,12 @@ def list_importable_origin_branches(
     except subprocess.CalledProcessError:
         return []
     try:
+        origin_heads = _origin_head_branches(
+            run_git(["git", "-C", str(repo_root), "ls-remote", "--heads", "origin"])
+        )
+    except subprocess.CalledProcessError:
+        origin_heads = None
+    try:
         worktree_output = run_git(["git", "-C", str(repo_root), "worktree", "list", "--porcelain"])
     except subprocess.CalledProcessError:
         worktree_output = ""
@@ -128,6 +134,8 @@ def list_importable_origin_branches(
             normalize_import_branch_ref(branch)
         except ValueError:
             continue
+        if origin_heads is not None and branch not in origin_heads:
+            continue
         target = (trees_root / "imported" / imported_branch_slug(branch)).resolve()
         if branch in checked_out_branches:
             continue
@@ -139,6 +147,18 @@ def list_importable_origin_branches(
             importable.append(branch)
             seen.add(branch)
     return importable
+
+
+def _origin_head_branches(ls_remote_output: str) -> set[str]:
+    branches: set[str] = set()
+    for line in ls_remote_output.splitlines():
+        parts = line.strip().split()
+        if len(parts) < 2:
+            continue
+        ref_name = parts[1].strip()
+        if ref_name.startswith("refs/heads/"):
+            branches.add(ref_name.removeprefix("refs/heads/"))
+    return branches
 
 
 def _validate_branch(branch: str, *, raw: str) -> None:
