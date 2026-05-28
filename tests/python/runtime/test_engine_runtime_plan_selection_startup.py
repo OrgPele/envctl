@@ -87,7 +87,7 @@ class EngineRuntimePlanSelectionStartupTests(_EngineRuntimeRealStartupTestCase):
             )
             self.assertEqual(selected, {"backend/task-a.md": 2, "backend/task-b.md": 1})
 
-    def test_initial_plan_selected_counts_ignores_stale_memory_when_existing_missing(self) -> None:
+    def test_initial_plan_selected_counts_ignores_memory_when_existing_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
