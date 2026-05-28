@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import ExitStack
 from dataclasses import dataclass
 import os
+import shutil
 import sys
 import time
 from typing import Any, Callable, Sequence, cast
@@ -81,6 +82,30 @@ def _exit_event_app(event: object, *, result: PromptToolkitListResult) -> None:
     exit_app = getattr(app, "exit", None)
     if callable(exit_app):
         exit_app(result=result)
+
+
+def visible_row_window(*, total: int, cursor: int, height: int, status_error: bool) -> tuple[int, int]:
+    if total <= 0:
+        return 0, 0
+    header_lines = 4
+    footer_lines = 1 if total > 1 else 0
+    status_lines = 1 if status_error else 0
+    visible_rows = max(5, int(height) - header_lines - footer_lines - status_lines)
+    if total <= visible_rows:
+        return 0, total
+    cursor = max(0, min(int(cursor), total - 1))
+    half = visible_rows // 2
+    start = max(0, cursor - half)
+    end = start + visible_rows
+    if end > total:
+        end = total
+        start = max(0, end - visible_rows)
+    return start, end
+
+
+def terminal_height() -> int:
+    size = shutil.get_terminal_size(fallback=(100, 24))
+    return max(10, int(getattr(size, "lines", 24)))
 
 
 def run_prompt_toolkit_list_selector(
@@ -176,8 +201,15 @@ def run_prompt_toolkit_list_selector(
         if status_error:
             lines.append(f"{bold}{red}{status_error}{reset}")
         lines.append("")
+        start, end = visible_row_window(
+            total=len(rows),
+            cursor=cursor,
+            height=terminal_height(),
+            status_error=bool(status_error),
+        )
         last_section = ""
-        for index, item in enumerate(rows):
+        for index in range(start, end):
+            item = rows[index]
             section = str(getattr(item, "section", "") or "").strip()
             if section and section != last_section:
                 lines.append(f"{bold}{section}{reset}")
@@ -185,6 +217,9 @@ def run_prompt_toolkit_list_selector(
             pointer = f"{magenta}▶{reset}" if index == cursor else " "
             marker = f"{green}●{reset}" if index in selected_indexes else "○"
             lines.append(f"{pointer} {marker} {_row_text(item)}")
+        if end - start < len(rows):
+            lines.append("")
+            lines.append(f"{dim}Showing {start + 1}-{end} of {len(rows)}{reset}")
         return ANSI("\n".join(lines))
 
     def _emit_key(key: str, before: int, after: int, *, handled: bool) -> None:
