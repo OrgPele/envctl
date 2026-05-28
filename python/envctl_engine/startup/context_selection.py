@@ -103,42 +103,48 @@ def _select_imported_worktree(
     branch_input = next((arg.strip() for arg in route.passthrough_args if arg.strip()), "")
     planning_orchestrator = getattr(runtime, "planning_worktree_orchestrator", None)
     importer = getattr(planning_orchestrator, "import_remote_branch_worktree", None)
+    branch_inputs = [branch_input] if branch_input else []
     if not branch_input:
-        selected_branch = _select_import_branch_from_tty(
+        selected_branches = _select_import_branches_from_tty(
             runtime=runtime,
             route=route,
             discovered_project_contexts=discovered_project_contexts,
         )
-        if selected_branch is None:
+        if selected_branches is None:
             return []
-        branch_input = selected_branch
-    if not branch_input or not callable(importer):
+        branch_inputs = selected_branches
+    if not branch_inputs or not callable(importer):
         print("--import requires a remote branch argument.")
         return []
-    result = cast(PlanWorktreeSyncResult, importer(branch_input=branch_input))
-    if result.error:
-        print(result.error)
-        return []
-    project_contexts = runtime._contexts_from_raw_projects(list(result.raw_projects))
+    raw_projects: list[tuple[str, Path]] = []
+    created_worktrees: list[CreatedPlanWorktree] = []
+    for selected_branch in branch_inputs:
+        result = cast(PlanWorktreeSyncResult, importer(branch_input=selected_branch))
+        if result.error:
+            print(result.error)
+            return []
+        raw_projects.extend(list(result.raw_projects))
+        created_worktrees.extend(list(result.created_worktrees))
+    project_contexts = runtime._contexts_from_raw_projects(raw_projects)
     setattr(
         planning_orchestrator,
         "_last_plan_selection_result",
         PlanSelectionResult(
-            raw_projects=list(result.raw_projects),
+            raw_projects=list(raw_projects),
             selected_contexts=list(project_contexts),
-            created_worktrees=result.created_worktrees,
-            error=result.error,
+            created_worktrees=tuple(created_worktrees),
+            error=None,
         ),
     )
     return list(project_contexts)
 
 
-def _select_import_branch_from_tty(
+def _select_import_branches_from_tty(
     *,
     runtime: StartupRuntime,
     route: Route,
     discovered_project_contexts: list[ProjectContextLike],
-) -> str | None:
+) -> list[str] | None:
     if route.flags.get("batch") or not runtime._can_interactive_tty():
         if route.flags.get("batch"):
             print("--import requires a remote branch argument when running headless.")
@@ -169,20 +175,32 @@ def _select_import_branch_from_tty(
         projects=projects,
         allow_all=False,
         allow_untested=False,
-        multi=False,
+        multi=True,
         initial_project_names=None,
     )
     if selection.cancelled:
         runtime._emit("planning.import.selector.cancelled", discovered_count=len(branches))
         return None
-    selected = next((str(name).strip() for name in selection.project_names if str(name).strip()), "")
+    selected = [str(name).strip() for name in selection.project_names if str(name).strip()]
     if not selected:
         runtime._emit("planning.import.selector.empty", discovered_count=len(branches))
         return None
-    if selected not in set(branches):
-        runtime._emit("planning.import.selector.miss", discovered_count=len(branches), selected=selected)
+    branch_names = set(branches)
+    missing = [branch for branch in selected if branch not in branch_names]
+    if missing:
+        runtime._emit(
+            "planning.import.selector.miss",
+            discovered_count=len(branches),
+            selected_branches=selected,
+            missing_branches=missing,
+        )
         return None
-    runtime._emit("planning.import.selector.applied", selected=selected)
+    runtime._emit(
+        "planning.import.selector.applied",
+        selected=selected[0],
+        selected_branches=selected,
+        selected_count=len(selected),
+    )
     return selected
 
 

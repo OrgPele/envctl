@@ -19,6 +19,15 @@ class PromptToolkitListRenderingTests(unittest.TestCase):
 
         self.assertLess(with_error[1] - with_error[0], without_error[1] - without_error[0])
 
+    def test_visible_window_keeps_row_count_stable_while_scrolling(self) -> None:
+        sizes = {
+            prompt_toolkit_list.visible_row_window(total=40, cursor=cursor, height=10, status_error=False)[1]
+            - prompt_toolkit_list.visible_row_window(total=40, cursor=cursor, height=10, status_error=False)[0]
+            for cursor in (0, 1, 2, 20, 37, 38, 39)
+        }
+
+        self.assertEqual(sizes, {5})
+
 
 if __name__ == "__main__":
     unittest.main()

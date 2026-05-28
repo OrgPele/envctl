@@ -207,11 +207,12 @@ def run_prompt_toolkit_list_selector(
             height=terminal_height(),
             status_error=bool(status_error),
         )
+        clipped = end - start < len(rows)
         last_section = ""
         for index in range(start, end):
             item = rows[index]
             section = str(getattr(item, "section", "") or "").strip()
-            if section and section != last_section:
+            if section and section != last_section and not clipped:
                 lines.append(f"{bold}{section}{reset}")
                 last_section = section
             pointer = f"{magenta}▶{reset}" if index == cursor else " "

@@ -30,8 +30,13 @@ class _RuntimeStub:
         self.selected_plan_contexts: list[SimpleNamespace] | None = None
         self.last_plan_selection_result = SimpleNamespace(created_worktrees=())
         self.import_calls: list[str] = []
+        self.import_results_by_branch: dict[str, SimpleNamespace] = {}
         self.planning_worktree_orchestrator = SimpleNamespace(
-            last_plan_selection_result=lambda: self.last_plan_selection_result,
+            last_plan_selection_result=lambda: getattr(
+                self.planning_worktree_orchestrator,
+                "_last_plan_selection_result",
+                self.last_plan_selection_result,
+            ),
             import_remote_branch_worktree=self._import_remote_branch_worktree,
         )
         self.import_result = SimpleNamespace(raw_projects=[], created_worktrees=(), error=None)
@@ -64,7 +69,7 @@ class _RuntimeStub:
 
     def _import_remote_branch_worktree(self, *, branch_input: str):  # noqa: ANN001
         self.import_calls.append(branch_input)
-        return self.import_result
+        return self.import_results_by_branch.get(branch_input, self.import_result)
 
     def _duplicate_project_context_error(self, project_contexts: list[SimpleNamespace]) -> str | None:
         self.duplicate_checked = list(project_contexts)
@@ -229,8 +234,53 @@ class StartupContextSelectionTests(unittest.TestCase):
         assert runtime.selection_kwargs is not None
         self.assertEqual(runtime.selection_kwargs.get("prompt"), "Import remote branch")
         self.assertFalse(runtime.selection_kwargs.get("allow_all"))
-        self.assertFalse(runtime.selection_kwargs.get("multi"))
+        self.assertTrue(runtime.selection_kwargs.get("multi"))
         self.assertEqual([context.name for context in session.selected_contexts], ["feature-bar"])
+
+    def test_select_startup_contexts_import_without_branch_imports_multiple_selections(self) -> None:
+        foo_root = Path("/tmp/feature-foo")
+        bar_root = Path("/tmp/feature-bar")
+        foo_created = CreatedPlanWorktree(name="feature-foo", root=foo_root, plan_file="")
+        bar_created = CreatedPlanWorktree(name="feature-bar", root=bar_root, plan_file="")
+        runtime = _RuntimeStub([])
+        runtime.selection = TargetSelection(project_names=["feature/foo", "feature/bar"])
+        runtime.import_results_by_branch = {
+            "feature/foo": SimpleNamespace(
+                raw_projects=[("feature-foo", foo_root)],
+                created_worktrees=(foo_created,),
+                error=None,
+            ),
+            "feature/bar": SimpleNamespace(
+                raw_projects=[("feature-bar", bar_root)],
+                created_worktrees=(bar_created,),
+                error=None,
+            ),
+        }
+        route = Route(command="import", mode="trees", raw_args=[], passthrough_args=[], projects=[], flags={})
+        session = self._session(route)
+
+        with patch(
+            "envctl_engine.startup.context_selection.list_importable_origin_branches",
+            return_value=["feature/foo", "feature/bar", "feature/baz"],
+        ) as branches:
+            result = select_startup_contexts(
+                runtime=runtime,
+                session=session,
+                trees_start_selection_required=lambda _route, _mode: False,
+                select_start_tree_projects=lambda *, route, project_contexts: project_contexts,
+                apply_restart_ports=lambda _session, project_contexts: None,
+                emit_phase=lambda _session, phase, started_at, **extra: None,
+                emit_snapshot=lambda _session, checkpoint, **extra: None,
+            )
+
+        self.assertIsNone(result)
+        branches.assert_called_once()
+        self.assertEqual(runtime.import_calls, ["feature/foo", "feature/bar"])
+        self.assertIsNotNone(runtime.selection_kwargs)
+        assert runtime.selection_kwargs is not None
+        self.assertTrue(runtime.selection_kwargs.get("multi"))
+        self.assertEqual([context.name for context in session.selected_contexts], ["feature-foo", "feature-bar"])
+        self.assertEqual(session.pending_plan_agent_worktrees, (foo_created, bar_created))
 
     def test_select_startup_contexts_import_without_branch_cancel_does_not_import(self) -> None:
         runtime = _RuntimeStub([])
