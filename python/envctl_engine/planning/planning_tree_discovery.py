@@ -119,20 +119,38 @@ def _append_feature_projects(
                 feature=feature_name,
                 iteration=iter_dir.name,
             )
-            dedupe_key = f"{project_name}|{iter_dir.resolve()}"
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-            projects.append((project_name, iter_dir))
+            _append_project(projects, seen, project_name, iter_dir)
+        return
+
+    direct_child_worktrees = sorted(
+        path
+        for path in feature_dir.iterdir()
+        if path.is_dir()
+        and not _is_ignored(path.name)
+        and (path / ".git").exists()
+        and _looks_like_tree_project_root(path)
+    )
+    for child_dir in direct_child_worktrees:
+        project_name = _branch_project_name_for_worktree(child_dir) or "_".join(
+            part for part in (_slugify_underscore(feature_name), _slugify_underscore(child_dir.name)) if part
+        )
+        if project_name:
+            _append_project(projects, seen, project_name, child_dir)
+    if direct_child_worktrees and not (feature_dir / ".git").exists():
         return
 
     if not _looks_like_tree_project_root(feature_dir):
         return
-    dedupe_key = f"{feature_name}|{feature_dir.resolve()}"
+    project_name = _branch_project_name_for_worktree(feature_dir) or feature_name
+    _append_project(projects, seen, project_name, feature_dir)
+
+
+def _append_project(projects: list[tuple[str, Path]], seen: set[str], project_name: str, project_root: Path) -> None:
+    dedupe_key = f"{project_name}|{project_root.resolve()}"
     if dedupe_key in seen:
         return
     seen.add(dedupe_key)
-    projects.append((feature_name, feature_dir))
+    projects.append((project_name, project_root))
 
 
 def _branch_project_name_for_worktree(worktree_root: Path) -> str | None:
@@ -174,3 +192,10 @@ def _is_iteration_name(name: str) -> bool:
 
 def _is_ignored(name: str) -> bool:
     return name.strip().lower() in _IGNORED_DIR_NAMES
+
+
+def _slugify_underscore(value: str) -> str:
+    lowered = value.strip().lower()
+    chars = [char if char.isalnum() else "_" for char in lowered]
+    slug = "_".join(part for part in "".join(chars).split("_") if part)
+    return slug
