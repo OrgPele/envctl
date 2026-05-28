@@ -501,9 +501,11 @@ def wait_for_omx_attach_target(
         excluded_session_names=excluded_session_names,
     )
 
-    while monotonic_fn() < deadline:
+    while True:
         attach_target = finder.discover()
         if attach_target is not None:
             return attach_target
-        sleep_fn(session_ready_poll_interval_seconds)
-    return finder.discover()
+        remaining_seconds = deadline - monotonic_fn()
+        if remaining_seconds <= 0:
+            return finder.discover()
+        sleep_fn(min(session_ready_poll_interval_seconds, remaining_seconds))
