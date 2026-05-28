@@ -131,6 +131,37 @@ class DisabledStartupResolutionTests(unittest.TestCase):
             ],
         )
 
+    def test_import_disabled_mode_writes_dashboard_state_without_starting_services(self) -> None:
+        route = Route(command="import", mode="trees", raw_args=[], passthrough_args=[], projects=[], flags={})
+        runtime = _RuntimeStub(enabled=False)
+        session = _session(route)
+        rendered: list[str] = []
+        phases: list[tuple[str, dict[str, object]]] = []
+
+        result = resolve_disabled_startup_mode(
+            runtime=runtime,
+            session=session,
+            route_is_implicit_start=lambda route: False,
+            ensure_run_id=lambda session: None,
+            announce_session_identifiers=lambda session: None,
+            resolved_run_id=lambda session: "run-1",
+            build_planning_dashboard_state=lambda *args, **kwargs: SimpleNamespace(metadata={"dashboard_runs_disabled": True}),
+            configured_service_types_for_mode=lambda mode: {"backend", "frontend"},
+            emit_phase=lambda session, phase, started_at, **extra: phases.append((phase, dict(extra))),
+            validate_plan_agent_handoff=lambda session, *, phase: None,
+            print_plan_dry_run_preview=lambda session: None,
+            headless_plan_output_only=lambda session: False,
+            print_headless_plan_session_summary=lambda session: None,
+            maybe_attach_plan_agent_terminal=lambda session: None,
+            print_fn=rendered.append,
+        )
+
+        self.assertEqual(result, 0)
+        self.assertTrue(session.disabled_startup_mode)
+        self.assertEqual(len(runtime.writes), 1)
+        self.assertEqual(phases, [("artifacts_write", {"status": "ok"})])
+        self.assertEqual(rendered, ["envctl runs are disabled for trees; opening dashboard without starting services."])
+
     def test_runtime_bound_disabled_startup_helper_writes_dashboard_state(self) -> None:
         route = Route(command="plan", mode="trees", raw_args=[], passthrough_args=[], projects=[], flags={})
         runtime = _RuntimeStub(enabled=False)
