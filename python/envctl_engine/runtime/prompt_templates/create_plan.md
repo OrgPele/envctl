@@ -38,7 +38,7 @@ Do not implement code. Only research and write the plan file.
 6. Review relevant config/env keys and any related docs.
 7. Capture evidence (file paths + function names) to ground the plan.
 
-Use the fastest appropriate code-intelligence layer while researching: use `rg` for exact strings such as flags, env keys, log messages, and docs prose; use Serena for symbol definitions, references, call paths, and semantic edit planning; use CodeGraphContext (`cgc`) for repo-wide ownership, coupling, impact, hotspot, and dead-code questions. Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl.
+Use repo-local AGENTS.md/tooling guidance and any injected code-intelligence context while researching. Default to `rg` for exact strings such as flags, env keys, log messages, docs prose, and error text; use Serena, CGC/CodeGraphContext, CodeGraph, or another graph tool only when it is actually configured for this checkout and relevant to the question.
 
 ## Context intake (ask if missing)
 Before finalizing the plan, request any missing inputs that materially affect the solution:

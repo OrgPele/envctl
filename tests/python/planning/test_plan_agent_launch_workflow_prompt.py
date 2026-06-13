@@ -64,6 +64,56 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
         self.assertIsNone(error)
         self.assertEqual(prompt_text, "Implement this task carefully.\n")
 
+    def test_workflow_step_prompt_text_injects_worktree_code_intelligence_context(self) -> None:
+        self.assertIsNotNone(_workflow_step_prompt_text)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_path = Path(tmpdir) / ".config" / "envctl" / "codex" / "prompts" / "implement_task.md"
+            worktree_root = Path(tmpdir) / "repo" / "trees" / "feature-a" / "1"
+            metadata_path = worktree_root / ".envctl-state" / "code-intelligence.json"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("Implement this task carefully.\n", encoding="utf-8")
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "serena_project_name": "repo-feature-a-1",
+                        "files": {".serena/project.yml": True, ".cgcignore": True},
+                        "cgc_active_context": "Repo-feature-a-1",
+                        "cgc_index_mode": "auto",
+                        "cgc_index_succeeded": True,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            runtime = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": "/tmp/repo",
+                        "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                    }
+                ),
+                env={"HOME": tmpdir},
+                process_runner=_RecordingRunner(),
+            )
+            step = workflow._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")
+            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="feature-a.md")
+
+            prompt_text, error = _workflow_step_prompt_text(
+                runtime,
+                launch_config=_launch_config_for_tests(cli="codex"),
+                cli="codex",
+                step=step,
+                worktree=worktree,
+            )
+
+        self.assertIsNone(error)
+        self.assertIn("Implement this task carefully.", prompt_text)
+        self.assertIn("## Worktree code intelligence", prompt_text)
+        self.assertIn("Serena project `repo-feature-a-1`", prompt_text)
+        self.assertIn("CodeGraphContext (`cgc`) context `Repo-feature-a-1`", prompt_text)
+
     def test_workflow_step_prompt_text_preserves_literal_arguments_mentions_in_review_prompt(self) -> None:
         self.assertIsNotNone(_workflow_step_prompt_text)
         with tempfile.TemporaryDirectory() as tmpdir:

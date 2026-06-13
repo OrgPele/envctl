@@ -10,6 +10,9 @@ from envctl_engine.planning.plan_agent.models import (
     _PlanAgentWorkflowStep,
 )
 from envctl_engine.planning.plan_agent.workflow_build import _slash_command
+from envctl_engine.planning.plan_agent.workflow_code_intelligence_context import (
+    _append_code_intelligence_context_for_preset as _append_code_intelligence_context_for_preset,
+)
 from envctl_engine.planning.plan_agent.workflow_e2e_prompt_context import (
     _original_plan_file_path as _original_plan_file_path,
     _original_task_source_prompt_section as _original_task_source_prompt_section,
@@ -90,6 +93,11 @@ def _resolve_preset_submission_text(
     if direct_prompt:
         resolved = _append_runtime_addresses_for_preset(
             runtime,
+            preset=preset,
+            prompt_text=resolved,
+            worktree=worktree,
+        )
+        resolved = _append_code_intelligence_context_for_preset(
             preset=preset,
             prompt_text=resolved,
             worktree=worktree,
