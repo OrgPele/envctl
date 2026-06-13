@@ -48,12 +48,12 @@ Use CGC for broad graph questions:
 
 How to use CGC in this checkout:
 - This main checkout uses the main Serena project identity and CGC context.
-  Envctl-generated worktrees use generated Serena project names, but by default
-  inherit the already-indexed source CGC context recorded as
-  `cgc_active_context` in `.envctl-state/code-intelligence.json`. Use that
-  active context for broad graph queries unless the worktree metadata says
-  `cgc_context_managed: true`, which means envctl created or reused an isolated
-  worktree CGC context.
+  Envctl-generated worktrees use generated Serena project names. They only get
+  CGC/CodeGraphContext metadata when `ENVCTL_WORKTREE_CGC_INDEX` was set to
+  `auto` or `true` during creation. If present, use the `cgc_active_context`
+  recorded in `.envctl-state/code-intelligence.json` for broad graph queries
+  unless the metadata says `cgc_context_managed: true`, which means envctl
+  created or reused an isolated worktree CGC context.
 - Health check: `cgc doctor`
 - Confirm the indexed repo: `cgc list --context Envctl`
 - Get graph stats: `cgc stats --context Envctl`
@@ -70,8 +70,8 @@ CGC boundaries:
   data.
 - Do not use CGC query output as the only proof for a line-level edit; use
   Serena or direct file reads once CGC has identified the relevant files.
-- Keep `.cgcignore` repo-local so generated worktrees inherit CGC ignore
-  behavior.
+- Keep `.cgcignore` repo-local so graph-enabled generated worktrees inherit
+  CGC ignore behavior.
 - If CGC looks unhealthy, run `cgc doctor` before relying on graph results.
 
 ## Envctl Workflow

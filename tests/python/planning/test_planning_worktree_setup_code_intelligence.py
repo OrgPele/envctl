@@ -288,7 +288,7 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             emitted: list[dict[str, object]] = []
             cgc_calls: list[list[str]] = []
 
-            engine = self._runtime(repo, runtime)
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "auto"})
             engine._emit = lambda event, **payload: emitted.append({"event": event, **payload})  # type: ignore[method-assign]
 
             def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
@@ -350,7 +350,7 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
             cgc_calls: list[list[str]] = []
 
-            engine = self._runtime(repo, runtime)
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "auto"})
 
             def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
                 _ = cwd, env, timeout
@@ -394,6 +394,51 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             self.assertTrue(metadata.get("cgc_index_succeeded"))
             self.assertEqual(metadata.get("cgc_source_context"), "Envctl")
             self.assertEqual(metadata.get("cgc_active_context"), "Envctl-feature-a-1")
+
+    def test_setup_worktree_graph_tools_default_disabled_even_with_cgc_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            runtime = root / "runtime"
+            target_root = repo / "trees" / "feature-a" / "1"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena").mkdir(parents=True, exist_ok=True)
+            (repo / ".serena" / "project.yml").write_text("project_name: repo\n", encoding="utf-8")
+            (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
+            (repo / ".codegraphcontext").write_text("/tmp/source-context\n", encoding="utf-8")
+            cgc_calls: list[list[str]] = []
+
+            engine = self._runtime(repo, runtime)
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                if command[:1] == ["cgc"]:
+                    cgc_calls.append(command)
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    target_root.mkdir(parents=True, exist_ok=True)
+                    (target_root / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+            with patch.object(PythonEngineRuntime, "_command_exists", return_value=True):
+                error = engine._create_single_worktree(feature="feature-a", iteration="1")  # noqa: SLF001
+
+            self.assertIsNone(error)
+            self.assertEqual(cgc_calls, [])
+            self.assertFalse((target_root / ".cgcignore").exists())
+            metadata = json.loads((target_root / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata.get("serena_project_name"), "repo-feature-a-1")
+            self.assertEqual(metadata.get("cgc_index_mode"), "disabled")
+            self.assertFalse(metadata.get("cgc_index_requested"))
+            self.assertFalse(metadata.get("cgc_context_managed"))
+            self.assertEqual(metadata.get("cgc_index_skipped_reason"), "disabled")
 
     def test_setup_worktree_cgc_launch_failure_does_not_fail_worktree_creation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -350,6 +350,16 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_STATE_COMPAT_MODE` | `compat_read_write` | State repository compatibility mode (`compat_read_write`, `compat_read_only`, `scoped_only`). |
 | `ENVCTL_RUNTIME_TRUTH_MODE` | `auto` | Runtime truth enforcement policy. |
 
+## Worktree Code Intelligence
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ENVCTL_WORKTREE_CODE_INTELLIGENCE` | `auto` | Bootstrap repo-local agent configuration into envctl-created worktrees. The default copies Serena project files when present; set to `false` to disable all code-intelligence bootstrap behavior. |
+| `ENVCTL_WORKTREE_CGC_INDEX` | unset | Opt-in graph tooling for generated worktrees. Unset/`false` skips `.cgcignore`, `.codegraphcontext`, and all `cgc` calls. `auto` reuses a verified source CGC context when repo graph markers exist and falls back to indexing a generated context. `true` always tries to create and index the generated worktree context. |
+| `ENVCTL_WORKTREE_SERENA_PROJECT_TEMPLATE` | `{project}-{worktree}` | Template for generated Serena project names. Supports `{project}`, `{worktree}`, `{feature}`, and `{iteration}`. |
+| `ENVCTL_WORKTREE_CGC_CONTEXT_TEMPLATE` | `{project}-{worktree}` | Template for generated CGC contexts when `ENVCTL_WORKTREE_CGC_INDEX` is `auto` or `true`. Supports `{project}`, `{worktree}`, `{feature}`, and `{iteration}`. |
+| `ENVCTL_WORKTREE_CGC_SOURCE_CONTEXT` | source Serena project/title | Source CGC context to verify when `ENVCTL_WORKTREE_CGC_INDEX=auto`. |
+| `ENVCTL_WORKTREE_CGC_DATABASE` | `kuzudb` | Backend passed as `--database <value>` to `cgc context create` for generated worktree contexts. |
+
 ## Execution Policy
 | Variable | Default | Purpose |
 | --- | --- | --- |

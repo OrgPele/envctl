@@ -305,9 +305,9 @@ This helps worktree-local test and runtime commands reuse the repo-local backend
 
 Envctl also bootstraps code-intelligence tool state for generated worktrees. When the source repo has repo-local Serena
 configuration, envctl copies `.serena/project.yml` into the worktree with a generated top-level `project_name`, and
-copies `.serena/.gitignore` if those files are not already present. When the source repo has a CGC ignore file, envctl
-copies `.cgcignore` as well. This keeps Codex, OpenCode, and other agents pointed at the current worktree's local
-symbol/index scope without putting tool routing rules into task prompts.
+copies `.serena/.gitignore` if those files are not already present. CGC/CodeGraphContext files and indexing are copied
+or run only when `ENVCTL_WORKTREE_CGC_INDEX` is explicitly enabled. This keeps Codex, OpenCode, and other agents pointed
+at the current worktree's local symbol scope without putting tool routing rules into task prompts.
 
 Generated names are deterministic from the worktree path under the configured trees root. For example,
 `trees/feature-a/1` in a repo whose Serena project is `envctl` gets:
@@ -319,15 +319,15 @@ Active CGC:     Envctl
 Metadata:       trees/feature-a/1/.envctl-state/code-intelligence.json
 ```
 
-CodeGraphContext indexing defaults to reusing the source checkout context instead of re-indexing every generated
-worktree. With the default `ENVCTL_WORKTREE_CGC_INDEX=auto`, envctl copies `.cgcignore`, verifies the source context with
-`cgc list --context <source-context>`, records the generated worktree context for optional future use, and records the
-verified source context as `cgc_active_context` in `.envctl-state/code-intelligence.json`. If that verification fails,
-auto mode falls back to creating and indexing the generated worktree context. This keeps plan-agent launches fast when
-the source checkout is already indexed without silently losing CGC setup when it is not. Set
+CodeGraphContext/CGC graph tooling is opt-in. When `ENVCTL_WORKTREE_CGC_INDEX` is unset or false, envctl does not copy
+`.cgcignore`, does not inspect `.codegraphcontext`, does not call `cgc`, and records graph tooling as disabled in
+`.envctl-state/code-intelligence.json`. Set `ENVCTL_WORKTREE_CGC_INDEX=auto` to reuse the source checkout context when
+the repo has `.cgcignore` or `.codegraphcontext`: envctl verifies the source context with
+`cgc list --context <source-context>`, records that verified source context as `cgc_active_context`, and falls back to
+creating/indexing the generated worktree context only when source-context verification fails. Set
 `ENVCTL_WORKTREE_CGC_INDEX=true` to force an isolated worktree CGC context with `cgc context create <context>` followed
-by `cgc index <worktree> --context <context>`. Set it to `false` to disable CGC indexing and inheritance metadata
-completely. Set `ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` to disable all of this code-intelligence bootstrap behavior.
+by `cgc index <worktree> --context <context>`. Set `ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` to disable the whole
+code-intelligence bootstrap, including Serena files.
 
 You can customize generated names with templates:
 

@@ -14,6 +14,17 @@ ENVCTL_DEFAULT_MODE=main
 # Planning root directory for --plan / --sequential-plan / --planning-prs.
 ENVCTL_PLANNING_DIR=todo/plans
 
+# Worktree code intelligence bootstrap. Serena config is copied by default when present.
+# Graph tooling is opt-in: unset/false skips .cgcignore, .codegraphcontext, and cgc calls.
+# ENVCTL_WORKTREE_CODE_INTELLIGENCE=auto
+# ENVCTL_WORKTREE_CGC_INDEX=false
+# ENVCTL_WORKTREE_CGC_INDEX=auto
+# ENVCTL_WORKTREE_CGC_INDEX=true
+# ENVCTL_WORKTREE_SERENA_PROJECT_TEMPLATE={project}-{worktree}
+# ENVCTL_WORKTREE_CGC_CONTEXT_TEMPLATE={project}-{worktree}
+# ENVCTL_WORKTREE_CGC_SOURCE_CONTEXT=Envctl
+# ENVCTL_WORKTREE_CGC_DATABASE=kuzudb
+
 # Host/IP injected into browser-facing frontend env URLs such as VITE_BACKEND_URL and VITE_API_URL.
 # Dashboard visual URLs default to this same host unless ENVCTL_UI_VISUAL_HOST is set explicitly.
 # Ports remain dynamic per project/worktree; service binding and probes are unchanged.
