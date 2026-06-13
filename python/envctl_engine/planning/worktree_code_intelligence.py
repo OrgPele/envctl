@@ -106,7 +106,9 @@ def prepare_worktree_code_intelligence(
         "cgc_index_succeeded": False,
         "cgc_index_returncode": None,
         "cgc_commands": [],
+        "cgc_index_skipped_reason": "disabled",
     }
+    cgc_mode = _worktree_cgc_index_mode(self)
     copied_files[".serena/project.yml"] = _copy_worktree_serena_project_file(
         source=self.config.base_dir / ".serena" / "project.yml",
         target=target / ".serena" / "project.yml",
@@ -117,11 +119,12 @@ def prepare_worktree_code_intelligence(
         source=self.config.base_dir / ".serena" / ".gitignore",
         target=target / ".serena" / ".gitignore",
     )
-    copied_files[".cgcignore"] = _copy_worktree_code_intelligence_file(
-        source=self.config.base_dir / ".cgcignore",
-        target=target / ".cgcignore",
-    )
-    cgc_mode = _worktree_cgc_index_mode(self)
+    copied_files[".cgcignore"] = False
+    if cgc_mode != _WORKTREE_CGC_INDEX_MODE_DISABLED:
+        copied_files[".cgcignore"] = _copy_worktree_code_intelligence_file(
+            source=self.config.base_dir / ".cgcignore",
+            target=target / ".cgcignore",
+        )
     if cgc_mode == _WORKTREE_CGC_INDEX_MODE_ENABLED:
         cgc_result = _index_worktree_with_cgc(self, target=target, context=identity.cgc_context)
     elif cgc_mode == _WORKTREE_CGC_INDEX_MODE_AUTO:

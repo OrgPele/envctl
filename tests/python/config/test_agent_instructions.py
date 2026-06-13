@@ -29,6 +29,11 @@ def test_agent_instructions_include_serena_and_cgc_only_when_configured(tmp_path
     assert "## CodeGraphContext" in text
     assert "## Envctl Workflow" in text
     assert "Do not use the old `codegraph` CLI or `.codegraph/` indexes" in text
+    assert "Use CGC only after the current checkout has an active CGC context" in text
+    assert "read `.envctl-state/code-intelligence.json`" in text
+    assert "`cgc_index_mode` is `auto` or `enabled`" in text
+    assert "Ignore `cgc_active_context` when metadata reports disabled" in text
+    assert "ENVCTL_WORKTREE_CGC_INDEX" not in text
 
 
 def test_agent_instructions_file_write_is_idempotent(tmp_path: Path) -> None:
@@ -109,4 +114,7 @@ def test_save_local_config_installs_agent_instructions(tmp_path: Path) -> None:
     assert result.agent_instructions_status is not None
     assert result.agent_instructions_status.updated is True
     assert result.agent_instructions_status.path == repo / "AGENTS.md"
-    assert "## CodeGraphContext" in (repo / "AGENTS.md").read_text(encoding="utf-8")
+    text = (repo / "AGENTS.md").read_text(encoding="utf-8")
+    assert "## CodeGraphContext" in text
+    assert "Use CGC only after the current checkout has an active CGC context" in text
+    assert "ENVCTL_WORKTREE_CGC_INDEX" not in text

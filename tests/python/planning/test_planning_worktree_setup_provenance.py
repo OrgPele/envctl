@@ -60,10 +60,7 @@ class PlanningWorktreeSetupProvenanceTests(PlanningWorktreeSetupTestCase):
                 (repo / "trees" / "feature-a" / "1" / ".serena" / ".gitignore").read_text(encoding="utf-8"),
                 "memories/\n",
             )
-            self.assertEqual(
-                (repo / "trees" / "feature-a" / "1" / ".cgcignore").read_text(encoding="utf-8"),
-                ".git/\n",
-            )
+            self.assertFalse((repo / "trees" / "feature-a" / "1" / ".cgcignore").exists())
             provenance = self._read_provenance(repo / "trees" / "feature-a" / "1")
             self.assertEqual(provenance.get("source_branch"), "dev")
             self.assertEqual(provenance.get("source_ref"), "origin/dev")
@@ -81,10 +78,11 @@ class PlanningWorktreeSetupProvenanceTests(PlanningWorktreeSetupTestCase):
                 {
                     ".serena/project.yml": True,
                     ".serena/.gitignore": True,
-                    ".cgcignore": True,
+                    ".cgcignore": False,
                 },
             )
             self.assertFalse(metadata.get("cgc_index_requested"))
+            self.assertEqual(metadata.get("cgc_index_skipped_reason"), "disabled")
 
     def test_plan_sync_created_worktrees_write_provenance_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -108,6 +108,9 @@ def test_cgc_index_mode_auto_requires_cgc_artifacts(tmp_path: Path) -> None:
     assert worktree_cgc_index_mode(runtime) == WORKTREE_CGC_INDEX_MODE_DISABLED
 
     (runtime.config.base_dir / ".cgcignore").write_text(".git/\n", encoding="utf-8")
+    assert worktree_cgc_index_mode(runtime) == WORKTREE_CGC_INDEX_MODE_DISABLED
+
+    runtime.env["ENVCTL_WORKTREE_CGC_INDEX"] = "auto"
     assert worktree_cgc_index_mode(runtime) == WORKTREE_CGC_INDEX_MODE_AUTO
 
     runtime.env["ENVCTL_WORKTREE_CGC_INDEX"] = "true"

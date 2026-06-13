@@ -11,7 +11,7 @@ $ARGUMENTS
 
 ## Required workflow
 1. Read `MAIN_TASK.md` and briefly inspect the current repo state so you understand what is being finalized.
-   - Use the fastest appropriate code-intelligence layer when inspection is needed: `rg` for exact strings, Serena for symbol definitions/references/semantic edits, and CodeGraphContext (`cgc`) for repo-wide ownership, coupling, impact, hotspot, or dead-code questions. Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl.
+   - Use the injected worktree code-intelligence context if envctl added one. Otherwise follow repo-local AGENTS.md/tooling guidance and use `rg` for exact strings; do not assume Serena, CGC/CodeGraphContext, CodeGraph, or any other graph tool exists unless it is configured for this checkout and relevant to the question.
 2. Run `envctl test-focused` from inside the current generated worktree for focused validation. When running from outside the worktree, use `envctl test-focused --project <current-worktree-name>`.
 3. If tests fail, investigate and fix the failures when they are caused by the current implementation, then rerun the relevant validation until the tree is in a good state or you have a concrete blocker. Run broad validation when the test plan recommends it or the change is cross-cutting/risky.
 4. For runtime or browser-visible work, use project-scoped envctl helpers before handoff:

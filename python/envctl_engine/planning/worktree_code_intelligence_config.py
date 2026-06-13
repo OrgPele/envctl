@@ -38,11 +38,12 @@ def worktree_code_intelligence_enabled(runtime: Any) -> bool:
 
 
 def worktree_cgc_index_mode(runtime: Any) -> str:
-    raw = str(
-        runtime.env.get("ENVCTL_WORKTREE_CGC_INDEX")
-        or runtime.config.raw.get("ENVCTL_WORKTREE_CGC_INDEX")
-        or "auto"
-    ).strip().lower()
+    raw_value = runtime.env.get("ENVCTL_WORKTREE_CGC_INDEX")
+    if raw_value is None or str(raw_value).strip() == "":
+        raw_value = runtime.config.raw.get("ENVCTL_WORKTREE_CGC_INDEX")
+    if raw_value is None or str(raw_value).strip() == "":
+        return WORKTREE_CGC_INDEX_MODE_DISABLED
+    raw = str(raw_value).strip().lower()
     if raw in WORKTREE_CGC_INDEX_ENABLED_VALUES:
         return WORKTREE_CGC_INDEX_MODE_ENABLED
     if raw in WORKTREE_CGC_INDEX_DISABLED_VALUES:
@@ -52,7 +53,10 @@ def worktree_cgc_index_mode(runtime: Any) -> str:
         if (repo_root / ".cgcignore").is_file() or (repo_root / ".codegraphcontext").exists():
             return WORKTREE_CGC_INDEX_MODE_AUTO
         return WORKTREE_CGC_INDEX_MODE_DISABLED
-    raise RuntimeError("Invalid ENVCTL_WORKTREE_CGC_INDEX value. Use auto/on/true or off/false.")
+    raise RuntimeError(
+        "Invalid ENVCTL_WORKTREE_CGC_INDEX value. "
+        "Use auto/on/true to enable CGC graph tooling or off/false to disable it."
+    )
 
 
 def worktree_code_intelligence_identity(
