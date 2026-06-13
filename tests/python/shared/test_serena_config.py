@@ -36,10 +36,11 @@ def test_agent_tooling_prefers_cgc_over_legacy_codegraph() -> None:
     assert "CodeGraphContext (`cgc`)" in agents
     assert agents.count("## CodeGraphContext") == 1
     assert "Do not\nuse the old `codegraph` CLI" in agents
-    assert "use the\n  `cgc_active_context`" in agents
+    assert "use the `cgc_active_context` recorded in" in agents
     assert "`cgc_index_mode` is `auto` or `enabled`" in agents
-    assert "successful indexing (`cgc_index_succeeded: true`) or source-context reuse" in agents
-    assert "`cgc_active_context` when `cgc_index_mode` is `disabled`" in agents
+    assert "succeeded (`cgc_index_succeeded: true`) or the source context was reused" in agents
+    assert "`cgc_active_context` when the metadata reports disabled" in agents
+    assert "ENVCTL_WORKTREE_CGC_INDEX" not in agents
     assert "codegraph init" not in agents
     assert "codegraph_*" not in agents
     assert "CODEGRAPH_START" not in agents

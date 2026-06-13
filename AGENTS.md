@@ -48,16 +48,14 @@ Use CGC for broad graph questions:
 
 How to use CGC in this checkout:
 - This main checkout uses the main Serena project identity and CGC context.
-  Envctl-generated worktrees use generated Serena project names. They only get
-  CGC/CodeGraphContext metadata when `ENVCTL_WORKTREE_CGC_INDEX` was set to
-  `auto` or `true` during creation. In a worktree, use the
-  `cgc_active_context` recorded in `.envctl-state/code-intelligence.json` only
-  when `cgc_index_mode` is `auto` or `enabled` and the metadata reports either
-  successful indexing (`cgc_index_succeeded: true`) or source-context reuse
+  Envctl-generated worktrees use generated Serena project names. In a worktree,
+  use the `cgc_active_context` recorded in
+  `.envctl-state/code-intelligence.json` only when the metadata reports active
+  graph tooling: `cgc_index_mode` is `auto` or `enabled`, and either indexing
+  succeeded (`cgc_index_succeeded: true`) or the source context was reused
   (`cgc_index_skipped_reason: source_context_reused`). Ignore
-  `cgc_active_context` when `cgc_index_mode` is `disabled`, when the skipped
-  reason is `disabled` or `cgc_not_available`, or when no success/reuse signal
-  is present.
+  `cgc_active_context` when the metadata reports disabled or unavailable graph
+  tooling, or when no success/reuse signal is present.
 - If worktree metadata says `cgc_context_managed: true`, envctl created or
   reused an isolated worktree CGC context; otherwise a valid
   `cgc_active_context` can point at the reused source checkout context.
