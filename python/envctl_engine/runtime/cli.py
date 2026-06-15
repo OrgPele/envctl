@@ -152,6 +152,11 @@ def run(
         config = load_config(env_map)
         route_env = dict(env_map)
         route_env.setdefault("ENVCTL_DEFAULT_MODE", config.default_mode)
+        default_tree_dependency_scope = config.raw.get(
+            "ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE"
+        )
+        if default_tree_dependency_scope:
+            route_env.setdefault("ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE", default_tree_dependency_scope)
         try:
             route = parse_route(argv, env=route_env)
         except RouteError as exc:
@@ -223,6 +228,11 @@ def _parse_initial_route(argv: Sequence[str], env_map: Mapping[str, str]) -> Rou
     default_mode = local_state.parsed_values.get("ENVCTL_DEFAULT_MODE")
     if default_mode and "ENVCTL_DEFAULT_MODE" not in initial_env:
         initial_env["ENVCTL_DEFAULT_MODE"] = default_mode
+    default_tree_dependency_scope = local_state.parsed_values.get(
+        "ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE"
+    )
+    if default_tree_dependency_scope and "ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE" not in initial_env:
+        initial_env["ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE"] = default_tree_dependency_scope
     return parse_route(list(argv), env=initial_env)
 
 

@@ -30,6 +30,7 @@ class CliPackagingTests(unittest.TestCase):
     _ISOLATED_RUNTIME_ENV_VARS = (
         "ENVCTL_CONFIG_FILE",
         "ENVCTL_DEFAULT_MODE",
+        "ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE",
         "ENVCTL_FORCE_BATCH",
         "ENVCTL_ROOT_DIR",
         "ENVCTL_USE_REPO_WRAPPER",

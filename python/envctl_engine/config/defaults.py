@@ -13,6 +13,7 @@ def _build_defaults() -> dict[str, str]:
     trees_dependencies = cast(Mapping[str, bool], trees_profile["dependencies"])
     return {
         "ENVCTL_DEFAULT_MODE": "main",
+        "ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE": "",
         "BACKEND_DIR": "backend",
         "FRONTEND_DIR": "frontend",
         "ENVCTL_BACKEND_START_CMD": "",
@@ -104,6 +105,7 @@ _MANAGED_DEPENDENCY_ENABLE_KEYS: tuple[str, ...] = (
 
 MANAGED_CONFIG_KEYS: tuple[str, ...] = (
     "ENVCTL_DEFAULT_MODE",
+    "ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE",
     "BACKEND_DIR",
     "FRONTEND_DIR",
     "ENVCTL_BACKEND_START_CMD",

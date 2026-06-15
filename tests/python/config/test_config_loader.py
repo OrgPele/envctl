@@ -153,6 +153,21 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertEqual(config.default_mode, "trees")
             self.assertEqual(config.backend_port_base, 8100)
 
+    def test_load_config_exposes_default_tree_dependency_scope(self) -> None:
+        default_config = load_config({"RUN_REPO_ROOT": tempfile.mkdtemp()})
+        self.assertEqual(default_config.raw["ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE"], "")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE=isolated\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertEqual(config.raw["ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE"], "isolated")
+
     def test_load_config_exposes_plan_agent_pr_review_comment_followup_toggle(self) -> None:
         default_config = load_config({"RUN_REPO_ROOT": tempfile.mkdtemp()})
         self.assertFalse(default_config.plan_agent_pr_review_comments_enable)

@@ -11,6 +11,10 @@
 # Allowed: main | trees
 ENVCTL_DEFAULT_MODE=main
 
+# Default dependency stack for trees mode when no dependency-scope flag is passed.
+# Allowed: shared | isolated
+# ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE=shared
+
 # Planning root directory for --plan / --sequential-plan / --planning-prs.
 ENVCTL_PLANNING_DIR=todo/plans
 

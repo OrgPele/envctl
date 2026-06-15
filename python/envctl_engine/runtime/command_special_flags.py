@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Mapping
+
 from envctl_engine.runtime.command_catalog import DEFAULT_HEADLESS_COMMANDS
 from envctl_engine.runtime.command_models import RouteError
 
@@ -142,6 +144,29 @@ def apply_default_runtime_scope_policy(command: str, *, flags: dict[str, object]
     if command == "restart" and projects:
         return
     flags["runtime_scope"] = "entire-system"
+
+
+def apply_default_dependency_scope_policy(mode: str, *, flags: dict[str, object], env: Mapping[str, str]) -> None:
+    if mode != "trees":
+        return
+    if flags.get("dependency_scope") is not None:
+        return
+    raw = str(env.get("ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE") or "").strip().lower()
+    if not raw:
+        return
+    aliases = {
+        "shared": "shared",
+        "share": "shared",
+        "main": "shared",
+        "isolated": "isolated",
+        "isolate": "isolated",
+        "separate": "isolated",
+        "separated": "isolated",
+    }
+    scope = aliases.get(raw)
+    if scope is None:
+        raise RouteError(f"Invalid ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE: {raw}")
+    flags["dependency_scope"] = scope
 
 
 def set_dependency_scope(flags: dict[str, object], scope: str) -> None:
