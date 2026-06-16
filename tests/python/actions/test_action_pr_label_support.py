@@ -32,7 +32,7 @@ def test_add_ship_pr_label_ensures_label_then_adds_it_to_pr(tmp_path: Path) -> N
             "label",
             "list",
             "--search",
-            "envctl-shipped",
+            "deploy-app",
             "--json",
             "name",
         ],
@@ -40,7 +40,7 @@ def test_add_ship_pr_label_ensures_label_then_adds_it_to_pr(tmp_path: Path) -> N
             "/usr/bin/gh",
             "label",
             "create",
-            "envctl-shipped",
+            "deploy-app",
             "--color",
             support.DEFAULT_SHIP_PR_LABEL_COLOR,
             "--description",
@@ -52,7 +52,7 @@ def test_add_ship_pr_label_ensures_label_then_adds_it_to_pr(tmp_path: Path) -> N
             "edit",
             "https://github.com/acme/repo/pull/7",
             "--add-label",
-            "envctl-shipped",
+            "deploy-app",
         ],
     ]
 
@@ -93,7 +93,7 @@ def test_add_ship_pr_label_does_not_recreate_existing_label(tmp_path: Path) -> N
     def run_process(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append([str(token) for token in args])
         if args[1:3] == ["label", "list"]:
-            return subprocess.CompletedProcess(args=args, returncode=0, stdout='[{"name":"envctl-shipped"}]', stderr="")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout='[{"name":"deploy-app"}]', stderr="")
         return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
 
     code = support.add_ship_pr_label(
