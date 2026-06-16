@@ -29,6 +29,7 @@ from envctl_engine.actions.action_ship_phase_status import (
     check_phase_status,
     ship_status_is_success,
 )
+from envctl_engine.actions.action_ship_pr_phase import run_ship_pr_label_phase, run_ship_pr_phase
 from envctl_engine.actions.action_ship_push import run_ship_push_phase
 
 GitOutput = Callable[[Path, list[str]], str]
@@ -65,6 +66,7 @@ class ShipWorkflowDependencies:
     resolve_base_ref: ResolveBaseRef
     run_commit_action: Callable[[Any], int]
     run_pr_action: Callable[[Any], int]
+    add_ship_pr_label: Callable[[Any, Path, str], int]
     probe_dirty_worktree: Callable[..., Any]
     existing_pr_url: Callable[[Path, str], str]
     partition_envctl_protected_paths: Callable[[str], Any]
@@ -85,6 +87,7 @@ class ShipWorkflowRunner:
             self._reject_existing_merge_conflicts,
             self._run_commit_phase,
             self._run_pr_phase,
+            self._run_pr_label_phase,
             self._reject_predicted_merge_conflicts,
             self._run_push_phase,
         ):
@@ -156,29 +159,20 @@ class ShipWorkflowRunner:
         return self._finish(state, status="commit_failed", ok=False, commit_sha=state.after_sha)
 
     def _run_pr_phase(self, state: ShipWorkflowState) -> int | None:
-        if state.pr_url:
-            state.step_statuses.append("pr_exists")
-            emit_ship_progress(f"ship: PR already exists for {self.context.project_name}: {state.pr_url}")
-            return None
+        return run_ship_pr_phase(
+            state=state,
+            context=self.context,
+            run_pr_action=self.dependencies.run_pr_action,
+            existing_pr_url=self.dependencies.existing_pr_url,
+            finish=self._finish,
+        )
 
-        pr_code = self.dependencies.run_pr_action(self.context)
-        if pr_code != 0:
-            return self._finish(state, status="pr_failed", ok=False, commit_sha=state.after_sha)
-
-        state.pr_url = self.dependencies.existing_pr_url(state.git_root, state.branch)
-        state.pr_created = bool(state.pr_url)
-        state.step_statuses.append("pr_created" if state.pr_created else "pr_unresolved")
-        if state.pr_created:
-            emit_ship_progress(f"ship: PR created for {self.context.project_name}: {state.pr_url}")
-            return None
-        return self._finish(
-            state,
-            status="pr_unresolved",
-            ok=False,
-            commit_sha=state.after_sha,
-            pushed=state.pushed,
-            pr_url="",
-            pr_created=False,
+    def _run_pr_label_phase(self, state: ShipWorkflowState) -> int | None:
+        return run_ship_pr_label_phase(
+            state=state,
+            context=self.context,
+            add_ship_pr_label=self.dependencies.add_ship_pr_label,
+            finish=self._finish,
         )
 
     def _reject_predicted_merge_conflicts(self, state: ShipWorkflowState) -> int | None:
@@ -284,8 +278,7 @@ class ShipWorkflowRunner:
         )
 
 def run_ship_workflow(
-    context: Any,
-    *,
+    context: Any, *,
     resolve_git_root: Callable[[Path, Path], Path],
     git_available: bool,
     git_output: GitOutput,
@@ -294,12 +287,12 @@ def run_ship_workflow(
     resolve_base_ref: ResolveBaseRef,
     run_commit_action: Callable[[Any], int],
     run_pr_action: Callable[[Any], int],
+    add_ship_pr_label: Callable[[Any, Path, str], int],
     probe_dirty_worktree: Callable[..., Any],
     existing_pr_url: Callable[[Path, str], str],
     partition_envctl_protected_paths: Callable[[str], Any],
     ordered_unique_paths: Callable[..., list[str]],
-    github_pr_checks: GithubPrChecks | None = None,
-) -> int:
+    github_pr_checks: GithubPrChecks | None = None) -> int:
     return ShipWorkflowRunner(
         context=context,
         dependencies=ShipWorkflowDependencies(
@@ -311,6 +304,7 @@ def run_ship_workflow(
             resolve_base_ref=resolve_base_ref,
             run_commit_action=run_commit_action,
             run_pr_action=run_pr_action,
+            add_ship_pr_label=add_ship_pr_label,
             probe_dirty_worktree=probe_dirty_worktree,
             existing_pr_url=existing_pr_url,
             partition_envctl_protected_paths=partition_envctl_protected_paths,

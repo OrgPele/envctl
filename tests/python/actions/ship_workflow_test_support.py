@@ -41,6 +41,7 @@ class ShipWorkflowFixture:
         resolve_base_ref: Callable[[Path, str], str] | None = None,
         run_commit_action: Callable[[object], int] | None = None,
         run_pr_action: Callable[[object], int] | None = None,
+        add_ship_pr_label: Callable[[object, Path, str], int] | None = None,
         probe_dirty_worktree: Callable[..., object] | None = None,
         existing_pr_url: Callable[[Path, str], str] | None = None,
         partition_envctl_protected_paths: Callable[[str], object] | None = None,
@@ -60,6 +61,7 @@ class ShipWorkflowFixture:
                 resolve_base_ref=resolve_base_ref or self.resolve_base_ref,
                 run_commit_action=run_commit_action or self.run_commit_action,
                 run_pr_action=run_pr_action or self.run_pr_action,
+                add_ship_pr_label=add_ship_pr_label or self.add_ship_pr_label,
                 probe_dirty_worktree=probe_dirty_worktree or self.probe_dirty_worktree,
                 existing_pr_url=existing_pr_url or self.existing_pr_url,
                 partition_envctl_protected_paths=(
@@ -97,6 +99,10 @@ class ShipWorkflowFixture:
 
     @staticmethod
     def run_pr_action(_context: object) -> int:
+        return 0
+
+    @staticmethod
+    def add_ship_pr_label(_context: object, _git_root: Path, _pr_url: str) -> int:
         return 0
 
     @staticmethod

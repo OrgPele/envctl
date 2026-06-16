@@ -32,6 +32,7 @@ def test_ship_workflow_runner_exposes_named_phases() -> None:
         "_reject_existing_merge_conflicts",
         "_run_commit_phase",
         "_run_pr_phase",
+        "_run_pr_label_phase",
         "_reject_predicted_merge_conflicts",
         "_run_checks_phase",
     ):
@@ -51,6 +52,7 @@ def test_ship_workflow_dependencies_group_injected_collaborators() -> None:
         "resolve_base_ref",
         "run_commit_action",
         "run_pr_action",
+        "add_ship_pr_label",
         "probe_dirty_worktree",
         "existing_pr_url",
         "partition_envctl_protected_paths",

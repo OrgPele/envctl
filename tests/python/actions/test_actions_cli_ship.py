@@ -77,6 +77,7 @@ class ActionsCliShipTests(unittest.TestCase):
                     side_effect=fake_commit_action,
                 ) as commit_action,
                 patch("envctl_engine.actions.project_action_domain.run_pr_action", return_value=0) as pr_action,
+                patch("envctl_engine.actions.project_action_domain.add_ship_pr_label", return_value=0) as label_pr,
                 patch(
                     "envctl_engine.actions.project_action_domain.existing_pr_url",
                     side_effect=["", "https://github.com/acme/repo/pull/7"],
@@ -116,6 +117,7 @@ class ActionsCliShipTests(unittest.TestCase):
         )
         commit_action.assert_called_once_with(context)
         pr_action.assert_called_once_with(context)
+        label_pr.assert_called_once_with(context, repo_root, "https://github.com/acme/repo/pull/7")
 
     def test_ship_action_reports_existing_pr_and_failed_checks(self) -> None:
         domain = importlib.import_module("envctl_engine.actions.project_action_domain")
@@ -147,6 +149,7 @@ class ActionsCliShipTests(unittest.TestCase):
                 patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run_git),
                 patch("envctl_engine.actions.project_action_domain.run_commit_action", return_value=0) as commit_action,
                 patch("envctl_engine.actions.project_action_domain.run_pr_action", return_value=0) as pr_action,
+                patch("envctl_engine.actions.project_action_domain.add_ship_pr_label", return_value=0) as label_pr,
                 patch(
                     "envctl_engine.actions.project_action_domain.existing_pr_url",
                     return_value="https://github.com/acme/repo/pull/7",
@@ -171,6 +174,7 @@ class ActionsCliShipTests(unittest.TestCase):
         self.assertEqual(payload["step_statuses"], ["clean_no_changes", "pr_exists", "checks_failed"])
         commit_action.assert_called_once_with(context)
         pr_action.assert_not_called()
+        label_pr.assert_called_once_with(context, repo_root, "https://github.com/acme/repo/pull/7")
 
     def test_ship_action_reports_predicted_merge_conflicts_json(self) -> None:
         domain = importlib.import_module("envctl_engine.actions.project_action_domain")
@@ -221,6 +225,7 @@ class ActionsCliShipTests(unittest.TestCase):
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run),
                 patch("envctl_engine.actions.project_action_domain.run_commit_action", return_value=0) as commit_action,
+                patch("envctl_engine.actions.project_action_domain.add_ship_pr_label", return_value=0) as label_pr,
                 patch(
                     "envctl_engine.actions.project_action_domain.existing_pr_url",
                     return_value="https://github.com/acme/repo/pull/7",
@@ -242,6 +247,7 @@ class ActionsCliShipTests(unittest.TestCase):
         self.assertIn("CONFLICT (content)", payload["merge_conflicts"]["conflicting_files"][0]["messages"][0])
         self.assertIn("git merge origin/main", payload["merge_conflicts"]["resolution_steps"])
         commit_action.assert_called_once_with(context)
+        label_pr.assert_called_once_with(context, repo_root, "https://github.com/acme/repo/pull/7")
 
     def test_ship_action_reports_existing_unmerged_index_conflicts_before_commit(self) -> None:
         domain = importlib.import_module("envctl_engine.actions.project_action_domain")

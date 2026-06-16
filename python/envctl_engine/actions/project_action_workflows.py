@@ -51,6 +51,7 @@ class ProjectActionPullRequestWorkflowDependencies:
     pr_body_fn: Callable[[Any, Path, str, str], str]
     write_pr_body_file_fn: Callable[[str], Path]
     run_pr_action_fn: Callable[[Any], int]
+    add_ship_pr_label_fn: Callable[[Any, Path, str], int]
     github_pr_checks_fn: ship_support.GithubPrChecks
 
 
@@ -147,6 +148,7 @@ class ProjectActionWorkflowRunner:
             resolve_base_ref=self._resolve_base_ref,
             run_commit_action=self.pull_request.run_commit_action_fn,
             run_pr_action=self.pull_request.run_pr_action_fn,
+            add_ship_pr_label=self.pull_request.add_ship_pr_label_fn,
             probe_dirty_worktree=self._probe_dirty_worktree_for_ship,
             existing_pr_url=self.pull_request.existing_pr_url_fn,
             partition_envctl_protected_paths=self.commit.partition_envctl_protected_paths_fn,

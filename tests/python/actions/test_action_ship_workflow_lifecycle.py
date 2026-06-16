@@ -9,6 +9,11 @@ from tests.python.actions.ship_workflow_test_support import ship_workflow_fixtur
 def test_run_ship_workflow_reuses_existing_pr_and_reports_failed_checks() -> None:
     with ship_workflow_fixture() as fixture:
         checks_expected_sha = ""
+        label_calls: list[str] = []
+
+        def add_ship_pr_label(_context: object, _git_root: Path, pr_url: str) -> int:
+            label_calls.append(pr_url)
+            return 0
 
         def github_pr_checks(
             _git_root: Path,
@@ -30,9 +35,10 @@ def test_run_ship_workflow_reuses_existing_pr_and_reports_failed_checks() -> Non
                 "expected_head_sha": expected_head_sha,
             }
 
-        result = fixture.run(github_pr_checks=github_pr_checks)
+        result = fixture.run(add_ship_pr_label=add_ship_pr_label, github_pr_checks=github_pr_checks)
 
     assert result.code == 1
+    assert label_calls == ["https://github.com/acme/repo/pull/7"]
     assert result.payload["status"] == "checks_failed"
     assert result.payload["step_statuses"] == ["clean_no_changes", "pr_exists", "checks_failed"]
     assert result.payload["operation_statuses"] == {
@@ -164,6 +170,7 @@ def test_run_ship_workflow_creates_pr_and_reports_check_success() -> None:
         commit_called = False
         pr_called = False
         checks_expected_sha = ""
+        label_calls: list[str] = []
 
         def git_output(_git_root: Path, args: list[str]) -> str:
             if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
@@ -185,6 +192,10 @@ def test_run_ship_workflow_creates_pr_and_reports_check_success() -> None:
         def run_pr_action(_context: object) -> int:
             nonlocal pr_called
             pr_called = True
+            return 0
+
+        def add_ship_pr_label(_context: object, _git_root: Path, pr_url: str) -> int:
+            label_calls.append(pr_url)
             return 0
 
         def github_pr_checks(
@@ -210,6 +221,7 @@ def test_run_ship_workflow_creates_pr_and_reports_check_success() -> None:
             git_output=git_output,
             run_commit_action=run_commit_action,
             run_pr_action=run_pr_action,
+            add_ship_pr_label=add_ship_pr_label,
             probe_dirty_worktree=lambda *_args, **_kwargs: SimpleNamespace(dirty=True),
             existing_pr_url=existing_pr_url,
             github_pr_checks=github_pr_checks,
@@ -218,6 +230,7 @@ def test_run_ship_workflow_creates_pr_and_reports_check_success() -> None:
     assert result.code == 0
     assert commit_called is True
     assert pr_called is True
+    assert label_calls == ["https://github.com/acme/repo/pull/8"]
     assert checks_expected_sha == "after"
     assert result.payload["status"] == "checks_passed"
     assert result.payload["step_statuses"] == ["committed_pushed", "pr_created", "checks_passed"]
@@ -236,6 +249,33 @@ def test_run_ship_workflow_creates_pr_and_reports_check_success() -> None:
         "ship: push succeeded for Main.",
         "ship: PR created for Main: https://github.com/acme/repo/pull/8",
     ]
+
+
+def test_run_ship_workflow_fails_when_pr_label_cannot_be_added() -> None:
+    with ship_workflow_fixture() as fixture:
+        checks_called = False
+
+        def github_pr_checks(*_args: object, **_kwargs: object) -> dict[str, object]:
+            nonlocal checks_called
+            checks_called = True
+            return {"state": "checks_passed", "failing_checks": [], "pending_checks": []}
+
+        result = fixture.run(
+            add_ship_pr_label=lambda _context, _git_root, _pr_url: 1,
+            github_pr_checks=github_pr_checks,
+        )
+
+    assert result.code == 1
+    assert checks_called is False
+    assert result.payload["status"] == "pr_label_failed"
+    assert result.payload["step_statuses"] == ["clean_no_changes", "pr_exists", "pr_label_failed"]
+    assert result.payload["operation_statuses"] == {
+        "checks": "not_run",
+        "commit": "no_changes",
+        "merge_conflicts": "none",
+        "pr": "existing",
+        "push": "not_needed",
+    }
 
 
 def test_run_ship_workflow_fails_when_pr_action_succeeds_but_pr_url_is_unresolved() -> None:
