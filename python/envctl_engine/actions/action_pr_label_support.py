@@ -10,7 +10,7 @@ from envctl_engine.shared.parsing import parse_bool
 
 DEFAULT_SHIP_PR_LABEL = "deploy-app"
 DEFAULT_SHIP_PR_LABEL_COLOR = "5319e7"
-DEFAULT_SHIP_PR_LABEL_DESCRIPTION = "Pull requests shipped by envctl"
+DEFAULT_SHIP_PR_LABEL_DESCRIPTION = "Deploy app with envctl"
 SHIP_PR_LABEL_ENABLE_ENV = "ENVCTL_SHIP_PR_LABEL_ENABLE"
 SHIP_PR_LABEL_ENV = "ENVCTL_SHIP_PR_LABEL"
 
