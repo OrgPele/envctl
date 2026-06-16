@@ -202,6 +202,24 @@ class ConfigLoaderTests(unittest.TestCase):
             self.assertTrue(config.plan_agent_browser_e2e_enable)
             self.assertEqual(config.raw["ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE"], "true")
 
+    def test_load_config_exposes_ship_pr_label_defaults_and_overrides(self) -> None:
+        default_config = load_config({"RUN_REPO_ROOT": tempfile.mkdtemp()})
+        self.assertEqual(default_config.raw["ENVCTL_SHIP_PR_LABEL_ENABLE"], "false")
+        self.assertEqual(default_config.raw["ENVCTL_SHIP_PR_LABEL"], "deploy-app")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".envctl").write_text(
+                "ENVCTL_SHIP_PR_LABEL_ENABLE=true\n"
+                "ENVCTL_SHIP_PR_LABEL=codex-generated\n",
+                encoding="utf-8",
+            )
+
+            config = load_config({"RUN_REPO_ROOT": str(repo)})
+
+            self.assertEqual(config.raw["ENVCTL_SHIP_PR_LABEL_ENABLE"], "true")
+            self.assertEqual(config.raw["ENVCTL_SHIP_PR_LABEL"], "codex-generated")
+
     def test_load_config_exposes_plan_agent_codex_goal_default_and_false_toggle(self) -> None:
         default_config = load_config({"RUN_REPO_ROOT": tempfile.mkdtemp()})
         self.assertTrue(default_config.plan_agent_codex_goal_enable)

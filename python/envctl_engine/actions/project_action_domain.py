@@ -8,6 +8,7 @@ import sys
 from typing import Mapping
 
 import envctl_engine.actions.action_commit_support as commit_support
+import envctl_engine.actions.action_pr_label_support as pr_label_support
 import envctl_engine.actions.action_git_state_support as git_state_support
 import envctl_engine.actions.action_pr_message_support as pr_message_support
 import envctl_engine.actions.action_review_artifact_support as review_artifact_support
@@ -73,6 +74,7 @@ __all__ = [
     "probe_dirty_worktree",
     "resolve_git_root",
     "run_commit_action",
+    "add_ship_pr_label",
     "run_pr_action",
     "run_review_action",
     "run_ship_action",
@@ -119,6 +121,7 @@ def _workflow_runner() -> ProjectActionWorkflowRunner:
             pr_body_fn=_pr_body,
             write_pr_body_file_fn=_write_pr_body_file,
             run_pr_action_fn=run_pr_action,
+            add_ship_pr_label_fn=add_ship_pr_label,
             github_pr_checks_fn=_github_pr_checks,
         ),
         review=workflow_factory.ProjectActionWorkflowReviewSources(
@@ -246,6 +249,16 @@ _write_pr_body_file = pr_message_support.write_pr_body_file
 
 def run_pr_action(context: ActionProjectContext) -> int:
     return _workflow_runner().run_pr_action(context)
+
+
+def add_ship_pr_label(context: ActionProjectContext, git_root: Path, pr_url: str) -> int:
+    return pr_label_support.add_ship_pr_label(
+        context,
+        git_root,
+        pr_url,
+        gh_path=shutil.which("gh"),
+        run_process=subprocess.run,
+    )
 
 
 def run_ship_action(context: ActionProjectContext) -> int:

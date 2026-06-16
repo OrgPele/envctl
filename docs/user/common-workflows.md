@@ -145,6 +145,18 @@ Why this is the preferred automation shape:
 - `--headless` removes interactive prompts
 - `--skip-startup --load-state` keeps repeated test runs fast
 
+### Optional PR label during `envctl ship`
+
+Repos that want shipped PRs labeled can opt in from `.envctl`:
+
+```dotenv
+ENVCTL_SHIP_PR_LABEL_ENABLE=true
+ENVCTL_SHIP_PR_LABEL=deploy-app
+```
+
+When enabled, `envctl ship` ensures the label exists in GitHub and applies it
+programmatically after it has a PR URL. The feature is disabled by default.
+
 ## One Project Tight Loop
 
 Use this when you only care about one service or one project.

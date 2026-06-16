@@ -5,7 +5,6 @@ from typing import Any
 
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
 from envctl_engine.planning.plan_agent.workflow_build import _browser_e2e_instruction_text
-from envctl_engine.planning.plan_agent.workflow_runtime_addresses import _runtime_addresses_prompt_section
 
 
 def _shape_queue_message_text(runtime: Any, text: str, *, worktree: CreatedPlanWorktree | None = None) -> str:
@@ -15,7 +14,6 @@ def _shape_queue_message_text(runtime: Any, text: str, *, worktree: CreatedPlanW
         section
         for section in (
             _original_task_source_prompt_section(runtime, worktree=worktree),
-            _runtime_addresses_prompt_section(runtime, worktree=worktree),
         )
         if section
     ]

@@ -161,6 +161,16 @@ ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false
 ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true
 
 # ==========================================
+# Ship / PR automation
+# ==========================================
+
+# Programmatically add a GitHub label to PRs during `envctl ship`.
+# Disabled by default; set true only for repos that want this automation.
+ENVCTL_SHIP_PR_LABEL_ENABLE=false
+# Optional label name. envctl creates the repo label when missing.
+ENVCTL_SHIP_PR_LABEL=deploy-app
+
+# ==========================================
 # Service launch env templates
 # ==========================================
 

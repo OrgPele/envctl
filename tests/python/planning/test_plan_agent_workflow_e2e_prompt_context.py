@@ -37,7 +37,7 @@ class PlanAgentWorkflowE2EPromptContextTests(PlanAgentLaunchSupportTestCase):
 
         self.assertEqual(_shape_queue_message_text(runtime, "Continue implementation"), "Continue implementation")
 
-    def test_browser_e2e_followup_injects_original_plan_and_runtime_addresses(self) -> None:
+    def test_browser_e2e_followup_injects_original_plan_without_runtime_addresses(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime_dir = Path(tmpdir) / "runtime"
@@ -82,9 +82,9 @@ class PlanAgentWorkflowE2EPromptContextTests(PlanAgentLaunchSupportTestCase):
         self.assertIn("## Original task source for E2E validation", prompt_text)
         self.assertIn(str(original_plan), prompt_text)
         self.assertIn("Use this original plan file before the current MAIN_TASK.md", prompt_text)
-        self.assertIn("## Current envctl runtime addresses", prompt_text)
-        self.assertIn("Postgres (feature-a): localhost:5500", prompt_text)
-        self.assertIn("Frontend (feature-a Frontend): http://localhost:9300", prompt_text)
+        self.assertNotIn("## Current envctl runtime addresses", prompt_text)
+        self.assertNotIn("Postgres (feature-a): localhost:5500", prompt_text)
+        self.assertNotIn("Frontend (feature-a Frontend): http://localhost:9300", prompt_text)
 
     def test_browser_e2e_followup_omits_stale_runtime_addresses_for_other_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

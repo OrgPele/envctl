@@ -47,6 +47,7 @@ class ProjectActionWorkflowPullRequestSources:
     pr_body_fn: Callable[[Any, Path, str, str], str]
     write_pr_body_file_fn: Callable[[str], Path]
     run_pr_action_fn: Callable[[Any], int]
+    add_ship_pr_label_fn: Callable[[Any, Path, str], int]
     github_pr_checks_fn: ship_support.GithubPrChecks
 
 
@@ -94,6 +95,7 @@ class ProjectActionWorkflowFactory:
                 pr_body_fn=self.pull_request.pr_body_fn,
                 write_pr_body_file_fn=self.pull_request.write_pr_body_file_fn,
                 run_pr_action_fn=self.pull_request.run_pr_action_fn,
+                add_ship_pr_label_fn=self.pull_request.add_ship_pr_label_fn,
                 github_pr_checks_fn=self.pull_request.github_pr_checks_fn,
             ),
             review=ProjectActionReviewWorkflowDependencies(
