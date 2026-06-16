@@ -112,6 +112,23 @@ def emit_service_startup_progress_timeout(
     )
 
 
+def emit_service_startup_progress_listener_accepted(
+    runtime: Any,
+    *,
+    service_name: str,
+    pid: int,
+    port: int,
+    progress_line: str,
+) -> None:
+    runtime._emit(
+        "service.startup.progress.listener_accepted",
+        service=service_name,
+        pid=pid,
+        port=port,
+        log=progress_line,
+    )
+
+
 def detect_service_actual_port(
     runtime: Any,
     *,
@@ -139,14 +156,14 @@ def detect_service_actual_port(
             if not progress_line:
                 return requested_port
             if time.monotonic() >= progress_deadline:
-                emit_service_startup_progress_timeout(
+                emit_service_startup_progress_listener_accepted(
                     runtime,
                     service_name=service_name,
                     pid=pid,
                     port=requested_port,
                     progress_line=progress_line,
                 )
-                return None
+                return requested_port
             emit_service_startup_progress_once(
                 runtime,
                 service_name=service_name,

@@ -244,7 +244,7 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
         self.assertEqual(runner.wait_calls, 2)
         self.assertTrue(any(event == "service.startup.progress" for event, _payload in events))
 
-    def test_detect_service_actual_port_fails_when_startup_progress_window_expires(self) -> None:
+    def test_detect_service_actual_port_accepts_listener_when_startup_progress_window_expires(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
 
         class _AlwaysListeningRunner(_RunnerStub):
@@ -282,8 +282,11 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
                 log_path=str(log_path),
             )
 
-        self.assertIsNone(detected)
-        self.assertTrue(any(event == "service.startup.progress.timeout" for event, _payload in events))
+        self.assertEqual(detected, 8000)
+        self.assertTrue(
+            any(event == "service.startup.progress.listener_accepted" for event, _payload in events)
+        )
+        self.assertFalse(any(event == "service.startup.progress.timeout" for event, _payload in events))
         self.assertFalse(any(event == "service.bind.actual.discovered" for event, _payload in events))
 
     def test_detect_service_actual_port_does_not_discover_rebound_after_startup_progress_timeout(self) -> None:
