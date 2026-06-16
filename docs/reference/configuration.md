@@ -449,7 +449,7 @@ Superset transport notes:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `ENVCTL_SHIP_PR_LABEL_ENABLE` | `false` | Opt in to programmatic PR labeling during `envctl ship`. When true, envctl ensures the configured label exists in the GitHub repository and applies it to the shipped PR after the PR URL is known. |
-| `ENVCTL_SHIP_PR_LABEL` | `envctl` | Label name applied when `ENVCTL_SHIP_PR_LABEL_ENABLE=true`. Blank disables label application even when the feature flag is enabled. |
+| `ENVCTL_SHIP_PR_LABEL` | `envctl-shipped-pr` | Label name applied when `ENVCTL_SHIP_PR_LABEL_ENABLE=true`. Blank disables label application even when the feature flag is enabled. |
 
 ## Debug and Diagnostics
 | Variable | Default | Purpose |

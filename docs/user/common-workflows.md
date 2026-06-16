@@ -151,7 +151,7 @@ Repos that want shipped PRs labeled can opt in from `.envctl`:
 
 ```dotenv
 ENVCTL_SHIP_PR_LABEL_ENABLE=true
-ENVCTL_SHIP_PR_LABEL=envctl
+ENVCTL_SHIP_PR_LABEL=envctl-shipped-pr
 ```
 
 When enabled, `envctl ship` ensures the label exists in GitHub and applies it

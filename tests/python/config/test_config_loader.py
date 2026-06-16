@@ -205,7 +205,7 @@ class ConfigLoaderTests(unittest.TestCase):
     def test_load_config_exposes_ship_pr_label_defaults_and_overrides(self) -> None:
         default_config = load_config({"RUN_REPO_ROOT": tempfile.mkdtemp()})
         self.assertEqual(default_config.raw["ENVCTL_SHIP_PR_LABEL_ENABLE"], "false")
-        self.assertEqual(default_config.raw["ENVCTL_SHIP_PR_LABEL"], "envctl")
+        self.assertEqual(default_config.raw["ENVCTL_SHIP_PR_LABEL"], "envctl-shipped-pr")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
