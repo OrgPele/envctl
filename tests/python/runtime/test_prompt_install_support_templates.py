@@ -122,7 +122,9 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertNotIn(".envctl-commit-message.md", codex)
         self.assertNotIn("### Envctl pointer ###", codex)
         self.assertNotIn("boundary after the last successful commit", codex)
-        self.assertIn("one complete commit message", codex)
+        self.assertIn("one complete commit/PR handoff message", codex)
+        self.assertIn("what your validation actually did and proved", codex)
+        self.assertIn("manual checks a human should still run to truly confirm it works", codex)
         self.assertIn("Do not write envctl-local commit-message ledger files", codex)
         self.assertIn("Do not run manual staging commands such as `git add .`", codex)
         self.assertIn("Inspect the baseline with `git status --short`; do not stage files manually", codex)
@@ -190,6 +192,9 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("$browser-use", opencode)
 
         continue_prompt = _load_template("continue_task")
+        self.assertIn("one complete commit/PR handoff message", continue_prompt.body)
+        self.assertIn("what your validation actually did and proved", continue_prompt.body)
+        self.assertIn("manual checks a human should still run to truly confirm it works", continue_prompt.body)
         self.assertNotIn(".envctl-commit-message.md", continue_prompt.body)
         self.assertNotIn("### Envctl pointer ###", continue_prompt.body)
         self.assertIn("Do not write envctl-local commit-message ledger files", continue_prompt.body)
@@ -212,6 +217,9 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertNotIn("CodeGraphContext (`cgc`) for repo-wide ownership", finalize_prompt.body)
         self.assertNotIn("Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl", finalize_prompt.body)
         self.assertIn('Run `envctl ship -m "<message>"` from inside the current generated worktree', finalize_prompt.body)
+        self.assertIn("one complete commit/PR handoff message", finalize_prompt.body)
+        self.assertIn("what your validation actually did and proved", finalize_prompt.body)
+        self.assertIn("manual checks a human should still run to truly confirm it works", finalize_prompt.body)
         self.assertIn("Run bare `envctl ship` from inside the current worktree/project directory", finalize_prompt.body)
         self.assertIn('`envctl ship --project <current-worktree-name> -m "<message>"`', finalize_prompt.body)
         self.assertIn("GitHub CLI checks only if `ship` is unavailable", finalize_prompt.body)
@@ -235,6 +243,9 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
 
         intermediate_prompt = _load_template("_plan_agent_intermediate_cycle_completion").body
         self.assertIn('then use `envctl ship -m "<message>"`', intermediate_prompt)
+        self.assertIn("Build the message as a commit/PR handoff message", intermediate_prompt)
+        self.assertIn("what your validation actually did and proved", intermediate_prompt)
+        self.assertIn("manual checks a human should still run to truly confirm it works", intermediate_prompt)
         self.assertIn("instead of a separate commit/push/PR flow", intermediate_prompt)
         self.assertIn("creates a PR when none exists", intermediate_prompt)
         self.assertIn(
@@ -250,12 +261,18 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         )
 
         first_cycle_prompt = _load_template("_plan_agent_first_cycle_completion").body
+        self.assertIn("Build the message as a commit/PR handoff message", first_cycle_prompt)
+        self.assertIn("what your validation actually did and proved", first_cycle_prompt)
+        self.assertIn("manual checks a human should still run to truly confirm it works", first_cycle_prompt)
         self.assertIn(
             "A successful ship result is silent: the shipping subagent must not send a success summary",
             first_cycle_prompt,
         )
 
         review_comments_prompt = _load_template("_plan_agent_pr_review_comments_followup").body
+        self.assertIn("Build the message as a commit/PR handoff message", review_comments_prompt)
+        self.assertIn("what your validation actually did and proved", review_comments_prompt)
+        self.assertIn("manual checks a human should still run to truly confirm it works", review_comments_prompt)
         self.assertIn("Inspect unresolved PR review comments", review_comments_prompt)
         self.assertIn("address all actionable comments", review_comments_prompt)
         self.assertIn(
@@ -284,7 +301,7 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("first merge branch A into the integration branch", merge_prompt.body)
         self.assertIn("Merge target: `integration/<branch-a>-plus-<branch-b>`", merge_prompt.body)
         self.assertNotIn(".envctl-commit-message.md", merge_prompt.body)
-        self.assertIn("The final commit message is available inline", merge_prompt.body)
+        self.assertIn("The final commit/PR handoff message is available inline", merge_prompt.body)
 
         plan_prompt = _load_template("create_plan")
         self.assertNotIn("Changelog entry appended.", plan_prompt.body)
