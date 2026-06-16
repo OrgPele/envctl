@@ -91,6 +91,36 @@ class CliRouterParityTests(unittest.TestCase):
                 route = parse_route(["--trees", token], env={})
                 self.assertEqual(route.flags.get("dependency_scope"), "isolated")
 
+    def test_default_tree_dependency_scope_env_is_applied(self) -> None:
+        route = parse_route(
+            ["--trees"],
+            env={"ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE": "isolated"},
+        )
+
+        self.assertEqual(route.mode, "trees")
+        self.assertEqual(route.flags.get("dependency_scope"), "isolated")
+
+        route = parse_route(
+            ["--trees", "--shared-deps"],
+            env={"ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE": "isolated"},
+        )
+
+        self.assertEqual(route.flags.get("dependency_scope"), "shared")
+
+        route = parse_route(
+            ["--main"],
+            env={"ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE": "isolated"},
+        )
+
+        self.assertNotIn("dependency_scope", route.flags)
+
+    def test_default_tree_dependency_scope_rejects_invalid_values(self) -> None:
+        with self.assertRaisesRegex(RouteError, "Invalid ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE"):
+            parse_route(
+                ["--trees"],
+                env={"ENVCTL_DEFAULT_TREE_DEPENDENCY_SCOPE": "sometimes"},
+            )
+
     def test_managed_dependency_flags_disable_external_dependencies_for_route(self) -> None:
         for token in (
             "--managed-deps",

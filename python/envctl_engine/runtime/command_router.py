@@ -32,6 +32,7 @@ from envctl_engine.runtime.command_catalog import (
 from envctl_engine.runtime.command_models import Route, RouteError
 from envctl_engine.runtime.command_policy import apply_command_policy, apply_mode_token
 from envctl_engine.runtime.command_special_flags import (
+    apply_default_dependency_scope_policy,
     apply_default_headless_policy,
     apply_default_runtime_scope_policy,
     handle_env_assignment,
@@ -83,6 +84,7 @@ def parse_route(argv: list[str], env: Mapping[str, str]) -> Route:
     _apply_mode_override_flag(state)
     _apply_default_runtime_scope_policy(state)
     _apply_default_headless_policy(state)
+    _apply_default_dependency_scope_policy(state)
     _validate_plan_agent_cli_flags(state)
     _validate_plan_agent_workflow_flags(state)
     _validate_import_branch_argument(state)
@@ -368,6 +370,10 @@ def _set_runtime_scope(flags: dict[str, object], scope: str) -> None:
 
 def _apply_default_runtime_scope_policy(state: _ParserState) -> None:
     apply_default_runtime_scope_policy(state.command, flags=state.flags, projects=state.projects)
+
+
+def _apply_default_dependency_scope_policy(state: _ParserState) -> None:
+    apply_default_dependency_scope_policy(state.mode, flags=state.flags, env=state.env)
 
 
 def _set_dependency_scope(flags: dict[str, object], scope: str) -> None:
