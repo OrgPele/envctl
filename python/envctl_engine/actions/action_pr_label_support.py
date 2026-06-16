@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from envctl_engine.shared.parsing import parse_bool
 
-DEFAULT_SHIP_PR_LABEL = "envctl-shipped-pr"
+DEFAULT_SHIP_PR_LABEL = "envctl-shipped"
 DEFAULT_SHIP_PR_LABEL_COLOR = "5319e7"
 DEFAULT_SHIP_PR_LABEL_DESCRIPTION = "Pull requests shipped by envctl"
 SHIP_PR_LABEL_ENABLE_ENV = "ENVCTL_SHIP_PR_LABEL_ENABLE"
