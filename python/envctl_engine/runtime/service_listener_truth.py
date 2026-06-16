@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import time
+import urllib.error
+import urllib.request
 from typing import Any
 
 from envctl_engine.runtime.service_truth_diagnostics import tail_log_startup_progress_line
+
+
+HTTP_READINESS_PATHS = ("/api/v1/health", "/health", "/readyz", "/healthz", "/")
 
 
 def wait_for_service_listener(
@@ -129,6 +134,43 @@ def emit_service_startup_progress_listener_accepted(
     )
 
 
+def emit_service_startup_progress_http_ready(
+    runtime: Any,
+    *,
+    service_name: str,
+    pid: int,
+    port: int,
+    progress_line: str,
+    health_path: str,
+) -> None:
+    runtime._emit(
+        "service.startup.progress.http_ready",
+        service=service_name,
+        pid=pid,
+        port=port,
+        log=progress_line,
+        health_path=health_path,
+    )
+
+
+def service_http_ready(port: int, *, host: str = "127.0.0.1", timeout: float = 0.2) -> str | None:
+    if port <= 0:
+        return None
+    for path in HTTP_READINESS_PATHS:
+        url = f"http://{host}:{port}{path}"
+        request = urllib.request.Request(url, headers={"User-Agent": "envctl-readiness-probe"})
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - local readiness probe.
+                status = int(getattr(response, "status", response.getcode()))
+        except urllib.error.HTTPError as exc:
+            status = int(getattr(exc, "code", 0) or 0)
+        except (OSError, TimeoutError, ValueError, urllib.error.URLError):
+            continue
+        if 200 <= status < 400:
+            return path
+    return None
+
+
 def detect_service_actual_port(
     runtime: Any,
     *,
@@ -154,6 +196,17 @@ def detect_service_actual_port(
         ):
             progress_line = tail_log_startup_progress_line(log_path)
             if not progress_line:
+                return requested_port
+            health_path = service_http_ready(requested_port)
+            if health_path is not None:
+                emit_service_startup_progress_http_ready(
+                    runtime,
+                    service_name=service_name,
+                    pid=pid,
+                    port=requested_port,
+                    progress_line=progress_line,
+                    health_path=health_path,
+                )
                 return requested_port
             if time.monotonic() >= progress_deadline:
                 emit_service_startup_progress_listener_accepted(

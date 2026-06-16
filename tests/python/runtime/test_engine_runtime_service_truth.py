@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 
 
@@ -288,6 +289,56 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
         )
         self.assertFalse(any(event == "service.startup.progress.timeout" for event, _payload in events))
         self.assertFalse(any(event == "service.bind.actual.discovered" for event, _payload in events))
+
+    def test_detect_service_actual_port_accepts_http_ready_during_startup_progress(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+
+        class _AlwaysListeningRunner(_RunnerStub):
+            def wait_for_pid_port(
+                self,
+                pid: int,
+                port: int,
+                *,
+                host: str = "127.0.0.1",
+                timeout: float = 30.0,
+                debug_pid_wait_group: str = "",
+            ) -> bool:  # noqa: ARG002
+                return True
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "backend.log"
+            log_path.write_text(
+                "INFO  [alembic.runtime.migration] Will assume transactional DDL.\n",
+                encoding="utf-8",
+            )
+            runner = _AlwaysListeningRunner()
+            runtime = SimpleNamespace(
+                process_runner=runner,
+                config=SimpleNamespace(runtime_truth_mode="auto"),
+                _listener_probe_supported=True,
+                _service_listener_timeout=lambda: 0.01,
+                _service_startup_progress_timeout=lambda: 600.0,
+                _service_rebound_max_delta=lambda: 50,
+                _emit=lambda event, **payload: events.append((event, payload)),
+            )
+
+            with patch(
+                "envctl_engine.runtime.service_listener_truth.service_http_ready",
+                return_value="/api/v1/health",
+            ) as probe:
+                detected = detect_service_actual_port(
+                    runtime,
+                    pid=4321,
+                    requested_port=8000,
+                    service_name="Main Backend",
+                    log_path=str(log_path),
+                )
+
+        self.assertEqual(detected, 8000)
+        probe.assert_called_once_with(8000)
+        self.assertTrue(any(event == "service.startup.progress.http_ready" for event, _payload in events))
+        self.assertFalse(any(event == "service.startup.progress.listener_accepted" for event, _payload in events))
+        self.assertFalse(any(event == "service.startup.progress.timeout" for event, _payload in events))
 
     def test_detect_service_actual_port_does_not_discover_rebound_after_startup_progress_timeout(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
