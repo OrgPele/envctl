@@ -445,6 +445,12 @@ Superset transport notes:
 - Superset auth and host errors are surfaced from the Superset command output; configure OAuth login or `SUPERSET_API_KEY` as Superset requires.
 - When `ENVCTL_PLAN_AGENT_SUPERSET_OPEN=true`, envctl treats a returned workspace id as usable only after Superset desktop can resolve it locally. If the Superset CLI created the host workspace but the desktop cache has not received it, envctl mirrors the workspace into Superset desktop's local cache and restarts the desktop once when needed. This prevents false-success handoffs where the CLI lists a workspace but the desktop opens to "Workspace not found."
 
+## Ship / PR Automation
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ENVCTL_SHIP_PR_LABEL_ENABLE` | `false` | Opt in to programmatic PR labeling during `envctl ship`. When true, envctl ensures the configured label exists in the GitHub repository and applies it to the shipped PR after the PR URL is known. |
+| `ENVCTL_SHIP_PR_LABEL` | `envctl` | Label name applied when `ENVCTL_SHIP_PR_LABEL_ENABLE=true`. Blank disables label application even when the feature flag is enabled. |
+
 ## Debug and Diagnostics
 | Variable | Default | Purpose |
 | --- | --- | --- |

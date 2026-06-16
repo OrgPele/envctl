@@ -521,6 +521,7 @@ or actionable review comments.
 - Codex installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`; envctl still resolves the shipped prompt body directly when it needs to submit a preset itself
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` explicitly opts in to the Codex/OMX `$browser` E2E follow-up; it is skipped by default
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` opts in to the final Codex/OMX PR review-comments follow-up; it is skipped by default so core implementation prompts rely on `envctl ship` status unless a dedicated review-comments pass is explicitly enabled
+- `ENVCTL_SHIP_PR_LABEL_ENABLE=true` opts in to programmatic PR labeling during `envctl ship`; the label name defaults to `envctl` and can be changed with `ENVCTL_SHIP_PR_LABEL`
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface or tmux window when envctl owns the terminal bootstrap
 - `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true` requires caller `CMUX_WORKSPACE_ID`
 - `ENVCTL_PLAN_AGENT_CODEX_YOLO=true` appends `--dangerously-bypass-approvals-and-sandbox` to the default envctl-owned Codex cmux/tmux launch command; set it to `false` in `.envctl` when your Codex wrapper or config already supplies that flag

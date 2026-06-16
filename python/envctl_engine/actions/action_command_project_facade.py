@@ -11,6 +11,10 @@ from envctl_engine.actions.action_git_command_support import (
     run_ship_action_with_owner,
 )
 from envctl_engine.actions.action_migrate_execution_support import run_migrate_action_with_owner
+from envctl_engine.actions.action_pr_label_support import (
+    SHIP_PR_LABEL_ENABLE_ENV,
+    SHIP_PR_LABEL_ENV,
+)
 from envctl_engine.actions.action_migrate_support import (
     MigrateProjectContext as _MigrateProjectContext,
     migrate_backend_cwd as migrate_backend_cwd_impl,
@@ -73,7 +77,7 @@ class ActionCommandProjectFacadeMixin:
         return run_commit_action_with_owner(self, route, targets, extra_env=self.action_extra_env(route))
 
     def run_ship_action(self, route: Route, targets: list[object]) -> int:
-        return run_ship_action_with_owner(self, route, targets, extra_env=self.action_extra_env(route))
+        return run_ship_action_with_owner(self, route, targets, extra_env=self.ship_action_extra_env(route))
 
     def run_review_action(self, route: Route, targets: list[object]) -> int:
         return run_review_action_with_owner(self, route, targets, extra_env=self.action_extra_env(route))
@@ -148,6 +152,15 @@ class ActionCommandProjectFacadeMixin:
     @staticmethod
     def action_extra_env(route: Route) -> dict[str, str]:
         return action_extra_env_impl(route)
+
+    def ship_action_extra_env(self, route: Route) -> dict[str, str]:
+        extra = self.action_extra_env(route)
+        config_raw = getattr(getattr(_runtime(self), "config", None), "raw", {})
+        if isinstance(config_raw, Mapping):
+            for key in (SHIP_PR_LABEL_ENABLE_ENV, SHIP_PR_LABEL_ENV):
+                if key in config_raw:
+                    extra[key] = str(config_raw[key])
+        return extra
 
     def migrate_action_env(
         self,

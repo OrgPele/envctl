@@ -433,6 +433,25 @@ class ActionsGitParityTests(_ActionsParityTestCase):
             implicit_extra = engine.action_command_orchestrator.action_extra_env(implicit_route)
             self.assertNotIn("ENVCTL_REVIEW_BASE", implicit_extra)
 
+    def test_ship_action_extra_env_forwards_pr_label_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / ".envctl").write_text(
+                "ENVCTL_SHIP_PR_LABEL_ENABLE=true\n"
+                "ENVCTL_SHIP_PR_LABEL=codex-generated\n",
+                encoding="utf-8",
+            )
+
+            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
+            route = parse_route(["ship"], env={"ENVCTL_DEFAULT_MODE": "main"})
+
+            extra = engine.action_command_orchestrator.ship_action_extra_env(route)
+
+            self.assertEqual(extra.get("ENVCTL_SHIP_PR_LABEL_ENABLE"), "true")
+            self.assertEqual(extra.get("ENVCTL_SHIP_PR_LABEL"), "codex-generated")
+
     def test_git_actions_fallback_to_system_python_when_repo_has_no_venv(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
