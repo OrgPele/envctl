@@ -274,10 +274,20 @@ class MachineStats:
         return self.load_1m / max(self.cpu_count, 1)
 
     @property
+    def load_per_cpu_percent(self) -> float:
+        return self.load_per_cpu * 100.0
+
+    @property
     def memory_available_percent(self) -> float | None:
         if not self.memory_total_bytes or self.memory_available_bytes is None:
             return None
         return self.memory_available_bytes * 100.0 / self.memory_total_bytes
+
+    @property
+    def memory_used_percent(self) -> float | None:
+        if self.memory_available_percent is None:
+            return None
+        return max(0.0, 100.0 - self.memory_available_percent)
 
     @property
     def disk_free_percent(self) -> float:
@@ -981,7 +991,8 @@ def overload_reasons(
     reasons: list[str] = []
     if stats.load_per_cpu > config.max_load_per_cpu:
         reasons.append(
-            f"1m load per CPU is {stats.load_per_cpu:.2f}, "
+            f"CPU load pressure is {stats.load_per_cpu_percent:.1f}% "
+            f"(1m load per CPU is {stats.load_per_cpu:.2f}), "
             f"above threshold {config.max_load_per_cpu:.2f}"
         )
     if (
@@ -1413,7 +1424,8 @@ class PreviewController:
             return self.delete(pr, reason="PR closed without merge")
         if action in {"synchronize", "reopened"}:
             if pr.has_label(self.config.label):
-                return self.start(pr, reason=f"PR {action}")
+                reason = "new commit pushed" if action == "synchronize" else "PR reopened"
+                return self.start(pr, reason=reason)
             return 0
         return 0
 
@@ -1971,6 +1983,8 @@ class PreviewController:
                 pr.number,
                 self.render_stopped_comment(pr, project_name, reason, result),
             )
+        if result.returncode == 0 and release_external_deps and state:
+            self.blast_all_if_scaled_to_zero([state], reconcile_states=False)
         return result.returncode
 
     def delete(self, pr: PullRequestInfo, *, reason: str) -> int:
@@ -2013,6 +2027,8 @@ class PreviewController:
 
     def sweep(self) -> int:
         active_prs = self.active_prs_with_label()
+        if not active_prs:
+            return self.blast_all_if_scaled_to_zero()
         now = utc_now()
         exit_code = 0
         for pr in active_prs:
@@ -2039,9 +2055,80 @@ class PreviewController:
                 self.remove_label(pr.number)
                 exit_code = exit_code or stop_code
                 continue
+            if state and state.status in {"running", "starting"}:
+                if state.head_sha and state.head_sha != pr.head_sha:
+                    exit_code = exit_code or self.start(
+                        pr,
+                        reason="scheduled reconciliation for new commit",
+                    )
+                continue
             if state is None or state.status not in {"running", "starting"}:
                 exit_code = exit_code or self.start(pr, reason="scheduled reconciliation")
         return exit_code
+
+    def blast_all_if_scaled_to_zero(
+        self,
+        candidate_states: list[PreviewState] | None = None,
+        reconcile_states: bool = True,
+    ) -> int:
+        active_prs = self.active_prs_with_label()
+        if active_prs:
+            return 0
+        states = candidate_states or self.load_all_states()
+        running_states = [
+            state
+            for state in states
+            if state.status not in {"stopped", "deleted"}
+        ]
+        if not running_states:
+            return 0
+        return self.blast_all_preview_processes(
+            running_states,
+            reconcile_states=reconcile_states,
+        )
+
+    def blast_all_preview_processes(
+        self,
+        states: list[PreviewState],
+        *,
+        reconcile_states: bool,
+    ) -> int:
+        for state in states:
+            self.remove_public_routes(state.pr_number)
+        result = self.runner.run(
+            [
+                self.config.envctl_bin,
+                "blast-all",
+                "--force",
+                "--blast-keep-worktree-volumes",
+                "--blast-keep-main-volumes",
+            ],
+            cwd=self.config.control_repo,
+            check=False,
+            env=headless_envctl_env(),
+        )
+        if result.returncode != 0:
+            return result.returncode
+        if not reconcile_states:
+            return 0
+        updated_at = isoformat(utc_now()) or ""
+        for state in states:
+            self.mark_deployment_inactive(state)
+            self.release_external_dependency_leases(
+                state.pr_number,
+                state.external_dependencies,
+            )
+            self.save_state(
+                PreviewState(
+                    **{
+                        **asdict(state),
+                        "status": "stopped",
+                        "updated_at": updated_at,
+                        "external_dependencies": {},
+                    }
+                )
+            )
+        return 0
 
     def ensure_control_repo(
         self,
@@ -2449,6 +2536,25 @@ class PreviewController:
     def state_path(self, pr_number: int) -> Path:
         return self.config.state_dir / f"pr-{pr_number}.json"
 
+    def load_all_states(self) -> list[PreviewState]:
+        if not self.config.state_dir.exists():
+            return []
+        states: list[PreviewState] = []
+        for path in sorted(self.config.state_dir.glob("pr-*.json")):
+            try:
+                payload = json.loads(path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            payload.setdefault("external_dependencies", {})
+            allowed = {item.name for item in fields(PreviewState)}
+            try:
+                states.append(
+                    PreviewState(**{key: payload.get(key) for key in allowed})
+                )
+            except TypeError:
+                continue
+        return states
+
     def load_state(self, pr_number: int) -> PreviewState | None:
         path = self.state_path(pr_number)
         if not path.exists():
@@ -2749,6 +2855,7 @@ class PreviewController:
             else f"unavailable ({stats.docker_error or 'unknown error'})"
         )
         memory_available_percent = percent(stats.memory_available_percent)
+        memory_used_percent = percent(stats.memory_used_percent)
         reason_lines = "\n".join(f"- {reason}" for reason in reasons)
         return (
             f"{COMMENT_MARKER}\n"
@@ -2759,7 +2866,9 @@ class PreviewController:
             "Machine stats at decision time:\n"
             f"- Load average: {stats.load_1m:.2f}, {stats.load_5m:.2f}, {stats.load_15m:.2f}\n"
             f"- CPUs: {stats.cpu_count}; 1m load per CPU: {stats.load_per_cpu:.2f} "
-            f"(threshold {self.config.max_load_per_cpu:.2f})\n"
+            f"({stats.load_per_cpu_percent:.1f}% pressure; "
+            f"threshold {self.config.max_load_per_cpu:.2f})\n"
+            f"- Memory used: {memory_used_percent}\n"
             f"- Memory available: {gib(stats.memory_available_bytes)} / "
             f"{gib(stats.memory_total_bytes)} ({memory_available_percent}; "
             f"threshold {self.config.min_memory_available_percent:.1f}%)\n"

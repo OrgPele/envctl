@@ -225,7 +225,9 @@ INSPECTION_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         what_it_does=(
             "coordinates GitHub pull-request preview environments from label, PR, schedule, or manual events",
             "imports or updates the PR branch, starts an isolated full envctl runtime, and publishes public routes",
+            "redeploys labeled PRs when new commits arrive or scheduled reconciliation detects a stale head",
             "stops previews when the label is removed and deletes imported worktrees when PRs close or merge",
+            "runs storage-preserving blast-all cleanup when the active preview count reaches zero",
             "posts PR comments, creates GitHub deployments, and records preview state for later reconciliation",
         ),
         flags=(

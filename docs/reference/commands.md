@@ -238,6 +238,31 @@ Behavior:
 - prefers the project's public frontend URL when one is projected or explicitly configured
 - writes `playwright-runtime-metadata.json` under the active run's `test-results` directory with the endpoint artifact path and without persisting the inherited subprocess environment
 
+## `pr-preview-controller`
+
+`pr-preview-controller` runs the GitHub label-driven PR preview controller.
+
+```bash
+envctl pr-preview-controller
+envctl pr-preview-controller --command sweep
+envctl pr-preview-controller --command start --pr-number 287
+```
+
+Behavior:
+
+- starts or reconciles a preview when the configured label is added
+- redeploys labeled PRs when GitHub sends a new-commit event
+- also redeploys during scheduled reconciliation if the saved preview head is stale
+- stops previews when the label is removed
+- deletes imported worktrees when a PR closes or merges
+- comments with CPU, memory, disk, Docker, and process evidence when the runner
+  is too loaded to deploy
+- runs storage-preserving `envctl blast-all` cleanup when active preview count
+  reaches zero, passing keep-volume flags so leftover containers and processes
+  are killed without deleting copied runtime storage
+- records GitHub deployments and marks them inactive when previews stop
+- is intended for trusted CI runners with `gh`, `git`, Docker, and envctl available
+
 
 ## Runtime Resolution Events
 
