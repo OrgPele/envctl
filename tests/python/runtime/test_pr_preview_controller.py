@@ -282,6 +282,17 @@ def pr_payload(*, action, labels=None, event_label=None, merged=False):
     return payload
 
 
+def push_payload(ref="refs/heads/feature/demo", *, deleted=False):
+    return {
+        "deleted": deleted,
+        "ref": ref,
+        "repository": {
+            "name": "pele-monorepo",
+            "owner": {"login": "OrgPele"},
+        },
+    }
+
+
 def pr_list_payload(number, title, head_ref="feature/demo"):
     return {
         "number": number,
@@ -1165,6 +1176,54 @@ def test_manual_start_refreshes_preview_ttl_when_label_is_old(tmp_path):
     assert "2000-01-01" not in runner.comments[-1]
 
 
+def test_push_event_refreshes_preview_ttl_for_labeled_branch(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        active_prs=[pr_list_payload(789, "Preview me", head_ref="feature/demo")],
+        timeline="labeled\t2000-01-01T00:00:00Z\tdeploy-app\n",
+        projects={
+            "projects": [
+                {"name": "feature/demo", "root": str(root), "running": True}
+            ]
+        },
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+    )
+    config = make_config(controller, tmp_path, ttl_minutes=45)
+    instance = controller.PreviewController(config, runner)
+
+    exit_code = instance.run_push_event(push_payload())
+
+    assert exit_code == 0
+    state = instance.load_state(789)
+    assert state is not None
+    started_at = controller.parse_github_datetime(state.started_at)
+    expires_at = controller.parse_github_datetime(state.expires_at)
+    assert started_at is not None
+    assert expires_at is not None
+    assert (expires_at - started_at).total_seconds() > 44 * 60
+    assert "2000-01-01" not in runner.comments[-1]
+    assert "- Reason: push to labeled PR branch feature/demo" in runner.comments[-1]
+
+
+def test_push_event_ignores_unmatched_labeled_pr_branch(tmp_path):
+    controller = load_controller()
+    runner = FakeRunner(
+        controller,
+        active_prs=[pr_list_payload(789, "Other branch", head_ref="feature/other")],
+    )
+    config = make_config(controller, tmp_path)
+    instance = controller.PreviewController(config, runner)
+
+    exit_code = instance.run_push_event(push_payload())
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "import") == []
+
+
 def test_start_stops_existing_tracked_preview_before_reimport(tmp_path):
     controller = load_controller()
     root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
@@ -1242,7 +1301,7 @@ def test_synchronize_event_redeploys_labeled_pr(tmp_path):
         endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
         root_to_branch={str(root): "feature/demo"},
     )
-    config = make_config(controller, tmp_path)
+    config = make_config(controller, tmp_path, ttl_minutes=45)
     instance = controller.PreviewController(config, runner)
     instance.save_state(
         controller.PreviewState(
@@ -1277,7 +1336,14 @@ def test_synchronize_event_redeploys_labeled_pr(tmp_path):
         ["envctl", "import"],
         ["envctl", "start"],
     ]
-    assert instance.load_state(789).head_sha == "abc123456789"
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.head_sha == "abc123456789"
+    started_at = controller.parse_github_datetime(state.started_at)
+    expires_at = controller.parse_github_datetime(state.expires_at)
+    assert started_at is not None
+    assert expires_at is not None
+    assert (expires_at - started_at).total_seconds() > 44 * 60
     assert "- Reason: new commit pushed" in runner.comments[-1]
 
 

@@ -1380,6 +1380,8 @@ class PreviewController:
             return self.run_command(args.command, args.pr_number)
         if event_name == "pull_request_target":
             return self.run_pull_request_event(event)
+        if event_name == "push":
+            return self.run_push_event(event)
         if event_name == "schedule":
             return self.sweep()
         if event_name == "workflow_dispatch":
@@ -1427,9 +1429,49 @@ class PreviewController:
         if action in {"synchronize", "reopened"}:
             if pr.has_label(self.config.label):
                 reason = "new commit pushed" if action == "synchronize" else "PR reopened"
-                return self.start(pr, reason=reason)
+                return self.start(
+                    pr,
+                    reason=reason,
+                    refresh_ttl=action == "synchronize",
+                )
             return 0
         return 0
+
+    def run_push_event(self, event: dict[str, Any]) -> int:
+        if event.get("deleted"):
+            print("Ignoring deleted branch push")
+            return 0
+        ref = str(event.get("ref") or "")
+        prefix = "refs/heads/"
+        if not ref.startswith(prefix):
+            print(f"Ignoring non-branch push ref: {ref!r}")
+            return 0
+        branch = ref.removeprefix(prefix)
+        owner, repo = self.config.repo_slug.split("/", 1)
+        matching_prs = [
+            pr
+            for pr in self.active_prs_with_label()
+            if pr.head_ref == branch
+            and pr.head_repo_owner == owner
+            and pr.head_repo_name == repo
+        ]
+        if not matching_prs:
+            print(
+                f"No open same-repo PR with `{self.config.label}` label found for "
+                f"pushed branch {branch!r}"
+            )
+            return 0
+        exit_code = 0
+        for pr in matching_prs:
+            exit_code = max(
+                exit_code,
+                self.start(
+                    pr,
+                    reason=f"push to labeled PR branch {branch}",
+                    refresh_ttl=True,
+                ),
+            )
+        return exit_code
 
     def preview_requested_or_tracked(self, pr: PullRequestInfo) -> bool:
         return pr.has_label(self.config.label) or self.load_state(pr.number) is not None
