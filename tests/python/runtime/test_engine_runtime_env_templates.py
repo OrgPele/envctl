@@ -108,6 +108,45 @@ class EngineRuntimeEnvTemplatesTests(EngineRuntimeEnvTestCase):
         self.assertNotIn("DATABASE_URL", frontend_env)
         self.assertNotIn("APP_DATABASE_URL", frontend_env)
 
+    def test_project_service_env_resolves_explicit_source_env_from_runtime(self) -> None:
+        runtime = SimpleNamespace(
+            _command_override_value=lambda key: None,
+            env={
+                "ENVCTL_SOURCE_AI_PROVIDER": "gemini",
+                "ENVCTL_SOURCE_GOOGLE_API_KEY": "secret-google-key",
+            },
+            config=SimpleNamespace(
+                backend_dependency_env_section_present=True,
+                backend_dependency_env_template_errors=(),
+                backend_dependency_env_templates=(
+                    SimpleNamespace(
+                        name="AI_PROVIDER",
+                        template="${ENVCTL_SOURCE_AI_PROVIDER}",
+                        line_number=1,
+                    ),
+                    SimpleNamespace(
+                        name="GOOGLE_API_KEY",
+                        template="${ENVCTL_SOURCE_GOOGLE_API_KEY}",
+                        line_number=2,
+                    ),
+                ),
+            ),
+        )
+        context = SimpleNamespace(name="Main", ports={})
+        requirements = RequirementsResult(project="Main", health="healthy", failures=[])
+
+        backend_env = project_service_env(
+            runtime,
+            context,
+            requirements=requirements,
+            route=None,
+            service_name="backend",
+        )
+
+        self.assertEqual(backend_env["AI_PROVIDER"], "gemini")
+        self.assertEqual(backend_env["GOOGLE_API_KEY"], "secret-google-key")
+        self.assertNotIn("ENVCTL_SOURCE_GOOGLE_API_KEY", backend_env)
+
     def test_project_service_env_combines_shared_and_frontend_templates_for_frontend(self) -> None:
         runtime = SimpleNamespace(
             _command_override_value=lambda key: None,

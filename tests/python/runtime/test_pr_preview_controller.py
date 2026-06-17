@@ -2168,6 +2168,8 @@ def test_headless_envctl_env_removes_plan_agent_aliases(monkeypatch):
     monkeypatch.setenv("ACTIONS_RUNTIME_TOKEN", "secret")
     monkeypatch.setenv("ENVCTL_PREVIEW_EXTERNAL_DEPS_JSON", '{"supabase":[]}')
     monkeypatch.setenv("ENVCTL_PREVIEW_PUBLIC_LINK_TOKEN", "public-link-token")
+    monkeypatch.setenv("ENVCTL_SOURCE_AI_PROVIDER", "gemini")
+    monkeypatch.setenv("ENVCTL_SOURCE_GOOGLE_API_KEY", "google-api-key")
 
     env = controller.headless_envctl_env()
 
@@ -2179,6 +2181,8 @@ def test_headless_envctl_env_removes_plan_agent_aliases(monkeypatch):
     assert "ACTIONS_RUNTIME_TOKEN" not in env
     assert "ENVCTL_PREVIEW_EXTERNAL_DEPS_JSON" not in env
     assert "ENVCTL_PREVIEW_PUBLIC_LINK_TOKEN" not in env
+    assert env["ENVCTL_SOURCE_AI_PROVIDER"] == "gemini"
+    assert env["ENVCTL_SOURCE_GOOGLE_API_KEY"] == "google-api-key"
     assert env["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] == "false"
     assert env["ENVCTL_UI_BACKEND"] == "non_interactive"
 
