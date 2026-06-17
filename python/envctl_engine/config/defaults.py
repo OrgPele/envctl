@@ -47,6 +47,7 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_PLAN_AGENT_CODEX_GOAL_ENABLE": "true",
         "ENVCTL_PLAN_AGENT_CODEX_YOLO": "true",
         "ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE": "false",
+        "ENVCTL_PLAN_AGENT_FULLSTACK_PR_URL_E2E_ENABLE": "false",
         "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE": "false",
         "ENVCTL_SHIP_PR_LABEL_ENABLE": "false",
         "ENVCTL_SHIP_PR_LABEL": "deploy-app",
@@ -130,4 +131,5 @@ MANAGED_CONFIG_KEYS: tuple[str, ...] = (
     "TREES_BACKEND_ENABLE",
     "TREES_BACKEND_EXPECT_LISTENER",
     "TREES_FRONTEND_ENABLE",
+    "ENVCTL_PLAN_AGENT_FULLSTACK_PR_URL_E2E_ENABLE",
 )

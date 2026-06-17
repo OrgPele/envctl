@@ -68,6 +68,13 @@ class CreatePlanPromptContractTests(unittest.TestCase):
             "5. One short approval question asking whether you should run the envctl worktree-and-prompt follow-up now or whether the user wants to run it manually.",
         )
 
+    def test_create_plan_prompt_distinguishes_launch_scope_from_validation(self) -> None:
+        self.assertContainsCluster(
+            "Treat this as plan-agent scope metadata and dependency-prep intent, not as an instruction for the implementation prompt to start local services or prove the feature through local deployment.",
+            "Separately record the validation lane: focused tests and `envctl ship` by default, plus deployed PR URL browser validation only when browser E2E is required.",
+            "explain that launch-scope flags select the implementation surface for the plan-agent workflow; they do not replace focused tests, `envctl ship`, or deployed PR URL validation",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

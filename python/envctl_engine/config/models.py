@@ -262,6 +262,7 @@ class EngineConfig:
     plan_agent_codex_goal_enable: bool
     plan_agent_codex_yolo: bool
     plan_agent_browser_e2e_enable: bool
+    plan_agent_fullstack_pr_url_e2e_enable: bool
     plan_agent_pr_review_comments_enable: bool
     plan_agent_shell: str
     plan_agent_require_cmux_context: bool
@@ -381,4 +382,3 @@ class EngineConfig:
         if normalized == "trees":
             return bool(self.trees_backend_expect_listener)
         return bool(self.main_backend_expect_listener)
-

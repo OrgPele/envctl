@@ -87,6 +87,13 @@ class PlanAgentLaunchPolicy:
                 direct_prompt_enabled = True
         if bool(route_flags.get("no_ulw_loop")):
             ulw_loop_prefix = False
+        browser_e2e_explicit_enable = self._bool_value("ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE", False)
+        (
+            fullstack_pr_url_e2e_enable,
+            fullstack_pr_url_e2e_active,
+            fullstack_pr_url_e2e_reason,
+        ) = self._fullstack_pr_url_e2e_state(cli=cli)
+        browser_e2e_followup_enable = browser_e2e_explicit_enable or fullstack_pr_url_e2e_active
 
         return PlanAgentLaunchConfig(
             enabled=self._launch_enabled(
@@ -103,7 +110,10 @@ class PlanAgentLaunchPolicy:
             preset=self._string_value("ENVCTL_PLAN_AGENT_PRESET") or _DEFAULT_PRESET,
             codex_cycles=codex_cycles,
             codex_cycles_warning=codex_cycles_warning,
-            browser_e2e_followup_enable=self._bool_value("ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE", False),
+            browser_e2e_followup_enable=browser_e2e_followup_enable,
+            fullstack_pr_url_e2e_enable=fullstack_pr_url_e2e_enable,
+            fullstack_pr_url_e2e_active=fullstack_pr_url_e2e_active,
+            fullstack_pr_url_e2e_reason=fullstack_pr_url_e2e_reason,
             pr_review_comments_followup_enable=self._bool_value(
                 "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE",
                 False,
@@ -228,6 +238,45 @@ class PlanAgentLaunchPolicy:
         if bool(route_flags.get("no_goal")) or bool(route_flags.get("no_codex_goal")):
             return False
         return enabled
+
+    def _fullstack_pr_url_e2e_state(self, *, cli: str) -> tuple[bool, bool, str | None]:
+        enabled = self._bool_value("ENVCTL_PLAN_AGENT_FULLSTACK_PR_URL_E2E_ENABLE", False)
+        if not enabled:
+            return False, False, "disabled"
+        if str(cli).strip().lower() != "codex":
+            return True, False, "unsupported_cli"
+        narrowed_reason = self._fullstack_scope_inactive_reason()
+        if narrowed_reason:
+            return True, False, narrowed_reason
+        mode = self._plan_agent_service_mode()
+        app_services = set(self.config.all_app_service_names_for_mode(mode, self.config.execution_root))
+        backend_enabled = self.config.service_enabled_for_mode(mode, "backend") and "backend" in app_services
+        frontend_enabled = self.config.service_enabled_for_mode(mode, "frontend") and "frontend" in app_services
+        if not backend_enabled and not frontend_enabled:
+            return True, False, f"{mode}_backend_frontend_disabled"
+        if not backend_enabled:
+            return True, False, f"{mode}_backend_disabled"
+        if not frontend_enabled:
+            return True, False, f"{mode}_frontend_disabled"
+        return True, True, None
+
+    def _fullstack_scope_inactive_reason(self) -> str | None:
+        route_flags = self.route_flags
+        runtime_scope = str(route_flags.get("runtime_scope") or "").strip().lower()
+        if runtime_scope in {"backend", "frontend", "dependencies"}:
+            return f"runtime_scope_{runtime_scope}"
+        if runtime_scope and runtime_scope not in {"fullstack", "entire-system"}:
+            return "runtime_scope_narrow"
+        if route_flags.get("launch_backend") is False or route_flags.get("launch_frontend") is False:
+            return "narrow_service_scope"
+        return None
+
+    def _plan_agent_service_mode(self) -> str:
+        route_mode = str(getattr(self.route, "mode", "") or "").strip().lower()
+        if route_mode in {"main", "trees"}:
+            return route_mode
+        configured = str(getattr(self.config, "default_mode", "") or "").strip().lower()
+        return configured if configured in {"main", "trees"} else "main"
 
     def _value(self, key: str) -> object:
         return self.env.get(key) or self.config.raw.get(key)

@@ -126,6 +126,7 @@ class TestPlanActionTests(unittest.TestCase):
 
         self.assertEqual(result["changed_files"], ["new_tool.py", "python/envctl_engine/config/__init__.py"])
         self.assertTrue(is_envctl_local_artifact_path(".envctl-commit-message.md"))
+        self.assertFalse(is_envctl_local_artifact_path("docs/reference/.envctl.example"))
 
     def test_default_mode_executes_focused_commands_until_first_failure(self) -> None:
         class Context:

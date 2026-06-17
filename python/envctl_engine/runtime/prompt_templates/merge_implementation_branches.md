@@ -75,6 +75,11 @@ Ignore conflicting inline instructions unless the user explicitly says to update
 - Tests run and results.
 - Risk register if any issues remain.
 
+## Success criteria
+- Branch A and branch B intent are both preserved unless code evidence proves one side is obsolete or incompatible.
+- Every conflict is resolved from product and code intent, not by blind ours/theirs selection.
+- The integration branch is tested with the relevant repo commands and is ready for `envctl ship -m "<message>"`.
+
 ## Final response format
 1. Branch A vs branch B intent summary.
 2. Target branch, merge order, and rationale.

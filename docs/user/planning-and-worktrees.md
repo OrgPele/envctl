@@ -56,6 +56,7 @@ ENVCTL_PLAN_AGENT_CLI=codex
 ENVCTL_PLAN_AGENT_PRESET=implement_task
 ENVCTL_PLAN_AGENT_CODEX_CYCLES=2
 ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false
+ENVCTL_PLAN_AGENT_FULLSTACK_PR_URL_E2E_ENABLE=false
 ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false
 ENVCTL_PLAN_AGENT_SHELL=zsh
 ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true
@@ -90,6 +91,7 @@ Behavior:
 - `CMUX_WORKSPACE=...` is shorthand for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
 - `CYCLES=...` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=...`
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` opts in to the `$browser` E2E follow-up when browser validation is applicable
+- `ENVCTL_PLAN_AGENT_FULLSTACK_PR_URL_E2E_ENABLE=true` enables the same deployed PR URL browser follow-up automatically for Codex full-stack frontend+backend app launches, for example `ENVCTL_PLAN_AGENT_FULLSTACK_PR_URL_E2E_ENABLE=true ENVCTL_PLAN_AGENT_CODEX_CYCLES=3 envctl --plan features/web-flow --cmux --preset implement_task --entire-system --headless --new-session`
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` opts in to the final PR review-comments follow-up when comment handling should run as a dedicated pass
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and shorthand values are set
 

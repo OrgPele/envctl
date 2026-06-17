@@ -85,16 +85,16 @@ Use this structure (adapt section names only if truly necessary):
 - One plan file created in todo/plans/<category>/.
 
 ## Launch scope default
-Before showing or running any envctl worktree-and-prompt follow-up, default implementation launches to the full stack with `--entire-system` so every feature plan starts with dependencies plus all configured backend/frontend services available for E2E validation.
+Before showing or running any envctl worktree-and-prompt follow-up, default implementation launches to the full-stack implementation surface with `--entire-system`. Treat this as plan-agent scope metadata and dependency-prep intent, not as an instruction for the implementation prompt to start local services or prove the feature through local deployment.
 
-- For backend-only changes, still default to `--entire-system` unless the user explicitly requests `--only-backend` or repo evidence proves full-stack startup is impossible or actively harmful.
-- For frontend-only changes, still default to `--entire-system` unless the user explicitly requests `--only-frontend` or repo evidence proves full-stack startup is impossible or actively harmful.
+- For backend-only changes, still default to `--entire-system` unless the user explicitly requests `--only-backend` or repo evidence proves the full-stack implementation surface is impossible or actively harmful.
+- For frontend-only changes, still default to `--entire-system` unless the user explicitly requests `--only-frontend` or repo evidence proves the full-stack implementation surface is impossible or actively harmful.
 - For changes that touch both backend and frontend, cross-stack contracts, shared runtime config, browser-visible behavior, or anything uncertain, use `--entire-system`.
 - For plans that truly need no runtime infrastructure (docs-only, prompt-only, pure static analysis, non-runtime metadata, or other edits that cannot benefit from backend, frontend, managed dependencies, or dependency prep), include `--no-infra` and explain why full-stack E2E does not apply.
 - For explicitly requested dependency/container/infrastructure verification, keep `--entire-system` unless a narrower dependency-only validation is part of the user's request or the repo's evidence.
 - If the user explicitly requests a launch scope, honor that request unless it conflicts with verified repo requirements.
 
-Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run.
+Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run. Separately record the validation lane: focused tests and `envctl ship` by default, plus deployed PR URL browser validation only when browser E2E is required.
 
 ## Browser E2E decision
 Before showing or running any envctl worktree-and-prompt follow-up, decide whether the implementation needs the browser E2E follow-up. Record both the browser E2E decision and rationale in the plan's Rollout / verification section as `browser_e2e_required: true` or `browser_e2e_required: false`.
@@ -131,6 +131,7 @@ Prefer the smallest number that can plausibly finish the task and verify it; `3`
     - `--headless`: envctl stays non-interactive and prints follow-up/attach guidance instead of taking over the current terminal
     - `--new-session`: create a fresh cmux surface, tmux session, or OMX-managed session instead of attaching to an existing one
   - whenever you show a follow-up command, include `--entire-system` by default; use narrower flags (`--only-frontend`, `--only-backend`, or `--no-infra`) only when the plan records why full-stack E2E does not apply
+  - explain that launch-scope flags select the implementation surface for the plan-agent workflow; they do not replace focused tests, `envctl ship`, or deployed PR URL validation
   - whenever the plan records `browser_e2e_required: true`, prefix shown/run follow-up commands with `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true`; leave it unset or false when browser E2E is not required
   - default to the cmux launcher when cmux is installed; use `--tmux` only when cmux is unavailable or the user explicitly asks for tmux
   - whenever you show a follow-up command, also explain in plain language what happens when that exact command runs: whether envctl only prints guidance or actually launches a session, whether the session is tmux-managed by envctl or OMX-managed by omx, whether the current terminal is taken over, and how the user can reconnect to the launched session later
