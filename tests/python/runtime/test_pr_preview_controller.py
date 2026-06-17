@@ -28,6 +28,9 @@ class FakeRunner:
         start_returncode: int = 0,
         start_stdout: str = "",
         start_stderr: str = "",
+        stop_returncode: int = 0,
+        stop_stdout: str = "",
+        stop_stderr: str = "",
     ):
         self.controller = controller
         self.active_prs = active_prs or []
@@ -38,6 +41,9 @@ class FakeRunner:
         self.start_returncode = start_returncode
         self.start_stdout = start_stdout
         self.start_stderr = start_stderr
+        self.stop_returncode = stop_returncode
+        self.stop_stdout = stop_stdout
+        self.stop_stderr = stop_stderr
         self.calls = []
         self.comments = []
         self.deployments = []
@@ -162,8 +168,14 @@ class FakeRunner:
             )
         if argv[:3] == ["envctl", "qa-user", "ensure"]:
             return self.ok(argv, stdout="ok\n")
+        if argv[:2] == ["envctl", "stop"]:
+            return self.controller.CommandResult(
+                argv=list(argv),
+                returncode=self.stop_returncode,
+                stdout=self.stop_stdout,
+                stderr=self.stop_stderr,
+            )
         if argv[:2] in (
-            ["envctl", "stop"],
             ["envctl", "delete-worktree"],
             ["envctl", "blast-worktree"],
             ["envctl", "blast-all"],
@@ -1411,6 +1423,48 @@ def test_synchronize_event_redeploys_labeled_pr(tmp_path):
     assert expires_at is not None
     assert (expires_at - started_at).total_seconds() > 44 * 60
     assert "- Reason: new commit pushed" in runner.comments[-1]
+
+
+def test_start_continues_when_pre_start_stop_has_no_selected_services(
+    tmp_path,
+    capsys,
+):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        projects={
+            "projects": [
+                {"name": "feature/demo", "root": str(root), "running": False}
+            ]
+        },
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+        stop_returncode=1,
+        stop_stdout="No matching services selected for stop.",
+    )
+    config = make_config(controller, tmp_path)
+    instance = controller.PreviewController(config, runner)
+    pr = controller.pr_from_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+
+    exit_code = instance.start(pr, reason="label added")
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "stop") == [
+        ["envctl", "stop", "--trees", "--project", "feature/demo", "--entire-system"]
+    ]
+    assert command_argvs(runner, "envctl", "start")
+    assert "pre-start stop failed; continuing" in capsys.readouterr().out
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.status == "running"
 
 
 def test_start_blasts_previous_failed_preview_before_reimport(tmp_path):
