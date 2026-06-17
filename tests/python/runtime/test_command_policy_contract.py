@@ -84,6 +84,7 @@ class CommandPolicyContractTests(unittest.TestCase):
             "install-prompts": "utility",
             "codex-tmux": "utility",
             "supabase-user": "utility",
+            "pr-preview-controller": "utility",
             "debug-pack": "debug",
             "stop": "lifecycle_cleanup",
             "resume": "resume",

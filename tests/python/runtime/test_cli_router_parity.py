@@ -39,6 +39,8 @@ class CliRouterParityTests(unittest.TestCase):
             "--debug-ui-pack": "debug-pack",
             "--endpoints": "endpoints",
             "--qa-user": "qa-user",
+            "--pr-preview-controller": "pr-preview-controller",
+            "--pr-preview": "pr-preview-controller",
         }
         for token, command in expected.items():
             route = parse_route([token], env={})
@@ -57,6 +59,9 @@ class CliRouterParityTests(unittest.TestCase):
             "qa-user": "qa-user",
             "qa-users": "qa-user",
             "playwright": "playwright",
+            "pr-preview-controller": "pr-preview-controller",
+            "pr-preview": "pr-preview-controller",
+            "github-pr-preview": "pr-preview-controller",
         }
         for token, command in expected.items():
             route = parse_route([token], env={})
@@ -340,6 +345,14 @@ class CliRouterParityTests(unittest.TestCase):
         route = parse_route(["codex-tmux", "workspace"], env={})
         self.assertEqual(route.command, "codex-tmux")
         self.assertEqual(route.passthrough_args, ["workspace"])
+
+        route = parse_route(["pr-preview-controller", "--", "--command", "sweep", "--dry-run"], env={})
+        self.assertEqual(route.command, "pr-preview-controller")
+        self.assertEqual(route.passthrough_args, ["--command", "sweep", "--dry-run"])
+
+        route = parse_route(["pr-preview-controller", "--command", "sweep", "--dry-run"], env={})
+        self.assertEqual(route.command, "pr-preview-controller")
+        self.assertEqual(route.passthrough_args, ["--command", "sweep", "--dry-run"])
 
         route = parse_route(["health"], env={})
         self.assertEqual(route.command, "health")

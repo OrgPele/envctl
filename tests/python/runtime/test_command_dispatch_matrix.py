@@ -48,8 +48,8 @@ class CommandDispatchMatrixTests(unittest.TestCase):
         runtime._debug_last = lambda _route: 0  # type: ignore[method-assign]
         runtime._discover_projects = lambda mode: []  # type: ignore[method-assign]
 
-        # Verify we have exactly 45 commands
-        self.assertEqual(len(commands), 45, f"Expected 45 commands, got {len(commands)}")
+        # Verify we have exactly 46 commands
+        self.assertEqual(len(commands), 46, f"Expected 46 commands, got {len(commands)}")
 
         # Expected command set
         expected_commands = {
@@ -68,6 +68,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "endpoints",
             "qa-user",
             "playwright",
+            "pr-preview-controller",
             "supabase-user",
             "test",
             "test-focused",
@@ -157,6 +158,7 @@ class CommandDispatchMatrixTests(unittest.TestCase):
             "supabase-user": "utility_dispatch",
             "qa-user": "utility_dispatch",
             "playwright": "utility_dispatch",
+            "pr-preview-controller": "utility_dispatch",
             # Direct handlers in dispatch
             "list-commands": "direct_dispatch",
             "list-targets": "direct_dispatch",

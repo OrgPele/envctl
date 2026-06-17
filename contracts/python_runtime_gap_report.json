@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "generated_at": "2026-05-26T19:53:37+00:00",
-  "matrix_generated_at": "2026-05-26T19:53:37+00:00",
-  "matrix_sha256": "d92dc49410b18f0e8ca58dbd83dce7b76a9d87cfaab03e09074deb0771cfc91d",
+  "generated_at": "2026-06-17T09:49:31+00:00",
+  "matrix_generated_at": "2026-06-17T09:49:19+00:00",
+  "matrix_sha256": "428d83c41bb0bdbce0468f17a5719c087890ab86dd1b04082ce1063ab4f77548",
   "summary": {
-    "feature_count": 58,
+    "feature_count": 59,
     "gap_count": 0,
     "high_or_medium_gap_count": 0,
     "by_status": {},

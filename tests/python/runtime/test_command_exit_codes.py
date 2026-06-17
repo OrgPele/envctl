@@ -370,6 +370,39 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(seen.get("base_dir"), requested_repo.resolve())
             self.assertTrue(seen.get("config_exists"))
 
+    def test_pr_preview_controller_owns_github_repo_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            seen: dict[str, object] = {}
+
+            def dispatcher(route, _config):  # noqa: ANN001
+                seen["command"] = route.command
+                seen["passthrough"] = list(route.passthrough_args)
+                return 0
+
+            code = cli.run(
+                [
+                    "pr-preview-controller",
+                    "--repo",
+                    "OrgPele/pele-monorepo",
+                    "--command",
+                    "sweep",
+                    "--dry-run",
+                ],
+                env={"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime)},
+                dispatcher=dispatcher,
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(seen.get("command"), "pr-preview-controller")
+            self.assertEqual(
+                seen.get("passthrough"),
+                ["--repo", "OrgPele/pele-monorepo", "--command", "sweep", "--dry-run"],
+            )
+
     def test_missing_envctl_allows_headless_config_set_without_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
