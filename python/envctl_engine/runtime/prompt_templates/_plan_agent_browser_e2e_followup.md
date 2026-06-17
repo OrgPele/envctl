@@ -1,9 +1,26 @@
 $browser
 
-After the implementation commit is pushed, the PR is created or updated, and GitHub status checks have completed successfully, run browser-based E2E validation against the URL already published in the generated PR or handoff message. Inspect the current branch PR body, latest commit message, and latest handoff text, especially the Verification and runtime-address sections, and find the frontend/app URL that was given to the reviewer. Prefer the published URL when it is reachable so you validate exactly what the human reviewer was handed.
+After the implementation commit is pushed, the PR is created or updated, and GitHub status checks have completed successfully, run browser-based E2E validation against the conventional deployment URL for the current PR. Re-read the initial `MAIN_TASK.md` and verify that the requested feature is completely implemented end-to-end.
 
-If the published URL is missing, stale, or unreachable, do not stop as a blocker before trying envctl-owned recovery: restart or resolve the envctl target yourself with the smallest scope that can prove the browser-visible behavior, defaulting to `envctl --entire-system --headless` when the feature crosses frontend/backend, auth, data, or dependency boundaries. Resolve the actual envctl project target from `envctl list-targets --json`, `envctl show-state --json`, or active endpoints; generated worktree directory names are not always valid project names. Prefer `envctl endpoints --project <actual-project-name> --json` for canonical active URLs, and use the recovered frontend/app URL for validation. Do not invent a localhost URL manually.
+Find the validation URL from the repository/PR naming convention, not from the PR body, comments, handoff text, envctl state, GitHub deployment statuses, or localhost/runtime-address sections. Use this exact flow, adjusting only if `jq` is unavailable:
 
-Re-read the initial `MAIN_TASK.md` and verify that the requested feature is completely implemented end-to-end using the published or recovered URL. Extract every manual/human check from the Verification section and try to perform every automatable check yourself through that URL, especially browser or E2E checks. If credentials are required, first use credentials explicitly provided in the PR, commit message, or handoff; if none were published, use `envctl qa-user ensure --project <actual-project-name> ... --json` to create or reuse deterministic local QA credentials for the active envctl target. Use `envctl playwright --project <actual-project-name> -- <executable> [args...]` for Playwright/browser tests against the active frontend. Use `envctl playwright --help` for wrapper help; after `--`, the first token must be an executable such as `npx`, not a wrapper help flag.
+```sh
+PR_JSON="$(gh pr view --json number,url,body)"
+PR_NUMBER="$(printf '%s' "$PR_JSON" | jq -r '.number')"
+REPO_NAME="$(
+  gh repo view --json name --jq '.name' |
+    tr '[:upper:]' '[:lower:]' |
+    sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
+)"
+DEPLOYMENT_URL="https://${REPO_NAME}-pr-${PR_NUMBER}.srv1512613.hstgr.cloud/"
 
-Because this follow-up is a Codex prompt, you may use the available `$browser` skill when it is installed in the session. If the feature is browser-visible or can be observed through the browser, prove it is visible in the browser and capture evidence. You must fix any issue, regression, or mismatch introduced by the implementation before final handoff, then rerun the relevant checks against the same URL class that exposed the issue and report what each check proved. Do not silently skip checks that were handed to a human: if a check is genuinely not automatable from this environment, name it, explain why, and state the exact remaining human confirmation with expected results. Stop only the exact envctl scope you started during this follow-up; leave pre-existing running targets alone.
+printf 'PR #%s conventional deployment URL: %s\n' "$PR_NUMBER" "$DEPLOYMENT_URL"
+test -n "$REPO_NAME"
+test -n "$DEPLOYMENT_URL"
+```
+
+Use `$DEPLOYMENT_URL` as the browser validation URL. For example, PR 287 in `pele-monorepo` should validate `https://pele-monorepo-pr-287.srv1512613.hstgr.cloud/`.
+
+Do not start services, discover runtime targets, create users, run `envctl`, query GitHub deployments, or invent a localhost URL on your own. If the conventional URL is not reachable, report that as the blocker and include the exact PR number, repo name, URL attempted, and observed browser/network failure.
+
+Use the PR body only to understand the implementation request and any listed manual verification checks; never use it as the source for the browser URL. Extract every manual/human check from the Verification section and try to perform every automatable check yourself through the conventional deployment URL, especially browser or E2E checks. If credentials are required, use only credentials explicitly provided in the PR/handoff or deployment comment. Because this follow-up is a Codex prompt, you may use the available `$browser` skill when it is installed in the session. If the feature is browser-visible or can be observed through the browser, prove it is visible in the browser and capture evidence. You must fix any issue, regression, or mismatch introduced by the implementation before final handoff, then rerun the relevant checks against the conventional deployment URL and report what each check proved. Do not silently skip checks that were handed to a human: if a check is genuinely not automatable from this environment, name it, explain why, and state the exact remaining human confirmation with expected results.
