@@ -19,8 +19,41 @@ from envctl_engine.runtime.launcher_support import (
     resolve_repo_root,
 )
 
+_PR_PREVIEW_CONTROLLER_TOKENS = {
+    "pr-preview-controller",
+    "pr-preview",
+    "github-pr-preview",
+    "--pr-preview-controller",
+    "--pr-preview",
+    "--github-pr-preview",
+}
+_BOOTSTRAP_SAFE_WITHOUT_REPO = {
+    "help",
+    "--help",
+    "-h",
+    "list-commands",
+    "--list-commands",
+    "show-config",
+    "--show-config",
+    "install-prompts",
+    "--install-prompts",
+    "codex-tmux",
+    "--codex-tmux",
+    "ensure-worktree",
+    "--ensure-worktree",
+    "supabase-user",
+    "--supabase-user",
+    "qa-user",
+    "--qa-user",
+    "playwright",
+    "--playwright",
+    *list(_PR_PREVIEW_CONTROLLER_TOKENS),
+}
+
 
 def _extract_repo_arg(argv: Sequence[str]) -> tuple[list[str], str | None]:
+    if _argv_invokes_pr_preview_controller(argv):
+        return list(argv), None
     filtered: list[str] = []
     repo_arg: str | None = None
     index = 0
@@ -45,6 +78,27 @@ def _extract_repo_arg(argv: Sequence[str]) -> tuple[list[str], str | None]:
         filtered.append(token)
         index += 1
     return filtered, repo_arg
+
+
+def _argv_invokes_pr_preview_controller(argv: Sequence[str]) -> bool:
+    index = 0
+    while index < len(argv):
+        token = str(argv[index])
+        if token in _PR_PREVIEW_CONTROLLER_TOKENS:
+            return True
+        if token in {"--command", "--action"}:
+            return index + 1 < len(argv) and str(argv[index + 1]) in _PR_PREVIEW_CONTROLLER_TOKENS
+        if token.startswith("--command=") or token.startswith("--action="):
+            return token.split("=", 1)[1] in _PR_PREVIEW_CONTROLLER_TOKENS
+        index += 1
+    return False
+
+
+def _argv_can_skip_repo_resolution(argv: Sequence[str]) -> bool:
+    if _argv_invokes_pr_preview_controller(argv):
+        return True
+    command = str(argv[0]) if argv else "start"
+    return command in _BOOTSTRAP_SAFE_WITHOUT_REPO
 
 
 def _extract_json_flag(argv: Sequence[str]) -> tuple[list[str], bool]:
@@ -144,8 +198,12 @@ def run(argv: Sequence[str] | None = None) -> int:
                 )
             return 0
         cwd = Path.cwd()
-        repo_root = resolve_repo_root(repo_arg=repo_arg, cwd=cwd)
-        execution_root = _resolve_execution_root(repo_arg=repo_arg, cwd=cwd)
+        if repo_arg is None and _argv_can_skip_repo_resolution(argv):
+            repo_root = cwd.resolve()
+            execution_root = cwd.resolve()
+        else:
+            repo_root = resolve_repo_root(repo_arg=repo_arg, cwd=cwd)
+            execution_root = _resolve_execution_root(repo_arg=repo_arg, cwd=cwd)
         return _forward_to_engine(root, repo_root, execution_root, argv)
     except LauncherError as exc:
         print(str(exc), file=sys.stderr)
