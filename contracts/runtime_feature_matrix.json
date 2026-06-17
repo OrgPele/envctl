@@ -1056,7 +1056,7 @@
         "tests/python/runtime/test_command_dispatch_matrix.py"
       ],
       "parity_status": "verified_python",
-      "notes": "PR preview orchestration is envctl-owned so repository CI only invokes the installed envctl binary with GitHub Actions environment inputs.",
+      "notes": "PR preview orchestration is envctl-owned so repository CI only invokes the installed envctl binary with GitHub Actions environment inputs. It redeploys labeled PRs on new commits, comments with machine-load evidence when overloaded, and runs storage-preserving blast-all cleanup at zero active previews.",
       "command": "pr-preview-controller"
     },
     {
