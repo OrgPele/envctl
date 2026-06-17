@@ -36,6 +36,7 @@ from envctl_engine.runtime.command_special_flags import (
     apply_default_headless_policy,
     apply_default_runtime_scope_policy,
     handle_env_assignment,
+    passthrough_after_command,
     handle_special_flag,
     set_dependency_scope,
     set_runtime_scope,
@@ -78,7 +79,7 @@ def parse_route(argv: list[str], env: Mapping[str, str]) -> Route:
     # Phase 3: Command/Mode Resolution - determine command and mode
     _phase_resolve_command_mode(classified, state)
     if state.command == "pr-preview-controller":
-        state.passthrough.extend(_passthrough_after_command(argv, "pr-preview-controller"))
+        state.passthrough.extend(passthrough_after_command(argv, "pr-preview-controller", COMMAND_ALIASES))
         state.passthrough.extend(passthrough_after_separator)
         return _phase_finalize(state, argv)
 
@@ -113,25 +114,6 @@ def _split_passthrough_separator(argv: list[str]) -> tuple[list[str], list[str]]
         return list(argv), []
     index = argv.index("--")
     return list(argv[:index]), list(argv[index + 1 :])
-
-
-def _passthrough_after_command(argv: list[str], command: str) -> list[str]:
-    index = 0
-    while index < len(argv):
-        token = argv[index]
-        if COMMAND_ALIASES.get(token) == command:
-            return list(argv[index + 1 :])
-        if token in {"--command", "--action"}:
-            if index + 1 < len(argv) and COMMAND_ALIASES.get(argv[index + 1]) == command:
-                return list(argv[index + 2 :])
-            index += 2
-            continue
-        if token.startswith("--command=") or token.startswith("--action="):
-            value = token.split("=", 1)[1]
-            if COMMAND_ALIASES.get(value) == command:
-                return list(argv[index + 1 :])
-        index += 1
-    return []
 
 
 def _phase_classify(normalized: list[tuple[str, str]]) -> list[dict[str, str | object]]:
