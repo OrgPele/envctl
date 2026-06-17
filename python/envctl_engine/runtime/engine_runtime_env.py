@@ -304,6 +304,7 @@ def project_service_env(
         env.update(dependency_env)
     env.update(runtime_env_overrides(route))
     _apply_route_log_overrides(env, route)
+    env.update(service_env_overlays(runtime, service_name=service_name or "", base_env=env))
     return env
 
 
