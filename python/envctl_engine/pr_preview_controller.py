@@ -1683,17 +1683,12 @@ class PreviewController:
 
         pre_start_stop = self.stop_project_before_start(str(project.get("name") or ""))
         if pre_start_stop.returncode != 0:
-            self.release_external_dependency_leases(pr.number, external_dependencies)
-            self.comment(
-                pr.number,
-                self.render_failure_comment(
-                    pr,
-                    "envctl pre-start stop failed",
-                    pre_start_stop.stdout,
-                    pre_start_stop.stderr,
-                ),
+            print(
+                "Warning: envctl pre-start stop failed; continuing with preview "
+                f"start. stdout={truncate(pre_start_stop.stdout)!r} "
+                f"stderr={truncate(pre_start_stop.stderr)!r}",
+                flush=True,
             )
-            return pre_start_stop.returncode
 
         start_env = self.envctl_command_env()
         start_env.update(pr_preview_start_env_overrides())
