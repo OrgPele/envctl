@@ -17,4 +17,4 @@ cd <repo-root> && ENVCTL_PLAN_AGENT_CODEX_CYCLES=<recommended_codex_cycles> envc
 Use a narrower runtime scope only when the plan explicitly records why full-stack E2E does not apply.
 
 ## Final Response
-Report the plan path, implementation surface, exact command executed, launch result, attach/reconnect guidance, and any residual risks.
+Report the plan path, exact command executed, launch result, attach/reconnect guidance, and any residual risks.

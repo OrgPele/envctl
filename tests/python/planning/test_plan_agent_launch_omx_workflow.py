@@ -32,8 +32,13 @@ class PlanAgentLaunchOmxWorkflowTests(PlanAgentLaunchSupportTestCase):
                         codex_goal_enable=True,
                     )
                     workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=1)
+                    goals: list[str] = []
                     submitted: list[str] = []
                     queued: list[str] = []
+
+                    def fake_submit_goal(*_args, goal_text, **_kwargs):  # noqa: ANN202, ANN001
+                        goals.append(goal_text)
+                        return None
 
                     def fake_submit(*_args, prompt_text, **_kwargs):  # noqa: ANN202, ANN001
                         submitted.append(prompt_text)
@@ -45,7 +50,7 @@ class PlanAgentLaunchOmxWorkflowTests(PlanAgentLaunchSupportTestCase):
 
                     with (
                         patch("envctl_engine.planning.plan_agent.tmux_transport._wait_for_tmux_cli_ready", return_value=None),
-                        patch("envctl_engine.planning.plan_agent.tmux_transport._submit_tmux_codex_goal", return_value=None),
+                        patch("envctl_engine.planning.plan_agent.tmux_transport._submit_tmux_codex_goal", side_effect=fake_submit_goal),
                         patch("envctl_engine.planning.plan_agent.tmux_transport._submit_tmux_prompt_workflow_step", side_effect=fake_submit),
                         patch("envctl_engine.planning.plan_agent.tmux_transport._queue_tmux_codex_workflow_steps", side_effect=fake_queue),
                         patch("envctl_engine.planning.plan_agent.tmux_transport._workflow_step_prompt_text", side_effect=lambda *_args, step, **_kwargs: (f"resolved::{step.kind}::{step.text}", None)),
@@ -60,6 +65,8 @@ class PlanAgentLaunchOmxWorkflowTests(PlanAgentLaunchSupportTestCase):
                         )
 
                     self.assertIsNone(error)
+                    self.assertEqual(len(goals), 1)
+                    self.assertIn(f"OMX: ${workflow_name} completion contract remains active.", goals[0])
                     self.assertEqual(len(submitted), 1)
                     self.assertTrue(submitted[0].startswith(f"${workflow_name}"))
                     self.assertEqual(queued, ["queue_direct_prompt"])

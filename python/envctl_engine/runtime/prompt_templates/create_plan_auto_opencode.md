@@ -17,4 +17,4 @@ cd <repo-root> && envctl --plan <category>/<slug> --cmux --opencode --preset imp
 OpenCode plan-agent launches use the `/ulw-loop` prefix by default. Use a narrower runtime scope only when the plan explicitly records why full-stack E2E does not apply.
 
 ## Final Response
-Report the plan path, implementation surface, exact command executed, launch result, attach/reconnect guidance, and any residual risks.
+Report the plan path, exact command executed, launch result, attach/reconnect guidance, and any residual risks.

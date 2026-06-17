@@ -1,8 +1,8 @@
 $browser
 
-After the implementation commit is pushed, the PR is created or updated, and GitHub status checks have completed successfully, run browser-based E2E validation against the conventional deployment URL for the current PR. Re-read the initial `MAIN_TASK.md` and verify that the requested feature is completely implemented end-to-end.
+After the implementation is pushed, the PR exists, and GitHub status checks are green, validate the requested behavior in a browser against the conventional PR deployment URL. Re-read the initial `MAIN_TASK.md` before testing.
 
-Find the validation URL from the repository/PR naming convention, not from the PR body, comments, handoff text, envctl state, GitHub deployment statuses, or localhost/runtime-address sections. Use this exact flow, adjusting only if `jq` is unavailable:
+Derive the URL from the repository and PR number, not from the PR body, comments, handoff text, envctl state, GitHub deployment statuses, localhost, or runtime-address output. Use this flow, adjusting only if `jq` is unavailable:
 
 ```sh
 PR_JSON="$(gh pr view --json number,url,body)"
@@ -19,8 +19,8 @@ test -n "$REPO_NAME"
 test -n "$DEPLOYMENT_URL"
 ```
 
-Use `$DEPLOYMENT_URL` as the browser validation URL. For example, PR 287 in `pele-monorepo` should validate `https://pele-monorepo-pr-287.srv1512613.hstgr.cloud/`.
+Use `$DEPLOYMENT_URL` as the validation target. For example, PR 287 in `pele-monorepo` validates `https://pele-monorepo-pr-287.srv1512613.hstgr.cloud/`.
 
-Do not start services, discover runtime targets, create users, run `envctl`, query GitHub deployments, or invent a localhost URL on your own. If the conventional URL is not reachable, report that as the blocker and include the exact PR number, repo name, URL attempted, and observed browser/network failure.
+Do not start services, discover runtime targets, create users, run `envctl`, query GitHub deployments, or invent a localhost URL. If the conventional URL is unreachable, report the blocker with PR number, repo name, URL attempted, and observed browser/network failure.
 
-Use the PR body only to understand the implementation request and any listed manual verification checks; never use it as the source for the browser URL. Extract every manual/human check from the Verification section and try to perform every automatable check yourself through the conventional deployment URL, especially browser or E2E checks. If credentials are required, use only credentials explicitly provided in the PR/handoff or deployment comment. Because this follow-up is a Codex prompt, you may use the available `$browser` skill when it is installed in the session. If the feature is browser-visible or can be observed through the browser, prove it is visible in the browser and capture evidence. You must fix any issue, regression, or mismatch introduced by the implementation before final handoff, then rerun the relevant checks against the conventional deployment URL and report what each check proved. Do not silently skip checks that were handed to a human: if a check is genuinely not automatable from this environment, name it, explain why, and state the exact remaining human confirmation with expected results.
+Use the PR body only for implementation context and the manual checks listed in its Verification section; never use it as the source for the browser URL. Extract every manual/human check and try to perform every automatable check yourself through `$DEPLOYMENT_URL`. If credentials are required, use only credentials explicitly provided in the PR, handoff, or deployment comment. Verify the feature is completely implemented end-to-end, prove browser-visible behavior is visible in the browser with captured evidence, fix any issue introduced by the implementation, rerun the relevant checks against `$DEPLOYMENT_URL`, and report what each check proved. If a human check is not automatable from this environment, name it, explain why, and state the exact expected results for the remaining human confirmation.
