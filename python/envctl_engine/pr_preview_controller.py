@@ -1862,6 +1862,8 @@ class PreviewController:
         )
         status = "stopped" if result.returncode == 0 else "stop_failed"
         external_dependencies = state.external_dependencies if state else None
+        if result.returncode == 0:
+            self.remove_project_docker_containers(project_name)
         if result.returncode == 0 and state:
             self.mark_deployment_inactive(state)
         if result.returncode == 0 and release_external_deps:
@@ -2308,7 +2310,7 @@ class PreviewController:
             display_argv=display_argv,
         )
 
-    def remove_project_docker_artifacts(self, project_name: str) -> None:
+    def remove_project_docker_containers(self, project_name: str) -> None:
         fragment = docker_name_fragment(project_name)
         if not fragment:
             return
@@ -2324,6 +2326,12 @@ class PreviewController:
                 check=False,
                 timeout=60,
             )
+
+    def remove_project_docker_artifacts(self, project_name: str) -> None:
+        fragment = docker_name_fragment(project_name)
+        if not fragment:
+            return
+        self.remove_project_docker_containers(project_name)
 
         volumes = self.runner.run(
             ["docker", "volume", "ls", "-q", "--filter", f"name={fragment}"],

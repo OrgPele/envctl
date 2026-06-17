@@ -1413,6 +1413,11 @@ def test_unlabeled_event_stops_tracked_preview(tmp_path):
     assert command_argvs(runner, "envctl", "stop") == [
         ["envctl", "stop", "--trees", "--project", "feature/demo", "--entire-system"]
     ]
+    assert command_argvs(runner, "docker", "rm") == [
+        ["docker", "rm", "-f", "container-a", "container-b"]
+    ]
+    assert command_argvs(runner, "docker", "volume") == []
+    assert command_argvs(runner, "docker", "network") == []
     assert instance.load_state(789).status == "stopped"
     assert runner.deployment_statuses[-1] == {
         "state": "inactive",
