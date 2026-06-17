@@ -19,6 +19,8 @@ def is_envctl_local_artifact_path(path_text: str) -> bool:
     normalized = str(path_text or "").strip().replace("\\", "/")
     if not normalized:
         return False
+    if normalized == "docs/reference/.envctl.example":
+        return False
     parts = [part for part in PurePath(normalized).parts if part not in {".", ""}]
     if not parts:
         return False
