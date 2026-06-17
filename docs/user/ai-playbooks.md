@@ -70,6 +70,14 @@ Create-plan skill behavior:
 - Keep the auto variants explicit-only; do not configure them for implicit invocation from generic planning language.
 - Rerun `envctl install-prompts --cli codex --yes`, `envctl install-prompts --cli opencode --yes`, or `envctl install-prompts --cli all --yes` to refresh installed prompt files.
 
+Prompt editing standard:
+
+- Put the outcome and source of truth before procedure.
+- Keep true invariants explicit: worktree boundaries, `MAIN_TASK.md`, TDD, `envctl test-focused`, `envctl ship -m "<message>"`, PR status/URL reporting, and browser E2E when required.
+- Prefer success criteria and decision rules over repeated absolute prose.
+- Delimit dynamic inputs such as `$ARGUMENTS`, plan selectors, and launch commands clearly.
+- Cover prompt edits with tests that prove required behavior, compactness, and removal of deprecated or confusing phrasing.
+
 `continue_task` is used automatically only by the optional Codex cycle workflow. When `ENVCTL_PLAN_AGENT_CODEX_CYCLES` is greater than `1`, envctl queues `continue_task`, then `implement_task`, in the same Codex session for each later round.
 
 Use `review_worktree_imp` from the local/origin repo CLI when you want a read-only review of a generated implementation worktree. By default it reviews the worktree created from the current plan file; pass `$ARGUMENTS` only when you want to override that target with a specific worktree path or name. The prompt treats the current repo as the unedited baseline and the target worktree as the edited implementation under review.

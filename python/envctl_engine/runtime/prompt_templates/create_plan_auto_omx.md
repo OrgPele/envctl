@@ -17,4 +17,4 @@ cd <repo-root> && envctl --plan <category>/<slug> --omx --ultragoal --preset imp
 OMX-managed launches are Codex-only. Use `--ralph` explicitly only when the Ralph compatibility workflow is required. Use a narrower runtime scope only when the plan explicitly records why full-stack E2E does not apply.
 
 ## Final Response
-Report the plan path, implementation surface, exact command executed, launch result, attach/reconnect guidance, and any residual risks.
+Report the plan path, exact command executed, launch result, attach/reconnect guidance, and any residual risks.
