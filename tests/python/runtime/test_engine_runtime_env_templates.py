@@ -1,10 +1,36 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 # ruff: noqa: F403,F405
 from tests.python.runtime.engine_runtime_env_test_support import *
+from envctl_engine.config import load_config
+from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.startup.service_execution_policy import resolve_service_env_overlay_builder
 
 
 class EngineRuntimeEnvTemplatesTests(EngineRuntimeEnvTestCase):
+    def test_python_runtime_exposes_service_env_overlay_builder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = {
+                "RUN_REPO_ROOT": tmpdir,
+                "ENVCTL_BACKEND_ENV__PADDLE_BILLING_ENABLED": "true",
+                "ENVCTL_BACKEND_ENV__PADDLE_API_KEY": "${ENVCTL_SOURCE_PADDLE_API_KEY}",
+                "ENVCTL_SOURCE_PADDLE_API_KEY": "pdl_test_secret",
+            }
+            runtime = PythonEngineRuntime(load_config(env), env=env)
+
+            overlay_builder = resolve_service_env_overlay_builder(runtime)
+
+            self.assertIsNotNone(overlay_builder)
+            assert overlay_builder is not None
+            overlays = overlay_builder(
+                service_name="backend",
+                base_env={"EXISTING": "value"},
+            )
+            self.assertEqual(overlays["PADDLE_BILLING_ENABLED"], "true")
+            self.assertEqual(overlays["PADDLE_API_KEY"], "pdl_test_secret")
+
     def test_project_service_env_uses_dependency_env_templates_when_section_present(self) -> None:
         runtime = SimpleNamespace(
             _command_override_value=lambda key: {"DB_HOST": "db.local", "DB_USER": "alice"}.get(key),
@@ -306,8 +332,81 @@ class EngineRuntimeEnvTemplatesTests(EngineRuntimeEnvTestCase):
 
         self.assertEqual(env["ENVCTL_SOURCE_SUPABASE_URL"], "http://localhost:54447")
         self.assertEqual(env["ENVCTL_SOURCE_BACKEND_URL"], "http://localhost:8123")
+        self.assertEqual(env["VITE_SUPABASE_URL"], "http://localhost:54447")
+        self.assertEqual(env["VITE_API_URL"], "http://localhost:8123/api/v1")
         self.assertEqual(overlays["VITE_SUPABASE_URL"], "http://localhost:54447")
         self.assertEqual(overlays["VITE_API_URL"], "http://localhost:8123/api/v1")
+
+    def test_project_service_env_applies_preview_service_overlays_to_app_env(self) -> None:
+        runtime = SimpleNamespace(
+            _command_override_value=lambda key: None,
+            env={
+                "ENVCTL_SOURCE_PADDLE_API_KEY": "pdl_test_secret",
+                "ENVCTL_BACKEND_ENV__PAYMENT_PROVIDER": "paddle",
+                "ENVCTL_BACKEND_ENV__PADDLE_BILLING_ENABLED": "true",
+                "ENVCTL_BACKEND_ENV__PADDLE_API_KEY": "${ENVCTL_SOURCE_PADDLE_API_KEY}",
+                "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN": "client-token",
+                "ENVCTL_FRONTEND_ENV__VITE_PADDLE_ENVIRONMENT": "sandbox",
+            },
+            config=SimpleNamespace(raw={}),
+        )
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                "backend": PortPlan(project="Main", requested=8000, assigned=8000, final=8123, source="assigned"),
+                "frontend": PortPlan(project="Main", requested=8080, assigned=8080, final=9123, source="assigned"),
+                "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
+                "supabase_api": PortPlan(
+                    project="Main", requested=54321, assigned=54321, final=54447, source="assigned"
+                ),
+            },
+        )
+        requirements = RequirementsResult(
+            project="Main",
+            supabase={
+                "enabled": True,
+                "success": True,
+                "final": 5432,
+                "resources": {"db": 5432, "api": 54447, "primary": 5432},
+            },
+            health="healthy",
+            failures=[],
+        )
+
+        backend_env = project_service_env(
+            runtime, context, requirements=requirements, route=None, service_name="backend"
+        )
+        frontend_env = project_service_env(
+            runtime, context, requirements=requirements, route=None, service_name="frontend"
+        )
+
+        self.assertEqual(backend_env["PAYMENT_PROVIDER"], "paddle")
+        self.assertEqual(backend_env["PADDLE_BILLING_ENABLED"], "true")
+        self.assertEqual(backend_env["PADDLE_API_KEY"], "pdl_test_secret")
+        self.assertEqual(frontend_env["VITE_PADDLE_CLIENT_TOKEN"], "client-token")
+        self.assertEqual(frontend_env["VITE_PADDLE_ENVIRONMENT"], "sandbox")
+        self.assertNotIn("ENVCTL_BACKEND_ENV__PADDLE_API_KEY", backend_env)
+        self.assertNotIn("ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN", frontend_env)
+
+    def test_service_env_overlays_fall_back_to_filtered_process_env(self) -> None:
+        runtime = SimpleNamespace(
+            env={},
+            config=SimpleNamespace(raw={}),
+        )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN": "client-token",
+                "ENVCTL_FRONTEND_ENV__VITE_PADDLE_ENVIRONMENT": "sandbox",
+                "UNRELATED_SECRET": "must-not-project",
+            },
+        ):
+            overlays = service_env_overlays(runtime, service_name="frontend", base_env={})
+
+        self.assertEqual(overlays["VITE_PADDLE_CLIENT_TOKEN"], "client-token")
+        self.assertEqual(overlays["VITE_PADDLE_ENVIRONMENT"], "sandbox")
+        self.assertNotIn("UNRELATED_SECRET", overlays)
 
     def test_frontend_launch_env_rejects_supabase_service_role_source_template(self) -> None:
         runtime = SimpleNamespace(

@@ -63,6 +63,11 @@ HEADLESS_ENVCTL_ENV_REMOVALS = {
     "SUPERSET_PROJECT",
     "SUPERSET_WORKSPACE",
 }
+PR_PREVIEW_START_ENV_PREFIXES = (
+    "ENVCTL_SOURCE_",
+    "ENVCTL_BACKEND_ENV__",
+    "ENVCTL_FRONTEND_ENV__",
+)
 FAILED_START_STATUSES = frozenset({"start_failed"})
 PLAN_AGENT_BOOLEAN_CONFIG_KEYS = {
     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE",
@@ -711,6 +716,14 @@ def headless_envctl_env(*, keep_github_tokens: bool = False) -> dict[str, str]:
     return env
 
 
+def pr_preview_start_env_overrides() -> dict[str, str]:
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.startswith(PR_PREVIEW_START_ENV_PREFIXES) and str(value).strip()
+    }
+
+
 def stable_system_python_bin() -> str | None:
     candidate = Path("/usr/bin/python3")
     if candidate.exists():
@@ -1055,9 +1068,24 @@ BACKEND_SOURCE_ENV_KEYS = (
     "PAYMENT_PROVIDER",
     "CREEM_API_KEY",
     "CREEM_WEBHOOK_SECRET",
+    "PADDLE_BILLING_ENABLED",
+    "PADDLE_ENVIRONMENT",
     "PADDLE_API_KEY",
     "PADDLE_CLIENT_TOKEN",
     "PADDLE_NOTIFICATION_WEBHOOK_SECRET",
+    "PADDLE_CHECKOUT_SUCCESS_URL",
+    "PADDLE_CHECKOUT_CANCEL_URL",
+    "PADDLE_DEFAULT_PAYMENT_LINK",
+    "PADDLE_STARTER_MONTHLY_PRICE_ID",
+    "PADDLE_STARTER_ANNUAL_PRICE_ID",
+    "PADDLE_GROWTH_MONTHLY_PRICE_ID",
+    "PADDLE_GROWTH_ANNUAL_PRICE_ID",
+    "PADDLE_PROFESSIONAL_MONTHLY_PRICE_ID",
+    "PADDLE_PROFESSIONAL_ANNUAL_PRICE_ID",
+    "PADDLE_STARTER_TRIAL_DAYS",
+    "PADDLE_GROWTH_TRIAL_DAYS",
+    "PADDLE_PROFESSIONAL_TRIAL_DAYS",
+    "PADDLE_VALIDATE_PRICE_TRIALS",
     "N8N_URL",
     "N8N_API_BASE_URL",
     "N8N_API_KEY",
@@ -1633,6 +1661,7 @@ class PreviewController:
             return 1
 
         start_env = headless_envctl_env()
+        start_env.update(pr_preview_start_env_overrides())
         start_env.update(
             self.external_dependency_start_env(external_dependencies)
         )

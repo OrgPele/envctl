@@ -621,6 +621,17 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     instance = controller.PreviewController(config, runner)
     monkeypatch.setenv("GH_TOKEN", "secret")
     monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:1")
+    monkeypatch.setenv("ENVCTL_SOURCE_PAYMENT_PROVIDER", "paddle")
+    monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_BILLING_ENABLED", "true")
+    monkeypatch.setenv(
+        "ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID",
+        "pri_growth_monthly",
+    )
+    monkeypatch.setenv("ENVCTL_BACKEND_ENV__PADDLE_BILLING_ENABLED", "true")
+    monkeypatch.setenv(
+        "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN",
+        "test-client-token",
+    )
 
     exit_code = instance.run_pull_request_event(
         pr_payload(
@@ -682,6 +693,17 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     assert "GH_TOKEN" not in start_call["env"]
     assert "CMUX_WORKSPACE_ID" not in start_call["env"]
     assert start_call["env"]["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] == "false"
+    assert start_call["env"]["ENVCTL_SOURCE_PAYMENT_PROVIDER"] == "paddle"
+    assert start_call["env"]["ENVCTL_SOURCE_PADDLE_BILLING_ENABLED"] == "true"
+    assert (
+        start_call["env"]["ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID"]
+        == "pri_growth_monthly"
+    )
+    assert start_call["env"]["ENVCTL_BACKEND_ENV__PADDLE_BILLING_ENABLED"] == "true"
+    assert (
+        start_call["env"]["ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN"]
+        == "test-client-token"
+    )
     assert (
         start_call["env"]["ENVCTL_BACKEND_ENV__FRONTEND_BASE_URL"]
         == "https://pele-monorepo-pr-789.srv.example.test"
@@ -775,27 +797,47 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     envctl_text = (tmp_path / "control" / ".envctl").read_text()
     assert "ENVCTL_PUBLIC_HOST=preview.getpele.test" in envctl_text
     assert "ENVCTL_UI_VISUAL_HOST=visual.getpele.test" in envctl_text
+    backend_start = envctl_text.split("ENVCTL_BACKEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+    frontend_start = envctl_text.split("ENVCTL_FRONTEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+    assert 'sh -c \'export PATH="$PWD/venv/bin:$PATH" ' in backend_start
+    assert "FRONTEND_BASE_URL=https://pele-monorepo-pr-789.srv.example.test" in (
+        backend_start
+    )
     assert (
-        'ENVCTL_BACKEND_START_CMD=sh -c \'export PATH="$PWD/venv/bin:$PATH" '
-        "FRONTEND_BASE_URL="
-        "https://pele-monorepo-pr-789.srv.example.test "
-        "BACKEND_PUBLIC_URL=https://pele-monorepo-pr-789-api.srv.example.test "
-        "CORS_ORIGINS_RAW=https://pele-monorepo-pr-789.srv.example.test "
-        "PYTHONFAULTHANDLER=1 "
-        "RUN_DB_MIGRATIONS_ON_STARTUP=true "
-        "ALLOW_LEGACY_SUPABASE_HS256=true; "
-        "exec python -m uvicorn app.main:app --host 127.0.0.1 --port "
-        "'\"'\"'{port}'\"'\"''"
-        in envctl_text
+        "BACKEND_PUBLIC_URL=https://pele-monorepo-pr-789-api.srv.example.test"
+        in backend_start
+    )
+    assert "CORS_ORIGINS_RAW=https://pele-monorepo-pr-789.srv.example.test" in (
+        backend_start
+    )
+    assert "PYTHONFAULTHANDLER=1" in backend_start
+    assert "RUN_DB_MIGRATIONS_ON_STARTUP=true" in backend_start
+    assert "PAYMENT_PROVIDER=" not in backend_start
+    assert "PADDLE_BILLING_ENABLED=" not in backend_start
+    assert "PADDLE_GROWTH_MONTHLY_PRICE_ID=" not in backend_start
+    assert "ALLOW_LEGACY_SUPABASE_HS256=true" in backend_start
+    assert "exec python -m uvicorn app.main:app --host 127.0.0.1 --port" in (
+        backend_start
     )
     assert (
         "ENVCTL_FRONTEND_START_CMD=sh -c 'export VITE_API_URL="
-        "https://pele-monorepo-pr-789-api.srv.example.test/api/v1 "
-        "VITE_BACKEND_URL=https://pele-monorepo-pr-789-api.srv.example.test "
-        "VITE_SUPABASE_URL=https://pele-monorepo-pr-789-supabase.srv.example.test; "
-        "exec npm run dev -- --port '\"'\"'{port}'\"'\"' --host 127.0.0.1"
-        in envctl_text
+        "https://pele-monorepo-pr-789-api.srv.example.test/api/v1" in envctl_text
     )
+    assert "VITE_BACKEND_URL=https://pele-monorepo-pr-789-api.srv.example.test" in (
+        frontend_start
+    )
+    assert (
+        "VITE_SUPABASE_URL=https://pele-monorepo-pr-789-supabase.srv.example.test"
+        in frontend_start
+    )
+    assert "VITE_PADDLE_CLIENT_TOKEN=" not in frontend_start
+    assert "exec npm run dev -- --port" in frontend_start
     assert "# >>> envctl backend launch env >>>" in envctl_text
     assert "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}" in envctl_text
     assert "REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}" in envctl_text
@@ -823,7 +865,27 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
         "TWILIO_MASTER_AUTH_TOKEN=${ENVCTL_SOURCE_TWILIO_MASTER_AUTH_TOKEN}"
         in envctl_text
     )
+    assert "PADDLE_BILLING_ENABLED=${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED}" in (
+        envctl_text
+    )
+    assert "PADDLE_ENVIRONMENT=${ENVCTL_SOURCE_PADDLE_ENVIRONMENT}" in envctl_text
     assert "PADDLE_API_KEY=${ENVCTL_SOURCE_PADDLE_API_KEY}" in envctl_text
+    assert (
+        "PADDLE_NOTIFICATION_WEBHOOK_SECRET="
+        "${ENVCTL_SOURCE_PADDLE_NOTIFICATION_WEBHOOK_SECRET}" in envctl_text
+    )
+    assert (
+        "PADDLE_GROWTH_MONTHLY_PRICE_ID="
+        "${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID}" in envctl_text
+    )
+    assert (
+        "PADDLE_GROWTH_TRIAL_DAYS=${ENVCTL_SOURCE_PADDLE_GROWTH_TRIAL_DAYS}"
+        in envctl_text
+    )
+    assert (
+        "PADDLE_VALIDATE_PRICE_TRIALS="
+        "${ENVCTL_SOURCE_PADDLE_VALIDATE_PRICE_TRIALS}" in envctl_text
+    )
     assert (
         "FRONTEND_BASE_URL="
         "https://pele-monorepo-pr-789.srv.example.test" in envctl_text
@@ -2285,7 +2347,30 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
         "TWILIO_MASTER_AUTH_TOKEN=${ENVCTL_SOURCE_TWILIO_MASTER_AUTH_TOKEN}"
         in rendered
     )
+    assert "PADDLE_BILLING_ENABLED=${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED}" in (
+        rendered
+    )
+    assert "PADDLE_ENVIRONMENT=${ENVCTL_SOURCE_PADDLE_ENVIRONMENT}" in rendered
     assert "PADDLE_API_KEY=${ENVCTL_SOURCE_PADDLE_API_KEY}" in rendered
+    assert (
+        "PADDLE_CLIENT_TOKEN=${ENVCTL_SOURCE_PADDLE_CLIENT_TOKEN}" in rendered
+    )
+    assert (
+        "PADDLE_CHECKOUT_SUCCESS_URL="
+        "${ENVCTL_SOURCE_PADDLE_CHECKOUT_SUCCESS_URL}" in rendered
+    )
+    assert (
+        "PADDLE_STARTER_MONTHLY_PRICE_ID="
+        "${ENVCTL_SOURCE_PADDLE_STARTER_MONTHLY_PRICE_ID}" in rendered
+    )
+    assert (
+        "PADDLE_GROWTH_ANNUAL_PRICE_ID="
+        "${ENVCTL_SOURCE_PADDLE_GROWTH_ANNUAL_PRICE_ID}" in rendered
+    )
+    assert (
+        "PADDLE_PROFESSIONAL_TRIAL_DAYS="
+        "${ENVCTL_SOURCE_PADDLE_PROFESSIONAL_TRIAL_DAYS}" in rendered
+    )
     assert (
         "SQLALCHEMY_DATABASE_URL=${ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL}"
         in rendered
@@ -2326,6 +2411,76 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
         "https://pele-monorepo-pr-789-api.srv.example.test" in rendered
     )
     assert "# <<< envctl frontend launch env <<<" in rendered
+
+
+def test_generated_public_preview_provider_env_stays_in_launch_sections(monkeypatch):
+    controller = load_controller()
+    monkeypatch.setenv("ENVCTL_SOURCE_PAYMENT_PROVIDER", "paddle")
+    monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_BILLING_ENABLED", "true")
+    monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_ENVIRONMENT", "sandbox")
+    monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_API_KEY", "test-api-key")
+    monkeypatch.setenv(
+        "ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID",
+        "pri_growth_monthly",
+    )
+    monkeypatch.setenv("ENVCTL_BACKEND_ENV__PADDLE_GROWTH_TRIAL_DAYS", "0")
+    monkeypatch.setenv(
+        "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN",
+        "test-client-token",
+    )
+    monkeypatch.setenv("ENVCTL_SOURCE_VITE_PADDLE_ENVIRONMENT", "sandbox")
+
+    rendered = controller.default_envctl_config(
+        public_host="preview.getpele.test",
+        public_urls={
+            "frontend": "https://pele-monorepo-pr-789.srv.example.test",
+            "backend": "https://pele-monorepo-pr-789-api.srv.example.test",
+            "supabase": "https://pele-monorepo-pr-789-supabase.srv.example.test",
+        },
+    )
+
+    backend_start = rendered.split("ENVCTL_BACKEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+    frontend_start = rendered.split("ENVCTL_FRONTEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+
+    assert "PAYMENT_PROVIDER=" not in backend_start
+    assert "PADDLE_BILLING_ENABLED=" not in backend_start
+    assert "PADDLE_ENVIRONMENT=" not in backend_start
+    assert "PADDLE_API_KEY=" not in backend_start
+    assert "PADDLE_GROWTH_MONTHLY_PRICE_ID=" not in backend_start
+    assert "PADDLE_GROWTH_TRIAL_DAYS=" not in backend_start
+    assert "VITE_PADDLE_CLIENT_TOKEN=" not in frontend_start
+    assert "VITE_PADDLE_ENVIRONMENT=" not in frontend_start
+    assert "PAYMENT_PROVIDER=${ENVCTL_SOURCE_PAYMENT_PROVIDER}" in rendered
+    assert (
+        "PADDLE_BILLING_ENABLED=${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED}"
+        in rendered
+    )
+    assert "PADDLE_ENVIRONMENT=${ENVCTL_SOURCE_PADDLE_ENVIRONMENT}" in rendered
+    assert "PADDLE_API_KEY=${ENVCTL_SOURCE_PADDLE_API_KEY}" in rendered
+    assert (
+        "PADDLE_GROWTH_MONTHLY_PRICE_ID="
+        "${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID}" in rendered
+    )
+    assert (
+        "PADDLE_GROWTH_TRIAL_DAYS=${ENVCTL_SOURCE_PADDLE_GROWTH_TRIAL_DAYS}"
+        in rendered
+    )
+    assert (
+        "VITE_PADDLE_CLIENT_TOKEN=${ENVCTL_SOURCE_VITE_PADDLE_CLIENT_TOKEN}"
+        in rendered
+    )
+    assert (
+        "VITE_PADDLE_ENVIRONMENT=${ENVCTL_SOURCE_VITE_PADDLE_ENVIRONMENT}"
+        in rendered
+    )
+    assert "test-api-key" not in rendered
+    assert "test-client-token" not in rendered
 
 
 def test_macos_memory_fallback_parses_vm_stat(monkeypatch):
@@ -2423,6 +2578,27 @@ def test_headless_envctl_env_removes_plan_agent_aliases(monkeypatch):
     assert "RUNNER_TRACKING_ID" not in import_env
     assert "CMUX_WORKSPACE_ID" not in import_env
     assert "ACTIONS_RUNTIME_TOKEN" not in import_env
+
+
+def test_pr_preview_start_env_overrides_keep_app_launch_env(monkeypatch):
+    controller = load_controller()
+    monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_BILLING_ENABLED", "true")
+    monkeypatch.setenv("ENVCTL_BACKEND_ENV__PAYMENT_PROVIDER", "paddle")
+    monkeypatch.setenv(
+        "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN",
+        "test-client-token",
+    )
+    monkeypatch.setenv("ENVCTL_PREVIEW_PUBLIC_LINK_TOKEN", "public-link-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "secret")
+    monkeypatch.setenv("UNRELATED", "value")
+
+    env = controller.pr_preview_start_env_overrides()
+
+    assert env == {
+        "ENVCTL_SOURCE_PADDLE_BILLING_ENABLED": "true",
+        "ENVCTL_BACKEND_ENV__PAYMENT_PROVIDER": "paddle",
+        "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN": "test-client-token",
+    }
 
 
 def test_unsafe_plan_agent_config_entries_rejects_terminal_enablers(tmp_path):
