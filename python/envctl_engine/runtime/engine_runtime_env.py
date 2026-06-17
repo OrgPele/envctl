@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from envctl_engine.requirements.external import dependency_external_mode
 from envctl_engine.requirements.core import dependency_definitions
@@ -286,7 +286,9 @@ def project_service_env(
     env = {"ENVCTL_PROJECT_NAME": context.name}
     dependency_env = _dependency_projector_env(runtime, context, requirements=requirements, route=route)
     dependency_env.update(_app_service_projector_env(runtime, context))
-    dependency_env.update(_source_alias_env(dependency_env))
+    source_aliases = _source_alias_env(dependency_env)
+    dependency_env.update(source_aliases)
+    dependency_env.update(_explicit_source_env(runtime))
     config = getattr(runtime, "config", None)
     mode = str(getattr(route, "mode", "") or "").strip().lower() if route is not None else ""
     scoped_dependency_env = _resolve_scoped_dependency_env(
@@ -297,11 +299,30 @@ def project_service_env(
     )
     if scoped_dependency_env is not None:
         env.update(scoped_dependency_env)
-        env.update({key: value for key, value in dependency_env.items() if key.startswith("ENVCTL_SOURCE_")})
+        env.update(source_aliases)
     else:
         env.update(dependency_env)
     env.update(runtime_env_overrides(route))
     _apply_route_log_overrides(env, route)
+    return env
+
+
+def _explicit_source_env(runtime: Any) -> dict[str, str]:
+    sources: list[Mapping[object, object]] = []
+    config_raw = getattr(getattr(runtime, "config", None), "raw", None)
+    if isinstance(config_raw, Mapping):
+        sources.append(config_raw)
+    runtime_env = getattr(runtime, "env", None)
+    if isinstance(runtime_env, Mapping):
+        sources.append(runtime_env)
+
+    env: dict[str, str] = {}
+    for source in sources:
+        for key, value in source.items():
+            name = str(key).strip()
+            text = str(value)
+            if name.startswith("ENVCTL_SOURCE_") and text.strip():
+                env[name] = text
     return env
 
 

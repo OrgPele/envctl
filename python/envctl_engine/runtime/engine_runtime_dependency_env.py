@@ -197,6 +197,13 @@ def resolve_dependency_env_templates(
         for key, value in canonical_dependency_env.items()
         if isinstance(value, str) and value.strip()
     }
+    source_env.update(
+        {
+            key: str(value)
+            for key, value in canonical_dependency_env.items()
+            if key.startswith("ENVCTL_SOURCE_") and isinstance(value, str) and value.strip()
+        }
+    )
     resolved: dict[str, str] = dict(resolved_env_base or {})
     seen_names: set[str] = set()
     for entry in entries:
