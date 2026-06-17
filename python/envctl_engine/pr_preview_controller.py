@@ -1147,55 +1147,6 @@ PUBLIC_PREVIEW_BACKEND_ENV = {
 }
 
 
-@dataclass(frozen=True)
-class ShellEnvReference:
-    name: str
-
-
-def _preview_env_reference(
-    *,
-    target_key: str,
-    source_key: str | None = None,
-    service_prefix: str,
-) -> ShellEnvReference | None:
-    source_key = source_key or target_key
-    candidates = (
-        f"{service_prefix}{target_key}",
-        f"ENVCTL_SOURCE_{target_key}",
-        f"ENVCTL_SOURCE_{source_key}",
-    )
-    for name in candidates:
-        value = os.environ.get(name)
-        if value is not None and str(value).strip():
-            return ShellEnvReference(name)
-    return None
-
-
-def preview_backend_inline_env_from_sources() -> dict[str, str | ShellEnvReference]:
-    values: dict[str, str | ShellEnvReference] = {}
-    for key in BACKEND_SOURCE_ENV_KEYS:
-        value = _preview_env_reference(
-            target_key=key,
-            service_prefix="ENVCTL_BACKEND_ENV__",
-        )
-        if value is not None:
-            values[key] = value
-    return values
-
-
-def preview_frontend_inline_env_from_sources() -> dict[str, str | ShellEnvReference]:
-    values: dict[str, str | ShellEnvReference] = {}
-    for frontend_key, source_key in FRONTEND_SOURCE_ENV_MAPPINGS:
-        value = _preview_env_reference(
-            target_key=frontend_key,
-            source_key=source_key,
-            service_prefix="ENVCTL_FRONTEND_ENV__",
-        )
-        if value is not None:
-            values[frontend_key] = value
-    return values
-
-
 def source_env_lines(keys: tuple[str, ...]) -> str:
     return "\n".join(f"{key}=${{ENVCTL_SOURCE_{key}}}" for key in keys)
 
@@ -1245,14 +1196,9 @@ VITE_BACKEND_URL={backend_url}
 """
 
 
-def shell_env_prefix(values: dict[str, str | ShellEnvReference]) -> str:
+def shell_env_prefix(values: dict[str, str]) -> str:
     assignments = []
     for key, value in values.items():
-        if isinstance(value, ShellEnvReference):
-            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", value.name):
-                raise ValueError(f"invalid shell environment reference: {value.name}")
-            assignments.append(f'{key}="${{{value.name}}}"')
-            continue
         assignments.append(f"{key}={shlex.quote(envctl_config_value(value))}")
     return " ".join(assignments)
 
@@ -1269,15 +1215,12 @@ def default_start_commands(public_urls: dict[str, str] | None = None) -> tuple[s
     frontend_url = str(public_urls.get("frontend") or "").strip()
     supabase_url = str(public_urls.get("supabase") or "").strip()
     if backend_url and frontend_url:
-        backend_inline_env = preview_backend_inline_env_from_sources()
-        frontend_inline_env = preview_frontend_inline_env_from_sources()
         backend_prefix = shell_env_prefix(
             {
                 "FRONTEND_BASE_URL": frontend_url,
                 "BACKEND_PUBLIC_URL": backend_url,
                 "CORS_ORIGINS_RAW": frontend_url,
                 **PUBLIC_PREVIEW_BACKEND_ENV,
-                **backend_inline_env,
                 **(
                     {"ALLOW_LEGACY_SUPABASE_HS256": "true"}
                     if supabase_url
@@ -1290,7 +1233,6 @@ def default_start_commands(public_urls: dict[str, str] | None = None) -> tuple[s
                 "VITE_API_URL": f"{backend_url}/api/v1",
                 "VITE_BACKEND_URL": backend_url,
                 **({"VITE_SUPABASE_URL": supabase_url} if supabase_url else {}),
-                **frontend_inline_env,
             }
         )
         backend_cmd = sh_c_command(

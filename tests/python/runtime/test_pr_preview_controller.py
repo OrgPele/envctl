@@ -808,15 +808,9 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     )
     assert "PYTHONFAULTHANDLER=1" in backend_start
     assert "RUN_DB_MIGRATIONS_ON_STARTUP=true" in backend_start
-    assert 'PAYMENT_PROVIDER="${ENVCTL_SOURCE_PAYMENT_PROVIDER}"' in backend_start
-    assert (
-        'PADDLE_BILLING_ENABLED="${ENVCTL_BACKEND_ENV__PADDLE_BILLING_ENABLED}"'
-        in backend_start
-    )
-    assert (
-        'PADDLE_GROWTH_MONTHLY_PRICE_ID='
-        '"${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID}"' in backend_start
-    )
+    assert "PAYMENT_PROVIDER=" not in backend_start
+    assert "PADDLE_BILLING_ENABLED=" not in backend_start
+    assert "PADDLE_GROWTH_MONTHLY_PRICE_ID=" not in backend_start
     assert "ALLOW_LEGACY_SUPABASE_HS256=true" in backend_start
     assert "exec python -m uvicorn app.main:app --host 127.0.0.1 --port" in (
         backend_start
@@ -832,10 +826,7 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
         "VITE_SUPABASE_URL=https://pele-monorepo-pr-789-supabase.srv.example.test"
         in frontend_start
     )
-    assert (
-        'VITE_PADDLE_CLIENT_TOKEN='
-        '"${ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN}"' in frontend_start
-    )
+    assert "VITE_PADDLE_CLIENT_TOKEN=" not in frontend_start
     assert "exec npm run dev -- --port" in frontend_start
     assert "# >>> envctl backend launch env >>>" in envctl_text
     assert "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}" in envctl_text
@@ -2357,7 +2348,7 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
     assert "# <<< envctl frontend launch env <<<" in rendered
 
 
-def test_generated_public_preview_start_commands_inline_provider_env(monkeypatch):
+def test_generated_public_preview_provider_env_stays_in_launch_sections(monkeypatch):
     controller = load_controller()
     monkeypatch.setenv("ENVCTL_SOURCE_PAYMENT_PROVIDER", "paddle")
     monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_BILLING_ENABLED", "true")
@@ -2383,27 +2374,44 @@ def test_generated_public_preview_start_commands_inline_provider_env(monkeypatch
         },
     )
 
-    assert 'PAYMENT_PROVIDER="${ENVCTL_SOURCE_PAYMENT_PROVIDER}"' in rendered
+    backend_start = rendered.split("ENVCTL_BACKEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+    frontend_start = rendered.split("ENVCTL_FRONTEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+
+    assert "PAYMENT_PROVIDER=" not in backend_start
+    assert "PADDLE_BILLING_ENABLED=" not in backend_start
+    assert "PADDLE_ENVIRONMENT=" not in backend_start
+    assert "PADDLE_API_KEY=" not in backend_start
+    assert "PADDLE_GROWTH_MONTHLY_PRICE_ID=" not in backend_start
+    assert "PADDLE_GROWTH_TRIAL_DAYS=" not in backend_start
+    assert "VITE_PADDLE_CLIENT_TOKEN=" not in frontend_start
+    assert "VITE_PADDLE_ENVIRONMENT=" not in frontend_start
+    assert "PAYMENT_PROVIDER=${ENVCTL_SOURCE_PAYMENT_PROVIDER}" in rendered
     assert (
-        'PADDLE_BILLING_ENABLED="${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED}"'
+        "PADDLE_BILLING_ENABLED=${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED}"
         in rendered
     )
-    assert 'PADDLE_ENVIRONMENT="${ENVCTL_SOURCE_PADDLE_ENVIRONMENT}"' in rendered
-    assert 'PADDLE_API_KEY="${ENVCTL_SOURCE_PADDLE_API_KEY}"' in rendered
+    assert "PADDLE_ENVIRONMENT=${ENVCTL_SOURCE_PADDLE_ENVIRONMENT}" in rendered
+    assert "PADDLE_API_KEY=${ENVCTL_SOURCE_PADDLE_API_KEY}" in rendered
     assert (
-        'PADDLE_GROWTH_MONTHLY_PRICE_ID='
-        '"${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID}"' in rendered
+        "PADDLE_GROWTH_MONTHLY_PRICE_ID="
+        "${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID}" in rendered
     )
     assert (
-        'PADDLE_GROWTH_TRIAL_DAYS='
-        '"${ENVCTL_BACKEND_ENV__PADDLE_GROWTH_TRIAL_DAYS}"' in rendered
+        "PADDLE_GROWTH_TRIAL_DAYS=${ENVCTL_SOURCE_PADDLE_GROWTH_TRIAL_DAYS}"
+        in rendered
     )
     assert (
-        'VITE_PADDLE_CLIENT_TOKEN='
-        '"${ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN}"' in rendered
+        "VITE_PADDLE_CLIENT_TOKEN=${ENVCTL_SOURCE_VITE_PADDLE_CLIENT_TOKEN}"
+        in rendered
     )
     assert (
-        'VITE_PADDLE_ENVIRONMENT="${ENVCTL_SOURCE_VITE_PADDLE_ENVIRONMENT}"'
+        "VITE_PADDLE_ENVIRONMENT=${ENVCTL_SOURCE_VITE_PADDLE_ENVIRONMENT}"
         in rendered
     )
     assert "test-api-key" not in rendered
