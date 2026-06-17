@@ -132,6 +132,9 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("use `envctl test-focused --project <current-worktree-name>`", codex)
         self.assertNotIn("envctl test-focused --project <current-worktree-name> --dry-run --json", codex)
         self.assertIn('use `envctl ship -m "<message>"` from inside the current generated worktree', codex)
+        self.assertIn("Full-stack PR-URL E2E delivery lane", codex)
+        self.assertIn("frontend and backend surfaces", codex)
+        self.assertIn("deployed PR URL", codex)
         self.assertIn("Run bare `envctl ship` from inside the current worktree/project directory", codex)
         self.assertIn("GitHub CLI checks only if `ship` is unavailable", codex)
         self.assertIn("creates a PR when none exists", codex)
@@ -204,6 +207,7 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         finalize_prompt = _load_template("finalize_task")
         self.assertEqual(finalize_prompt.name, "finalize_task")
         self.assertIn("Run `envctl test-focused` from inside the current generated worktree", finalize_prompt.body)
+        self.assertIn("deployed PR URL E2E validation is an additional post-PR lane", finalize_prompt.body)
         self.assertIn("use `envctl test-focused --project <current-worktree-name>`", finalize_prompt.body)
         self.assertNotIn("envctl test-focused --project <current-worktree-name> --dry-run --json", finalize_prompt.body)
         self.assertIn("envctl endpoints --project <current-worktree-name> --json", finalize_prompt.body)
@@ -243,6 +247,7 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
 
         intermediate_prompt = _load_template("_plan_agent_intermediate_cycle_completion").body
         self.assertIn('then use `envctl ship -m "<message>"`', intermediate_prompt)
+        self.assertIn("Do not substitute localhost validation for deployed PR URL validation", intermediate_prompt)
         self.assertIn("Build the message as a commit/PR handoff message", intermediate_prompt)
         self.assertIn("what your validation actually did and proved", intermediate_prompt)
         self.assertIn("manual checks a human should still run to truly confirm it works", intermediate_prompt)
@@ -261,6 +266,7 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         )
 
         first_cycle_prompt = _load_template("_plan_agent_first_cycle_completion").body
+        self.assertIn("Do not substitute localhost validation for deployed PR URL validation", first_cycle_prompt)
         self.assertIn("Build the message as a commit/PR handoff message", first_cycle_prompt)
         self.assertIn("what your validation actually did and proved", first_cycle_prompt)
         self.assertIn("manual checks a human should still run to truly confirm it works", first_cycle_prompt)

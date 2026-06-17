@@ -50,6 +50,9 @@ class PlanAgentLaunchConfig:
     ulw_loop_prefix: bool
     ulw_suffix: bool
     browser_e2e_followup_enable: bool = False
+    fullstack_pr_url_e2e_enable: bool = False
+    fullstack_pr_url_e2e_active: bool = False
+    fullstack_pr_url_e2e_reason: str | None = None
     pr_review_comments_followup_enable: bool = False
     omx_workflow: Literal["", "ultragoal", "ralph", "team"] = ""
     codex_goal_enable: bool = True

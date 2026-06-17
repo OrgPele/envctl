@@ -458,6 +458,9 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                     "codex_cycles": 3,
                     "codex_goal_enable": True,
                     "browser_e2e_followup_enable": False,
+                    "fullstack_pr_url_e2e_enable": False,
+                    "fullstack_pr_url_e2e_active": False,
+                    "fullstack_pr_url_e2e_reason": "disabled",
                     "pr_review_comments_followup_enable": False,
                 }
             ],

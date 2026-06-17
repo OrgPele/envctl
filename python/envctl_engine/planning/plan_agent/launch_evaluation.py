@@ -41,6 +41,9 @@ class PlanAgentLaunchEvaluation:
             "codex_cycles": self.launch_config.codex_cycles,
             "codex_goal_enable": self.launch_config.codex_goal_enable,
             "browser_e2e_followup_enable": self.launch_config.browser_e2e_followup_enable,
+            "fullstack_pr_url_e2e_enable": self.launch_config.fullstack_pr_url_e2e_enable,
+            "fullstack_pr_url_e2e_active": self.launch_config.fullstack_pr_url_e2e_active,
+            "fullstack_pr_url_e2e_reason": self.launch_config.fullstack_pr_url_e2e_reason,
             "pr_review_comments_followup_enable": self.launch_config.pr_review_comments_followup_enable,
         }
 
@@ -60,6 +63,9 @@ class PlanAgentLaunchEvaluation:
             "ulw_loop_prefix": self.launch_config.ulw_loop_prefix,
             "ulw_suffix": self.launch_config.ulw_suffix,
             "browser_e2e_followup_enable": self.launch_config.browser_e2e_followup_enable,
+            "fullstack_pr_url_e2e_enable": self.launch_config.fullstack_pr_url_e2e_enable,
+            "fullstack_pr_url_e2e_active": self.launch_config.fullstack_pr_url_e2e_active,
+            "fullstack_pr_url_e2e_reason": self.launch_config.fullstack_pr_url_e2e_reason,
             "pr_review_comments_followup_enable": self.launch_config.pr_review_comments_followup_enable,
             "require_cmux_context": self.launch_config.require_cmux_context,
             "workspace_id": self.workspace_id,
