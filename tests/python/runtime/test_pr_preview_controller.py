@@ -610,6 +610,17 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     instance = controller.PreviewController(config, runner)
     monkeypatch.setenv("GH_TOKEN", "secret")
     monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:1")
+    monkeypatch.setenv("ENVCTL_SOURCE_PAYMENT_PROVIDER", "paddle")
+    monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_BILLING_ENABLED", "true")
+    monkeypatch.setenv(
+        "ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID",
+        "pri_growth_monthly",
+    )
+    monkeypatch.setenv("ENVCTL_BACKEND_ENV__PADDLE_BILLING_ENABLED", "true")
+    monkeypatch.setenv(
+        "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN",
+        "test-client-token",
+    )
 
     exit_code = instance.run_pull_request_event(
         pr_payload(
@@ -672,6 +683,17 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     assert "GH_TOKEN" not in start_call["env"]
     assert "CMUX_WORKSPACE_ID" not in start_call["env"]
     assert start_call["env"]["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] == "false"
+    assert start_call["env"]["ENVCTL_SOURCE_PAYMENT_PROVIDER"] == "paddle"
+    assert start_call["env"]["ENVCTL_SOURCE_PADDLE_BILLING_ENABLED"] == "true"
+    assert (
+        start_call["env"]["ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID"]
+        == "pri_growth_monthly"
+    )
+    assert start_call["env"]["ENVCTL_BACKEND_ENV__PADDLE_BILLING_ENABLED"] == "true"
+    assert (
+        start_call["env"]["ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN"]
+        == "test-client-token"
+    )
     assert (
         start_call["env"]["ENVCTL_BACKEND_ENV__FRONTEND_BASE_URL"]
         == "https://pele-monorepo-pr-789.srv.example.test"
@@ -813,7 +835,27 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
         "TWILIO_MASTER_AUTH_TOKEN=${ENVCTL_SOURCE_TWILIO_MASTER_AUTH_TOKEN}"
         in envctl_text
     )
+    assert "PADDLE_BILLING_ENABLED=${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED}" in (
+        envctl_text
+    )
+    assert "PADDLE_ENVIRONMENT=${ENVCTL_SOURCE_PADDLE_ENVIRONMENT}" in envctl_text
     assert "PADDLE_API_KEY=${ENVCTL_SOURCE_PADDLE_API_KEY}" in envctl_text
+    assert (
+        "PADDLE_NOTIFICATION_WEBHOOK_SECRET="
+        "${ENVCTL_SOURCE_PADDLE_NOTIFICATION_WEBHOOK_SECRET}" in envctl_text
+    )
+    assert (
+        "PADDLE_GROWTH_MONTHLY_PRICE_ID="
+        "${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID}" in envctl_text
+    )
+    assert (
+        "PADDLE_GROWTH_TRIAL_DAYS=${ENVCTL_SOURCE_PADDLE_GROWTH_TRIAL_DAYS}"
+        in envctl_text
+    )
+    assert (
+        "PADDLE_VALIDATE_PRICE_TRIALS="
+        "${ENVCTL_SOURCE_PADDLE_VALIDATE_PRICE_TRIALS}" in envctl_text
+    )
     assert (
         "FRONTEND_BASE_URL="
         "https://pele-monorepo-pr-789.srv.example.test" in envctl_text
@@ -2220,7 +2262,30 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
         "TWILIO_MASTER_AUTH_TOKEN=${ENVCTL_SOURCE_TWILIO_MASTER_AUTH_TOKEN}"
         in rendered
     )
+    assert "PADDLE_BILLING_ENABLED=${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED}" in (
+        rendered
+    )
+    assert "PADDLE_ENVIRONMENT=${ENVCTL_SOURCE_PADDLE_ENVIRONMENT}" in rendered
     assert "PADDLE_API_KEY=${ENVCTL_SOURCE_PADDLE_API_KEY}" in rendered
+    assert (
+        "PADDLE_CLIENT_TOKEN=${ENVCTL_SOURCE_PADDLE_CLIENT_TOKEN}" in rendered
+    )
+    assert (
+        "PADDLE_CHECKOUT_SUCCESS_URL="
+        "${ENVCTL_SOURCE_PADDLE_CHECKOUT_SUCCESS_URL}" in rendered
+    )
+    assert (
+        "PADDLE_STARTER_MONTHLY_PRICE_ID="
+        "${ENVCTL_SOURCE_PADDLE_STARTER_MONTHLY_PRICE_ID}" in rendered
+    )
+    assert (
+        "PADDLE_GROWTH_ANNUAL_PRICE_ID="
+        "${ENVCTL_SOURCE_PADDLE_GROWTH_ANNUAL_PRICE_ID}" in rendered
+    )
+    assert (
+        "PADDLE_PROFESSIONAL_TRIAL_DAYS="
+        "${ENVCTL_SOURCE_PADDLE_PROFESSIONAL_TRIAL_DAYS}" in rendered
+    )
     assert (
         "SQLALCHEMY_DATABASE_URL=${ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL}"
         in rendered
@@ -2358,6 +2423,27 @@ def test_headless_envctl_env_removes_plan_agent_aliases(monkeypatch):
     assert "RUNNER_TRACKING_ID" not in import_env
     assert "CMUX_WORKSPACE_ID" not in import_env
     assert "ACTIONS_RUNTIME_TOKEN" not in import_env
+
+
+def test_pr_preview_start_env_overrides_keep_app_launch_env(monkeypatch):
+    controller = load_controller()
+    monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_BILLING_ENABLED", "true")
+    monkeypatch.setenv("ENVCTL_BACKEND_ENV__PAYMENT_PROVIDER", "paddle")
+    monkeypatch.setenv(
+        "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN",
+        "test-client-token",
+    )
+    monkeypatch.setenv("ENVCTL_PREVIEW_PUBLIC_LINK_TOKEN", "public-link-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "secret")
+    monkeypatch.setenv("UNRELATED", "value")
+
+    env = controller.pr_preview_start_env_overrides()
+
+    assert env == {
+        "ENVCTL_SOURCE_PADDLE_BILLING_ENABLED": "true",
+        "ENVCTL_BACKEND_ENV__PAYMENT_PROVIDER": "paddle",
+        "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN": "test-client-token",
+    }
 
 
 def test_unsafe_plan_agent_config_entries_rejects_terminal_enablers(tmp_path):
