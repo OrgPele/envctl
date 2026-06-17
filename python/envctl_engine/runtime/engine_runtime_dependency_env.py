@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Mapping
 
@@ -11,6 +12,11 @@ from envctl_engine.state.models import RequirementsResult
 
 _ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _TEMPLATE_VAR_RE = re.compile(r"\$\{([^}]+)\}")
+_SERVICE_OVERLAY_SOURCE_PREFIXES = (
+    "ENVCTL_SOURCE_",
+    "ENVCTL_BACKEND_ENV__",
+    "ENVCTL_FRONTEND_ENV__",
+)
 
 
 def service_env_overlays(
@@ -27,6 +33,9 @@ def service_env_overlays(
     config_raw = getattr(getattr(runtime, "config", None), "raw", None)
     if isinstance(config_raw, Mapping):
         raw_sources.append(config_raw)
+    process_source = _process_service_overlay_source()
+    if process_source:
+        raw_sources.append(process_source)
     runtime_env = getattr(runtime, "env", None)
     if isinstance(runtime_env, Mapping):
         raw_sources.append(runtime_env)
@@ -49,6 +58,14 @@ def service_env_overlays(
                 source_env={**source_env, **overlays},
             )
     return overlays
+
+
+def _process_service_overlay_source() -> dict[str, str]:
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if value and key.startswith(_SERVICE_OVERLAY_SOURCE_PREFIXES)
+    }
 
 
 def source_alias_env(env: Mapping[str, str]) -> dict[str, str]:

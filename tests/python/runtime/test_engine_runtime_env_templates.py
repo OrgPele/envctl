@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 # ruff: noqa: F403,F405
 from tests.python.runtime.engine_runtime_env_test_support import *
 from envctl_engine.config import load_config
@@ -385,6 +387,26 @@ class EngineRuntimeEnvTemplatesTests(EngineRuntimeEnvTestCase):
         self.assertEqual(frontend_env["VITE_PADDLE_ENVIRONMENT"], "sandbox")
         self.assertNotIn("ENVCTL_BACKEND_ENV__PADDLE_API_KEY", backend_env)
         self.assertNotIn("ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN", frontend_env)
+
+    def test_service_env_overlays_fall_back_to_filtered_process_env(self) -> None:
+        runtime = SimpleNamespace(
+            env={},
+            config=SimpleNamespace(raw={}),
+        )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN": "client-token",
+                "ENVCTL_FRONTEND_ENV__VITE_PADDLE_ENVIRONMENT": "sandbox",
+                "UNRELATED_SECRET": "must-not-project",
+            },
+        ):
+            overlays = service_env_overlays(runtime, service_name="frontend", base_env={})
+
+        self.assertEqual(overlays["VITE_PADDLE_CLIENT_TOKEN"], "client-token")
+        self.assertEqual(overlays["VITE_PADDLE_ENVIRONMENT"], "sandbox")
+        self.assertNotIn("UNRELATED_SECRET", overlays)
 
     def test_frontend_launch_env_rejects_supabase_service_role_source_template(self) -> None:
         runtime = SimpleNamespace(
