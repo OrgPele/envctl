@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import json
 import unittest
 from unittest.mock import patch
@@ -12,6 +13,7 @@ from contextlib import redirect_stderr, redirect_stdout
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime import cli
+from envctl_engine.runtime import launcher_cli
 from envctl_engine.runtime.prompt_install_support import _target_path
 
 
@@ -369,6 +371,75 @@ class CommandExitCodeTests(unittest.TestCase):
             self.assertEqual(seen.get("mode"), "trees")
             self.assertEqual(seen.get("base_dir"), requested_repo.resolve())
             self.assertTrue(seen.get("config_exists"))
+
+    def test_pr_preview_controller_owns_github_repo_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+
+            seen: dict[str, object] = {}
+
+            def dispatcher(route, _config):  # noqa: ANN001
+                seen["command"] = route.command
+                seen["passthrough"] = list(route.passthrough_args)
+                return 0
+
+            code = cli.run(
+                [
+                    "pr-preview-controller",
+                    "--repo",
+                    "OrgPele/pele-monorepo",
+                    "--command",
+                    "sweep",
+                    "--dry-run",
+                ],
+                env={"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime)},
+                dispatcher=dispatcher,
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(seen.get("command"), "pr-preview-controller")
+            self.assertEqual(
+                seen.get("passthrough"),
+                ["--repo", "OrgPele/pele-monorepo", "--command", "sweep", "--dry-run"],
+            )
+
+    def test_launcher_pr_preview_controller_owns_github_repo_flag_without_repo_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_cwd = Path.cwd()
+            os.chdir(tmpdir)
+            try:
+                with patch("envctl_engine.runtime.launcher_cli.runtime_cli.run", return_value=0) as run:
+                    code = launcher_cli.run(
+                        [
+                            "pr-preview-controller",
+                            "--repo",
+                            "OrgPele/pele-monorepo",
+                            "--command",
+                            "sweep",
+                            "--dry-run",
+                        ]
+                    )
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertEqual(code, 0)
+        run.assert_called_once()
+        forwarded_argv = run.call_args.args[0]
+        forwarded_env = run.call_args.kwargs["env"]
+        self.assertEqual(
+            forwarded_argv,
+            [
+                "pr-preview-controller",
+                "--repo",
+                "OrgPele/pele-monorepo",
+                "--command",
+                "sweep",
+                "--dry-run",
+            ],
+        )
+        self.assertEqual(forwarded_env["RUN_REPO_ROOT"], str(Path(tmpdir).resolve()))
 
     def test_missing_envctl_allows_headless_config_set_without_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

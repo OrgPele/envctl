@@ -12,7 +12,16 @@ from envctl_engine.runtime.command_policy import (
 WORKFLOW_COMMANDS = frozenset({"start", "restart", "resume", "dashboard", "config", "plan", "import"})
 DEBUG_COMMANDS = frozenset({"debug-pack", "debug-report", "debug-last", "doctor"})
 UTILITY_COMMANDS = frozenset(
-    {"codex-tmux", "ensure-worktree", "install-prompts", "migrate-hooks", "supabase-user", "qa-user", "playwright"}
+    {
+        "codex-tmux",
+        "ensure-worktree",
+        "install-prompts",
+        "migrate-hooks",
+        "supabase-user",
+        "qa-user",
+        "playwright",
+        "pr-preview-controller",
+    }
 )
 DEFAULT_HEADLESS_COMMANDS = ACTION_COMMANDS | LIFECYCLE_CLEANUP_COMMANDS | STATE_ACTION_COMMANDS
 GENERAL_WORKFLOW_ORDER = ("start", "resume", "restart", "dashboard", "config", "plan", "import")
@@ -54,6 +63,7 @@ GENERAL_UTILITY_ORDER = (
     "supabase-user",
     "qa-user",
     "playwright",
+    "pr-preview-controller",
     "migrate-hooks",
 )
 

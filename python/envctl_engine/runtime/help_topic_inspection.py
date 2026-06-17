@@ -215,4 +215,39 @@ INSPECTION_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         aliases=("--playwright",),
         related=("endpoints", "qa-user", "test"),
     ),
+    "pr-preview-controller": CommandHelpTopic(
+        command="pr-preview-controller",
+        summary="run the GitHub PR-label preview controller",
+        usage=(
+            "envctl pr-preview-controller [--event-path <path>] [--event-name <name>]",
+            "envctl pr-preview-controller --command <start|stop|delete|sweep> --pr-number <number>",
+        ),
+        what_it_does=(
+            "coordinates GitHub pull-request preview environments from label, PR, schedule, or manual events",
+            "imports or updates the PR branch, starts an isolated full envctl runtime, and publishes public routes",
+            "stops previews when the label is removed and deletes imported worktrees when PRs close or merge",
+            "posts PR comments, creates GitHub deployments, and records preview state for later reconciliation",
+        ),
+        flags=(
+            "--event-path <path>     GitHub event payload path; defaults to GITHUB_EVENT_PATH",
+            "--event-name <name>     GitHub event name; defaults to GITHUB_EVENT_NAME",
+            "--repo <owner/repo>     repository slug; defaults to GITHUB_REPOSITORY",
+            "--label <name>         preview trigger label; defaults to ENVCTL_PREVIEW_LABEL",
+            "--ttl-minutes <n>      preview lifetime before scheduled sweep cleanup",
+            "--command <name>       manual command: start, stop, delete, or sweep",
+            "--pr-number <n>        required with manual start, stop, and delete",
+            "--dry-run              print commands without mutating GitHub, Docker, or envctl state",
+        ),
+        examples=(
+            "envctl pr-preview-controller",
+            "envctl pr-preview-controller --command sweep",
+            "envctl pr-preview-controller --command delete --pr-number 287",
+        ),
+        notes=(
+            "intended for CI on a trusted self-hosted runner with gh, docker, git, and envctl available",
+            "configuration is supplied through ENVCTL_PREVIEW_* environment variables",
+        ),
+        aliases=("pr-preview", "github-pr-preview", "--pr-preview-controller", "--pr-preview"),
+        related=("import", "start", "qa-user", "endpoints"),
+    ),
 }

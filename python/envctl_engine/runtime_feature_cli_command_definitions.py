@@ -169,6 +169,24 @@ CLI_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
         parity_status="verified_python",
         notes="QA user ensure is Python-owned, scopes Supabase Auth operations through the active project runtime resolver, writes redacted artifacts/events, and mutates existing users only with explicit update flags.",
     ),
+    "pr-preview-controller": FeatureDefinition(
+        area="cli",
+        feature="Command: run the GitHub PR-label preview controller",
+        user_visible=True,
+        shell_source_of_truth=(),
+        python_source_of_truth=(
+            "python/envctl_engine/pr_preview_controller.py",
+            "python/envctl_engine/runtime/command_router.py",
+            "python/envctl_engine/runtime/utility_command_support.py",
+        ),
+        evidence_tests=(
+            "tests/python/runtime/test_pr_preview_controller.py",
+            "tests/python/runtime/test_cli_router_parity.py",
+            "tests/python/runtime/test_command_dispatch_matrix.py",
+        ),
+        parity_status="verified_python",
+        notes="PR preview orchestration is envctl-owned so repository CI only invokes the installed envctl binary with GitHub Actions environment inputs.",
+    ),
     "list-targets": FeatureDefinition(
         area="cli",
         feature="Command: print available project and service targets",

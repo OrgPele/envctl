@@ -36,6 +36,7 @@ from envctl_engine.runtime.command_special_flags import (
     apply_default_headless_policy,
     apply_default_runtime_scope_policy,
     handle_env_assignment,
+    passthrough_after_command,
     handle_special_flag,
     set_dependency_scope,
     set_runtime_scope,
@@ -77,6 +78,10 @@ def parse_route(argv: list[str], env: Mapping[str, str]) -> Route:
 
     # Phase 3: Command/Mode Resolution - determine command and mode
     _phase_resolve_command_mode(classified, state)
+    if state.command == "pr-preview-controller":
+        state.passthrough.extend(passthrough_after_command(argv, "pr-preview-controller", COMMAND_ALIASES))
+        state.passthrough.extend(passthrough_after_separator)
+        return _phase_finalize(state, argv)
 
     # Phase 4: Flag Binding - extract and bind flags
     _phase_bind_flags(classified, state)

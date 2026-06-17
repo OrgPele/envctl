@@ -10,6 +10,7 @@ from envctl_engine.runtime.prompt_install_support import run_install_prompts_com
 from envctl_engine.runtime.playwright_command_support import run_playwright_command
 from envctl_engine.runtime.qa_user_command_support import run_qa_user_command
 from envctl_engine.runtime.supabase_user_command_support import run_supabase_user_command
+from envctl_engine.pr_preview_controller import run_pr_preview_controller_command
 
 UtilityCommandHandler = Callable[[Any, Route], int]
 
@@ -22,6 +23,7 @@ def utility_command_handlers() -> dict[str, UtilityCommandHandler]:
         "supabase-user": run_supabase_user_command,
         "qa-user": run_qa_user_command,
         "playwright": run_playwright_command,
+        "pr-preview-controller": run_pr_preview_controller_command,
     }
 
 

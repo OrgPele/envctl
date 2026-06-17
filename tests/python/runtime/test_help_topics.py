@@ -22,6 +22,13 @@ class HelpTopicsTests(unittest.TestCase):
         self.assertEqual(suffix_text, prefix_text)
         self.assertIn("envctl playwright - run a browser-test command", suffix_text)
 
+    def test_pr_preview_controller_help_topic_is_available(self) -> None:
+        self.assertIn("pr-preview-controller", COMMAND_HELP_TOPICS)
+        text = render_command_help(COMMAND_HELP_TOPICS["pr-preview-controller"])
+
+        self.assertIn("envctl pr-preview-controller - run the GitHub PR-label preview controller", text)
+        self.assertIn("--command <name>", text)
+
     def test_help_text_for_route_returns_none_for_general_help(self) -> None:
         self.assertIsNone(help_text_for_route(parse_route(["--help"], env={})))
 

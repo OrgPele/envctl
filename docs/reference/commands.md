@@ -41,7 +41,7 @@ Use this section when you need to know which `envctl` commands are safe before r
 | Command family | What it covers today | Boundary |
 | --- | --- | --- |
 | launcher-owned commands | `--help`, `--version`, launcher `doctor`, `install`, `uninstall` | handled by the launcher before the normal runtime path |
-| bootstrap-safe inspection or utility commands | `list-commands`, `list-targets`, `list-trees`, `show-config`, `show-state`, `endpoints`, `explain-startup`, `install-prompts`, `codex-tmux`, `ensure-worktree`, `supabase-user`, `qa-user`, `playwright` | available without a repo-local `.envctl` and outside the full runtime dependency gate |
+| bootstrap-safe inspection or utility commands | `list-commands`, `list-targets`, `list-trees`, `show-config`, `show-state`, `endpoints`, `explain-startup`, `install-prompts`, `codex-tmux`, `ensure-worktree`, `supabase-user`, `qa-user`, `playwright`, `pr-preview-controller` | available without a repo-local `.envctl` and outside the full runtime dependency gate |
 | operational runtime commands | `start`, `plan`, `import`, `resume`, `restart`, `dashboard`, `test`, `logs`, `health`, `errors`, `pr`, `commit`, `review`, `migrate` | enter the normal runtime path for startup, saved-state, or action workflows |
 
 This boundary is grounded in the current launcher and Python runtime behavior, not a separate documentation-only model.
@@ -307,6 +307,7 @@ Current supported command surface:
 - `migrate-hooks`
 - `playwright`
 - `plan`
+- `pr-preview-controller`
 - `pr`
 - `qa-user`
 - `restart`

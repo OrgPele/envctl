@@ -23,6 +23,15 @@ from envctl_engine.runtime.runtime_dependency_contract import (
 )
 from envctl_engine.runtime.engine_runtime import dispatch_route
 
+_PR_PREVIEW_CONTROLLER_TOKENS = {
+    "pr-preview-controller",
+    "pr-preview",
+    "github-pr-preview",
+    "--pr-preview-controller",
+    "--pr-preview",
+    "--github-pr-preview",
+}
+
 
 def _best_effort_restore_terminal_state() -> None:
     try:
@@ -177,6 +186,7 @@ def run(
             "supabase-user",
             "qa-user",
             "playwright",
+            "pr-preview-controller",
             "endpoints",
             "list-commands",
             "list-targets",
@@ -252,6 +262,7 @@ def _command_can_skip_local_config_bootstrap(route: Route) -> bool:
         "supabase-user",
         "qa-user",
         "playwright",
+        "pr-preview-controller",
         "doctor",
         "errors",
         "health",
@@ -282,6 +293,8 @@ def _command_can_skip_local_config_bootstrap(route: Route) -> bool:
 
 
 def _extract_repo_arg(argv: Sequence[str]) -> tuple[list[str], str | None]:
+    if _argv_invokes_pr_preview_controller(argv):
+        return list(argv), None
     filtered: list[str] = []
     repo_arg: str | None = None
     index = 0
@@ -306,6 +319,20 @@ def _extract_repo_arg(argv: Sequence[str]) -> tuple[list[str], str | None]:
         filtered.append(token)
         index += 1
     return filtered, repo_arg
+
+
+def _argv_invokes_pr_preview_controller(argv: Sequence[str]) -> bool:
+    index = 0
+    while index < len(argv):
+        token = str(argv[index])
+        if token in _PR_PREVIEW_CONTROLLER_TOKENS:
+            return True
+        if token in {"--command", "--action"}:
+            return index + 1 < len(argv) and str(argv[index + 1]) in _PR_PREVIEW_CONTROLLER_TOKENS
+        if token.startswith("--command=") or token.startswith("--action="):
+            return token.split("=", 1)[1] in _PR_PREVIEW_CONTROLLER_TOKENS
+        index += 1
+    return False
 
 
 def _resolve_base_dir(env_map: Mapping[str, str], *, repo_arg: str | None) -> Path:

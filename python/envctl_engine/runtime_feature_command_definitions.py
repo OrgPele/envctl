@@ -29,7 +29,7 @@ _COMMAND_ORDER = tuple(
     "self-destruct-worktree test test-focused pr commit ship review migrate logs clear-logs "
     "health errors show-config show-state explain-startup preflight dashboard config doctor "
     "migrate-hooks debug-pack debug-report debug-last help list-commands install-prompts "
-    "codex-tmux ensure-worktree supabase-user endpoints qa-user playwright session list-targets "
+    "codex-tmux ensure-worktree supabase-user endpoints qa-user playwright pr-preview-controller session list-targets "
     "list-trees".split()
 )
 

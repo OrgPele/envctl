@@ -200,6 +200,7 @@ class EngineRuntimeDispatchTests(unittest.TestCase):
                 "supabase-user",
                 "qa-user",
                 "playwright",
+                "pr-preview-controller",
             },
         )
 

@@ -9,6 +9,25 @@ TRUTHY_TOKENS = frozenset({"true", "1", "yes", "on"})
 FALSY_TOKENS = frozenset({"false", "0", "no", "off"})
 
 
+def passthrough_after_command(argv: list[str], command: str, aliases: Mapping[str, str]) -> list[str]:
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if aliases.get(token) == command:
+            return list(argv[index + 1 :])
+        if token in {"--command", "--action"}:
+            if index + 1 < len(argv) and aliases.get(argv[index + 1]) == command:
+                return list(argv[index + 2 :])
+            index += 2
+            continue
+        if token.startswith("--command=") or token.startswith("--action="):
+            value = token.split("=", 1)[1]
+            if aliases.get(value) == command:
+                return list(argv[index + 1 :])
+        index += 1
+    return []
+
+
 def handle_special_flag(flags: dict[str, object], token: str) -> None:
     if token == "--backend":
         set_runtime_scope(flags, "backend")
