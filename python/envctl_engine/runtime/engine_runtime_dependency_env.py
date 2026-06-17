@@ -31,6 +31,8 @@ def service_env_overlays(
     if isinstance(runtime_env, Mapping):
         raw_sources.append(runtime_env)
     source_env = dict(base_env)
+    for source in raw_sources:
+        source_env.update({str(key): str(value) for key, value in source.items()})
     source_env.update(source_alias_env(source_env))
     overlays: dict[str, str] = {}
     for source in raw_sources:

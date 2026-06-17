@@ -27,6 +27,7 @@ from envctl_engine.runtime.engine_runtime_env import (
     requirement_enabled_for_mode as runtime_requirement_enabled_for_mode,
     requirements_ready as runtime_requirements_ready,
     runtime_env_overrides as runtime_env_overrides,
+    service_env_overlays as runtime_service_env_overlays,
     service_enabled_for_mode as runtime_service_enabled_for_mode,
     skipped_requirement as runtime_skipped_requirement,
     validate_mode_toggles as runtime_validate_mode_toggles,
@@ -99,6 +100,9 @@ class RuntimeServiceFacadeMixin:
 
     def _runtime_env_overrides(self, route: Route | None) -> dict[str, str]:
         return runtime_env_overrides(route)
+
+    def _service_env_overlays(self, *, service_name: str, base_env: Mapping[str, str]) -> dict[str, str]:
+        return runtime_service_env_overlays(self, service_name=service_name, base_env=base_env)
 
     def _service_enabled_for_mode(self, mode: str, service_name: str) -> bool:
         return runtime_service_enabled_for_mode(self, mode, service_name)

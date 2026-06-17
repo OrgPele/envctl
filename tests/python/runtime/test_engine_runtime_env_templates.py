@@ -2,9 +2,33 @@ from __future__ import annotations
 
 # ruff: noqa: F403,F405
 from tests.python.runtime.engine_runtime_env_test_support import *
+from envctl_engine.config import load_config
+from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
+from envctl_engine.startup.service_execution_policy import resolve_service_env_overlay_builder
 
 
 class EngineRuntimeEnvTemplatesTests(EngineRuntimeEnvTestCase):
+    def test_python_runtime_exposes_service_env_overlay_builder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = {
+                "RUN_REPO_ROOT": tmpdir,
+                "ENVCTL_BACKEND_ENV__PADDLE_BILLING_ENABLED": "true",
+                "ENVCTL_BACKEND_ENV__PADDLE_API_KEY": "${ENVCTL_SOURCE_PADDLE_API_KEY}",
+                "ENVCTL_SOURCE_PADDLE_API_KEY": "pdl_test_secret",
+            }
+            runtime = PythonEngineRuntime(load_config(env), env=env)
+
+            overlay_builder = resolve_service_env_overlay_builder(runtime)
+
+            self.assertIsNotNone(overlay_builder)
+            assert overlay_builder is not None
+            overlays = overlay_builder(
+                service_name="backend",
+                base_env={"EXISTING": "value"},
+            )
+            self.assertEqual(overlays["PADDLE_BILLING_ENABLED"], "true")
+            self.assertEqual(overlays["PADDLE_API_KEY"], "pdl_test_secret")
+
     def test_project_service_env_uses_dependency_env_templates_when_section_present(self) -> None:
         runtime = SimpleNamespace(
             _command_override_value=lambda key: {"DB_HOST": "db.local", "DB_USER": "alice"}.get(key),
