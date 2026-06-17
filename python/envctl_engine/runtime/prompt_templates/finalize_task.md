@@ -14,7 +14,7 @@ $ARGUMENTS
    - Use the injected worktree code-intelligence context if envctl added one. Otherwise follow repo-local AGENTS.md/tooling guidance and use `rg` for exact strings; do not assume Serena, CGC/CodeGraphContext, CodeGraph, or any other graph tool exists unless it is configured for this checkout and relevant to the question.
 2. Run `envctl test-focused` from inside the current generated worktree for focused validation. When running from outside the worktree, use `envctl test-focused --project <current-worktree-name>`.
 3. If tests fail, investigate and fix the failures when they are caused by the current implementation, then rerun the relevant validation until the tree is in a good state or you have a concrete blocker. Run broad validation when the test plan recommends it or the change is cross-cutting/risky.
-4. For runtime or browser-visible work, use project-scoped envctl helpers before handoff:
+4. For runtime or browser-visible work, use project-scoped envctl helpers before handoff only when a local runtime is already running or the task/test harness explicitly requires one:
    - `envctl endpoints --project <current-worktree-name> --json` to read canonical active URLs and dependency ports.
    - `envctl qa-user ensure --project <current-worktree-name> ... --json` when deterministic auth credentials are needed.
    - `envctl playwright --project <current-worktree-name> -- <command>` for Playwright/browser tests against the active frontend.
@@ -31,6 +31,12 @@ $ARGUMENTS
 - If validation fails and you cannot resolve it safely, stop before commit/push/PR and report the blocker clearly.
 - Prefer inline `-m "<message>"` for `envctl ship`; reserve `envctl commit` for fallback or commit-only maintenance cases, and do not write envctl-local commit-message ledger files.
 - Preserve repo conventions and avoid unrelated cleanup.
+
+## Success criteria
+- The implementation is verified against the current `MAIN_TASK.md`.
+- Focused validation has passed or a concrete blocker is reported before shipping.
+- `envctl ship -m "<message>"` is the handoff path unless it is unavailable or returns actionable fallback instructions.
+- Any deployed PR URL E2E requirement remains queued for the browser follow-up and is not replaced with localhost validation.
 
 ## Final response format
 1. Validation commands run.

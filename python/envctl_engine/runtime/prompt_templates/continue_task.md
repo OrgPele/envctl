@@ -73,6 +73,12 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Short summary of what was complete vs what was carried forward.
 - Risk register only if unresolved ambiguity remains.
 
+## Success criteria
+- The archived task preserves the previous implementation request without overwriting any existing `OLD_TASK_*.md`.
+- The new `MAIN_TASK.md` contains only remaining work, with explicit acceptance criteria and test requirements.
+- Every carried-forward requirement is mapped to evidence from code, tests, git history, or the previous task file.
+- If nothing remains, the new `MAIN_TASK.md` says that clearly instead of inventing scope.
+
 ## Final response format
 1. File rename performed (`MAIN_TASK.md` -> `OLD_TASK_<iteration>.md`).
 2. Summary of implemented vs remaining scope.

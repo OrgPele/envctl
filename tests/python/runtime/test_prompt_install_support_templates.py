@@ -81,6 +81,11 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
                 self.assertIn("--headless", body)
                 self.assertIn("--new-session", body)
                 self.assertIn("--entire-system", body)
+                self.assertIn(
+                    "it is not an instruction to prove the feature by starting local services",
+                    body,
+                )
+                self.assertIn("## Success criteria", body)
                 self.assertIn("Use a narrower runtime scope only when the plan explicitly records why full-stack E2E does not apply.", body)
 
     def test_create_plan_template_requires_bounded_codex_cycle_recommendation(self) -> None:
@@ -195,6 +200,8 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("$browser-use", opencode)
 
         continue_prompt = _load_template("continue_task")
+        self.assertIn("## Success criteria", continue_prompt.body)
+        self.assertIn("The new `MAIN_TASK.md` contains only remaining work", continue_prompt.body)
         self.assertIn("one complete commit/PR handoff message", continue_prompt.body)
         self.assertIn("what your validation actually did and proved", continue_prompt.body)
         self.assertIn("manual checks a human should still run to truly confirm it works", continue_prompt.body)
@@ -206,6 +213,8 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
 
         finalize_prompt = _load_template("finalize_task")
         self.assertEqual(finalize_prompt.name, "finalize_task")
+        self.assertIn("## Success criteria", finalize_prompt.body)
+        self.assertIn("only when a local runtime is already running or the task/test harness explicitly requires one", finalize_prompt.body)
         self.assertIn("Run `envctl test-focused` from inside the current generated worktree", finalize_prompt.body)
         self.assertIn("deployed PR URL E2E validation is an additional post-PR lane", finalize_prompt.body)
         self.assertIn("use `envctl test-focused --project <current-worktree-name>`", finalize_prompt.body)
@@ -246,6 +255,7 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertNotIn("Inspect unresolved PR review comments", finalize_prompt.body)
 
         intermediate_prompt = _load_template("_plan_agent_intermediate_cycle_completion").body
+        self.assertIn("## Ship contract", intermediate_prompt)
         self.assertIn('then use `envctl ship -m "<message>"`', intermediate_prompt)
         self.assertIn("Do not substitute localhost validation for deployed PR URL validation", intermediate_prompt)
         self.assertIn("Build the message as a commit/PR handoff message", intermediate_prompt)
@@ -266,6 +276,7 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         )
 
         first_cycle_prompt = _load_template("_plan_agent_first_cycle_completion").body
+        self.assertIn("## Ship contract", first_cycle_prompt)
         self.assertIn("Do not substitute localhost validation for deployed PR URL validation", first_cycle_prompt)
         self.assertIn("Build the message as a commit/PR handoff message", first_cycle_prompt)
         self.assertIn("what your validation actually did and proved", first_cycle_prompt)
@@ -276,6 +287,8 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         )
 
         review_comments_prompt = _load_template("_plan_agent_pr_review_comments_followup").body
+        self.assertIn("## Comment triage", review_comments_prompt)
+        self.assertIn("## Ship contract", review_comments_prompt)
         self.assertIn("Build the message as a commit/PR handoff message", review_comments_prompt)
         self.assertIn("what your validation actually did and proved", review_comments_prompt)
         self.assertIn("manual checks a human should still run to truly confirm it works", review_comments_prompt)
@@ -286,8 +299,20 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
             review_comments_prompt,
         )
 
+        browser_e2e_prompt = _load_template("_plan_agent_browser_e2e_followup").body
+        self.assertIn("## Objective", browser_e2e_prompt)
+        self.assertIn("## URL source", browser_e2e_prompt)
+        self.assertIn("## Validation steps", browser_e2e_prompt)
+        self.assertIn("## Final response", browser_e2e_prompt)
+        self.assertIn("conventional deployment URL", browser_e2e_prompt)
+        self.assertIn("not from the PR body", browser_e2e_prompt)
+        self.assertIn("never use it as the source for the browser URL", browser_e2e_prompt)
+        self.assertIn("not automatable from this environment", browser_e2e_prompt)
+
         review_worktree_prompt = _load_template("review_worktree_imp")
         self.assertEqual(review_worktree_prompt.name, "review_worktree_imp")
+        self.assertIn("## Success criteria", review_worktree_prompt.body)
+        self.assertIn("Findings are grounded in the target worktree diff", review_worktree_prompt.body)
         self.assertIn("current local repo directory is the unedited baseline", review_worktree_prompt.body)
         self.assertIn("defaults to the worktree created from the current plan file", review_worktree_prompt.body)
         self.assertIn("Launch arguments:\n$ARGUMENTS", review_worktree_prompt.body)
@@ -303,6 +328,8 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
 
         merge_prompt = _load_template("merge_implementation_branches")
         self.assertEqual(merge_prompt.name, "merge_implementation_branches")
+        self.assertIn("## Success criteria", merge_prompt.body)
+        self.assertIn("Every conflict is resolved from product and code intent", merge_prompt.body)
         self.assertIn("Read `MAIN_TASK.md` from branch A and branch B separately.", merge_prompt.body)
         self.assertIn("first merge branch A into the integration branch", merge_prompt.body)
         self.assertIn("Merge target: `integration/<branch-a>-plus-<branch-b>`", merge_prompt.body)
@@ -441,6 +468,9 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("If the user explicitly asks for a light/quick/minimal planning pass", plan_prompt.body)
         self.assertIn("Review todo/plans/README.md if it exists", plan_prompt.body)
         self.assertIn("Launch scope default", plan_prompt.body)
+        self.assertIn("plan-agent scope metadata and dependency-prep intent", plan_prompt.body)
+        self.assertIn("Separately record the validation lane: focused tests and `envctl ship` by default", plan_prompt.body)
+        self.assertIn("they do not replace focused tests, `envctl ship`, or deployed PR URL validation", plan_prompt.body)
         self.assertIn("--entire-system", plan_prompt.body)
         self.assertIn("backend-only", plan_prompt.body)
         self.assertIn("--only-backend", plan_prompt.body)
