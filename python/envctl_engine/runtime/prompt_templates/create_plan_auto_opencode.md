@@ -21,5 +21,5 @@ OpenCode plan-agent launches use the `/ulw-loop` prefix by default. The `--entir
 - The implementation launch uses the shared `implement_task` preset through OpenCode.
 - The final response includes the plan path, exact command, launch result, and attach/reconnect guidance.
 
-## Final Response
+## Final response
 Report the plan path, implementation surface, exact command executed, launch result, attach/reconnect guidance, and any residual risks.

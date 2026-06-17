@@ -86,6 +86,8 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
                     body,
                 )
                 self.assertIn("## Success criteria", body)
+                self.assertIn("## Final response", body)
+                self.assertNotIn("## Final Response", body)
                 self.assertIn("Use a narrower runtime scope only when the plan explicitly records why full-stack E2E does not apply.", body)
 
     def test_create_plan_template_requires_bounded_codex_cycle_recommendation(self) -> None:
@@ -171,6 +173,7 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("ship with `envctl ship -m \"<message>\"`", codex)
         self.assertIn("Start local envctl services only when the authoritative task", codex)
         self.assertIn("the final browser-visible proof is the deployed PR URL", codex)
+        self.assertIn("## Handoff and ship contract", codex)
         self.assertNotIn("Default to `envctl --entire-system --headless`", codex)
         self.assertNotIn("envctl --backend --headless", codex)
         self.assertNotIn("envctl --frontend --headless", codex)
@@ -344,6 +347,9 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertNotIn("use CodeGraphContext (`cgc`) for repo-wide ownership", plan_prompt.body)
         self.assertNotIn("Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl", plan_prompt.body)
         self.assertIn("envctl --headless --plan <selector>", plan_prompt.body)
+        self.assertIn("Ground the follow-up in the real supported flow", plan_prompt.body)
+        self.assertIn("Use these repo-scoped command forms as the source of examples", plan_prompt.body)
+        self.assertIn("Multi-launch choices mean separate commands", plan_prompt.body)
         self.assertIn(
             "cd <repo> && envctl --plan <selector> --tmux --opencode",
             plan_prompt.body,
