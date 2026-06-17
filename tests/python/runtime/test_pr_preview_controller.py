@@ -651,7 +651,7 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
             "--project",
             "feature/demo",
             "--email",
-            "qa-preview+pr789@getpele.tech",
+            "qa-preview@getpele.tech",
             "--password",
             "Pele-QA-2026!",
             "--update-password",
@@ -848,7 +848,7 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     assert "- Public base domain: `srv.example.test`" in runner.comments[-1]
     assert "- Public link token: `configured`" in runner.comments[-1]
     assert "QA user:" in runner.comments[-1]
-    assert "- Email: `qa-preview+pr789@getpele.tech`" in runner.comments[-1]
+    assert "- Email: `qa-preview@getpele.tech`" in runner.comments[-1]
     assert "- Password: `Pele-QA-2026!`" in runner.comments[-1]
     assert "https://pele-monorepo-pr-789.srv.example.test" in runner.comments[-1]
     assert "https://pele-monorepo-pr-789-api.srv.example.test" in runner.comments[-1]
