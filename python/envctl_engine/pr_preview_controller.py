@@ -51,17 +51,38 @@ HEADLESS_ENVCTL_ENV_REMOVALS = {
     "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
     "ACTIONS_ID_TOKEN_REQUEST_URL",
     "ACTIONS_RUNTIME_TOKEN",
+    "APP_ENV_FILE",
+    "BACKEND_PUBLIC_URL",
     "CMUX",
     "CMUX_WORKSPACE",
     "CMUX_WORKSPACE_ID",
+    "CORS_ORIGINS_RAW",
     "ENVCTL_PREVIEW_EXTERNAL_DEPS_JSON",
     "ENVCTL_PREVIEW_PUBLIC_LINK_TOKEN",
+    "FRONTEND_BASE_URL",
     "GH_TOKEN",
     "GITHUB_TOKEN",
+    "PADDLE_API_KEY",
+    "PADDLE_BILLING_ENABLED",
+    "PADDLE_CLIENT_TOKEN",
+    "PADDLE_DEFAULT_PAYMENT_LINK",
+    "PADDLE_ENVIRONMENT",
+    "PADDLE_NOTIFICATION_WEBHOOK_SECRET",
+    "PAYMENT_PROVIDER",
     "RUNNER_TRACKING_ID",
     "SUPERSET",
     "SUPERSET_PROJECT",
     "SUPERSET_WORKSPACE",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE_JWKS_URL",
+    "SUPABASE_JWT_SECRET",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_URL",
+    "VITE_API_URL",
+    "VITE_BACKEND_URL",
+    "VITE_PADDLE_CLIENT_TOKEN",
+    "VITE_PADDLE_ENVIRONMENT",
+    "VITE_SUPABASE_URL",
 }
 PR_PREVIEW_START_ENV_PREFIXES = (
     "ENVCTL_SOURCE_",
@@ -1611,7 +1632,7 @@ class PreviewController:
             ],
             cwd=self.config.control_repo,
             check=False,
-            env=headless_envctl_env(keep_github_tokens=True),
+            env=self.envctl_command_env(keep_github_tokens=True),
         )
         if import_result.returncode != 0:
             self.release_external_dependency_leases(pr.number, external_dependencies)
@@ -1660,7 +1681,21 @@ class PreviewController:
             )
             return 1
 
-        start_env = headless_envctl_env()
+        pre_start_stop = self.stop_project_before_start(str(project.get("name") or ""))
+        if pre_start_stop.returncode != 0:
+            self.release_external_dependency_leases(pr.number, external_dependencies)
+            self.comment(
+                pr.number,
+                self.render_failure_comment(
+                    pr,
+                    "envctl pre-start stop failed",
+                    pre_start_stop.stdout,
+                    pre_start_stop.stderr,
+                ),
+            )
+            return pre_start_stop.returncode
+
+        start_env = self.envctl_command_env()
         start_env.update(pr_preview_start_env_overrides())
         start_env.update(
             self.external_dependency_start_env(external_dependencies)
@@ -1877,6 +1912,26 @@ class PreviewController:
         ):
             (backend / ".envctl-state" / state_name).unlink(missing_ok=True)
 
+    def envctl_command_env(self, *, keep_github_tokens: bool = False) -> dict[str, str]:
+        env = headless_envctl_env(keep_github_tokens=keep_github_tokens)
+        env["RUN_SH_RUNTIME_DIR"] = str(self.config.preview_root / "runtime")
+        return env
+
+    def stop_project_before_start(self, project_name: str) -> CommandResult:
+        return self.runner.run(
+            [
+                self.config.envctl_bin,
+                "stop",
+                "--trees",
+                "--project",
+                project_name,
+                "--entire-system",
+            ],
+            cwd=self.config.control_repo,
+            check=False,
+            env=self.envctl_command_env(),
+        )
+
     def cleanup_failed_start_preview(self, state: PreviewState) -> int:
         cleanup_result = self.runner.run(
             [
@@ -1888,7 +1943,7 @@ class PreviewController:
             ],
             cwd=self.config.control_repo,
             check=False,
-            env=headless_envctl_env(),
+            env=self.envctl_command_env(),
         )
         if cleanup_result.returncode != 0:
             return cleanup_result.returncode
@@ -2025,7 +2080,7 @@ class PreviewController:
             ],
             cwd=self.config.control_repo,
             check=False,
-            env=headless_envctl_env(),
+            env=self.envctl_command_env(),
         )
         status = "stopped" if result.returncode == 0 else "stop_failed"
         external_dependencies = state.external_dependencies if state else None
@@ -2083,7 +2138,7 @@ class PreviewController:
             [self.config.envctl_bin, "delete-worktree", "--project", project_name, "--yes"],
             cwd=self.config.control_repo,
             check=False,
-            env=headless_envctl_env(),
+            env=self.envctl_command_env(),
         )
         if delete_result.returncode == 0:
             self.remove_project_docker_artifacts(project_name)
@@ -2177,7 +2232,7 @@ class PreviewController:
             ],
             cwd=self.config.control_repo,
             check=False,
-            env=headless_envctl_env(),
+            env=self.envctl_command_env(),
         )
         if result.returncode != 0:
             return result.returncode
@@ -2375,7 +2430,7 @@ class PreviewController:
             [self.config.envctl_bin, *args],
             cwd=self.config.control_repo,
             check=False,
-            env=headless_envctl_env(),
+            env=self.envctl_command_env(),
         )
         if result.returncode != 0:
             return {
@@ -2552,7 +2607,7 @@ class PreviewController:
             argv,
             cwd=self.config.control_repo,
             check=False,
-            env=headless_envctl_env(),
+            env=self.envctl_command_env(),
             display_argv=display_argv,
         )
 

@@ -690,9 +690,11 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     assert import_call["env"]["GH_TOKEN"] == "secret"
     assert "CMUX_WORKSPACE_ID" not in import_call["env"]
     assert import_call["env"]["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] == "false"
+    assert import_call["env"]["RUN_SH_RUNTIME_DIR"] == str(tmp_path / "runtime")
     assert "GH_TOKEN" not in start_call["env"]
     assert "CMUX_WORKSPACE_ID" not in start_call["env"]
     assert start_call["env"]["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] == "false"
+    assert start_call["env"]["RUN_SH_RUNTIME_DIR"] == str(tmp_path / "runtime")
     assert start_call["env"]["ENVCTL_SOURCE_PAYMENT_PROVIDER"] == "paddle"
     assert start_call["env"]["ENVCTL_SOURCE_PADDLE_BILLING_ENABLED"] == "true"
     assert (
@@ -1337,10 +1339,12 @@ def test_start_stops_existing_tracked_preview_before_reimport(tmp_path):
     assert sequence == [
         ["envctl", "stop"],
         ["envctl", "import"],
+        ["envctl", "stop"],
         ["envctl", "start"],
     ]
     assert command_argvs(runner, "envctl", "stop") == [
-        ["envctl", "stop", "--trees", "--project", "feature/demo", "--entire-system"]
+        ["envctl", "stop", "--trees", "--project", "feature/demo", "--entire-system"],
+        ["envctl", "stop", "--trees", "--project", "feature/demo", "--entire-system"],
     ]
     state = instance.load_state(789)
     assert state is not None
@@ -1395,6 +1399,7 @@ def test_synchronize_event_redeploys_labeled_pr(tmp_path):
     assert sequence == [
         ["envctl", "stop"],
         ["envctl", "import"],
+        ["envctl", "stop"],
         ["envctl", "start"],
     ]
     state = instance.load_state(789)
@@ -1465,6 +1470,7 @@ def test_start_blasts_previous_failed_preview_before_reimport(tmp_path):
     assert sequence == [
         ["envctl", "blast-worktree"],
         ["envctl", "import"],
+        ["envctl", "stop"],
         ["envctl", "start"],
     ]
     assert command_argvs(runner, "envctl", "blast-worktree") == [
@@ -1497,7 +1503,9 @@ def test_start_blasts_previous_failed_preview_before_reimport(tmp_path):
         "rm",
         "network-a",
     ] in command_argvs(runner, "docker", "network")
-    assert command_argvs(runner, "envctl", "stop") == []
+    assert command_argvs(runner, "envctl", "stop") == [
+        ["envctl", "stop", "--trees", "--project", "feature/demo", "--entire-system"]
+    ]
     state = instance.load_state(789)
     assert state is not None
     assert state.status == "running"
@@ -2077,6 +2085,7 @@ def test_sweep_redeploys_running_preview_when_head_sha_changes(tmp_path):
     assert sequence == [
         ["envctl", "stop"],
         ["envctl", "import"],
+        ["envctl", "stop"],
         ["envctl", "start"],
     ]
     assert instance.load_state(789).head_sha == "abc123456789"
@@ -2554,8 +2563,18 @@ def test_headless_envctl_env_removes_plan_agent_aliases(monkeypatch):
     monkeypatch.setenv("ACTIONS_RUNTIME_TOKEN", "secret")
     monkeypatch.setenv("ENVCTL_PREVIEW_EXTERNAL_DEPS_JSON", '{"supabase":[]}')
     monkeypatch.setenv("ENVCTL_PREVIEW_PUBLIC_LINK_TOKEN", "public-link-token")
+    monkeypatch.setenv("PADDLE_API_KEY", "wrong-paddle-api-key")
+    monkeypatch.setenv("SUPABASE_URL", "https://wrong-supabase.example.test")
+    monkeypatch.setenv("VITE_API_URL", "https://wrong-api.example.test/api/v1")
+    monkeypatch.setenv("VITE_BACKEND_URL", "https://wrong-api.example.test")
+    monkeypatch.setenv("VITE_SUPABASE_URL", "https://wrong-supabase.example.test")
     monkeypatch.setenv("ENVCTL_SOURCE_AI_PROVIDER", "gemini")
     monkeypatch.setenv("ENVCTL_SOURCE_GOOGLE_API_KEY", "google-api-key")
+    monkeypatch.setenv("ENVCTL_BACKEND_ENV__PADDLE_API_KEY", "right-paddle-api-key")
+    monkeypatch.setenv(
+        "ENVCTL_FRONTEND_ENV__VITE_API_URL",
+        "https://right-api.example.test/api/v1",
+    )
 
     env = controller.headless_envctl_env()
 
@@ -2567,8 +2586,18 @@ def test_headless_envctl_env_removes_plan_agent_aliases(monkeypatch):
     assert "ACTIONS_RUNTIME_TOKEN" not in env
     assert "ENVCTL_PREVIEW_EXTERNAL_DEPS_JSON" not in env
     assert "ENVCTL_PREVIEW_PUBLIC_LINK_TOKEN" not in env
+    assert "PADDLE_API_KEY" not in env
+    assert "SUPABASE_URL" not in env
+    assert "VITE_API_URL" not in env
+    assert "VITE_BACKEND_URL" not in env
+    assert "VITE_SUPABASE_URL" not in env
     assert env["ENVCTL_SOURCE_AI_PROVIDER"] == "gemini"
     assert env["ENVCTL_SOURCE_GOOGLE_API_KEY"] == "google-api-key"
+    assert env["ENVCTL_BACKEND_ENV__PADDLE_API_KEY"] == "right-paddle-api-key"
+    assert (
+        env["ENVCTL_FRONTEND_ENV__VITE_API_URL"]
+        == "https://right-api.example.test/api/v1"
+    )
     assert env["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] == "false"
     assert env["ENVCTL_UI_BACKEND"] == "non_interactive"
 
@@ -2578,6 +2607,7 @@ def test_headless_envctl_env_removes_plan_agent_aliases(monkeypatch):
     assert "RUNNER_TRACKING_ID" not in import_env
     assert "CMUX_WORKSPACE_ID" not in import_env
     assert "ACTIONS_RUNTIME_TOKEN" not in import_env
+    assert "VITE_API_URL" not in import_env
 
 
 def test_pr_preview_start_env_overrides_keep_app_launch_env(monkeypatch):
