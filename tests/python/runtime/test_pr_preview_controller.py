@@ -166,6 +166,7 @@ class FakeRunner:
             ["envctl", "stop"],
             ["envctl", "delete-worktree"],
             ["envctl", "blast-worktree"],
+            ["envctl", "blast-all"],
         ):
             return self.ok(argv)
         return self.ok(argv)
@@ -1227,6 +1228,59 @@ def test_start_stops_existing_tracked_preview_before_reimport(tmp_path):
     assert state.head_sha == "abc123456789"
 
 
+def test_synchronize_event_redeploys_labeled_pr(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        projects={
+            "projects": [
+                {"name": "feature/demo", "root": str(root), "running": True}
+            ]
+        },
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+    )
+    config = make_config(controller, tmp_path)
+    instance = controller.PreviewController(config, runner)
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=789,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(root),
+            head_ref="feature/demo",
+            head_sha="oldsha",
+            status="running",
+            label_added_at="2026-06-14T00:00:00Z",
+            started_at="2026-06-14T00:00:00Z",
+            expires_at="2026-06-14T00:45:00Z",
+            updated_at="2026-06-14T00:00:00Z",
+            endpoints={},
+        )
+    )
+
+    exit_code = instance.run_pull_request_event(
+        pr_payload(action="synchronize", labels=["deploy-app"])
+    )
+
+    assert exit_code == 0
+    sequence = [
+        call["argv"][:2]
+        for call in runner.calls
+        if call["argv"][:2]
+        in (["envctl", "stop"], ["envctl", "import"], ["envctl", "start"])
+    ]
+    assert sequence == [
+        ["envctl", "stop"],
+        ["envctl", "import"],
+        ["envctl", "start"],
+    ]
+    assert instance.load_state(789).head_sha == "abc123456789"
+    assert "- Reason: new commit pushed" in runner.comments[-1]
+
+
 def test_start_blasts_previous_failed_preview_before_reimport(tmp_path):
     controller = load_controller()
     root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
@@ -1507,6 +1561,15 @@ def test_unlabeled_event_stops_tracked_preview(tmp_path):
     ]
     assert command_argvs(runner, "docker", "volume") == []
     assert command_argvs(runner, "docker", "network") == []
+    assert command_argvs(runner, "envctl", "blast-all") == [
+        [
+            "envctl",
+            "blast-all",
+            "--force",
+            "--blast-keep-worktree-volumes",
+            "--blast-keep-main-volumes",
+        ]
+    ]
     assert instance.load_state(789).status == "stopped"
     assert runner.deployment_statuses[-1] == {
         "state": "inactive",
@@ -1839,6 +1902,109 @@ def test_sweep_expires_label_stops_preview_and_removes_label(tmp_path):
     assert command_argvs(runner, "envctl", "delete-worktree") == []
     assert runner.removed_labels == ["deploy-app"]
     assert "TTL expired" in runner.comments[0]
+
+
+def test_sweep_redeploys_running_preview_when_head_sha_changes(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    config = make_config(controller, tmp_path, ttl_minutes=45)
+    runner = FakeRunner(
+        controller,
+        active_prs=[pr_list_payload(789, "Preview me")],
+        projects={
+            "projects": [
+                {"name": "feature/demo", "root": str(root), "running": True}
+            ]
+        },
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+    )
+    instance = controller.PreviewController(config, runner)
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=789,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(root),
+            head_ref="feature/demo",
+            head_sha="oldsha",
+            status="running",
+            label_added_at="2999-01-01T00:00:00Z",
+            started_at="2999-01-01T00:00:00Z",
+            expires_at="2999-01-01T00:45:00Z",
+            updated_at="2999-01-01T00:00:00Z",
+            endpoints={},
+        )
+    )
+
+    exit_code = instance.sweep()
+
+    assert exit_code == 0
+    sequence = [
+        call["argv"][:2]
+        for call in runner.calls
+        if call["argv"][:2]
+        in (["envctl", "stop"], ["envctl", "import"], ["envctl", "start"])
+    ]
+    assert sequence == [
+        ["envctl", "stop"],
+        ["envctl", "import"],
+        ["envctl", "start"],
+    ]
+    assert instance.load_state(789).head_sha == "abc123456789"
+    assert "scheduled reconciliation for new commit" in runner.comments[-1]
+
+
+def test_sweep_with_no_active_prs_blasts_processes_without_removing_storage(
+    tmp_path,
+):
+    controller = load_controller()
+    config = make_config(controller, tmp_path, ttl_minutes=45)
+    runner = FakeRunner(controller, active_prs=[])
+    instance = controller.PreviewController(config, runner)
+    instance.save_external_dependency_leases({"supabase": {"supabase-a": 789}})
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=789,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(tmp_path / "control" / "trees" / "imported" / "feature-demo"),
+            head_ref="feature/demo",
+            head_sha="abc123456789",
+            status="running",
+            label_added_at="2000-01-01T00:00:00Z",
+            started_at="2000-01-01T00:00:00Z",
+            expires_at="2000-01-01T00:45:00Z",
+            updated_at="2000-01-01T00:00:00Z",
+            endpoints={},
+            external_dependencies={"supabase": "supabase-a"},
+            deployment_id="12345",
+        )
+    )
+
+    exit_code = instance.sweep()
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "blast-all") == [
+        [
+            "envctl",
+            "blast-all",
+            "--force",
+            "--blast-keep-worktree-volumes",
+            "--blast-keep-main-volumes",
+        ]
+    ]
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.status == "stopped"
+    assert state.external_dependencies == {}
+    assert instance.load_external_dependency_leases() == {}
+    assert runner.deployment_statuses[-1] == {
+        "state": "inactive",
+        "description": "Envctl preview stopped",
+        "auto_inactive": False,
+    }
 
 
 def test_sweep_uses_saved_label_time_when_timeline_is_unavailable(tmp_path):
