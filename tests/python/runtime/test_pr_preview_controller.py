@@ -26,6 +26,7 @@ class FakeRunner:
         endpoints=None,
         root_to_branch=None,
         start_returncode: int = 0,
+        start_stdout: str = "",
         start_stderr: str = "",
     ):
         self.controller = controller
@@ -35,6 +36,7 @@ class FakeRunner:
         self.endpoints = endpoints or {}
         self.root_to_branch = root_to_branch or {}
         self.start_returncode = start_returncode
+        self.start_stdout = start_stdout
         self.start_stderr = start_stderr
         self.calls = []
         self.comments = []
@@ -155,7 +157,7 @@ class FakeRunner:
             return self.controller.CommandResult(
                 argv=list(argv),
                 returncode=self.start_returncode,
-                stdout="",
+                stdout=self.start_stdout,
                 stderr=self.start_stderr,
             )
         if argv[:3] == ["envctl", "qa-user", "ensure"]:
@@ -684,6 +686,8 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     assert start_call["env"]["ENVCTL_BACKEND_ENV__RUN_DB_MIGRATIONS_ON_STARTUP"] == (
         "true"
     )
+    assert start_call["env"]["ENVCTL_BACKEND_ENV__PYTHONFAULTHANDLER"] == "1"
+    assert start_call["env"].get("PYTHON_BIN")
     assert (
         start_call["env"]["ENVCTL_BACKEND_ENV__ALLOW_LEGACY_SUPABASE_HS256"]
         == "true"
@@ -766,6 +770,7 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
         "https://pele-monorepo-pr-789.srv.example.test "
         "BACKEND_PUBLIC_URL=https://pele-monorepo-pr-789-api.srv.example.test "
         "CORS_ORIGINS_RAW=https://pele-monorepo-pr-789.srv.example.test "
+        "PYTHONFAULTHANDLER=1 "
         "RUN_DB_MIGRATIONS_ON_STARTUP=true "
         "ALLOW_LEGACY_SUPABASE_HS256=true; "
         "exec python -m uvicorn app.main:app --host 127.0.0.1 --port "
@@ -786,6 +791,7 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     assert "SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}" in envctl_text
     assert "SUPABASE_ANON_KEY=${ENVCTL_SOURCE_SUPABASE_ANON_KEY}" in envctl_text
     assert "ALLOW_LEGACY_SUPABASE_HS256=true" in envctl_text
+    assert "PYTHONFAULTHANDLER=1" in envctl_text
     assert (
         "ALLOW_LEGACY_SUPABASE_HS256="
         "${ENVCTL_SOURCE_ALLOW_LEGACY_SUPABASE_HS256}" not in envctl_text
@@ -1354,6 +1360,7 @@ def test_labeled_event_records_start_failure_after_import(tmp_path):
         },
         root_to_branch={str(root): "feature/demo"},
         start_returncode=7,
+        start_stdout="Starting 1 project(s)...",
         start_stderr="backend failed to bind",
     )
     config = make_config(controller, tmp_path)
@@ -1374,8 +1381,90 @@ def test_labeled_event_records_start_failure_after_import(tmp_path):
     assert state is not None
     assert state.status == "start_failed"
     assert state.project == "feature/demo"
+    assert state.external_dependencies == {}
     assert "envctl start failed" in runner.comments[-1]
+    assert "- Failed-start cleanup exit code: `0`" in runner.comments[-1]
+    assert "stderr:" in runner.comments[-1]
     assert "backend failed to bind" in runner.comments[-1]
+    assert "stdout:" in runner.comments[-1]
+    assert "Starting 1 project(s)..." in runner.comments[-1]
+    assert [
+        "docker",
+        "rm",
+        "-f",
+        "container-a",
+        "container-b",
+    ] in command_argvs(runner, "docker", "rm")
+    assert [
+        "docker",
+        "volume",
+        "rm",
+        "-f",
+        "volume-a",
+    ] in command_argvs(runner, "docker", "volume")
+    assert [
+        "docker",
+        "network",
+        "rm",
+        "network-a",
+    ] in command_argvs(runner, "docker", "network")
+
+
+def test_start_removes_backend_venv_created_with_different_python(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    backend = root / "backend"
+    state_dir = backend / ".envctl-state"
+    venv = backend / "venv"
+    old_python = tmp_path / "old-python"
+    new_python = tmp_path / "new-python"
+    old_python.write_text("", encoding="utf-8")
+    new_python.write_text("", encoding="utf-8")
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text(
+        f"executable = {old_python}\n",
+        encoding="utf-8",
+    )
+    state_dir.mkdir(parents=True)
+    (state_dir / "envctl-backend-bootstrap.json").write_text("{}", encoding="utf-8")
+    (state_dir / "envctl-backend-runtime-prep.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    runner = FakeRunner(controller)
+    instance = controller.PreviewController(make_config(controller, tmp_path), runner)
+
+    instance.reset_incompatible_backend_venv(
+        {"root": str(root)},
+        {"PYTHON_BIN": str(new_python)},
+    )
+
+    assert not venv.exists()
+    assert not (state_dir / "envctl-backend-bootstrap.json").exists()
+    assert not (state_dir / "envctl-backend-runtime-prep.json").exists()
+
+
+def test_start_keeps_backend_venv_created_with_same_python(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    backend = root / "backend"
+    venv = backend / "venv"
+    python_bin = tmp_path / "python"
+    python_bin.write_text("", encoding="utf-8")
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text(
+        f"executable = {python_bin}\n",
+        encoding="utf-8",
+    )
+    runner = FakeRunner(controller)
+    instance = controller.PreviewController(make_config(controller, tmp_path), runner)
+
+    instance.reset_incompatible_backend_venv(
+        {"root": str(root)},
+        {"PYTHON_BIN": str(python_bin)},
+    )
+
+    assert venv.exists()
 
 
 def test_unlabeled_event_stops_tracked_preview(tmp_path):
@@ -1619,6 +1708,7 @@ def test_merged_pr_deletes_tracked_worktree_even_after_label_removed(tmp_path):
         "docker",
         "network",
     )
+    assert runner.removed_labels == ["deploy-app"]
     assert instance.load_state(789) is None
     assert "worktree deleted" in runner.comments[-1]
 
@@ -1671,6 +1761,7 @@ def test_closed_unmerged_pr_deletes_tracked_worktree(tmp_path):
         "docker",
         "network",
     )
+    assert runner.removed_labels == ["deploy-app"]
     assert instance.load_state(789) is None
     assert "PR closed without merge" in runner.comments[-1]
     assert "worktree deleted" in runner.comments[-1]
@@ -1715,6 +1806,7 @@ def test_delete_without_worktree_cleans_branch_docker_artifacts(tmp_path):
         "docker",
         "network",
     )
+    assert runner.removed_labels == ["deploy-app"]
     assert "Docker artifacts matching the PR branch slug were cleaned" in (
         runner.comments[-1]
     )
@@ -1914,6 +2006,7 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
         "https://pele-monorepo-pr-789.srv.example.test "
         "BACKEND_PUBLIC_URL=https://pele-monorepo-pr-789-api.srv.example.test "
         "CORS_ORIGINS_RAW=https://pele-monorepo-pr-789.srv.example.test "
+        "PYTHONFAULTHANDLER=1 "
         "RUN_DB_MIGRATIONS_ON_STARTUP=true "
         "ALLOW_LEGACY_SUPABASE_HS256=true; "
         "exec python -m uvicorn app.main:app --host 127.0.0.1 --port "
@@ -1932,6 +2025,7 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
     assert "REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}" in rendered
     assert "N8N_URL=${ENVCTL_SOURCE_N8N_URL}" in rendered
     assert "SUPABASE_URL=${ENVCTL_SOURCE_SUPABASE_URL}" in rendered
+    assert "PYTHONFAULTHANDLER=1" in rendered
     assert "SUPABASE_JWKS_URL=${ENVCTL_SOURCE_SUPABASE_JWKS_URL}" in rendered
     assert "SUPABASE_JWT_SECRET=${ENVCTL_SOURCE_SUPABASE_JWT_SECRET}" in rendered
     assert "ALLOW_LEGACY_SUPABASE_HS256=true" in rendered
