@@ -648,8 +648,32 @@ def truncate(text: str, limit: int = 3500) -> str:
     return text[-limit:]
 
 
+def render_command_output(*, stdout: str, stderr: str) -> str:
+    blocks: list[str] = []
+    if stderr:
+        blocks.append(f"stderr:\n```text\n{truncate(stderr)}\n```")
+    if stdout:
+        blocks.append(f"stdout:\n```text\n{truncate(stdout)}\n```")
+    if not blocks:
+        blocks.append("No command output was captured.")
+    return "\n\n".join(blocks)
+
+
 def split_lines(text: str) -> list[str]:
     return [line.strip() for line in str(text or "").splitlines() if line.strip()]
+
+
+def pyvenv_cfg_value(path: Path, key: str) -> str | None:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return None
+    expected = key.strip().lower()
+    for line in lines:
+        name, sep, value = line.partition("=")
+        if sep and name.strip().lower() == expected:
+            return value.strip()
+    return None
 
 
 def load_event(path: str | None) -> dict[str, Any]:
@@ -669,7 +693,18 @@ def headless_envctl_env(*, keep_github_tokens: bool = False) -> dict[str, str]:
     for key in removals:
         env.pop(key, None)
     env.update(HEADLESS_ENVCTL_ENV_OVERRIDES)
+    if "PYTHON_BIN" not in env:
+        python_bin = stable_system_python_bin()
+        if python_bin:
+            env["PYTHON_BIN"] = python_bin
     return env
+
+
+def stable_system_python_bin() -> str | None:
+    candidate = Path("/usr/bin/python3")
+    if candidate.exists():
+        return str(candidate)
+    return shutil.which("python3")
 
 
 def normalize_envctl_config_value(raw: str) -> str:
@@ -1068,6 +1103,7 @@ FRONTEND_SOURCE_ENV_MAPPINGS = (
 
 
 PUBLIC_PREVIEW_BACKEND_ENV = {
+    "PYTHONFAULTHANDLER": "1",
     "RUN_DB_MIGRATIONS_ON_STARTUP": "true",
 }
 
@@ -1109,6 +1145,7 @@ def public_route_envctl_config(public_urls: dict[str, str]) -> str:
 FRONTEND_BASE_URL={frontend_url}
 BACKEND_PUBLIC_URL={backend_url}
 CORS_ORIGINS_RAW={frontend_url}
+PYTHONFAULTHANDLER=1
 RUN_DB_MIGRATIONS_ON_STARTUP=true
 # <<< envctl backend launch env <<<
 
@@ -1543,6 +1580,7 @@ class PreviewController:
         start_env.update(
             self.external_dependency_start_env(external_dependencies)
         )
+        self.reset_incompatible_backend_venv(project, start_env)
         public_urls = self.public_route_urls(pr.number)
         if public_urls.get("backend"):
             start_env["ENVCTL_BACKEND_ENV__FRONTEND_BASE_URL"] = (
@@ -1601,6 +1639,14 @@ class PreviewController:
                 external_dependencies=external_dependencies,
             )
             self.save_state(state)
+            cleanup_code = self.cleanup_failed_start_preview(state)
+            self.release_external_dependency_leases(
+                pr.number,
+                external_dependencies,
+            )
+            if external_dependencies:
+                state = PreviewState(**{**asdict(state), "external_dependencies": {}})
+                self.save_state(state)
             self.comment(
                 pr.number,
                 self.render_failure_comment(
@@ -1608,6 +1654,7 @@ class PreviewController:
                     "envctl start failed",
                     start_result.stdout,
                     start_result.stderr,
+                    cleanup_code=cleanup_code,
                 ),
             )
             return start_result.returncode
@@ -1709,6 +1756,42 @@ class PreviewController:
         self.save_state(state)
         self.comment(pr.number, self.render_started_comment(pr, state, reason))
         return 0
+
+    def reset_incompatible_backend_venv(
+        self,
+        project: dict[str, Any],
+        start_env: dict[str, str],
+    ) -> None:
+        python_bin = str(start_env.get("PYTHON_BIN") or "").strip()
+        root_raw = str(project.get("root") or "").strip()
+        if not python_bin or not root_raw:
+            return
+        backend = Path(root_raw) / "backend"
+        venv = backend / "venv"
+        cfg = venv / "pyvenv.cfg"
+        if not cfg.is_file():
+            return
+        executable = pyvenv_cfg_value(cfg, "executable")
+        if not executable:
+            return
+        try:
+            selected = Path(python_bin).expanduser().resolve()
+            existing = Path(executable).expanduser().resolve()
+        except OSError:
+            return
+        if selected == existing:
+            return
+        print(
+            "Removing backend venv created by a different Python executable: "
+            f"{existing} != {selected}",
+            flush=True,
+        )
+        shutil.rmtree(venv, ignore_errors=True)
+        for state_name in (
+            "envctl-backend-bootstrap.json",
+            "envctl-backend-runtime-prep.json",
+        ):
+            (backend / ".envctl-state" / state_name).unlink(missing_ok=True)
 
     def cleanup_failed_start_preview(self, state: PreviewState) -> int:
         cleanup_result = self.runner.run(
@@ -1899,6 +1982,8 @@ class PreviewController:
             project_name = str(project.get("name")) if project else None
         if not project_name:
             self.remove_project_docker_artifacts(pr.head_ref)
+            if stop_code == 0:
+                self.remove_label(pr.number)
             self.comment(
                 pr.number,
                 (
@@ -1918,6 +2003,8 @@ class PreviewController:
             self.remove_project_docker_artifacts(project_name)
             self.release_external_dependency_leases(pr.number)
             self.state_path(pr.number).unlink(missing_ok=True)
+            if stop_code == 0:
+                self.remove_label(pr.number)
         self.comment(
             pr.number,
             self.render_deleted_comment(pr, project_name, reason, stop_code, delete_result),
@@ -2607,14 +2694,22 @@ class PreviewController:
         title: str,
         stdout: str,
         stderr: str,
+        cleanup_code: int | None = None,
     ) -> str:
+        details = render_command_output(stdout=stdout, stderr=stderr)
+        cleanup_line = (
+            f"- Failed-start cleanup exit code: `{cleanup_code}`\n"
+            if cleanup_code is not None
+            else ""
+        )
         return (
             f"{COMMENT_MARKER}\n"
             f"{title} for PR #{pr.number}. The `{self.config.label}` label was left in place "
             "so a later scheduled reconciliation or new commit can retry.\n\n"
             f"- Branch: `{pr.head_ref}`\n"
             f"- Head: `{pr.head_sha[:12]}`\n\n"
-            f"```text\n{truncate(stderr or stdout)}\n```"
+            f"{cleanup_line}"
+            f"{details}"
         )
 
     def render_ttl_comment(
