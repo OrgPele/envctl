@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -47,6 +49,27 @@ class EngineRuntimeCommandsTests(unittest.TestCase):
         self.assertEqual(env["PORT"], "9000")
         self.assertEqual(env["A"], "1")
         self.assertEqual(env["B"], "2")
+
+    def test_command_env_strips_github_actions_cleanup_variables(self) -> None:
+        runtime = SimpleNamespace(env={"A": "1"})
+        actions_env = {
+            "RUNNER_TRACKING_ID": "github-cleanup-token",
+            "ACTIONS_RUNTIME_TOKEN": "secret",
+            "GITHUB_TOKEN": "secret",
+            "GH_TOKEN": "secret",
+            "KEEP_ME": "value",
+        }
+
+        with patch.dict(os.environ, actions_env, clear=True):
+            env = command_env(runtime, port=9000)
+
+        self.assertNotIn("RUNNER_TRACKING_ID", env)
+        self.assertNotIn("ACTIONS_RUNTIME_TOKEN", env)
+        self.assertNotIn("GITHUB_TOKEN", env)
+        self.assertNotIn("GH_TOKEN", env)
+        self.assertEqual(env["KEEP_ME"], "value")
+        self.assertEqual(env["A"], "1")
+        self.assertEqual(env["PORT"], "9000")
 
     def test_default_python_executable_prefers_runtime_override(self) -> None:
         runtime = SimpleNamespace(
