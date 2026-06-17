@@ -1672,7 +1672,6 @@ class PreviewController:
                 "--entire-system",
                 "--isolated-deps",
                 "--copy-db-storage",
-                "--no-resume",
             ],
             cwd=self.config.control_repo,
             check=False,

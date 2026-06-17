@@ -654,7 +654,6 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
             "--entire-system",
             "--isolated-deps",
             "--copy-db-storage",
-            "--no-resume",
         ]
     ]
     assert command_argvs(runner, "envctl", "qa-user") == [
