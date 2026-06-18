@@ -832,9 +832,16 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     )
     assert "PYTHONFAULTHANDLER=1" in backend_start
     assert "RUN_DB_MIGRATIONS_ON_STARTUP=true" in backend_start
-    assert "PAYMENT_PROVIDER=" not in backend_start
-    assert "PADDLE_BILLING_ENABLED=" not in backend_start
-    assert "PADDLE_GROWTH_MONTHLY_PRICE_ID=" not in backend_start
+    assert 'PAYMENT_PROVIDER="${ENVCTL_SOURCE_PAYMENT_PROVIDER:-}"' in backend_start
+    assert (
+        'PADDLE_BILLING_ENABLED="${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED:-}"'
+        in backend_start
+    )
+    assert 'PADDLE_API_KEY="${ENVCTL_SOURCE_PADDLE_API_KEY:-}"' in backend_start
+    assert (
+        'PADDLE_GROWTH_MONTHLY_PRICE_ID="'
+        '${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID:-}"' in backend_start
+    )
     assert "ALLOW_LEGACY_SUPABASE_HS256=true" in backend_start
     assert "exec python -m uvicorn app.main:app --host 127.0.0.1 --port" in (
         backend_start
@@ -850,7 +857,10 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
         "VITE_SUPABASE_URL=https://pele-monorepo-pr-789-supabase.srv.example.test"
         in frontend_start
     )
-    assert "VITE_PADDLE_CLIENT_TOKEN=" not in frontend_start
+    assert (
+        'VITE_PADDLE_CLIENT_TOKEN="${ENVCTL_SOURCE_VITE_PADDLE_CLIENT_TOKEN:-}"'
+        in frontend_start
+    )
     assert "exec npm run dev -- --port" in frontend_start
     assert "# >>> envctl backend launch env >>>" in envctl_text
     assert "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}" in envctl_text
@@ -2356,26 +2366,49 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
     )
 
     assert "# >>> envctl backend launch env >>>" in rendered
-    assert (
-        'ENVCTL_BACKEND_START_CMD=sh -c \'export PATH="$PWD/venv/bin:$PATH" '
-        "FRONTEND_BASE_URL="
-        "https://pele-monorepo-pr-789.srv.example.test "
+    backend_start = rendered.split("ENVCTL_BACKEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+    frontend_start = rendered.split("ENVCTL_FRONTEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+    assert backend_start.startswith(
+        'sh -c \'export PATH="$PWD/venv/bin:$PATH" '
+        "FRONTEND_BASE_URL=https://pele-monorepo-pr-789.srv.example.test "
         "BACKEND_PUBLIC_URL=https://pele-monorepo-pr-789-api.srv.example.test "
-        "CORS_ORIGINS_RAW=https://pele-monorepo-pr-789.srv.example.test "
-        "PYTHONFAULTHANDLER=1 "
-        "RUN_DB_MIGRATIONS_ON_STARTUP=true "
-        "ALLOW_LEGACY_SUPABASE_HS256=true; "
-        "exec python -m uvicorn app.main:app --host 127.0.0.1 --port "
-        "'\"'\"'{port}'\"'\"''"
-        in rendered
+    )
+    assert "ALLOW_LEGACY_SUPABASE_HS256=true" in backend_start
+    assert 'PAYMENT_PROVIDER="${ENVCTL_SOURCE_PAYMENT_PROVIDER:-}"' in backend_start
+    assert 'PADDLE_API_KEY="${ENVCTL_SOURCE_PADDLE_API_KEY:-}"' in backend_start
+    assert (
+        'PADDLE_GROWTH_MONTHLY_PRICE_ID="'
+        '${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID:-}"' in backend_start
     )
     assert (
-        "ENVCTL_FRONTEND_START_CMD=sh -c 'export VITE_API_URL="
+        "exec python -m uvicorn app.main:app --host 127.0.0.1 --port "
+        "'\"'\"'{port}'\"'\"''" in backend_start
+    )
+    assert frontend_start.startswith(
+        "sh -c 'export VITE_API_URL="
         "https://pele-monorepo-pr-789-api.srv.example.test/api/v1 "
-        "VITE_BACKEND_URL=https://pele-monorepo-pr-789-api.srv.example.test "
-        "VITE_SUPABASE_URL=https://pele-monorepo-pr-789-supabase.srv.example.test; "
+    )
+    assert (
+        "VITE_SUPABASE_URL=https://pele-monorepo-pr-789-supabase.srv.example.test"
+        in frontend_start
+    )
+    assert (
+        'VITE_PADDLE_CLIENT_TOKEN="${ENVCTL_SOURCE_VITE_PADDLE_CLIENT_TOKEN:-}"'
+        in frontend_start
+    )
+    assert (
+        'VITE_PADDLE_ENVIRONMENT="${ENVCTL_SOURCE_VITE_PADDLE_ENVIRONMENT:-}"'
+        in frontend_start
+    )
+    assert (
         "exec npm run dev -- --port '\"'\"'{port}'\"'\"' --host 127.0.0.1"
-        in rendered
+        in frontend_start
     )
     assert "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}" in rendered
     assert "REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}" in rendered
@@ -2511,14 +2544,31 @@ def test_generated_public_preview_provider_env_stays_in_launch_sections(monkeypa
         1,
     )[0]
 
-    assert "PAYMENT_PROVIDER=" not in backend_start
-    assert "PADDLE_BILLING_ENABLED=" not in backend_start
-    assert "PADDLE_ENVIRONMENT=" not in backend_start
-    assert "PADDLE_API_KEY=" not in backend_start
-    assert "PADDLE_GROWTH_MONTHLY_PRICE_ID=" not in backend_start
-    assert "PADDLE_GROWTH_TRIAL_DAYS=" not in backend_start
-    assert "VITE_PADDLE_CLIENT_TOKEN=" not in frontend_start
-    assert "VITE_PADDLE_ENVIRONMENT=" not in frontend_start
+    assert 'PAYMENT_PROVIDER="${ENVCTL_SOURCE_PAYMENT_PROVIDER:-}"' in backend_start
+    assert (
+        'PADDLE_BILLING_ENABLED="${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED:-}"'
+        in backend_start
+    )
+    assert 'PADDLE_ENVIRONMENT="${ENVCTL_SOURCE_PADDLE_ENVIRONMENT:-}"' in (
+        backend_start
+    )
+    assert 'PADDLE_API_KEY="${ENVCTL_SOURCE_PADDLE_API_KEY:-}"' in backend_start
+    assert (
+        'PADDLE_GROWTH_MONTHLY_PRICE_ID="'
+        '${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID:-}"' in backend_start
+    )
+    assert (
+        'PADDLE_GROWTH_TRIAL_DAYS="${ENVCTL_SOURCE_PADDLE_GROWTH_TRIAL_DAYS:-}"'
+        in backend_start
+    )
+    assert (
+        'VITE_PADDLE_CLIENT_TOKEN="${ENVCTL_SOURCE_VITE_PADDLE_CLIENT_TOKEN:-}"'
+        in frontend_start
+    )
+    assert (
+        'VITE_PADDLE_ENVIRONMENT="${ENVCTL_SOURCE_VITE_PADDLE_ENVIRONMENT:-}"'
+        in frontend_start
+    )
     assert "PAYMENT_PROVIDER=${ENVCTL_SOURCE_PAYMENT_PROVIDER}" in rendered
     assert (
         "PADDLE_BILLING_ENABLED=${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED}"
