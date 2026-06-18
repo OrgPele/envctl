@@ -1168,6 +1168,39 @@ PUBLIC_PREVIEW_BACKEND_ENV = {
     "RUN_DB_MIGRATIONS_ON_STARTUP": "true",
 }
 
+PUBLIC_PREVIEW_BACKEND_SOURCE_EXPORT_MAPPINGS = (
+    ("PAYMENT_PROVIDER", "PAYMENT_PROVIDER"),
+    ("PADDLE_BILLING_ENABLED", "PADDLE_BILLING_ENABLED"),
+    ("PADDLE_ENVIRONMENT", "PADDLE_ENVIRONMENT"),
+    ("PADDLE_API_KEY", "PADDLE_API_KEY"),
+    ("PADDLE_CLIENT_TOKEN", "PADDLE_CLIENT_TOKEN"),
+    ("PADDLE_NOTIFICATION_WEBHOOK_SECRET", "PADDLE_NOTIFICATION_WEBHOOK_SECRET"),
+    ("PADDLE_CHECKOUT_SUCCESS_URL", "PADDLE_CHECKOUT_SUCCESS_URL"),
+    ("PADDLE_CHECKOUT_CANCEL_URL", "PADDLE_CHECKOUT_CANCEL_URL"),
+    ("PADDLE_DEFAULT_PAYMENT_LINK", "PADDLE_DEFAULT_PAYMENT_LINK"),
+    ("PADDLE_STARTER_MONTHLY_PRICE_ID", "PADDLE_STARTER_MONTHLY_PRICE_ID"),
+    ("PADDLE_STARTER_ANNUAL_PRICE_ID", "PADDLE_STARTER_ANNUAL_PRICE_ID"),
+    ("PADDLE_GROWTH_MONTHLY_PRICE_ID", "PADDLE_GROWTH_MONTHLY_PRICE_ID"),
+    ("PADDLE_GROWTH_ANNUAL_PRICE_ID", "PADDLE_GROWTH_ANNUAL_PRICE_ID"),
+    (
+        "PADDLE_PROFESSIONAL_MONTHLY_PRICE_ID",
+        "PADDLE_PROFESSIONAL_MONTHLY_PRICE_ID",
+    ),
+    (
+        "PADDLE_PROFESSIONAL_ANNUAL_PRICE_ID",
+        "PADDLE_PROFESSIONAL_ANNUAL_PRICE_ID",
+    ),
+    ("PADDLE_STARTER_TRIAL_DAYS", "PADDLE_STARTER_TRIAL_DAYS"),
+    ("PADDLE_GROWTH_TRIAL_DAYS", "PADDLE_GROWTH_TRIAL_DAYS"),
+    ("PADDLE_PROFESSIONAL_TRIAL_DAYS", "PADDLE_PROFESSIONAL_TRIAL_DAYS"),
+    ("PADDLE_VALIDATE_PRICE_TRIALS", "PADDLE_VALIDATE_PRICE_TRIALS"),
+)
+
+PUBLIC_PREVIEW_FRONTEND_SOURCE_EXPORT_MAPPINGS = (
+    ("VITE_PADDLE_CLIENT_TOKEN", "VITE_PADDLE_CLIENT_TOKEN"),
+    ("VITE_PADDLE_ENVIRONMENT", "VITE_PADDLE_ENVIRONMENT"),
+)
+
 
 def source_env_lines(keys: tuple[str, ...]) -> str:
     return "\n".join(f"{key}=${{ENVCTL_SOURCE_{key}}}" for key in keys)
@@ -1176,6 +1209,13 @@ def source_env_lines(keys: tuple[str, ...]) -> str:
 def mapped_source_env_lines(mappings: tuple[tuple[str, str], ...]) -> str:
     return "\n".join(
         f"{target}=${{ENVCTL_SOURCE_{source}}}" for target, source in mappings
+    )
+
+
+def shell_source_env_prefix(mappings: tuple[tuple[str, str], ...]) -> str:
+    return " ".join(
+        f'{target}="${{ENVCTL_SOURCE_{source}:-}}"'
+        for target, source in mappings
     )
 
 
@@ -1250,6 +1290,9 @@ def default_start_commands(public_urls: dict[str, str] | None = None) -> tuple[s
                 ),
             }
         )
+        backend_source_prefix = shell_source_env_prefix(
+            PUBLIC_PREVIEW_BACKEND_SOURCE_EXPORT_MAPPINGS
+        )
         frontend_prefix = shell_env_prefix(
             {
                 "VITE_API_URL": f"{backend_url}/api/v1",
@@ -1257,10 +1300,17 @@ def default_start_commands(public_urls: dict[str, str] | None = None) -> tuple[s
                 **({"VITE_SUPABASE_URL": supabase_url} if supabase_url else {}),
             }
         )
-        backend_cmd = sh_c_command(
-            f'export PATH="$PWD/venv/bin:$PATH" {backend_prefix}; exec {backend_cmd}'
+        frontend_source_prefix = shell_source_env_prefix(
+            PUBLIC_PREVIEW_FRONTEND_SOURCE_EXPORT_MAPPINGS
         )
-        frontend_cmd = sh_c_command(f"export {frontend_prefix}; exec {frontend_cmd}")
+        backend_cmd = sh_c_command(
+            f'export PATH="$PWD/venv/bin:$PATH" {backend_prefix} '
+            f"{backend_source_prefix}; exec {backend_cmd}"
+        )
+        frontend_cmd = sh_c_command(
+            f"export {frontend_prefix} {frontend_source_prefix}; "
+            f"exec {frontend_cmd}"
+        )
     return backend_cmd, frontend_cmd
 
 
