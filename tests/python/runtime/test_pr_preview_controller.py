@@ -834,6 +834,18 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     assert "RUN_DB_MIGRATIONS_ON_STARTUP=true" in backend_start
     assert 'PAYMENT_PROVIDER="${ENVCTL_SOURCE_PAYMENT_PROVIDER:-}"' in backend_start
     assert (
+        'CREEM_BILLING_ENABLED="${ENVCTL_SOURCE_CREEM_BILLING_ENABLED:-}"'
+        in backend_start
+    )
+    assert 'CREEM_ENVIRONMENT="${ENVCTL_SOURCE_CREEM_ENVIRONMENT:-}"' in (
+        backend_start
+    )
+    assert 'CREEM_API_KEY="${ENVCTL_SOURCE_CREEM_API_KEY:-}"' in backend_start
+    assert (
+        'CREEM_STARTER_MONTHLY_PRODUCT_ID="'
+        '${ENVCTL_SOURCE_CREEM_STARTER_MONTHLY_PRODUCT_ID:-}"' in backend_start
+    )
+    assert (
         'PADDLE_BILLING_ENABLED="${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED:-}"'
         in backend_start
     )
@@ -2381,6 +2393,12 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
     )
     assert "ALLOW_LEGACY_SUPABASE_HS256=true" in backend_start
     assert 'PAYMENT_PROVIDER="${ENVCTL_SOURCE_PAYMENT_PROVIDER:-}"' in backend_start
+    assert 'CREEM_API_KEY="${ENVCTL_SOURCE_CREEM_API_KEY:-}"' in backend_start
+    assert (
+        'CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID="'
+        '${ENVCTL_SOURCE_CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID:-}"'
+        in backend_start
+    )
     assert 'PADDLE_API_KEY="${ENVCTL_SOURCE_PADDLE_API_KEY:-}"' in backend_start
     assert (
         'PADDLE_GROWTH_MONTHLY_PRICE_ID="'
@@ -2442,6 +2460,24 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
     assert (
         "TWILIO_MASTER_AUTH_TOKEN=${ENVCTL_SOURCE_TWILIO_MASTER_AUTH_TOKEN}"
         in rendered
+    )
+    assert "CREEM_BILLING_ENABLED=${ENVCTL_SOURCE_CREEM_BILLING_ENABLED}" in (
+        rendered
+    )
+    assert "CREEM_ENVIRONMENT=${ENVCTL_SOURCE_CREEM_ENVIRONMENT}" in rendered
+    assert "CREEM_API_KEY=${ENVCTL_SOURCE_CREEM_API_KEY}" in rendered
+    assert "CREEM_WEBHOOK_SECRET=${ENVCTL_SOURCE_CREEM_WEBHOOK_SECRET}" in rendered
+    assert (
+        "CREEM_STARTER_MONTHLY_PRODUCT_ID="
+        "${ENVCTL_SOURCE_CREEM_STARTER_MONTHLY_PRODUCT_ID}" in rendered
+    )
+    assert (
+        "CREEM_PROFESSIONAL_ANNUAL_PRODUCT_ID="
+        "${ENVCTL_SOURCE_CREEM_PROFESSIONAL_ANNUAL_PRODUCT_ID}" in rendered
+    )
+    assert (
+        "CREEM_PROFESSIONAL_TRIAL_DAYS="
+        "${ENVCTL_SOURCE_CREEM_PROFESSIONAL_TRIAL_DAYS}" in rendered
     )
     assert "PADDLE_BILLING_ENABLED=${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED}" in (
         rendered
@@ -2511,7 +2547,16 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
 
 def test_generated_public_preview_provider_env_stays_in_launch_sections(monkeypatch):
     controller = load_controller()
-    monkeypatch.setenv("ENVCTL_SOURCE_PAYMENT_PROVIDER", "paddle")
+    monkeypatch.setenv("ENVCTL_SOURCE_PAYMENT_PROVIDER", "creem")
+    monkeypatch.setenv("ENVCTL_SOURCE_CREEM_BILLING_ENABLED", "true")
+    monkeypatch.setenv("ENVCTL_SOURCE_CREEM_ENVIRONMENT", "test")
+    monkeypatch.setenv("ENVCTL_SOURCE_CREEM_API_KEY", "test-api-key")
+    monkeypatch.setenv("ENVCTL_SOURCE_CREEM_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv(
+        "ENVCTL_SOURCE_CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID",
+        "prod_professional_monthly",
+    )
+    monkeypatch.setenv("ENVCTL_SOURCE_CREEM_PROFESSIONAL_TRIAL_DAYS", "0")
     monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_BILLING_ENABLED", "true")
     monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_ENVIRONMENT", "sandbox")
     monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_API_KEY", "test-api-key")
@@ -2546,6 +2591,27 @@ def test_generated_public_preview_provider_env_stays_in_launch_sections(monkeypa
 
     assert 'PAYMENT_PROVIDER="${ENVCTL_SOURCE_PAYMENT_PROVIDER:-}"' in backend_start
     assert (
+        'CREEM_BILLING_ENABLED="${ENVCTL_SOURCE_CREEM_BILLING_ENABLED:-}"'
+        in backend_start
+    )
+    assert 'CREEM_ENVIRONMENT="${ENVCTL_SOURCE_CREEM_ENVIRONMENT:-}"' in (
+        backend_start
+    )
+    assert 'CREEM_API_KEY="${ENVCTL_SOURCE_CREEM_API_KEY:-}"' in backend_start
+    assert (
+        'CREEM_WEBHOOK_SECRET="${ENVCTL_SOURCE_CREEM_WEBHOOK_SECRET:-}"'
+        in backend_start
+    )
+    assert (
+        'CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID="'
+        '${ENVCTL_SOURCE_CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID:-}"'
+        in backend_start
+    )
+    assert (
+        'CREEM_PROFESSIONAL_TRIAL_DAYS="'
+        '${ENVCTL_SOURCE_CREEM_PROFESSIONAL_TRIAL_DAYS:-}"' in backend_start
+    )
+    assert (
         'PADDLE_BILLING_ENABLED="${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED:-}"'
         in backend_start
     )
@@ -2570,6 +2636,21 @@ def test_generated_public_preview_provider_env_stays_in_launch_sections(monkeypa
         in frontend_start
     )
     assert "PAYMENT_PROVIDER=${ENVCTL_SOURCE_PAYMENT_PROVIDER}" in rendered
+    assert (
+        "CREEM_BILLING_ENABLED=${ENVCTL_SOURCE_CREEM_BILLING_ENABLED}"
+        in rendered
+    )
+    assert "CREEM_ENVIRONMENT=${ENVCTL_SOURCE_CREEM_ENVIRONMENT}" in rendered
+    assert "CREEM_API_KEY=${ENVCTL_SOURCE_CREEM_API_KEY}" in rendered
+    assert "CREEM_WEBHOOK_SECRET=${ENVCTL_SOURCE_CREEM_WEBHOOK_SECRET}" in rendered
+    assert (
+        "CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID="
+        "${ENVCTL_SOURCE_CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID}" in rendered
+    )
+    assert (
+        "CREEM_PROFESSIONAL_TRIAL_DAYS="
+        "${ENVCTL_SOURCE_CREEM_PROFESSIONAL_TRIAL_DAYS}" in rendered
+    )
     assert (
         "PADDLE_BILLING_ENABLED=${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED}"
         in rendered
