@@ -2018,7 +2018,10 @@ class PreviewController:
             check=False,
             env=self.envctl_command_env(),
         )
-        if cleanup_result.returncode != 0:
+        missing_target = "No matching targets found" in (
+            cleanup_result.stdout + cleanup_result.stderr
+        )
+        if cleanup_result.returncode != 0 and not missing_target:
             return cleanup_result.returncode
         for raw_name in (
             state.head_ref,

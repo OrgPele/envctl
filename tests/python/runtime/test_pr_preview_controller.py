@@ -31,6 +31,9 @@ class FakeRunner:
         stop_returncode: int = 0,
         stop_stdout: str = "",
         stop_stderr: str = "",
+        blast_returncode: int = 0,
+        blast_stdout: str = "",
+        blast_stderr: str = "",
     ):
         self.controller = controller
         self.active_prs = active_prs or []
@@ -44,6 +47,9 @@ class FakeRunner:
         self.stop_returncode = stop_returncode
         self.stop_stdout = stop_stdout
         self.stop_stderr = stop_stderr
+        self.blast_returncode = blast_returncode
+        self.blast_stdout = blast_stdout
+        self.blast_stderr = blast_stderr
         self.calls = []
         self.comments = []
         self.deployments = []
@@ -175,11 +181,14 @@ class FakeRunner:
                 stdout=self.stop_stdout,
                 stderr=self.stop_stderr,
             )
-        if argv[:2] in (
-            ["envctl", "delete-worktree"],
-            ["envctl", "blast-worktree"],
-            ["envctl", "blast-all"],
-        ):
+        if argv[:2] == ["envctl", "blast-worktree"]:
+            return self.controller.CommandResult(
+                argv=list(argv),
+                returncode=self.blast_returncode,
+                stdout=self.blast_stdout,
+                stderr=self.blast_stderr,
+            )
+        if argv[:2] in (["envctl", "delete-worktree"], ["envctl", "blast-all"]):
             return self.ok(argv)
         return self.ok(argv)
 
@@ -1585,6 +1594,64 @@ def test_start_blasts_previous_failed_preview_before_reimport(tmp_path):
     state = instance.load_state(789)
     assert state is not None
     assert state.status == "running"
+
+
+def test_start_treats_missing_failed_preview_target_as_clean(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        projects={
+            "projects": [
+                {"name": "feature/demo", "root": str(root), "running": False}
+            ]
+        },
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+        blast_returncode=1,
+        blast_stdout="No matching targets found for: feature/demo\n",
+    )
+    config = make_config(controller, tmp_path)
+    instance = controller.PreviewController(config, runner)
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=789,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(root),
+            head_ref="feature/demo",
+            head_sha="oldsha",
+            status="start_failed",
+            label_added_at="2026-06-14T00:00:00Z",
+            started_at="2026-06-14T00:00:00Z",
+            expires_at="2026-06-14T00:45:00Z",
+            updated_at="2026-06-14T00:00:00Z",
+            endpoints={},
+        )
+    )
+    pr = controller.pr_from_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+
+    exit_code = instance.start(pr, reason="label added")
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "blast-worktree") == [
+        ["envctl", "blast-worktree", "--project", "feature/demo", "--yes"]
+    ]
+    assert [
+        "docker",
+        "ps",
+        "-aq",
+        "--filter",
+        "name=feature-demo",
+    ] in command_argvs(runner, "docker", "ps")
+    assert command_argvs(runner, "envctl", "start")
 
 
 def test_labeled_event_fails_closed_when_imported_project_is_unresolved(tmp_path):
