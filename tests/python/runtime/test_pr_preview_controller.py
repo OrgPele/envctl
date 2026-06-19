@@ -993,6 +993,7 @@ def test_labeled_event_blasts_wrong_branch_import_target_and_retries(tmp_path):
     controller = load_controller()
     root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
     root.mkdir(parents=True)
+    target = root
     runner = FakeRunner(
         controller,
         projects={
@@ -1008,7 +1009,7 @@ def test_labeled_event_blasts_wrong_branch_import_target_and_retries(tmp_path):
                 "stderr": (
                     "Import reuse failed: imported worktree target already "
                     "exists on the wrong branch. actual_branch=main "
-                    "expected_branch=feature/demo"
+                    f"expected_branch=feature/demo target={target}"
                 ),
             },
             {"returncode": 0},
@@ -1030,6 +1031,18 @@ def test_labeled_event_blasts_wrong_branch_import_target_and_retries(tmp_path):
     assert command_argvs(runner, "envctl", "blast-worktree") == [
         ["envctl", "blast-worktree", "--project", "feature/demo", "--yes"]
     ]
+    assert command_argvs(runner, "git", "-C") == [
+        [
+            "git",
+            "-C",
+            str(tmp_path / "control"),
+            "worktree",
+            "remove",
+            "--force",
+            str(target),
+        ],
+        ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+    ]
     sequence = [
         call["argv"][:2]
         for call in runner.calls
@@ -1037,13 +1050,16 @@ def test_labeled_event_blasts_wrong_branch_import_target_and_retries(tmp_path):
         in (
             ["envctl", "import"],
             ["envctl", "blast-worktree"],
+            ["git", "-C"],
             ["envctl", "start"],
         )
     ]
     assert sequence == [
         ["envctl", "import"],
         ["envctl", "blast-worktree"],
+        ["git", "-C"],
         ["envctl", "import"],
+        ["git", "-C"],
         ["envctl", "start"],
     ]
     state = instance.load_state(789)
