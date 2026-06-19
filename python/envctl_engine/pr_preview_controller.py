@@ -2199,6 +2199,7 @@ class PreviewController:
             project_name = str(project.get("name")) if project else None
         if not project_name:
             self.remove_project_docker_artifacts(pr.head_ref)
+            self.remove_imported_branch(pr.head_ref)
             if stop_code == 0:
                 self.remove_label(pr.number)
             self.comment(
@@ -2218,6 +2219,7 @@ class PreviewController:
         )
         if delete_result.returncode == 0:
             self.remove_project_docker_artifacts(project_name)
+            self.remove_imported_branch(pr.head_ref)
             self.release_external_dependency_leases(pr.number)
             self.state_path(pr.number).unlink(missing_ok=True)
             if stop_code == 0:
@@ -2227,6 +2229,14 @@ class PreviewController:
             self.render_deleted_comment(pr, project_name, reason, stop_code, delete_result),
         )
         return delete_result.returncode or stop_code
+
+    def remove_imported_branch(self, branch: str) -> None:
+        if not branch:
+            return
+        self.runner.run(
+            ["git", "-C", str(self.config.control_repo), "branch", "-D", branch],
+            check=False,
+        )
 
     def sweep(self) -> int:
         active_prs = self.active_prs_with_label()

@@ -2034,6 +2034,16 @@ def test_merged_pr_deletes_tracked_worktree_even_after_label_removed(tmp_path):
     assert command_argvs(runner, "envctl", "delete-worktree") == [
         ["envctl", "delete-worktree", "--project", "feature/demo", "--yes"]
     ]
+    assert command_argvs(runner, "git", "-C") == [
+        [
+            "git",
+            "-C",
+            str(config.control_repo),
+            "branch",
+            "-D",
+            "feature/demo",
+        ]
+    ]
     assert ["docker", "rm", "-f", "container-a", "container-b"] in command_argvs(
         runner,
         "docker",
@@ -2087,6 +2097,16 @@ def test_closed_unmerged_pr_deletes_tracked_worktree(tmp_path):
     assert command_argvs(runner, "envctl", "delete-worktree") == [
         ["envctl", "delete-worktree", "--project", "feature/demo", "--yes"]
     ]
+    assert command_argvs(runner, "git", "-C") == [
+        [
+            "git",
+            "-C",
+            str(config.control_repo),
+            "branch",
+            "-D",
+            "feature/demo",
+        ]
+    ]
     assert ["docker", "rm", "-f", "container-a", "container-b"] in command_argvs(
         runner,
         "docker",
@@ -2132,6 +2152,16 @@ def test_delete_without_worktree_cleans_branch_docker_artifacts(tmp_path):
 
     assert exit_code == 0
     assert command_argvs(runner, "envctl", "delete-worktree") == []
+    assert command_argvs(runner, "git", "-C") == [
+        [
+            "git",
+            "-C",
+            str(config.control_repo),
+            "branch",
+            "-D",
+            "codex/address-pr283-doc-hygiene",
+        ]
+    ]
     assert ["docker", "rm", "-f", "orphan-container"] in command_argvs(
         runner,
         "docker",
