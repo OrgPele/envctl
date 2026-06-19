@@ -34,6 +34,7 @@ class FakeRunner:
         blast_returncode: int = 0,
         blast_stdout: str = "",
         blast_stderr: str = "",
+        import_results=None,
     ):
         self.controller = controller
         self.active_prs = active_prs or []
@@ -50,6 +51,7 @@ class FakeRunner:
         self.blast_returncode = blast_returncode
         self.blast_stdout = blast_stdout
         self.blast_stderr = blast_stderr
+        self.import_results = list(import_results or [])
         self.calls = []
         self.comments = []
         self.deployments = []
@@ -160,6 +162,14 @@ class FakeRunner:
         if argv and argv[0] == "docker":
             return self.ok(argv, stdout="db\nredis\n")
         if argv[:2] == ["envctl", "import"]:
+            if self.import_results:
+                result = self.import_results.pop(0)
+                return self.controller.CommandResult(
+                    argv=list(argv),
+                    returncode=result.get("returncode", 0),
+                    stdout=result.get("stdout", ""),
+                    stderr=result.get("stderr", ""),
+                )
             return self.ok(argv)
         if argv[:2] == ["envctl", "list-trees"]:
             return self.ok(argv, stdout=json.dumps(self.projects))
@@ -977,6 +987,68 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     assert "https://pele-monorepo-pr-789.srv.example.test" in runner.comments[-1]
     assert "https://pele-monorepo-pr-789-api.srv.example.test" in runner.comments[-1]
     assert "https://pele-monorepo-pr-789-supabase.srv.example.test" in runner.comments[-1]
+
+
+def test_labeled_event_blasts_wrong_branch_import_target_and_retries(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        projects={
+            "projects": [
+                {"name": "feature/demo", "root": str(root), "running": True}
+            ]
+        },
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+        import_results=[
+            {
+                "returncode": 1,
+                "stderr": (
+                    "Import reuse failed: imported worktree target already "
+                    "exists on the wrong branch. actual_branch=main "
+                    "expected_branch=feature/demo"
+                ),
+            },
+            {"returncode": 0},
+        ],
+    )
+    config = make_config(controller, tmp_path)
+    instance = controller.PreviewController(config, runner)
+
+    exit_code = instance.run_pull_request_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+
+    assert exit_code == 0
+    assert len(command_argvs(runner, "envctl", "import")) == 2
+    assert command_argvs(runner, "envctl", "blast-worktree") == [
+        ["envctl", "blast-worktree", "--project", "feature/demo", "--yes"]
+    ]
+    sequence = [
+        call["argv"][:2]
+        for call in runner.calls
+        if call["argv"][:2]
+        in (
+            ["envctl", "import"],
+            ["envctl", "blast-worktree"],
+            ["envctl", "start"],
+        )
+    ]
+    assert sequence == [
+        ["envctl", "import"],
+        ["envctl", "blast-worktree"],
+        ["envctl", "import"],
+        ["envctl", "start"],
+    ]
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.status == "running"
 
 
 def test_labeled_event_refreshes_legacy_generated_envctl_config(tmp_path, monkeypatch):

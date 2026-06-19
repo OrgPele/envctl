@@ -696,6 +696,13 @@ def render_command_output(*, stdout: str, stderr: str) -> str:
     return "\n\n".join(blocks)
 
 
+def is_wrong_branch_import_reuse_failure(result: CommandResult) -> bool:
+    output = f"{result.stdout}\n{result.stderr}"
+    return "Import reuse failed" in output and (
+        "wrong branch" in output or "failure_reason=wrong_branch" in output
+    )
+
+
 def split_lines(text: str) -> list[str]:
     return [line.strip() for line in str(text or "").splitlines() if line.strip()]
 
@@ -1698,20 +1705,61 @@ class PreviewController:
 
         started_at = utc_now()
         expires_at = label_added_at + timedelta(minutes=self.config.ttl_minutes)
-        import_result = self.runner.run(
-            [
-                self.config.envctl_bin,
-                "import",
-                pr.head_ref,
-                "--headless",
-                "--no-infra",
-                "--isolated-deps",
-                "--no-resume",
-            ],
-            cwd=self.config.control_repo,
-            check=False,
-            env=self.envctl_command_env(keep_github_tokens=True),
-        )
+        def run_import() -> CommandResult:
+            return self.runner.run(
+                [
+                    self.config.envctl_bin,
+                    "import",
+                    pr.head_ref,
+                    "--headless",
+                    "--no-infra",
+                    "--isolated-deps",
+                    "--no-resume",
+                ],
+                cwd=self.config.control_repo,
+                check=False,
+                env=self.envctl_command_env(keep_github_tokens=True),
+            )
+
+        import_result = run_import()
+        if (
+            import_result.returncode != 0
+            and is_wrong_branch_import_reuse_failure(import_result)
+        ):
+            print(
+                "Import target is on the wrong branch; blasting the stale "
+                f"worktree for {pr.head_ref} and retrying import once.",
+                flush=True,
+            )
+            cleanup_code = self.cleanup_failed_start_preview(
+                PreviewState(
+                    pr_number=pr.number,
+                    label=self.config.label,
+                    project=pr.head_ref,
+                    root=None,
+                    head_ref=pr.head_ref,
+                    head_sha=pr.head_sha,
+                    status="import_wrong_branch",
+                    label_added_at=isoformat(label_added_at),
+                    started_at=isoformat(started_at),
+                    expires_at=isoformat(expires_at),
+                    updated_at=isoformat(utc_now()) or "",
+                    endpoints={},
+                    external_dependencies=external_dependencies,
+                )
+            )
+            if cleanup_code == 0:
+                import_result = run_import()
+            else:
+                import_result = CommandResult(
+                    argv=import_result.argv,
+                    returncode=cleanup_code,
+                    stdout=import_result.stdout,
+                    stderr=(
+                        import_result.stderr
+                        + "\nStale wrong-branch import cleanup failed."
+                    ).strip(),
+                )
         if import_result.returncode != 0:
             self.release_external_dependency_leases(pr.number, external_dependencies)
             self.comment(
