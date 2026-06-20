@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, datetime, timedelta
 import json
 import os
@@ -1584,6 +1584,7 @@ class PreviewController:
         if event.get("deleted"):
             print("Ignoring deleted branch push")
             return 0
+        pushed_sha = str(event.get("after") or "")
         ref = str(event.get("ref") or "")
         prefix = "refs/heads/"
         if not ref.startswith(prefix):
@@ -1606,10 +1607,11 @@ class PreviewController:
             return 0
         exit_code = 0
         for pr in matching_prs:
+            start_pr = replace(pr, head_sha=pushed_sha) if pushed_sha else pr
             exit_code = max(
                 exit_code,
                 self.start(
-                    pr,
+                    start_pr,
                     reason=f"push to labeled PR branch {branch}",
                     refresh_ttl=True,
                 ),
