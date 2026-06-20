@@ -1619,6 +1619,38 @@ class PreviewController:
     def preview_requested_or_tracked(self, pr: PullRequestInfo) -> bool:
         return pr.has_label(self.config.label) or self.load_state(pr.number) is not None
 
+    def current_head_preview_is_running(
+        self,
+        pr: PullRequestInfo,
+        state: PreviewState | None,
+    ) -> bool:
+        return bool(
+            state
+            and state.status == "running"
+            and state.project
+            and state.head_ref == pr.head_ref
+            and state.head_sha
+            and pr.head_sha
+            and state.head_sha == pr.head_sha
+        )
+
+    def refresh_running_preview_state(
+        self,
+        state: PreviewState,
+        *,
+        label_added_at: datetime,
+    ) -> PreviewState:
+        return PreviewState(
+            **{
+                **asdict(state),
+                "label_added_at": isoformat(label_added_at),
+                "expires_at": isoformat(
+                    label_added_at + timedelta(minutes=self.config.ttl_minutes)
+                ),
+                "updated_at": isoformat(utc_now()) or "",
+            }
+        )
+
     def start(
         self,
         pr: PullRequestInfo,
@@ -1630,6 +1662,23 @@ class PreviewController:
         label_added_at = self.label_active_since(pr.number) or utc_now()
         if refresh_ttl:
             label_added_at = utc_now()
+        existing_state = self.load_state(pr.number)
+        if self.current_head_preview_is_running(pr, existing_state):
+            updated_state = self.refresh_running_preview_state(
+                existing_state,
+                label_added_at=label_added_at,
+            )
+            self.save_state(updated_state)
+            self.comment(
+                pr.number,
+                self.render_started_comment(
+                    pr,
+                    updated_state,
+                    f"{reason}; already running for this head",
+                ),
+            )
+            return 0
+
         active_prs = self.active_prs_with_label()
         stats = collect_machine_stats(self.config.preview_root, self.runner)
         reasons = overload_reasons(stats, active_prs, pr.number, self.config)
@@ -1644,7 +1693,6 @@ class PreviewController:
             self.remove_label(pr.number)
             return 0
 
-        existing_state = self.load_state(pr.number)
         external_dependencies = self.acquire_external_dependency_leases(
             pr,
             existing_state,

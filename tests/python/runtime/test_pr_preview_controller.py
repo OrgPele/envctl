@@ -543,7 +543,7 @@ def test_overloaded_start_comments_stats_lists_other_prs_and_removes_label(
     assert "111 python 250.0 5.0" in comment
 
 
-def test_overloaded_start_stops_existing_tracked_preview_before_label_removal(
+def test_overloaded_start_stops_stale_tracked_preview_before_label_removal(
     tmp_path,
     monkeypatch,
 ):
@@ -564,7 +564,7 @@ def test_overloaded_start_stops_existing_tracked_preview_before_label_removal(
             project="feature/demo",
             root=str(tmp_path / "control" / "trees" / "imported" / "feature-demo"),
             head_ref="feature/demo",
-            head_sha="abc123456789",
+            head_sha="oldsha",
             status="running",
             label_added_at="2026-06-14T00:00:00Z",
             started_at="2026-06-14T00:00:00Z",
@@ -1481,6 +1481,50 @@ def test_start_stops_existing_tracked_preview_before_reimport(tmp_path):
     assert state is not None
     assert state.status == "running"
     assert state.head_sha == "abc123456789"
+
+
+def test_synchronize_event_reuses_current_head_preview_without_restart(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(controller)
+    config = make_config(controller, tmp_path, ttl_minutes=45)
+    instance = controller.PreviewController(config, runner)
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=789,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(root),
+            head_ref="feature/demo",
+            head_sha="abc123456789",
+            status="running",
+            label_added_at="2026-06-14T00:00:00Z",
+            started_at="2026-06-14T00:00:00Z",
+            expires_at="2026-06-14T00:45:00Z",
+            updated_at="2026-06-14T00:00:00Z",
+            endpoints={"frontend": {"public_url": "https://preview.example"}},
+            deployment_id="12345",
+        )
+    )
+
+    exit_code = instance.run_pull_request_event(
+        pr_payload(action="synchronize", labels=["deploy-app"])
+    )
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "stop") == []
+    assert command_argvs(runner, "envctl", "import") == []
+    assert command_argvs(runner, "envctl", "start") == []
+    assert command_argvs(runner, "docker", "rm") == []
+    assert runner.deployment_statuses == []
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.status == "running"
+    assert state.head_sha == "abc123456789"
+    assert state.started_at == "2026-06-14T00:00:00Z"
+    assert state.expires_at != "2026-06-14T00:45:00Z"
+    assert "already running for this head" in runner.comments[-1]
 
 
 def test_synchronize_event_redeploys_labeled_pr(tmp_path):
