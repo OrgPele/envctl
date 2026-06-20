@@ -313,8 +313,14 @@ def pr_payload(*, action, labels=None, event_label=None, merged=False):
     return payload
 
 
-def push_payload(ref="refs/heads/feature/demo", *, deleted=False):
+def push_payload(
+    ref="refs/heads/feature/demo",
+    *,
+    deleted=False,
+    after="abc123456789",
+):
     return {
+        "after": after,
         "deleted": deleted,
         "ref": ref,
         "repository": {
@@ -324,14 +330,19 @@ def push_payload(ref="refs/heads/feature/demo", *, deleted=False):
     }
 
 
-def pr_list_payload(number, title, head_ref="feature/demo"):
+def pr_list_payload(
+    number,
+    title,
+    head_ref="feature/demo",
+    head_sha="abc123456789",
+):
     return {
         "number": number,
         "title": title,
         "url": f"https://github.com/OrgPele/pele-monorepo/pull/{number}",
         "state": "OPEN",
         "headRefName": head_ref,
-        "headRefOid": "abc123456789",
+        "headRefOid": head_sha,
         "headRepository": {
             "name": "pele-monorepo",
             "nameWithOwner": "OrgPele/pele-monorepo",
@@ -543,7 +554,7 @@ def test_overloaded_start_comments_stats_lists_other_prs_and_removes_label(
     assert "111 python 250.0 5.0" in comment
 
 
-def test_overloaded_start_stops_existing_tracked_preview_before_label_removal(
+def test_overloaded_start_stops_stale_tracked_preview_before_label_removal(
     tmp_path,
     monkeypatch,
 ):
@@ -564,7 +575,7 @@ def test_overloaded_start_stops_existing_tracked_preview_before_label_removal(
             project="feature/demo",
             root=str(tmp_path / "control" / "trees" / "imported" / "feature-demo"),
             head_ref="feature/demo",
-            head_sha="abc123456789",
+            head_sha="oldsha",
             status="running",
             label_added_at="2026-06-14T00:00:00Z",
             started_at="2026-06-14T00:00:00Z",
@@ -1403,6 +1414,82 @@ def test_push_event_refreshes_preview_ttl_for_labeled_branch(tmp_path):
     assert "- Reason: push to labeled PR branch feature/demo" in runner.comments[-1]
 
 
+def test_push_event_uses_pushed_sha_before_same_head_skip(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        active_prs=[
+            pr_list_payload(
+                789,
+                "Preview me",
+                head_ref="feature/demo",
+                head_sha="oldsha",
+            )
+        ],
+        timeline="labeled\t2000-01-01T00:00:00Z\tdeploy-app\n",
+        projects={
+            "projects": [
+                {"name": "feature/demo", "root": str(root), "running": True}
+            ]
+        },
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+    )
+    config = make_config(controller, tmp_path, ttl_minutes=45)
+    instance = controller.PreviewController(config, runner)
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=789,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(root),
+            head_ref="feature/demo",
+            head_sha="oldsha",
+            status="running",
+            label_added_at="2026-06-14T00:00:00Z",
+            started_at="2026-06-14T00:00:00Z",
+            expires_at="2026-06-14T00:45:00Z",
+            updated_at="2026-06-14T00:00:00Z",
+            endpoints={"frontend": {"public_url": "https://preview.example"}},
+        )
+    )
+
+    exit_code = instance.run_push_event(push_payload(after="newsha"))
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "import") == [
+        [
+            "envctl",
+            "import",
+            "feature/demo",
+            "--headless",
+            "--no-infra",
+            "--isolated-deps",
+            "--no-resume",
+        ]
+    ]
+    assert command_argvs(runner, "envctl", "start") == [
+        [
+            "envctl",
+            "start",
+            "--trees",
+            "--project",
+            "feature/demo",
+            "--headless",
+            "--entire-system",
+            "--isolated-deps",
+            "--copy-db-storage",
+        ]
+    ]
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.status == "running"
+    assert state.head_sha == "newsha"
+    assert "already running for this head" not in runner.comments[-1]
+
+
 def test_push_event_ignores_unmatched_labeled_pr_branch(tmp_path):
     controller = load_controller()
     runner = FakeRunner(
@@ -1481,6 +1568,50 @@ def test_start_stops_existing_tracked_preview_before_reimport(tmp_path):
     assert state is not None
     assert state.status == "running"
     assert state.head_sha == "abc123456789"
+
+
+def test_synchronize_event_reuses_current_head_preview_without_restart(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(controller)
+    config = make_config(controller, tmp_path, ttl_minutes=45)
+    instance = controller.PreviewController(config, runner)
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=789,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(root),
+            head_ref="feature/demo",
+            head_sha="abc123456789",
+            status="running",
+            label_added_at="2026-06-14T00:00:00Z",
+            started_at="2026-06-14T00:00:00Z",
+            expires_at="2026-06-14T00:45:00Z",
+            updated_at="2026-06-14T00:00:00Z",
+            endpoints={"frontend": {"public_url": "https://preview.example"}},
+            deployment_id="12345",
+        )
+    )
+
+    exit_code = instance.run_pull_request_event(
+        pr_payload(action="synchronize", labels=["deploy-app"])
+    )
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "stop") == []
+    assert command_argvs(runner, "envctl", "import") == []
+    assert command_argvs(runner, "envctl", "start") == []
+    assert command_argvs(runner, "docker", "rm") == []
+    assert runner.deployment_statuses == []
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.status == "running"
+    assert state.head_sha == "abc123456789"
+    assert state.started_at == "2026-06-14T00:00:00Z"
+    assert state.expires_at != "2026-06-14T00:45:00Z"
+    assert "already running for this head" in runner.comments[-1]
 
 
 def test_synchronize_event_redeploys_labeled_pr(tmp_path):
