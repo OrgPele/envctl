@@ -123,6 +123,48 @@ def test_ship_payload_normalizes_malformed_nested_payloads(tmp_path: Path) -> No
     assert payload["pending_checks"] == []
     assert payload["merge_conflicts"] == {}
 
+def test_ship_payload_includes_full_pr_checks_and_deployment_url_when_supplied(tmp_path: Path) -> None:
+    context = ShipContext(project_name="Main", project_root=tmp_path / "project", repo_root=tmp_path, env={})
+    context.project_root.mkdir()
+
+    payload = ship_payload(
+        context=context,
+        git_root=tmp_path,
+        branch="feature",
+        status="checks_passed",
+        started=0.0,
+        checks={
+            "state": "checks_passed",
+            "passed_checks": [{"name": "pytest", "state": "SUCCESS"}],
+            "pr_checks": [
+                {"name": "pytest", "state": "SUCCESS"},
+                {"name": "preview", "state": "NEUTRAL"},
+            ],
+            "deployment_url": "https://preview.test/pr-7",
+        },
+    )
+
+    assert payload["pr_checks"] == [
+        {"name": "pytest", "state": "SUCCESS"},
+        {"name": "preview", "state": "NEUTRAL"},
+    ]
+    assert payload["deployment_url"] == "https://preview.test/pr-7"
+
+def test_ship_payload_does_not_invent_deployment_url(tmp_path: Path) -> None:
+    context = ShipContext(project_name="Main", project_root=tmp_path / "project", repo_root=tmp_path, env={})
+    context.project_root.mkdir()
+
+    payload = ship_payload(
+        context=context,
+        git_root=tmp_path,
+        branch="feature",
+        status="no_checks_reported",
+        started=0.0,
+        checks={"state": "no_checks_reported"},
+    )
+
+    assert payload["deployment_url"] == ""
+
 def test_ship_result_human_output_includes_pr_creation_state(tmp_path: Path, capsys: Any) -> None:
     context = ShipContext(project_name="Main", project_root=tmp_path / "project", repo_root=tmp_path, env={})
     context.project_root.mkdir()

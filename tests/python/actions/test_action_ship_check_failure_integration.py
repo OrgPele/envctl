@@ -232,6 +232,8 @@ def test_github_pr_checks_retries_failed_check_logs_until_github_makes_them_avai
                 ),
                 stderr="",
             )
+        if args[:2] == ["/usr/bin/gh", "api"]:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="[]", stderr="")
         raise AssertionError(args)
 
     def fake_sleep(seconds: float) -> None:
