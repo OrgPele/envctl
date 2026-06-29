@@ -42,7 +42,7 @@ PLANNING_COMMAND_DEFINITIONS: dict[str, FeatureDefinition] = {
             "tests/python/startup/test_plan_agent_handoff.py",
         ),
         parity_status="verified_python",
-        notes="Remote branch import is Python-owned, origin-only for v1, and uses fast-forward-only update semantics without force reset.",
+        notes="Remote branch import is Python-owned, origin-only for v1, and resets reused imports to origin/<branch>.",
     ),
     "delete-worktree": FeatureDefinition(
         area="planning",
