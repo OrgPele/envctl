@@ -285,7 +285,7 @@ class WorktreeImportOrchestrationTests(unittest.TestCase):
             self.assertEqual(create_result[1]["failure_reason"], "local_branch_checked_out_elsewhere")
             self.assertEqual(create_result[1]["local_branch"], "feature/foo")
 
-    def test_import_remote_branch_preserves_local_work_on_ff_only_failure(self) -> None:
+    def test_import_remote_branch_resets_diverged_worktree_to_remote(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             source, repo, target = self._repo_with_remote_feature_branch(Path(tmpdir))
             events: list[tuple[str, dict[str, object]]] = []
@@ -309,21 +309,16 @@ class WorktreeImportOrchestrationTests(unittest.TestCase):
 
             result = import_remote_branch_worktree(runtime, branch_input="feature/foo")
 
-            self.assertIsNotNone(result.error)
-            assert result.error is not None
-            self.assertIn("Import ff_only_update failed", result.error)
-            self.assertIn("failure_reason=ff_only_update_failed", result.error)
-            self.assertEqual((target / "local.txt").read_text(encoding="utf-8"), "local\n")
-            self.assertFalse((target / "remote.txt").exists())
+            self.assertIsNone(result.error)
+            self.assertFalse((target / "local.txt").exists())
+            self.assertEqual((target / "remote.txt").read_text(encoding="utf-8"), "remote\n")
             head_message = subprocess.check_output(
                 ["git", "-C", str(target), "log", "-1", "--pretty=%s"],
                 text=True,
             ).strip()
-            self.assertEqual(head_message, "local")
+            self.assertEqual(head_message, "remote")
             update_result = events[-1]
-            self.assertEqual(update_result[0], "planning.import.update.result")
-            self.assertNotEqual(update_result[1]["returncode"], 0)
-            self.assertEqual(update_result[1]["failure_reason"], "ff_only_update_failed")
+            self.assertEqual(update_result[0], "planning.import.ready")
             self.assertEqual(update_result[1]["action"], "reused")
 
 
