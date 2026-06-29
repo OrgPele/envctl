@@ -182,3 +182,97 @@ def test_github_pr_check_query_uses_injected_runner_for_failed_check_logs(tmp_pa
         ["gh-test", "pr", "checks", "feature/demo", "--json", "name,state,workflow,link"],
         ["gh-test", "run", "view", "123", "--job", "456", "--log"],
     ]
+
+def test_github_pr_check_query_preserves_available_non_target_checks(tmp_path: Path) -> None:
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=json.dumps(
+                [
+                    {"name": "lint", "workflow": "Ruff", "state": "SUCCESS", "link": "https://ci.test/lint"},
+                    {"name": "deploy", "workflow": "Preview", "state": "SKIPPED"},
+                ]
+            ),
+            stderr="",
+        )
+
+    checks = action_ship_check_queries.query_github_pr_checks(
+        tmp_path,
+        gh_path="gh-test",
+        branch="feature/demo",
+        started=0.0,
+        run_command=fake_run,
+        monotonic=lambda: 0.5,
+    )
+
+    assert checks["state"] == "no_checks_reported"
+    assert checks["passed_checks"] == []
+    assert checks["pr_checks"] == [
+        {"name": "lint", "workflow": "Ruff", "state": "SUCCESS", "link": "https://ci.test/lint"},
+        {"name": "deploy", "workflow": "Preview", "state": "SKIPPED"},
+    ]
+
+def test_expected_head_check_query_returns_full_pr_check_rollup_and_deployment_url(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:3] == ["gh-test", "pr", "view"]:
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "headRefOid": "newsha",
+                        "url": "https://github.com/acme/repo/pull/7",
+                        "statusCheckRollup": [
+                            {
+                                "name": "pytest",
+                                "workflowName": "Tests",
+                                "status": "COMPLETED",
+                                "conclusion": "SUCCESS",
+                                "detailsUrl": "https://ci.test/pytest",
+                            },
+                            {
+                                "name": "preview",
+                                "workflowName": "Deploy",
+                                "status": "COMPLETED",
+                                "conclusion": "NEUTRAL",
+                                "detailsUrl": "https://ci.test/deploy",
+                            },
+                        ],
+                    }
+                ),
+                stderr="",
+            )
+        if args[:3] == ["gh-test", "api", "repos/acme/repo/deployments?ref=feature%2Fdemo&per_page=5"]:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps([{"id": 99}]), stderr="")
+        if args[:3] == ["gh-test", "api", "repos/acme/repo/deployments/99/statuses?per_page=5"]:
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=json.dumps([{"environment_url": "https://preview.test/pr-7"}]),
+                stderr="",
+            )
+        raise AssertionError(args)
+
+    checks = action_ship_check_queries.query_expected_head_pr_checks(
+        tmp_path,
+        gh_path="gh-test",
+        branch="feature/demo",
+        pr_url="https://github.com/acme/repo/pull/7",
+        expected_head_sha="newsha",
+        started=0.0,
+        no_checks_grace_seconds=10.0,
+        run_command=fake_run,
+        monotonic=lambda: 0.5,
+    )
+
+    assert checks["state"] == "checks_passed"
+    assert checks["passed_checks"] == [{"name": "pytest", "workflow": "Tests", "state": "SUCCESS", "link": "https://ci.test/pytest"}]
+    assert checks["pr_checks"] == [
+        {"name": "pytest", "workflow": "Tests", "state": "SUCCESS", "link": "https://ci.test/pytest"},
+        {"name": "preview", "workflow": "Deploy", "state": "NEUTRAL", "link": "https://ci.test/deploy"},
+    ]
+    assert checks["deployment_url"] == "https://preview.test/pr-7"
