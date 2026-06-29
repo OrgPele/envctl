@@ -64,7 +64,7 @@ def service_listener_failure_detail(runtime: Any, *, log_path: str | None, pid: 
     return "; ".join(parts)
 
 
-def tail_log_error_line(log_path: str | None, *, max_chars: int = 240) -> str | None:
+def tail_log_error_line(log_path: str | None, *, max_chars: int = 800) -> str | None:
     lines = _tail_candidate_lines(log_path)
     if not lines:
         return None
@@ -79,10 +79,15 @@ def tail_log_error_line(log_path: str | None, *, max_chars: int = 240) -> str | 
         "No module named",
     )
     selected = lines[-1]
-    for line in reversed(lines):
+    selected_index = len(lines) - 1
+    for index in range(len(lines) - 1, -1, -1):
+        line = lines[index]
         if any(token in line for token in priority_tokens):
             selected = line
+            selected_index = index
             break
+    if "ValidationError" in selected or "validation error for" in selected:
+        selected = "\n".join(lines[selected_index : selected_index + 8])
     if len(selected) > max_chars:
         return selected[: max_chars - 3] + "..."
     return selected
