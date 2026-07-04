@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-06-17T09:49:19+00:00",
+  "generated_at": "2026-06-29T14:23:58+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -834,7 +834,7 @@
         "tests/python/startup/test_plan_agent_handoff.py"
       ],
       "parity_status": "verified_python",
-      "notes": "Remote branch import is Python-owned, origin-only for v1, and uses fast-forward-only update semantics without force reset.",
+      "notes": "Remote branch import is Python-owned, origin-only for v1, and resets reused imports to origin/<branch>.",
       "command": "import"
     },
     {

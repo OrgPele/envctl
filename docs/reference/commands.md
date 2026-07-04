@@ -486,9 +486,9 @@ envctl ensure-worktree feature-a --json
 
 - accepts `feature/foo`, `origin/feature/foo`, or `refs/remotes/origin/feature/foo` and normalizes them to the same source
 - fetches the branch from `origin`, creates `trees/imported/<branch-slug>` when needed, and checks out a local branch tracking `origin/<branch>`
-- reuses an existing import only when the worktree is on the requested branch, then runs a fast-forward-only merge from `origin/<branch>`
+- reuses an existing import only when the worktree is on the requested branch, then resets it to `origin/<branch>`
 - records import provenance but does not create a plan file or seed `MAIN_TASK.md` from `todo/plans`
-- never uses `git branch -B`, force checkout, or force reset to make local branch names match remote branches
+- never uses `git branch -B` or force checkout to make local branch names match remote branches
 - supports the same explicit plan-agent handoff flags as `--plan`, including `--cmux`, `--tmux`, `--omx`, `--codex`, `--opencode`, `--headless`, and `--no-infra`
 
 `ensure-worktree` is the cheap automation-oriented worktree surface:

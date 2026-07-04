@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import time
 from typing import Callable, Mapping
+from urllib.parse import quote, urlencode, urlparse
 
 from envctl_engine.actions.action_ship_check_results import (
     normalize_github_pr_checks,
@@ -83,6 +84,7 @@ def query_expected_head_pr_checks(
         if isinstance(rollup, list)
         else []
     )
+    pr_checks = _mapping_check_list(checks)
     target_checks = target_status_checks(checks)
     if not target_checks:
         if duration < no_checks_grace_seconds:
@@ -99,18 +101,29 @@ def query_expected_head_pr_checks(
                 error="GitHub has not reported target test check contexts for the pushed head commit yet.",
                 expected_head_sha=expected_head_sha,
                 pr_url=str(data.get("url") or pr_url),
+                pr_checks=pr_checks,
             )
         return _check_query_result(
             state="no_checks_reported",
             duration_seconds=duration,
             expected_head_sha=expected_head_sha,
             pr_url=str(data.get("url") or pr_url),
+            pr_checks=pr_checks,
         )
 
     normalized = normalize_github_pr_checks(target_checks, duration_seconds=duration)
     normalized["expected_head_sha"] = expected_head_sha
     normalized["actual_head_sha"] = actual_head_sha
     normalized["pr_url"] = str(data.get("url") or pr_url)
+    normalized["pr_checks"] = pr_checks
+    if normalized.get("state") != "checks_pending_timeout":
+        normalized["deployment_url"] = _deployment_url_for_branch(
+            git_root,
+            gh_path=gh_path,
+            branch=branch,
+            pr_url=str(data.get("url") or pr_url),
+            run_command=run_command,
+        )
     return _with_failed_check_log_excerpts(
         normalized,
         git_root=git_root,
@@ -152,14 +165,17 @@ def query_github_pr_checks(
     except json.JSONDecodeError:
         loaded = []
     checks = loaded if isinstance(loaded, list) else []
+    pr_checks = _mapping_check_list(checks)
     target_checks = target_status_checks(checks)
     if not target_checks:
         return _check_query_result(
             state="no_checks_reported",
             duration_seconds=duration,
             error="GitHub has not reported target test check contexts for this branch.",
+            pr_checks=pr_checks,
         )
     normalized = normalize_github_pr_checks(target_checks, duration_seconds=duration)
+    normalized["pr_checks"] = pr_checks
     return _with_failed_check_log_excerpts(
         normalized,
         git_root=git_root,
@@ -221,6 +237,85 @@ def _mapping_check_list(value: object) -> list[Mapping[str, object]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, Mapping)]
+
+
+def _deployment_url_for_branch(
+    git_root: Path,
+    *,
+    gh_path: str,
+    branch: str,
+    pr_url: str,
+    run_command: RunCommand,
+) -> str:
+    repo_slug = _repo_slug_from_pr_url(pr_url)
+    if not repo_slug:
+        return ""
+    query = urlencode({"ref": branch, "per_page": "5"})
+    completed, _command_error = _run_gh_query(
+        [gh_path, "api", f"repos/{repo_slug}/deployments?{query}"],
+        git_root=git_root,
+        run_command=run_command,
+    )
+    if completed is None or completed.returncode != 0:
+        return ""
+    try:
+        deployments = json.loads(completed.stdout or "[]")
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(deployments, list):
+        return ""
+    for deployment in deployments:
+        deployment_id = str(deployment.get("id") or "").strip() if isinstance(deployment, Mapping) else ""
+        if not deployment_id:
+            continue
+        status_url = _deployment_status_url(
+            git_root,
+            gh_path=gh_path,
+            repo_slug=repo_slug,
+            deployment_id=deployment_id,
+            run_command=run_command,
+        )
+        if status_url:
+            return status_url
+    return ""
+
+
+def _deployment_status_url(
+    git_root: Path,
+    *,
+    gh_path: str,
+    repo_slug: str,
+    deployment_id: str,
+    run_command: RunCommand,
+) -> str:
+    completed, _command_error = _run_gh_query(
+        [gh_path, "api", f"repos/{repo_slug}/deployments/{quote(deployment_id, safe='')}/statuses?per_page=5"],
+        git_root=git_root,
+        run_command=run_command,
+    )
+    if completed is None or completed.returncode != 0:
+        return ""
+    try:
+        statuses = json.loads(completed.stdout or "[]")
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(statuses, list):
+        return ""
+    for status in statuses:
+        if not isinstance(status, Mapping):
+            continue
+        url = str(status.get("environment_url") or status.get("target_url") or "").strip()
+        if url:
+            return url
+    return ""
+
+
+def _repo_slug_from_pr_url(pr_url: str) -> str:
+    parsed = urlparse(pr_url)
+    path_parts = [quote(part, safe="") for part in parsed.path.split("/") if part]
+    if len(path_parts) >= 4 and path_parts[2] == "pull":
+        return f"{path_parts[0]}/{path_parts[1]}"
+    return ""
 
 
 def _run_gh_query(

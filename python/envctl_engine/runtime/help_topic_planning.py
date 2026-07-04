@@ -62,7 +62,7 @@ PLANNING_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "normalizes branch input to an existing origin branch",
             "fetches origin/<branch>, creates or reuses trees/imported/<branch-slug>, and checks out a "
             "tracking local branch",
-            "updates reused imported worktrees with fast-forward-only semantics without force reset",
+            "updates reused imported worktrees by resetting them to origin/<branch>",
             "writes import provenance, links shared artifacts, prepares code intelligence, and can launch "
             "the plan-agent workflow",
         ),

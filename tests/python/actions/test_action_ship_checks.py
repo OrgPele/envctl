@@ -174,6 +174,8 @@ def test_github_pr_checks_emits_progress_every_progress_interval_while_pending(t
     ]
 
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["/usr/bin/gh", "api"]:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="[]", stderr="")
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
 
     def fake_sleep(seconds: float) -> None:
@@ -213,6 +215,8 @@ def test_github_pr_checks_ignores_non_test_checks_after_target_tests_pass(tmp_pa
     ]
 
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["/usr/bin/gh", "api"]:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="[]", stderr="")
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
 
     def fake_sleep(seconds: float) -> None:
@@ -272,6 +276,8 @@ def test_github_pr_checks_can_detect_success_before_next_progress_heartbeat(tmp_
     ]
 
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["/usr/bin/gh", "api"]:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="[]", stderr="")
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
 
     def fake_sleep(seconds: float) -> None:
@@ -339,6 +345,8 @@ def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(tm
 
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(args)
+        if args[:2] == ["/usr/bin/gh", "api"]:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="[]", stderr="")
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
 
     checks = github_pr_checks(
@@ -359,7 +367,7 @@ def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(tm
             "link": "https://github.com/acme/repo/actions/runs/2/job/2",
         }
     ]
-    assert [call[:4] for call in calls] == [
+    assert [call[:4] for call in calls if call[1:3] == ["pr", "view"]] == [
         ["/usr/bin/gh", "pr", "view", "feature/demo"],
         ["/usr/bin/gh", "pr", "view", "feature/demo"],
         ["/usr/bin/gh", "pr", "view", "feature/demo"],
