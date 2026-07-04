@@ -33,6 +33,24 @@ class TestPlanActionTests(unittest.TestCase):
         self.assertIn("uv run --extra dev ruff check python/envctl_engine/planning/worktree_domain.py", commands)
         self.assertEqual(result["full_gate"]["recommended"], False)
 
+    def test_shared_runtime_files_recommend_shared_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            result = build_test_plan(
+                repo_root=repo,
+                project_root=repo,
+                project_name="Main",
+                changed_files=("python/envctl_engine/shared/process_streaming_support.py",),
+            )
+
+        commands = [item["command"] for item in result["commands"]]
+
+        self.assertIn("uv run --extra dev pytest -q tests/python/shared", commands)
+        self.assertIn(
+            "uv run --extra dev ruff check python/envctl_engine/shared/process_streaming_support.py",
+            commands,
+        )
+
     def test_prompt_templates_recommend_prompt_install_tests(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
