@@ -1,65 +1,97 @@
 You are preparing the next implementation iteration after an incomplete delivery.
-Authoritative source of truth: current `MAIN_TASK.md`, plus code, tests, and git evidence from this repo.
-First audit what was actually implemented; then archive the old task and write the next `MAIN_TASK.md` containing only remaining work.
-Ask questions only when a blocking ambiguity remains after code, test, and git review.
-Final output must include: archive file name, implemented vs remaining scope, new MAIN_TASK focus, git-evidence commands used, and material assumptions or residual risks.
-WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. Read outside it only for necessary historical/reference context, and keep that access read-only.
+Authoritative source of truth: the current `MAIN_TASK.md`, plus code and test evidence from the repo.
+First, audit what was actually implemented by reading the task, the code, the tests, and recent git history in depth.
+Ask questions only if a blocking ambiguity remains after deep code, test, and git review; otherwise resolve everything yourself according to repo evidence and best practices.
+Final output must include: archive file name, implemented vs remaining scope, new MAIN_TASK focus, git-evidence commands used, and any material assumptions or residual risks.
+WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. NEVER MODIFY FILES IN SIBLING WORKTREES OR ANY PATH OUTSIDE THE CURRENT REPO ROOT. You may read outside the current worktree ONLY when genuinely needed for historical/reference context (for example, to inspect how something worked previously), and that access MUST remain read-only.
 
 ## Inputs
 Primary source of truth: current MAIN_TASK.md
 Additional gap evidence (optional):
 $ARGUMENTS
 
-If $ARGUMENTS contains pasted spec or reviewer findings, write it into `MAIN_TASK.md` first, then continue from `MAIN_TASK.md`.
+If $ARGUMENTS contains pasted spec or reviewer findings, write that content into `MAIN_TASK.md` first, then continue from `MAIN_TASK.md`.
+Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless the user explicitly says to update `MAIN_TASK.md`.
 
-## Success contract
-- Preserve history by moving `MAIN_TASK.md` to the next available `OLD_TASK_<iteration>.md`; never overwrite an existing archive.
-- Audit untracked, staged, unstaged, and committed divergence from the worktree's originating branch/ref when provenance is available.
-- Classify every requirement from the current `MAIN_TASK.md` as fully implemented, partially implemented, or not implemented.
-- Write a new `MAIN_TASK.md` with only remaining work, fully actionable acceptance criteria, and no TODO/later placeholders.
-- If nothing remains, say so explicitly in the new `MAIN_TASK.md` instead of inventing work.
-- Keep one complete commit/PR handoff message ready and pass it inline with `envctl ship -m "<message>"`. Do not write envctl-local commit-message ledger files. If more changes land before handoff, update the message to cover the full cumulative set of changes between commits.
+## Non-negotiables
+- Preserve history first: rename current MAIN_TASK.md to `OLD_TASK_<iteration>.md` before creating a new MAIN_TASK.md.
+- Determine `<iteration>` as the next available integer in repo root (do not overwrite any existing `OLD_TASK_*.md`).
+- Use git CLI and code evidence to identify what was implemented vs what remains.
+- Audit both working-tree changes and committed divergence from the worktree's originating branch/ref.
+- Read as much relevant code, tests, and docs as needed.
+- Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
+- Keep one complete commit/PR handoff message ready and pass it inline with `envctl ship -m "<message>"` in the normal case.
+  - Do not run `envctl commit` separately unless `ship` is unavailable, blocked by the environment, or you are intentionally performing a commit-only maintenance operation. Do not write envctl-local commit-message ledger files.
+  - Keep the message as the full cumulative set of changes between commits: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and risks/notes.
+  - In the Verification section, state what your validation actually did and proved, then state any manual checks a human should still run to truly confirm it works, with expected results.
+- Do NOT ask questions unless truly blocked by ambiguity that cannot be resolved from code, tests, git history, or docs.
+- Optimize for completeness over speed: assume unlimited time, and specify everything required for full implementation.
+- Make reasonable assumptions from repo evidence and resolve the task fully on your own. Surface assumptions in the final response only if they materially affected the new MAIN_TASK.
+- Do not leave TODOs in the new MAIN_TASK.
+- Do not stop after partial analysis of the previous iteration.
 
-## Required audit
-1. Ensure `MAIN_TASK.md` exists.
-2. Enumerate existing `OLD_TASK_*.md` files.
-3. If `.envctl-state/worktree-provenance.json` exists, read it for `source_ref` / `source_branch`.
-4. Run:
-   - `git status --short`
-   - `git diff --name-status`
-   - `git diff --cached --name-status`
-   - `git log --oneline --decorate -n 30`
-5. If provenance provides an originating base, resolve it using `source_ref` first, then `source_branch`; run `git merge-base HEAD <originating-base>`, `git diff --name-status <merge-base>..HEAD`, and `git log --oneline --decorate <merge-base>..HEAD`.
-6. If no provenance exists, state that committed-divergence evidence could not be anchored and use the best available git evidence.
-7. Inspect relevant changed files and tests before writing the new task.
+## Required protocol
+1. Validate preconditions:
+   - Ensure `MAIN_TASK.md` exists.
+   - Enumerate existing `OLD_TASK_*.md` files.
+   - If present, read `.envctl-state/worktree-provenance.json` to identify the originating `source_ref` / `source_branch`.
+2. Audit implementation evidence:
+   - Run `git status --short`
+   - Run `git diff --name-status`
+   - Run `git diff --cached --name-status`
+   - Run `git log --oneline --decorate -n 30`
+   - If worktree provenance exists, resolve the originating base (`source_ref` first, then `source_branch`), run `git merge-base HEAD <originating-base>`, then audit both `git diff --name-status <merge-base>..HEAD` and `git log --oneline --decorate <merge-base>..HEAD`
+   - If no worktree provenance exists, explicitly note that committed-divergence evidence could not be anchored to an originating branch/ref and fall back to the best available git evidence
+   - Inspect relevant changed files and tests
+3. Build a requirement status matrix from current MAIN_TASK.md:
+   - Fully implemented
+   - Partially implemented
+   - Not implemented
+4. Rename task file:
+   - Move `MAIN_TASK.md` -> `OLD_TASK_<iteration>.md` (next available integer).
+5. Create a new `MAIN_TASK.md` that includes only remaining work (partial + missing), rewritten as fully actionable requirements.
+6. Ensure the new MAIN_TASK is implementation-ready with explicit acceptance criteria and no ambiguity.
 
-## Rewrite protocol
-1. Build a requirement status matrix from current `MAIN_TASK.md`.
-2. Rename `MAIN_TASK.md` to `OLD_TASK_<iteration>.md`.
-3. Create a new `MAIN_TASK.md` with this structure:
-   - `# <Title focused on remaining scope>`
-   - `## Context and objective`
-   - `## Remaining requirements (complete and exhaustive)`
-   - `## Gaps from prior iteration (mapped to evidence)`
-   - `## Acceptance criteria (requirement-by-requirement)`
-   - `## Required implementation scope (frontend/backend/data/integration)`
-   - `## Required tests and quality gates`
-   - `## Edge cases and failure handling`
-   - `## Definition of done`
-4. Ensure every remaining gap is specific, testable, and implementable without another planning pass.
+## New MAIN_TASK.md structure (must follow)
+- # <Title focused on remaining scope>
+- ## Context and objective
+- ## Remaining requirements (complete and exhaustive)
+- ## Gaps from prior iteration (mapped to evidence)
+- ## Acceptance criteria (requirement-by-requirement)
+- ## Required implementation scope (frontend/backend/data/integration)
+- ## Required tests and quality gates
+- ## Edge cases and failure handling
+- ## Definition of done
 
-## Handoff rule
-If this task itself changes files that should be committed, use `envctl ship -m "<message>"` in the normal case. The message must include scope, key files/modules, tests run and results, config/env/migration notes, and risks. Its Verification section must state what validation proved and any remaining human checks with expected results. Do not run `envctl commit` separately unless `ship` is unavailable, blocked, or you are intentionally doing commit-only maintenance.
+## Completeness standard for the new MAIN_TASK
+- Every remaining gap from the previous task is included.
+- Requirements are specific enough to implement confidently from the spec.
+- Explicitly state to fully implement all items end-to-end.
+- No placeholders, no TODO language, no “later” buckets for core scope.
+- If the previous iteration is genuinely 100% complete and nothing remains, do not invent more work; make that explicit in the new `MAIN_TASK.md` by stating clearly that there is nothing left to implement and that the prior task is fully complete.
+
+## Deliverables (required)
+- `OLD_TASK_<iteration>.md` created from the previous MAIN_TASK.md.
+- New `MAIN_TASK.md` containing all remaining work, fully specified.
+- Short summary of what was complete vs what was carried forward.
+- Risk register only if unresolved ambiguity remains.
+
+## Success criteria
+- The archived task preserves the previous implementation request without overwriting any existing `OLD_TASK_*.md`.
+- The new `MAIN_TASK.md` contains only remaining work, with explicit acceptance criteria and test requirements.
+- Every carried-forward requirement is mapped to evidence from code, tests, git history, or the previous task file.
+- If nothing remains, the new `MAIN_TASK.md` says that clearly instead of inventing scope.
 
 ## Final response format
 1. File rename performed (`MAIN_TASK.md` -> `OLD_TASK_<iteration>.md`).
 2. Summary of implemented vs remaining scope.
-3. New `MAIN_TASK.md` focus and structure confirmation.
+3. New MAIN_TASK.md focus and structure confirmation.
 4. Commands used for git evidence.
-5. Risk register only if needed.
+5. Risk register (only if needed).
 
-## Self-check
-- Original `MAIN_TASK.md` was archived safely.
-- New `MAIN_TASK.md` contains all remaining work and excludes completed work.
+## Self-check (before responding)
+- Original MAIN_TASK.md was archived safely with the correct next iteration number.
+- New MAIN_TASK.md contains all remaining work and excludes completed work.
+- New MAIN_TASK.md emphasizes full implementation to completion.
 - Requirements are specific, exhaustive, and testable.
-- Final audit covered current worktree state plus committed divergence when provenance was available.
+- Final audit considered untracked/staged/unstaged changes plus committed divergence from the originating branch/ref when provenance was available.

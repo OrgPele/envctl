@@ -56,6 +56,7 @@ ENVCTL_PLAN_AGENT_CLI=codex
 ENVCTL_PLAN_AGENT_PRESET=implement_task
 ENVCTL_PLAN_AGENT_CODEX_CYCLES=2
 ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false
+ENVCTL_PLAN_AGENT_FULLSTACK_PR_URL_E2E_ENABLE=false
 ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=false
 ENVCTL_PLAN_AGENT_SHELL=zsh
 ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT=true
@@ -90,6 +91,7 @@ Behavior:
 - `CMUX_WORKSPACE=...` is shorthand for `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE=...`
 - `CYCLES=...` is shorthand for `ENVCTL_PLAN_AGENT_CODEX_CYCLES=...`
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` opts in to the `$browser` E2E follow-up when browser validation is applicable
+- `ENVCTL_PLAN_AGENT_FULLSTACK_PR_URL_E2E_ENABLE=true` enables the same deployed PR URL browser follow-up automatically for Codex full-stack frontend+backend app launches, for example `ENVCTL_PLAN_AGENT_FULLSTACK_PR_URL_E2E_ENABLE=true ENVCTL_PLAN_AGENT_CODEX_CYCLES=3 envctl --plan features/web-flow --cmux --preset implement_task --entire-system --headless --new-session`
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` opts in to the final PR review-comments follow-up when comment handling should run as a dedicated pass
 - canonical `ENVCTL_PLAN_AGENT_*` values win when both canonical and shorthand values are set
 
@@ -260,8 +262,8 @@ directory; add `--project <name>` only when operating from another checkout.
 `ship` owns the normal handoff flow, so agents should use it instead of running
 `envctl commit`, push, and PR commands separately. Commit messages should be
 passed inline with `-m`; installed prompts tell agents not to maintain
-envctl-local commit-message ledger files. Envctl-local artifacts such as `.envctl-state/`, `MAIN_TASK.md`,
-`OLD_TASK_*.md`, `trees/`, and `trees-*` stay local. The command commits,
+envctl-local commit-message ledger files. Envctl-local artifacts such as `.envctl-state/`, `.codegraph/`,
+`.serena/project.local.yml`, `MAIN_TASK.md`, `OLD_TASK_*.md`, `trees/`, and `trees-*` stay local. The command commits,
 pushes, creates a PR when none exists, reuses or updates the existing PR otherwise, predicts merge conflicts, waits for GitHub
 checks until they pass, fail, time out, or report no check contexts, and returns the PR URL plus
 `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`, `failing_checks`,
@@ -304,30 +306,27 @@ When the source repo already has common local dependency/runtime artifacts, envc
 This helps worktree-local test and runtime commands reuse the repo-local backend virtualenv, backend env file, and frontend dependency tree when those artifacts already exist in the source repo. Envctl only creates the link when the source artifact exists and the worktree path is not already occupied by a real file or directory. Plan-agent dependency prep does not rely on these links; it prepares per-worktree dependency artifacts so branch-specific dependency files remain authoritative.
 
 Envctl also bootstraps code-intelligence tool state for generated worktrees. When the source repo has repo-local Serena
-configuration, envctl copies `.serena/project.yml` into the worktree with a generated top-level `project_name`, and
-copies `.serena/.gitignore` if those files are not already present. CGC/CodeGraphContext files and indexing are copied
-or run only when `ENVCTL_WORKTREE_CGC_INDEX` is explicitly enabled. This keeps Codex, OpenCode, and other agents pointed
-at the current worktree's local symbol scope without putting tool routing rules into task prompts.
+configuration, envctl copies `.serena/project.yml` unchanged, writes the generated worktree identity to
+`.serena/project.local.yml`, and copies `.serena/.gitignore` if those files are not already present. When `codegraph` is installed, envctl also syncs or
+initializes the source `.codegraph/` index, copies that local index into the new worktree when possible, then runs
+`codegraph sync <worktree>` so the worktree has its own current `.codegraph/` database without full reindexing on every
+creation. This keeps Codex, OpenCode, and other agents pointed at the current worktree's local symbol and graph scope
+without putting broad tool routing rules into task prompts. Envctl protects `.serena/project.local.yml`, `.envctl-state/`,
+and `.codegraph/` as local generated artifacts rather than repository source.
 
 Generated names are deterministic from the worktree path under the configured trees root. For example,
 `trees/feature-a/1` in a repo whose Serena project is `envctl` gets:
 
 ```text
 Serena project: envctl-feature-a-1
-CGC context:    Envctl-feature-a-1
-Active CGC:     Envctl
+CodeGraph:      trees/feature-a/1/.codegraph/
 Metadata:       trees/feature-a/1/.envctl-state/code-intelligence.json
 ```
 
-CodeGraphContext/CGC graph tooling is opt-in. When `ENVCTL_WORKTREE_CGC_INDEX` is unset or false, envctl does not copy
-`.cgcignore`, does not inspect `.codegraphcontext`, does not call `cgc`, and records graph tooling as disabled in
-`.envctl-state/code-intelligence.json`. Set `ENVCTL_WORKTREE_CGC_INDEX=auto` to reuse the source checkout context when
-the repo has `.cgcignore` or `.codegraphcontext`: envctl verifies the source context with
-`cgc list --context <source-context>`, records that verified source context as `cgc_active_context`, and falls back to
-creating/indexing the generated worktree context only when source-context verification fails. Set
-`ENVCTL_WORKTREE_CGC_INDEX=true` to force an isolated worktree CGC context with `cgc context create <context>` followed
-by `cgc index <worktree> --context <context>`. Set `ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` to disable the whole
-code-intelligence bootstrap, including Serena files.
+CodeGraph indexing is opt-in by repo state: `auto` follows an existing source `.codegraph/` index, `true` forces
+CodeGraph setup, and `false` skips CodeGraph entirely. Set `ENVCTL_WORKTREE_CODE_INTELLIGENCE=false` to disable the
+whole code-intelligence bootstrap, including Serena files.
+Legacy CodeGraphContext/CGC graph tooling remains explicit opt-in via `ENVCTL_WORKTREE_CGC_INDEX`.
 
 You can customize generated names with templates:
 

@@ -93,12 +93,12 @@ class WorktreeImportCommandsTests(unittest.TestCase):
                 ],
             )
 
-    def test_update_command_uses_ff_only_merge(self) -> None:
+    def test_update_command_resets_to_remote_branch(self) -> None:
         ref = normalize_import_branch_ref("feature/foo")
 
         self.assertEqual(
             build_update_imported_worktree_command(worktree_root=Path("/repo/trees/imported/feature-foo"), branch_ref=ref),
-            ["git", "-C", "/repo/trees/imported/feature-foo", "merge", "--ff-only", "origin/feature/foo"],
+            ["git", "-C", "/repo/trees/imported/feature-foo", "reset", "--hard", "origin/feature/foo"],
         )
 
     def test_list_importable_origin_branches_excludes_non_importable_refs(self) -> None:
@@ -220,7 +220,9 @@ class WorktreeImportCommandsTests(unittest.TestCase):
             subprocess.run(build_fetch_remote_branch_command(repo_root=clone, branch_ref=ref), check=True)
 
             result = subprocess.run(build_update_imported_worktree_command(worktree_root=target, branch_ref=ref))
-            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.returncode, 0)
+            self.assertFalse((target / "local.txt").exists())
+            self.assertEqual((target / "remote.txt").read_text(encoding="utf-8"), "remote\n")
 
 
 if __name__ == "__main__":

@@ -1,9 +1,12 @@
-When the current implementation pass finishes, validate with `envctl test-focused`, then hand off with `envctl ship -m "<message>"`.
+## Decision
+When the current implementation pass finishes, continue implementation if anything remains. If the first implementation pass is complete, run focused validation with `envctl test-focused`, then use `envctl ship -m "<message>"` instead of a separate commit/push/PR flow.
 
-Success criteria:
-- The message is a complete commit/PR handoff: scope, important files/modules, tests run with results, config/env/migration notes, and risks.
-- Its Verification section says what validation proved and lists any remaining human checks with expected results.
-- `ship` runs from the current worktree; use `--project <current-worktree-name>` only if you are operating from elsewhere.
-- `ship` owns commit, push, PR create/update, merge-conflict prediction, and GitHub Tests waiting. Use raw `git`, `gh`, or separate PR/status commands only when `ship` is unavailable or gives explicit fallback steps.
-- If a real subagent/background task tool exists, delegate `ship` there and keep working on non-overlapping follow-up while checks are pending. The worker reports only failures, merge conflicts, failed checks, pending-check timeout, no-checks-reported status, or actionable review comments.
-- A successful ship result is silent: the shipping worker must not send a success summary, JSON payload, or completion message back to the main agent.
+## Handoff message
+Build the message as a commit/PR handoff message; its Verification section must state what your validation actually did and proved, then state any manual checks a human should still run to truly confirm it works, with expected results.
+
+## Full-stack PR-URL E2E
+For full-stack PR-URL E2E flows: Do not substitute localhost validation for deployed PR URL validation; local validation proves pre-ship readiness, while the queued browser follow-up proves the deployed app through the PR URL after ship.
+
+## Ship contract
+- Follow AGENTS.md for the ship workflow.
+- Use `envctl ship -m "<message>"` for the handoff unless it is unavailable or returns actionable fallback instructions.

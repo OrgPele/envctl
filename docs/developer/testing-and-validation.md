@@ -12,6 +12,23 @@ The project validates behavior across several layers:
 
 Each layer catches different classes of failures.
 
+## Test Suite Taxonomy
+
+Use the smallest test layer that protects the behavior contract you are changing:
+
+- Unit tests: pure functions, value objects, planners, parsers, and policy decisions with no process, Git, or filesystem orchestration beyond a temporary directory.
+- Contract tests: stable public or cross-module behavior such as command payloads, state artifacts, release-gate inputs, runtime feature matrices, and documented output semantics.
+- Parity tests: migration or facade equivalence checks where an older route and a newer owner must remain behaviorally identical. Keep one clear test per behavior and prefer parametrized cases over copied methods.
+- Integration tests: CLI dispatch, subprocess boundaries, Git or GitHub workflow orchestration, installed-entrypoint behavior, and runtime startup flows that need multiple components together.
+- Runtime startup tests: startup, resume, service bootstrap, dependency readiness, and process cleanup behavior. Keep these under `tests/python/startup` or `tests/python/runtime` depending on whether the assertion is about startup orchestration or lower-level runtime primitives.
+- UI tests: dashboard, textual selector, config wizard, and rendering contracts under `tests/python/ui` or the matching textual/config domain when the owner is more specific.
+- Packaging tests: installed CLI, package data, build metadata, and entrypoint expectations under runtime packaging coverage.
+- Release-gate tests: shipability, generated matrices, gap reports, and governance scripts. These must preserve the machine-readable contract used by release automation.
+
+When a test file grows because it is covering several of these categories, split by behavior owner rather than by line count alone. Shared helpers belong in `*_test_support.py` only when they remove real duplication across multiple files; otherwise keep setup local so the test remains readable.
+
+Prefer parametrized cases when the same behavior is being checked against many inputs. Prefer a new file when the setup, owner module, or failure meaning changes.
+
 ## Python Tests
 
 Python tests are the fastest way to validate:
@@ -132,6 +149,33 @@ To confirm the release gate runs the same test lane:
 uv run --extra dev python scripts/release_shipability_gate.py --repo . --check-tests
 ```
 
+The canonical PR CI lane is:
+
+```bash
+uv run --extra dev pytest -q -n 4 --dist=loadscope --maxfail=25 --ff --junitxml=test-results/junit.xml
+```
+
+`--dist=loadscope` keeps tests from the same module or class on the same worker, which reduces fixture churn and keeps failure ordering easier to interpret while still running the suite in parallel.
+
+`envctl test` and `envctl test-focused` add pytest-xdist workers automatically for
+`python -m pytest` commands when xdist is available. The worker count is based on
+current free CPU cores unless capped by `--test-parallel-max <n>` or
+`ENVCTL_ACTION_TEST_PYTEST_WORKERS=<n>`. Use
+`ENVCTL_TEST_FOCUSED_PYTEST_WORKERS=<n>` for a focused-only cap.
+
+For an inventory of suite size, helpers, markers, skipped or slow tests, and duplicate test-name clusters:
+
+```bash
+uv run --extra dev python scripts/test_suite_inventory.py --repo .
+uv run --extra dev python scripts/test_suite_inventory.py --repo . --json
+```
+
+Use `--check` with thresholds for cleanup planning or a local guardrail, for example:
+
+```bash
+uv run --extra dev python scripts/test_suite_inventory.py --repo . --check --max-file-lines 1200
+```
+
 Serena is the repo's symbolic code navigation tool. It is configured by `.serena/project.yml` and should be used for
 architecture discovery, dependency tracing, and refactor planning when available:
 
@@ -142,9 +186,10 @@ serena project health-check
 Serena is not a CI gate for this repository. Keep CI-style validation centered on pytest, ruff, build, and the release
 shipability gate. Use Serena as an interactive symbol/reference layer before broad text search.
 
-CodeGraphContext (`cgc`) is the repo-wide graph analysis layer for ownership, coupling, impact, and hotspot questions.
-Use `cgc` commands such as `cgc stats --context Envctl`, `cgc report --context Envctl`, and read-only `cgc query ...`
-when the question crosses many modules. Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl.
+CodeGraph is the repo-wide graph context layer for call paths, flows, blast radius, and affected-test questions.
+Use `codegraph explore "<question>"`, `codegraph node <symbol>`, or the CodeGraph MCP tool when the question crosses
+many modules. Envctl-generated worktrees should use their own `.codegraph/` index; trust it only when
+`.envctl-state/code-intelligence.json` reports `codegraph_index_succeeded: true`.
 Use `rg` for exact strings such as flags, log messages, config keys, and docs prose.
 
 Use narrower scopes while iterating, then widen before finishing. Targeted `unittest` runs remain useful for focused module work, but `pytest -q` is the authoritative repo-wide signal.

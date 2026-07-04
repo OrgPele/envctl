@@ -33,6 +33,8 @@ envctl doctor --repo /absolute/path/to/repo --json
 ```
 
 `--version` does not add a runtime command and does not appear in `list-commands`.
+Launcher doctor JSON includes the resolved repo root, launcher binary path, Python executable, and
+`envctl_engine` module path so PATH or source-checkout mismatches are visible without starting a runtime.
 
 ## Command Boundary
 
@@ -414,7 +416,16 @@ envctl test --all
 envctl test --failed
 envctl test --all --skip-startup --load-state
 envctl test --failed --skip-startup --load-state
+envctl test-focused
 ```
+
+Pytest parallelism:
+
+- when `envctl test` or `envctl test-focused` executes a `python -m pytest` command and pytest-xdist is installed, envctl adds `-n <free-cores>` using current CPU load to estimate the number of free cores
+- envctl does not add xdist flags when the pytest command already includes `-n`, `--numprocesses`, or `-p no:xdist`
+- use `--test-parallel-max <n>` to cap both envctl's suite concurrency and pytest-xdist workers for the current run
+- persistent pytest-specific controls are `ENVCTL_ACTION_TEST_PYTEST_PARALLEL`, `ENVCTL_ACTION_TEST_PYTEST_WORKERS`, `ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL`, and `ENVCTL_TEST_FOCUSED_PYTEST_WORKERS`
+- `ENVCTL_ACTION_TEST_PARALLEL` and `ENVCTL_ACTION_TEST_PARALLEL_MAX` remain suite-concurrency settings; they do not silently replace the free-core pytest worker estimate
 
 Logs and inspection:
 
@@ -457,7 +468,7 @@ envctl config
 printf '%s\n' '{"default_mode":"trees"}' | envctl config --stdin-json
 ```
 
-`envctl config` saves `.envctl`, protects envctl-local artifacts through the configured Git global excludes file, and creates or updates the repo-local `AGENTS.md` envctl-managed agent guidance block.
+`envctl config` saves `.envctl`, protects envctl-local artifacts through the configured Git global excludes file, and creates or updates the repo-local `AGENTS.md` envctl-managed agent guidance block from `python/envctl_engine/config/AGENTS.md.tpl`.
 
 Planning and worktrees:
 
@@ -475,9 +486,9 @@ envctl ensure-worktree feature-a --json
 
 - accepts `feature/foo`, `origin/feature/foo`, or `refs/remotes/origin/feature/foo` and normalizes them to the same source
 - fetches the branch from `origin`, creates `trees/imported/<branch-slug>` when needed, and checks out a local branch tracking `origin/<branch>`
-- reuses an existing import only when the worktree is on the requested branch, then runs a fast-forward-only merge from `origin/<branch>`
+- reuses an existing import only when the worktree is on the requested branch, then resets it to `origin/<branch>`
 - records import provenance but does not create a plan file or seed `MAIN_TASK.md` from `todo/plans`
-- never uses `git branch -B`, force checkout, or force reset to make local branch names match remote branches
+- never uses `git branch -B` or force checkout to make local branch names match remote branches
 - supports the same explicit plan-agent handoff flags as `--plan`, including `--cmux`, `--tmux`, `--omx`, `--codex`, `--opencode`, `--headless`, and `--no-infra`
 
 `ensure-worktree` is the cheap automation-oriented worktree surface:
@@ -498,7 +509,7 @@ Commit defaults:
 - `envctl commit` reads its fallback default commit message from the repo-local `.envctl-commit-message.md` file when you do not pass `-m`, `--commit-message`, or `--commit-message-file`
 - treat `### Envctl pointer ###` as the boundary after the last successful default commit; everything after it is the next default commit message
 - write one complete next commit message in `.envctl-commit-message.md` rather than multiple fragmented summaries only when using the fallback ledger
-- envctl-local control artifacts (`.envctl*`, `MAIN_TASK.md`, `OLD_TASK_*.md`, `trees/`) stay local; if a broad `git add .` stages them, `envctl commit` unstages those protected paths before committing normal changes
+- envctl-local control artifacts (`.envctl*`, `.codegraph/`, `.serena/project.local.yml`, `MAIN_TASK.md`, `OLD_TASK_*.md`, `trees/`) stay local; if a broad `git add .` stages them, `envctl commit` unstages those protected paths before committing normal changes
 
 Optional plan-agent launch config for `--plan` and `--import`:
 
@@ -508,7 +519,7 @@ generated worktree or project, run it without `--project`; use `--project
 creates a PR when none exists, reuses or updates the existing PR otherwise, predicts merge conflicts, waits for GitHub PR checks
 whose rendered name starts with `Tests` case-insensitively until they pass, fail, time out, or report no target check contexts,
 and prints a progress update every 10 seconds while target checks are still running.
-If GitHub has attached the pushed head commit but still has no target test check contexts after 10 seconds, `ship` reports
+If GitHub has attached the pushed head commit but still has no target test check contexts after 15 seconds, `ship` reports
 `no_checks_reported` immediately instead of waiting for the full timeout. The command returns the structured JSON result by default including
 the PR URL, `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`,
 `failing_checks`, `pending_checks`, and `checks_error`. `--json` remains accepted as a compatibility no-op;
@@ -517,7 +528,7 @@ checks after that window are reported as `checks_pending_timeout` without failin
 checks still return a non-zero exit. The timeout can be tuned with
 `ENVCTL_SHIP_CHECK_TIMEOUT_SECONDS` and
 `ENVCTL_SHIP_CHECK_POLL_INTERVAL_SECONDS` (default: 5 seconds); progress heartbeat output can be tuned separately with
-`ENVCTL_SHIP_CHECK_PROGRESS_INTERVAL_SECONDS`; the no-check-context grace can be tuned with
+`ENVCTL_SHIP_CHECK_PROGRESS_INTERVAL_SECONDS`; the no-check-context grace defaults to 15 seconds and can be tuned with
 `ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS`. When a real background/subagent lane runs `ship`, success is silent: the worker
 should report only commit/push/PR failures, merge conflicts, failed checks, pending timeouts, no-checks-reported status,
 or actionable review comments.
@@ -546,6 +557,7 @@ or actionable review comments.
 - For `--plan --tmux --opencode`, envctl considers the AI launch successful only after the tmux pane shows a usable OpenCode prompt and the implementation prompt can be submitted. If tmux starts but OpenCode exits, stays on a loading screen, reports a shell/config error, or leaves a stale non-OpenCode pane behind, envctl reports an AI launch failure instead of printing implementation-session attach guidance.
 - Codex installs envctl presets as explicit-only skills under `~/.codex/skills/envctl-*`; envctl still resolves the shipped prompt body directly when it needs to submit a preset itself
 - `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` explicitly opts in to the Codex/OMX `$browser` E2E follow-up; it is skipped by default
+- `ENVCTL_PLAN_AGENT_FULLSTACK_PR_URL_E2E_ENABLE=true` automatically enables that PR-URL `$browser` follow-up for Codex plan-agent launches whose selected app scope has both backend and frontend services enabled; backend-only, frontend-only, dependencies-only, `--no-infra`, missing-service, and OpenCode launches remain inactive and report why
 - `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true` opts in to the final Codex/OMX PR review-comments follow-up; it is skipped by default so core implementation prompts rely on `envctl ship` status unless a dedicated review-comments pass is explicitly enabled
 - `ENVCTL_SHIP_PR_LABEL_ENABLE=true` opts in to programmatic PR labeling during `envctl ship`; the label name defaults to `deploy-app` and can be changed with `ENVCTL_SHIP_PR_LABEL`
 - `ENVCTL_PLAN_AGENT_SHELL=zsh` selects the shell started in the new cmux surface or tmux window when envctl owns the terminal bootstrap

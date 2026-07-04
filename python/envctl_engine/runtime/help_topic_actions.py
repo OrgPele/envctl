@@ -11,6 +11,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         what_it_does=(
             "runs configured test commands from .envctl for selected projects/worktrees",
             "parses test output, renders summaries, and tracks failed/untested suites for reruns",
+            "auto-sizes pytest-xdist workers from free CPU cores when pytest-xdist is available",
         ),
         flags=(
             "--project <name>        test one project/worktree",
@@ -18,6 +19,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--failed                rerun previously failed suites where tracked",
             "--untested              run targets without recorded test evidence",
             "--test-parallel / --test-sequential  choose suite parallelism",
+            "--test-parallel-max <n>              cap suite concurrency and pytest-xdist workers",
             "--frontend-test-runner <name>         select frontend runner integration",
         ),
         examples=("envctl test --project feature-a-1", "envctl test --all", "envctl test --failed"),
@@ -32,12 +34,15 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "collects changed files from git and maps common envctl code areas to focused test commands",
             "when run inside a generated worktree, infers that worktree without requiring --project",
             "includes reasons, confidence, ruff suggestions for touched Python paths, and full-gate guidance",
+            "auto-sizes pytest-xdist workers from free CPU cores when pytest-xdist is available",
             "runs the focused commands by default in order and stops at the first failure",
         ),
         flags=(
             "--project <name>        plan validation for one project/worktree",
             "--dry-run               print the focused commands without executing them",
             "--json                  print the envctl.test_plan.v1 payload",
+            "--test-parallel-max <n> cap pytest-xdist workers for this run",
+            "--no-test-parallel      disable pytest-xdist auto-injection for this run",
         ),
         examples=(
             "envctl test-focused",

@@ -349,6 +349,7 @@ def _submit_direct_prompt_workflow_step(
         failure_event=failure_event,
         paste_surface_text_fn=_paste_surface_text,
         send_surface_key_fn=_send_surface_key,
+        wait_for_direct_prompt_ready_fn=_wait_for_direct_prompt_ready,
     )
 
 
@@ -432,8 +433,8 @@ def _launch_cli_bootstrap_commands(
     )
 
 
-def _wait_for_cli_ready(runtime: Any, *, workspace_id: str, surface_id: str, cli: str) -> None:
-    cmux_surface_support.wait_for_cli_ready(
+def _wait_for_cli_ready(runtime: Any, *, workspace_id: str, surface_id: str, cli: str) -> str | None:
+    return cmux_surface_support.wait_for_cli_ready(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
@@ -472,6 +473,7 @@ _send_surface_key = cmux_surface_support.send_surface_key
 _run_cmux_command = cmux_surface_support.run_cmux_command
 _completed_process_error_text = cmux_surface_support.completed_process_error_text
 _read_surface_screen = cmux_surface_support.read_surface_screen
+_wait_for_direct_prompt_ready = cmux_surface_support.wait_for_direct_prompt_ready
 _wait_for_prompt_submit_ready = cmux_surface_support.wait_for_prompt_submit_ready
 _wait_for_prompt_picker_ready = cmux_surface_support.wait_for_prompt_picker_ready
 _prepare_surface = cmux_surface_support.prepare_surface

@@ -16,7 +16,8 @@ _FIELD_STEP_IDS = {"additional_services", "directories", "commands", "ports", "r
 _MANAGED_IGNORE_WARNING = (
     "envctl local artifacts are managed through Git global excludes instead of repo "
     ".gitignore. On save, envctl configures or updates core.excludesFile to keep "
-    ".envctl, MAIN_TASK.md, OLD_TASK_*.md, trees/, and trees-* out of git status."
+    ".envctl, .codegraph/, .serena/project.local.yml, MAIN_TASK.md, OLD_TASK_*.md, "
+    "trees/, and trees-* out of git status."
 )
 
 

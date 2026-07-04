@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import signal
 import subprocess
@@ -8,6 +9,10 @@ import time
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from envctl_engine.actions.action_pytest_parallel_support import (
+    PytestParallelPolicy,
+    parallelized_pytest_args,
+)
 from envctl_engine.config.local_artifacts import is_envctl_local_artifact_path
 
 _PREFIX_TESTS: tuple[tuple[str, str, str], ...] = (
@@ -24,8 +29,7 @@ _PROMPT_PREFIX = "python/envctl_engine/runtime/prompt_templates/"
 _PROMPT_TEST = "tests/python/runtime/test_prompt_install_support_templates.py"
 _DOC_TOOLING_PREFIXES = ("docs/", "README.md", "AGENTS.md", ".serena/")
 _DOC_TOOLING_TESTS = (
-    "tests/python/shared/test_validation_workflow_contract.py "
-    "tests/python/shared/test_serena_config.py"
+    "tests/python/shared/test_validation_workflow_contract.py tests/python/shared/test_serena_config.py"
 )
 
 
@@ -137,7 +141,13 @@ def run_test_plan_action(context: object, *, json_output: bool = False, dry_run:
     payload = build_test_plan(repo_root=repo_root, project_root=project_root, project_name=project_name)
     exit_code = 0
     if not dry_run:
-        run_payload, exit_code = _run_plan_commands(payload, cwd=project_root)
+        run_payload, exit_code = _run_plan_commands(
+            payload,
+            cwd=project_root,
+            env=_context_mapping(context, "env", os.environ),
+            config_raw=_context_mapping(context, "config_raw", {}),
+            route_flags=_context_mapping(context, "route_flags", {}),
+        )
         payload["run"] = run_payload
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -150,29 +160,57 @@ def run_test_plan_action(context: object, *, json_output: bool = False, dry_run:
             for result in result_items:
                 if isinstance(result, Mapping):
                     print(f"{result.get('status', 'unknown')}: {result.get('command', '')}")
+                    for name in ("stdout", "stderr"):
+                        text = result.get(name)
+                        if isinstance(text, str) and text:
+                            print(f"{name}:")
+                            print(text, end="" if text.endswith("\n") else "\n")
         else:
             for command in _command_items(payload):
                 print(command.get("command", ""))
     return exit_code
 
 
-def _run_plan_commands(payload: Mapping[str, object], *, cwd: Path) -> tuple[dict[str, object], int]:
+def _run_plan_commands(
+    payload: Mapping[str, object],
+    *,
+    cwd: Path,
+    env: Mapping[str, object] | None = None,
+    config_raw: Mapping[str, object] | None = None,
+    route_flags: Mapping[str, object] | None = None,
+) -> tuple[dict[str, object], int]:
     commands = [str(item.get("command") or "").strip() for item in _command_items(payload)]
     results: list[dict[str, object]] = []
     exit_code = 0
+    pytest_parallel = PytestParallelPolicy(
+        env=env or {},
+        config_raw=config_raw or {},
+        route_flags=route_flags or {},
+        include_focused_env=True,
+    )
     for index, command in enumerate(commands):
         if not command:
             continue
         command_args = shlex.split(command)
         executed_args = _execution_args(command_args, cwd=cwd)
+        executed_args = parallelized_pytest_args(executed_args, cwd=cwd, policy=pytest_parallel)
         started = time.monotonic()
-        completed = subprocess.run(executed_args, cwd=str(cwd), check=False)
+        completed = subprocess.run(
+            executed_args,
+            cwd=str(cwd),
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         duration = round(time.monotonic() - started, 3)
         result = _command_result(
             command=command,
             executed_args=executed_args,
             returncode=completed.returncode,
             duration=duration,
+            stdout=completed.stdout,
+            stderr=completed.stderr,
         )
         results.append(result)
         if completed.returncode != 0:
@@ -206,7 +244,20 @@ def _execution_args(command_args: list[str], *, cwd: Path) -> list[str]:
     return command_args
 
 
-def _command_result(*, command: str, executed_args: list[str], returncode: int, duration: float) -> dict[str, object]:
+def _context_mapping(context: object, name: str, default: Mapping[str, object]) -> Mapping[str, object]:
+    value = getattr(context, name, default)
+    return value if isinstance(value, Mapping) else default
+
+
+def _command_result(
+    *,
+    command: str,
+    executed_args: list[str],
+    returncode: int,
+    duration: float,
+    stdout: str | None = None,
+    stderr: str | None = None,
+) -> dict[str, object]:
     status = "passed" if returncode == 0 else "failed"
     result: dict[str, object] = {
         "command": command,
@@ -217,6 +268,9 @@ def _command_result(*, command: str, executed_args: list[str], returncode: int, 
     executed_command = shlex.join(executed_args)
     if executed_command != command:
         result["executed_command"] = executed_command
+    if returncode != 0:
+        result["stdout"] = stdout or ""
+        result["stderr"] = stderr or ""
     if returncode < 0:
         signal_number = abs(returncode)
         result["status"] = "terminated_by_signal"

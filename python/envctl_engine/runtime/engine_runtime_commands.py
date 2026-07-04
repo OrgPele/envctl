@@ -8,6 +8,17 @@ from typing import Any, Mapping
 
 from envctl_engine.runtime.command_resolution import resolve_requirement_start_command, resolve_service_start_command
 
+SERVICE_LAUNCH_ENV_REMOVALS = {
+    "ACTIONS_CACHE_URL",
+    "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+    "ACTIONS_ID_TOKEN_REQUEST_URL",
+    "ACTIONS_RESULTS_URL",
+    "ACTIONS_RUNTIME_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "RUNNER_TRACKING_ID",
+}
+
 
 def requirement_command(
     runtime: Any,
@@ -151,6 +162,8 @@ def _command_exists_for_cwd(runtime: Any, executable: str, *, cwd: str | Path | 
 
 def command_env(runtime: Any, *, port: int, extra: Mapping[str, str] | None = None) -> dict[str, str]:
     env = dict(os.environ)
+    for key in SERVICE_LAUNCH_ENV_REMOVALS:
+        env.pop(key, None)
     env.update(runtime.env)
     env["PORT"] = str(port)
     if extra:

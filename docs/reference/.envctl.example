@@ -155,6 +155,11 @@ ENVCTL_PLAN_AGENT_SUPERSET_OPEN=true
 # Set to true to queue the optional browser E2E follow-up after implementation/finalization.
 ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false
 
+# For Codex full-stack frontend+backend app launches, automatically queue the
+# PR-URL browser E2E follow-up after envctl ship. The follow-up validates the
+# deployed PR URL instead of localhost or envctl runtime URLs.
+ENVCTL_PLAN_AGENT_FULLSTACK_PR_URL_E2E_ENABLE=false
+
 # Queue an extra Codex/OMX prompt after implementation and optional browser-E2E prompts
 # to inspect unresolved PR review comments and address all actionable feedback.
 # Set to false to skip this follow-up for repos where PR comment handling is manual.
@@ -169,6 +174,8 @@ ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE=true
 ENVCTL_SHIP_PR_LABEL_ENABLE=false
 # Optional label name. envctl creates the repo label when missing.
 ENVCTL_SHIP_PR_LABEL=deploy-app
+# Seconds to wait for GitHub to attach PR check contexts before no_checks_reported.
+ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS=15
 
 # ==========================================
 # Service launch env templates

@@ -51,6 +51,46 @@ class PlanAgentWorkflowQueueInteractionTests(unittest.TestCase):
         self.assertTrue(interactor.queue_message(queued_text))
         self.assertEqual(sent_keys, ["tab"])
 
+    def test_queue_message_tabs_when_long_paste_is_collapsed_by_codex(self) -> None:
+        sent_keys: list[str] = []
+        state = {"stage": "typed"}
+        queued_text = "You are finalizing an implementation.\n" + ("Confirm validation evidence.\n" * 80)
+        ready_screen = "OpenAI Codex\n  › [Pasted Content 2198 chars]\n  tab to queue message\n"
+        queued_screen = "OpenAI Codex\n• Queued follow-up messages\n"
+
+        interactor = CodexQueueMessageInteractor(
+            read_screen=lambda: ready_screen if state["stage"] == "typed" else queued_screen,
+            send_key=lambda key: sent_keys.append(key) or state.update(stage="queued") or None,
+            monotonic=iter([0.0, 0.1, 0.2, 0.3]).__next__,
+            sleep=lambda _seconds: None,
+            timeout_seconds=1.0,
+            poll_interval_seconds=0.05,
+            max_tab_attempts=3,
+        )
+
+        self.assertTrue(interactor.queue_message(queued_text))
+        self.assertEqual(sent_keys, ["tab"])
+
+    def test_queue_message_tabs_for_long_prompt_when_only_tab_hint_is_visible(self) -> None:
+        sent_keys: list[str] = []
+        state = {"stage": "typed"}
+        queued_text = "You are finalizing an implementation.\n" + ("Confirm validation evidence.\n" * 80)
+        ready_screen = "OpenAI Codex\n  tab to queue message\n"
+        queued_screen = "OpenAI Codex\n• Queued follow-up messages\n"
+
+        interactor = CodexQueueMessageInteractor(
+            read_screen=lambda: ready_screen if state["stage"] == "typed" else queued_screen,
+            send_key=lambda key: sent_keys.append(key) or state.update(stage="queued") or None,
+            monotonic=iter([0.0, 0.1, 0.2, 0.3]).__next__,
+            sleep=lambda _seconds: None,
+            timeout_seconds=1.0,
+            poll_interval_seconds=0.05,
+            max_tab_attempts=3,
+        )
+
+        self.assertTrue(interactor.queue_message(queued_text))
+        self.assertEqual(sent_keys, ["tab"])
+
     def test_queue_message_does_not_send_keys_when_message_text_is_not_visible(self) -> None:
         sent_keys: list[str] = []
         queued_text = "Queued prompt body"

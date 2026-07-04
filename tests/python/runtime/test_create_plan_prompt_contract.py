@@ -58,6 +58,9 @@ class CreatePlanPromptContractTests(unittest.TestCase):
             "- After completing the required final response items, ask exactly one final approval question",
             "- use an explicit selector for the created plan with `envctl --headless --plan <selector>`",
             "explain the supported launch surfaces clearly enough that the user does not need to run `envctl --help` to understand them",
+            "Ground the follow-up in the real supported flow",
+            "Use these repo-scoped command forms as the source of examples",
+            "Multi-launch choices mean separate commands",
             "- default the launch preset to `implement_task`",
             "AI launch choice: `codex`, `opencode`, `omx`, `codex + opencode`, or `codex + omx`",
             "if the selected launch choice includes Codex or OMX-managed Codex, include `recommended Codex cycles: <n>`",
@@ -66,6 +69,13 @@ class CreatePlanPromptContractTests(unittest.TestCase):
             "2. One-paragraph summary of the plan intent.",
             "3. Files referenced during research (short list).",
             "5. One short approval question asking whether you should run the envctl worktree-and-prompt follow-up now or whether the user wants to run it manually.",
+        )
+
+    def test_create_plan_prompt_distinguishes_launch_scope_from_validation(self) -> None:
+        self.assertContainsCluster(
+            "Treat this as plan-agent scope metadata and dependency-prep intent, not as an instruction for the implementation prompt to start local services or prove the feature through local deployment.",
+            "Separately record the validation lane: focused tests and `envctl ship` by default, plus deployed PR URL browser validation only when browser E2E is required.",
+            "explain that launch-scope flags select the implementation surface for the plan-agent workflow; they do not replace focused tests, `envctl ship`, or deployed PR URL validation",
         )
 
 

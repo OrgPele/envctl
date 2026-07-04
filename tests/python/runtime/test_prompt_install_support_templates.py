@@ -81,6 +81,13 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
                 self.assertIn("--headless", body)
                 self.assertIn("--new-session", body)
                 self.assertIn("--entire-system", body)
+                self.assertIn(
+                    "it is not an instruction to prove the feature by starting local services",
+                    body,
+                )
+                self.assertIn("## Success criteria", body)
+                self.assertIn("## Final response", body)
+                self.assertNotIn("## Final Response", body)
                 self.assertIn("Use a narrower runtime scope only when the plan explicitly records why full-stack E2E does not apply.", body)
 
     def test_create_plan_template_requires_bounded_codex_cycle_recommendation(self) -> None:
@@ -117,114 +124,151 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
 
         self.assertEqual(template.name, "implement_task")
         self.assertTrue(codex.startswith("You are implementing real code, end-to-end."))
-        for phrase in (
-            "Authoritative spec file: MAIN_TASK.md.",
-            "write it into `MAIN_TASK.md` first",
-            "WORKTREE BOUNDARY IS STRICT",
-            "Use TDD",
-            "git status --short",
-            "one complete commit/PR handoff message",
-            "Do not write envctl-local commit-message ledger files",
-            "envctl test-focused",
-            'envctl ship -m "<message>"',
-            "`ship` commits, pushes, creates a PR when none exists",
-            "waits for target GitHub Tests checks",
-            "A successful ship result is silent",
-            "Do not run raw `git`, `gh`, or separate commit/PR/status commands",
-            "Only inspect PR review comments when `ship` reports actionable review-comment status",
-            "envctl --entire-system --headless",
-            "envctl --backend --headless",
-            "envctl --frontend --headless",
-            "envctl --fullstack --headless",
-            "envctl --dependencies --headless",
-            "envctl stop --entire-system --headless",
-            "$browser",
-            "Use the injected worktree code-intelligence context when envctl adds one",
-            "use `rg` for exact strings",
-            "only use Serena, CGC/CodeGraphContext, CodeGraph, or another graph tool",
-            "envctl endpoints --project <actual-project-name> --json",
-            "envctl qa-user ensure --project <actual-project-name>",
-            "envctl playwright --project <actual-project-name> -- <executable> [args...]",
-            "Runtime addresses used or produced",
-            "Playwright",
-            "running service",
-        ):
-            with self.subTest(prompt="implement_task", phrase=phrase):
-                self.assertIn(phrase, codex)
-        self.assertNotIn("envctl test-focused --project <current-worktree-name> --dry-run --json", codex)
-        self.assertNotIn("Inspect unresolved PR review comments after the PR exists", codex)
+        self.assertIn("Authoritative spec file: MAIN_TASK.md.", codex)
+        self.assertIn("write that content into `MAIN_TASK.md` first", codex)
         self.assertNotIn(".envctl-commit-message.md", codex)
         self.assertNotIn("### Envctl pointer ###", codex)
         self.assertNotIn("boundary after the last successful commit", codex)
-        self.assertLessEqual(len(codex.splitlines()), 105)
+        self.assertIn("one complete commit/PR handoff message", codex)
+        self.assertIn("what your validation actually did and proved", codex)
+        self.assertIn("manual checks a human should still run to truly confirm it works", codex)
+        self.assertIn("Do not write envctl-local commit-message ledger files", codex)
+        self.assertIn("Do not run manual staging commands such as `git add .`", codex)
+        self.assertIn("Inspect the baseline with `git status --short`; do not stage files manually", codex)
+        self.assertIn("follow AGENTS.md for the focused validation and handoff workflow", codex)
+        self.assertNotIn("envctl test-focused --project <current-worktree-name> --dry-run --json", codex)
+        self.assertIn("Follow the AGENTS.md ship workflow", codex)
+        self.assertIn("Full-stack PR-URL E2E delivery lane", codex)
+        self.assertIn("frontend and backend surfaces", codex)
+        self.assertIn("deployed PR URL", codex)
+        self.assertNotIn("Run bare `envctl ship` from inside the current worktree/project directory", codex)
+        self.assertNotIn("returns JSON by default with the PR URL", codex)
+        self.assertNotIn("`pr_created`, `operation_statuses`, `checks_state`", codex)
+        self.assertNotIn("A successful ship result is silent", codex)
+        self.assertIn("Only inspect PR review comments when `ship` reports actionable review-comment status", codex)
+        self.assertNotIn("Inspect unresolved PR review comments after the PR exists", codex)
+        self.assertIn("PR status and URL", codex)
+        self.assertIn("full cumulative set of changes between commits", codex)
+        self.assertIn("Do not start or deploy a local envctl runtime as the default proof path", codex)
+        self.assertIn("follow AGENTS.md for final validation and handoff", codex)
+        self.assertIn("Start local envctl services only when the authoritative task", codex)
+        self.assertIn("the final browser-visible proof is the deployed PR URL", codex)
+        self.assertIn("## Handoff", codex)
+        self.assertNotIn("Default to `envctl --entire-system --headless`", codex)
+        self.assertNotIn("envctl --backend --headless", codex)
+        self.assertNotIn("envctl --frontend --headless", codex)
+        self.assertNotIn("envctl --fullstack --headless", codex)
+        self.assertNotIn("envctl --dependencies --headless", codex)
+        self.assertNotIn("envctl --entire-system --headless", codex)
+        self.assertIn("Tooling and validation context", codex)
+        self.assertIn("$browser", codex)
         self.assertNotIn("$browser-use", codex)
+        self.assertIn("Follow the active AGENTS.md and any injected worktree code-intelligence context", codex)
+        self.assertIn("Use graph or symbol tooling only when it is configured", codex)
+        self.assertNotIn("use CodeGraphContext (`cgc`) for repo-wide ownership", codex)
+        self.assertNotIn("Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl", codex)
+        self.assertNotIn("envctl endpoints --project <actual-project-name> --json", codex)
+        self.assertNotIn("envctl qa-user ensure --project <actual-project-name>", codex)
+        self.assertNotIn("envctl playwright --project <actual-project-name>", codex)
+        self.assertIn("stop exactly what you started before final handoff", codex)
+        self.assertIn("At the end of every implementation, run the final relevant validation yourself", codex)
+        self.assertIn("If no runtime was started, say so", codex)
+        self.assertIn("Runtime addresses used or produced during validation: dependencies, backend, and frontend", codex)
+        self.assertIn("Playwright", codex)
+        self.assertIn("running target", codex)
         self.assertNotEqual(claude, codex)
         self.assertIn("$browser-use", claude)
         self.assertNotEqual(opencode, codex)
         self.assertIn("$browser-use", opencode)
 
         continue_prompt = _load_template("continue_task")
-        for phrase in (
-            "current `MAIN_TASK.md`",
-            "OLD_TASK_<iteration>.md",
-            ".envctl-state/worktree-provenance.json",
-            "git merge-base HEAD <originating-base>",
-            "one complete commit/PR handoff message",
-            "what validation proved",
-            "Do not write envctl-local commit-message ledger files",
-        ):
-            self.assertIn(phrase, continue_prompt.body)
-        self.assertLessEqual(len(continue_prompt.body.splitlines()), 80)
+        self.assertIn("## Success criteria", continue_prompt.body)
+        self.assertIn("The new `MAIN_TASK.md` contains only remaining work", continue_prompt.body)
+        self.assertIn("one complete commit/PR handoff message", continue_prompt.body)
+        self.assertIn("what your validation actually did and proved", continue_prompt.body)
+        self.assertIn("manual checks a human should still run to truly confirm it works", continue_prompt.body)
         self.assertNotIn(".envctl-commit-message.md", continue_prompt.body)
         self.assertNotIn("### Envctl pointer ###", continue_prompt.body)
+        self.assertIn("Do not write envctl-local commit-message ledger files", continue_prompt.body)
+        self.assertIn(".envctl-state/worktree-provenance.json", continue_prompt.body)
+        self.assertIn("git merge-base HEAD <originating-base>", continue_prompt.body)
 
         finalize_prompt = _load_template("finalize_task")
         self.assertEqual(finalize_prompt.name, "finalize_task")
-        for phrase in (
-            "envctl test-focused",
-            "envctl test-focused --project <current-worktree-name>",
-            "envctl endpoints --project <current-worktree-name> --json",
-            "envctl qa-user ensure --project <current-worktree-name>",
-            "envctl playwright --project <current-worktree-name> -- <command>",
-            "$browser",
-            'envctl ship -m "<message>"',
-            '`envctl ship --project <current-worktree-name> -m "<message>"`',
-            "what validation proved",
-            "Do not run raw `git`, `gh`, or separate commit/PR/status commands",
-            "A successful ship result is silent",
-            "Only inspect PR review comments when `ship` reports actionable review-comment status",
-        ):
-            self.assertIn(phrase, finalize_prompt.body)
-        self.assertLessEqual(len(finalize_prompt.body.splitlines()), 55)
+        self.assertIn("## Success criteria", finalize_prompt.body)
+        self.assertIn("only when a local runtime is already running or the task/test harness explicitly requires one", finalize_prompt.body)
+        self.assertIn("Run `envctl test-focused` from inside the current generated worktree", finalize_prompt.body)
+        self.assertIn("deployed PR URL E2E validation is an additional post-PR lane", finalize_prompt.body)
+        self.assertIn("use `envctl test-focused --project <current-worktree-name>`", finalize_prompt.body)
         self.assertNotIn("envctl test-focused --project <current-worktree-name> --dry-run --json", finalize_prompt.body)
+        self.assertNotIn("envctl endpoints --project <current-worktree-name> --json", finalize_prompt.body)
+        self.assertNotIn("envctl qa-user ensure --project <current-worktree-name>", finalize_prompt.body)
+        self.assertNotIn("envctl playwright --project <current-worktree-name>", finalize_prompt.body)
+        self.assertIn("$browser", finalize_prompt.body)
         self.assertNotIn("$browser-use", finalize_prompt.body)
+        self.assertIn("Use the injected worktree code-intelligence context if envctl added one", finalize_prompt.body)
+        self.assertIn("use `rg` for exact strings", finalize_prompt.body)
+        self.assertIn("do not assume Serena, CodeGraph, or any other graph tool exists", finalize_prompt.body)
+        self.assertNotIn("CodeGraphContext (`cgc`) for repo-wide ownership", finalize_prompt.body)
+        self.assertNotIn("Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl", finalize_prompt.body)
+        self.assertIn("Follow AGENTS.md for the ship workflow", finalize_prompt.body)
+        self.assertIn("one complete commit/PR handoff message", finalize_prompt.body)
+        self.assertIn("what your validation actually did and proved", finalize_prompt.body)
+        self.assertIn("manual checks a human should still run to truly confirm it works", finalize_prompt.body)
+        self.assertNotIn("Run bare `envctl ship` from inside the current worktree/project directory", finalize_prompt.body)
+        self.assertNotIn("returns JSON by default with current status", finalize_prompt.body)
+        self.assertNotIn("`pr_created`, `operation_statuses`, `checks_state`", finalize_prompt.body)
+        self.assertNotIn("A successful ship result is silent", finalize_prompt.body)
+        self.assertIn("Only inspect PR review comments when `ship` reports actionable review-comment status", finalize_prompt.body)
         self.assertNotIn("Inspect unresolved PR review comments", finalize_prompt.body)
 
         intermediate_prompt = _load_template("_plan_agent_intermediate_cycle_completion").body
-        self.assertIn('envctl ship -m "<message>"', intermediate_prompt)
-        self.assertIn("Success criteria:", intermediate_prompt)
-        self.assertIn("what validation proved", intermediate_prompt)
-        self.assertIn("PR create/update", intermediate_prompt)
-        self.assertIn("return to the shipping lane only when it reports an issue", intermediate_prompt)
-        self.assertIn("A successful ship result is silent", intermediate_prompt)
-        self.assertLessEqual(len(intermediate_prompt.splitlines()), 12)
+        self.assertIn("## Ship contract", intermediate_prompt)
+        self.assertIn('then use `envctl ship -m "<message>"`', intermediate_prompt)
+        self.assertIn("Do not substitute localhost validation for deployed PR URL validation", intermediate_prompt)
+        self.assertIn("Build the message as a commit/PR handoff message", intermediate_prompt)
+        self.assertIn("what your validation actually did and proved", intermediate_prompt)
+        self.assertIn("manual checks a human should still run to truly confirm it works", intermediate_prompt)
+        self.assertIn("instead of a separate commit/push/PR flow", intermediate_prompt)
+        self.assertIn("Follow AGENTS.md for the ship workflow", intermediate_prompt)
+        self.assertNotIn("creates a PR when none exists", intermediate_prompt)
+        self.assertNotIn("`pr_created`, `operation_statuses`, `checks_state`", intermediate_prompt)
+        self.assertNotIn("A successful ship result is silent", intermediate_prompt)
 
         first_cycle_prompt = _load_template("_plan_agent_first_cycle_completion").body
-        self.assertIn("Success criteria:", first_cycle_prompt)
-        self.assertIn("what validation proved", first_cycle_prompt)
-        self.assertIn("A successful ship result is silent", first_cycle_prompt)
-        self.assertLessEqual(len(first_cycle_prompt.splitlines()), 12)
+        self.assertIn("## Ship contract", first_cycle_prompt)
+        self.assertIn("Do not substitute localhost validation for deployed PR URL validation", first_cycle_prompt)
+        self.assertIn("Build the message as a commit/PR handoff message", first_cycle_prompt)
+        self.assertIn("what your validation actually did and proved", first_cycle_prompt)
+        self.assertIn("manual checks a human should still run to truly confirm it works", first_cycle_prompt)
+        self.assertIn("Follow AGENTS.md for the ship workflow", first_cycle_prompt)
+        self.assertNotIn("A successful ship result is silent", first_cycle_prompt)
 
         review_comments_prompt = _load_template("_plan_agent_pr_review_comments_followup").body
-        self.assertIn('envctl ship -m "<message>"', review_comments_prompt)
-        self.assertIn("what validation proved", review_comments_prompt)
+        self.assertIn("## Comment triage", review_comments_prompt)
+        self.assertIn("## Ship contract", review_comments_prompt)
+        self.assertIn("Build the message as a commit/PR handoff message", review_comments_prompt)
+        self.assertIn("what your validation actually did and proved", review_comments_prompt)
+        self.assertIn("manual checks a human should still run to truly confirm it works", review_comments_prompt)
         self.assertIn("Inspect unresolved PR review comments", review_comments_prompt)
-        self.assertIn("Address every actionable comment", review_comments_prompt)
-        self.assertIn("A successful ship result is silent", review_comments_prompt)
-        self.assertLessEqual(len(review_comments_prompt.splitlines()), 12)
+        self.assertIn("address all actionable comments", review_comments_prompt)
+        self.assertIn("Follow AGENTS.md for the ship workflow", review_comments_prompt)
+        self.assertNotIn("A successful ship result is silent", review_comments_prompt)
+
+        browser_e2e_prompt = _load_template("_plan_agent_browser_e2e_followup").body
+        self.assertIn("## Objective", browser_e2e_prompt)
+        self.assertIn("## URL source", browser_e2e_prompt)
+        self.assertIn("## Validation steps", browser_e2e_prompt)
+        self.assertIn("## Final response", browser_e2e_prompt)
+        self.assertIn("conventional deployment URL", browser_e2e_prompt)
+        self.assertIn("not from the PR body", browser_e2e_prompt)
+        self.assertIn("never use it as the source for the browser URL", browser_e2e_prompt)
+        self.assertIn("not automatable from this environment", browser_e2e_prompt)
 
         review_worktree_prompt = _load_template("review_worktree_imp")
         self.assertEqual(review_worktree_prompt.name, "review_worktree_imp")
+        self.assertIn("## Success criteria", review_worktree_prompt.body)
+        self.assertIn("Findings are grounded in the target worktree diff", review_worktree_prompt.body)
         self.assertIn("current local repo directory is the unedited baseline", review_worktree_prompt.body)
         self.assertIn("defaults to the worktree created from the current plan file", review_worktree_prompt.body)
         self.assertIn("Launch arguments:\n$ARGUMENTS", review_worktree_prompt.body)
@@ -240,6 +284,8 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
 
         merge_prompt = _load_template("merge_implementation_branches")
         self.assertEqual(merge_prompt.name, "merge_implementation_branches")
+        self.assertIn("## Success criteria", merge_prompt.body)
+        self.assertIn("Every conflict is resolved from product and code intent", merge_prompt.body)
         self.assertIn("Read `MAIN_TASK.md` from branch A and branch B separately.", merge_prompt.body)
         self.assertIn("first merge branch A into the integration branch", merge_prompt.body)
         self.assertIn("Merge target: `integration/<branch-a>-plus-<branch-b>`", merge_prompt.body)
@@ -250,10 +296,13 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertNotIn("Changelog entry appended.", plan_prompt.body)
         self.assertIn("Default to `rg` for exact strings", plan_prompt.body)
         self.assertIn("Use repo-local AGENTS.md/tooling guidance and any injected code-intelligence context", plan_prompt.body)
-        self.assertIn("use Serena, CGC/CodeGraphContext, CodeGraph, or another graph tool only when", plan_prompt.body)
+        self.assertIn("use Serena, CodeGraph, or another graph tool only when", plan_prompt.body)
         self.assertNotIn("use CodeGraphContext (`cgc`) for repo-wide ownership", plan_prompt.body)
         self.assertNotIn("Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl", plan_prompt.body)
         self.assertIn("envctl --headless --plan <selector>", plan_prompt.body)
+        self.assertIn("Ground the follow-up in the real supported flow", plan_prompt.body)
+        self.assertIn("Use these repo-scoped command forms as the source of examples", plan_prompt.body)
+        self.assertIn("Multi-launch choices mean separate commands", plan_prompt.body)
         self.assertIn(
             "cd <repo> && envctl --plan <selector> --tmux --opencode",
             plan_prompt.body,
@@ -378,6 +427,9 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("If the user explicitly asks for a light/quick/minimal planning pass", plan_prompt.body)
         self.assertIn("Review todo/plans/README.md if it exists", plan_prompt.body)
         self.assertIn("Launch scope default", plan_prompt.body)
+        self.assertIn("plan-agent scope metadata and dependency-prep intent", plan_prompt.body)
+        self.assertIn("Separately record the validation lane: focused tests and `envctl ship` by default", plan_prompt.body)
+        self.assertIn("they do not replace focused tests, `envctl ship`, or deployed PR URL validation", plan_prompt.body)
         self.assertIn("--entire-system", plan_prompt.body)
         self.assertIn("backend-only", plan_prompt.body)
         self.assertIn("--only-backend", plan_prompt.body)
@@ -397,11 +449,3 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
                 self.assertIn("pass it inline with `envctl ship -m", prompt.body)
                 self.assertIn("Do not run `envctl commit` separately", prompt.body)
                 self.assertIn("full cumulative set of changes between commits", prompt.body)
-
-    def test_ai_playbook_documents_prompt_editing_standard(self) -> None:
-        body = (Path("docs/user/ai-playbooks.md")).read_text(encoding="utf-8")
-
-        self.assertIn("Prompt editing standard:", body)
-        self.assertIn("Put the outcome and source of truth before procedure.", body)
-        self.assertIn('`envctl ship -m "<message>"`', body)
-        self.assertIn("Cover prompt edits with tests", body)

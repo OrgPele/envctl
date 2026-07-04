@@ -6,10 +6,10 @@ This script is invoked by the release CI to:
 * compute the next version (either from a ``patch|minor|major`` bump or from an
   explicit ``--version`` override),
 * update ``pyproject.toml`` and the version-bound badges in ``README.md``,
-* write ``docs/changelog/RELEASE_NOTES_<version>.md`` from the source PR body.
+* write ``docs/changelog/RELEASE_NOTES_<version>.md`` from the release notes body.
 
-The CI workflows then commit those changes, open a release PR, and publish a
-GitHub Release with the same notes file once the PR merges.
+The release workflow commits those changes directly to ``main``, tags that
+commit, and publishes a GitHub Release with the same notes file.
 """
 
 from __future__ import annotations

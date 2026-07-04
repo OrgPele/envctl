@@ -44,6 +44,11 @@ $ARGUMENTS
 - Tests cover the main behavior, edge cases, and likely regressions.
 - The target worktree’s behavior is evaluated relative to the unedited current repo baseline, not in isolation.
 
+## Success criteria
+- Findings are grounded in the target worktree diff, original plan, and current baseline behavior.
+- Each finding includes a concrete file reference and explains the user-visible or maintenance risk.
+- Non-issues are not padded into the review; if no issues are found, say that and name any remaining test gaps.
+
 ## Guardrails
 - Do not modify files in either repo during this review pass.
 - Do not treat the current baseline repo as the implementation target.

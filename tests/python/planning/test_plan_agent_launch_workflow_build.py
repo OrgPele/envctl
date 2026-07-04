@@ -203,6 +203,42 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
             ],
         )
 
+    def test_build_plan_agent_workflow_appends_browser_e2e_for_single_prompt_codex_when_effectively_enabled(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        self.assertIsNotNone(_browser_e2e_instruction_text)
+        workflow = _build_plan_agent_workflow(
+            cli="codex",
+            preset="implement_task",
+            codex_cycles=0,
+            browser_e2e_followup_enable=True,
+        )
+
+        self.assertEqual(workflow.mode, "single_prompt")
+        self.assertEqual(
+            [(step.kind, step.text) for step in workflow.steps],
+            [
+                ("submit_direct_prompt", "implement_task"),
+                ("queue_message", _browser_e2e_instruction_text()),
+            ],
+        )
+
+    def test_build_plan_agent_workflow_appends_browser_e2e_for_two_and_three_cycles_when_effectively_enabled(self) -> None:
+        self.assertIsNotNone(_build_plan_agent_workflow)
+        self.assertIsNotNone(_browser_e2e_instruction_text)
+
+        for cycles in (2, 3):
+            with self.subTest(cycles=cycles):
+                workflow = _build_plan_agent_workflow(
+                    cli="codex",
+                    preset="implement_task",
+                    codex_cycles=cycles,
+                    browser_e2e_followup_enable=True,
+                )
+
+                self.assertEqual(workflow.mode, "codex_cycles")
+                self.assertEqual(workflow.steps[-1].kind, "queue_message")
+                self.assertEqual(workflow.steps[-1].text, _browser_e2e_instruction_text())
+
     def test_build_plan_agent_workflow_for_multiple_cycles_queues_continue_and_implement_rounds(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
         self.assertIsNotNone(_finalization_instruction_text)
@@ -287,5 +323,4 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
             pr_review_comments_followup_enable=True,
         )
 
-        self.assertTrue(workflow.steps[0].requires_goal)
-        self.assertTrue(all(not step.requires_goal for step in workflow.steps[1:]))
+        self.assertTrue(all(not step.requires_goal for step in workflow.steps))

@@ -523,9 +523,16 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             self._prepare_repo(repo)
             excludes_path = Path(tmpdir) / "git" / "ignore"
             excludes_path.parent.mkdir(parents=True, exist_ok=True)
-            excludes_path.write_text(".envctl*\nMAIN_TASK.md\nOLD_TASK_*.md\ntrees/\ntrees-*\n", encoding="utf-8")
+            excludes_path.write_text(
+                ".envctl*\n.codegraph/\n.serena/project.local.yml\nMAIN_TASK.md\nOLD_TASK_*.md\ntrees/\ntrees-*\n",
+                encoding="utf-8",
+            )
             env = self._isolated_git_env(tmpdir, excludes_path=excludes_path)
             (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
+            (repo / ".codegraph").mkdir()
+            (repo / ".codegraph" / "codegraph.db").write_text("index\n", encoding="utf-8")
+            (repo / ".serena").mkdir()
+            (repo / ".serena" / "project.local.yml").write_text('project_name: "local"\n', encoding="utf-8")
             (repo / "MAIN_TASK.md").write_text("task\n", encoding="utf-8")
             (repo / ".envctl-commit-message.md").write_text("queued\n", encoding="utf-8")
 
@@ -548,7 +555,10 @@ class ReleaseShipabilityGateTests(unittest.TestCase):
             self._prepare_repo(repo)
             excludes_path = Path(tmpdir) / "git" / "ignore"
             excludes_path.parent.mkdir(parents=True, exist_ok=True)
-            excludes_path.write_text(".envctl*\nMAIN_TASK.md\nOLD_TASK_*.md\ntrees/\ntrees-*\n", encoding="utf-8")
+            excludes_path.write_text(
+                ".envctl*\n.codegraph/\n.serena/project.local.yml\nMAIN_TASK.md\nOLD_TASK_*.md\ntrees/\ntrees-*\n",
+                encoding="utf-8",
+            )
             env = self._isolated_git_env(tmpdir, excludes_path=excludes_path)
             (repo / ".envctl").write_text("ENVCTL_DEFAULT_MODE=main\n", encoding="utf-8")
             (repo / "MAIN_TASK.md").write_text("task\n", encoding="utf-8")

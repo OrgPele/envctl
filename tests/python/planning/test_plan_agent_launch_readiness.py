@@ -1,6 +1,8 @@
 # ruff: noqa: F403,F405
 from __future__ import annotations
 
+from envctl_engine.planning.plan_agent.constants import _CODEX_QUEUE_READY_TIMEOUT_SECONDS
+
 from tests.python.planning.plan_agent_launch_support_test_support import *
 
 
@@ -38,7 +40,10 @@ class PlanAgentLaunchReadinessTests(PlanAgentLaunchSupportTestCase):
 
     def test_ai_cli_ready_window_allows_slower_opencode_startup(self) -> None:
         self.assertEqual(config._cli_ready_delay_seconds("codex"), 5.0)
-        self.assertEqual(config._cli_ready_delay_seconds("opencode"), 15.0)
+        self.assertEqual(config._cli_ready_delay_seconds("opencode"), 180.0)
+
+    def test_codex_queue_ready_window_allows_slow_session_hooks(self) -> None:
+        self.assertEqual(_CODEX_QUEUE_READY_TIMEOUT_SECONDS, 30.0)
 
     def test_opencode_ready_screen_rejects_loading_text_even_with_prompt_glyphs(self) -> None:
         screen = "Loading workspace...\n  ›\n"

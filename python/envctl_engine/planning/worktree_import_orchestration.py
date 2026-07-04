@@ -7,6 +7,7 @@ from typing import Any
 
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanWorktreeSyncResult
 from envctl_engine.planning.worktree_code_intelligence import prepare_worktree_code_intelligence
+from envctl_engine.planning.worktree_code_intelligence_files import ensure_worktree_git_excludes
 from envctl_engine.planning.worktree_git_hooks import worktree_git_hooks_disabled
 from envctl_engine.planning.worktree_import_commands import (
     ImportedBranchRef,
@@ -174,16 +175,16 @@ def import_remote_branch_worktree(self: Any, *, branch_input: str) -> PlanWorktr
         target=target,
         action=action,
         returncode=update_returncode,
-        **_failure_payload(update_returncode, "ff_only_update_failed"),
+        **_failure_payload(update_returncode, "reset_update_failed"),
     )
     if update_returncode != 0:
         return _error_result(
             branch_ref=branch_ref,
             target=target,
-            action="ff_only_update",
+            action="reset_update",
             result=update_result,
-            failure_reason="ff_only_update_failed",
-            fallback=f"imported worktree could not fast-forward to {branch_ref.remote_ref}",
+            failure_reason="reset_update_failed",
+            fallback=f"imported worktree could not reset to {branch_ref.remote_ref}",
         )
 
     link_repo_local_shared_artifacts(repo_root=repo_root, target=target)
@@ -225,6 +226,7 @@ def import_remote_branch_worktree(self: Any, *, branch_input: str) -> PlanWorktr
 def _write_import_provenance(self: Any, *, target: Path, branch_ref: ImportedBranchRef) -> Path | None:
     if not target.is_dir():
         return None
+    ensure_worktree_git_excludes(root=target, patterns=(".envctl-state/",))
     payload: dict[str, object] = {
         "schema_version": WORKTREE_PROVENANCE_SCHEMA_VERSION,
         "source_branch": branch_ref.branch,

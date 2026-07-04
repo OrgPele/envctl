@@ -19,25 +19,23 @@ def test_release_workflow_runs_shipability_gate_before_version_bump() -> None:
     assert gate_index < bump_index
 
 
-def test_release_workflow_opens_pr_instead_of_pushing_release_commit_to_main() -> None:
+def test_release_workflow_merges_release_metadata_through_pr_rule() -> None:
     workflow = _release_workflow()
 
-    assert "git push origin \"HEAD:main\"" not in workflow
-    assert "branch=\"release/envctl-${NEW_VERSION}\"" in workflow
+    assert "pull_request:" not in workflow
+    assert "pull-requests: write" in workflow
+    assert 'branch="release/envctl-${NEW_VERSION}"' in workflow
     assert "gh pr create" in workflow
-    assert "--base main" in workflow
+    assert "gh pr merge" in workflow
+    assert 'git push origin "HEAD:main"' not in workflow
+    assert "gh release create" in workflow
 
 
-def test_release_workflow_handles_restrictive_actions_pr_policy_after_branch_push() -> None:
+def test_release_workflow_uses_release_token_for_pr_merge_and_github_release() -> None:
     workflow = _release_workflow()
 
-    assert "secrets.ENVCTL_RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN" in workflow
-    push_index = workflow.index("git push --force-with-lease origin \"$branch\"")
-    policy_index = workflow.index("not permitted to create.*pull requests")
-    error_index = workflow.index("::error::release branch was pushed, but this repository does not permit")
-    assert push_index < policy_index < error_index
-    assert "configure ENVCTL_RELEASE_PR_TOKEN" in workflow
-    assert "::warning::release branch was pushed" not in workflow
+    assert "secrets.ENVCTL_RELEASE_TOKEN || secrets.ENVCTL_RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN" in workflow
+    assert "GH_TOKEN: ${{ secrets.ENVCTL_RELEASE_TOKEN || secrets.ENVCTL_RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}" in workflow
 
 
 def test_release_workflow_prefers_checked_in_release_notes_file_before_generated_notes() -> None:
@@ -52,14 +50,27 @@ def test_release_workflow_prefers_checked_in_release_notes_file_before_generated
     assert "--- generated notes preview ---" in workflow
 
 
-def test_release_workflow_publishes_only_after_release_pr_merge() -> None:
+def test_release_workflow_merges_release_pr_before_tagging_and_publishing() -> None:
     workflow = _release_workflow()
 
-    publish_index = workflow.index("publish:")
-    guard_index = workflow.index("startsWith(github.event.pull_request.head.ref, 'release/envctl-')")
+    commit_index = workflow.index("git commit -m \"Release envctl ${NEW_VERSION}\"")
+    branch_index = workflow.index("HEAD:refs/heads/${branch}")
+    merge_index = workflow.index("gh pr merge")
+    fetch_index = workflow.index("git fetch origin main --tags")
     tag_index = workflow.index("git tag -a \"$NEW_VERSION\"")
+    release_index = workflow.index("gh release create")
 
-    assert publish_index < guard_index < tag_index
+    assert commit_index < branch_index < merge_index < fetch_index < tag_index < release_index
+
+
+def test_release_workflow_can_resume_after_metadata_already_merged() -> None:
+    workflow = _release_workflow()
+
+    assert 'gh release view "$new"' in workflow
+    assert 'echo "tag_exists=$tag_exists"' in workflow
+    assert "release metadata is already committed" in workflow
+    assert 'tag_commit=$(git rev-list -n 1 "$NEW_VERSION")' in workflow
+    assert 'expected ${release_commit}' in workflow
 
 
 def test_release_workflow_cleans_dist_before_uploading_artifacts() -> None:

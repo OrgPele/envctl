@@ -14,7 +14,12 @@ $ARGUMENTS
 cd <repo-root> && envctl --plan <category>/<slug> --cmux --opencode --preset implement_task --entire-system --headless --new-session
 ```
 
-OpenCode plan-agent launches use the `/ulw-loop` prefix by default. Use a narrower runtime scope only when the plan explicitly records why full-stack E2E does not apply.
+OpenCode plan-agent launches use the `/ulw-loop` prefix by default. The `--entire-system` flag records the intended implementation surface for the plan-agent workflow; it is not an instruction to prove the feature by starting local services. Use a narrower runtime scope only when the plan explicitly records why full-stack E2E does not apply.
 
-## Final Response
-Report the plan path, exact command executed, launch result, attach/reconnect guidance, and any residual risks.
+## Success criteria
+- Exactly one plan file exists at `todo/plans/<category>/<slug>.md`.
+- The implementation launch uses the shared `implement_task` preset through OpenCode.
+- The final response includes the plan path, exact command, launch result, and attach/reconnect guidance.
+
+## Final response
+Report the plan path, implementation surface, exact command executed, launch result, attach/reconnect guidance, and any residual risks.

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
+
+from envctl_engine.config.source_discovery import parse_envctl_text
 
 
 MANAGED_AGENTS_START = "<!-- ENVCTL_AGENTS_START -->"
 MANAGED_AGENTS_END = "<!-- ENVCTL_AGENTS_END -->"
+AGENTS_TEMPLATE_NAME = "AGENTS.md.tpl"
+_CODEGRAPH_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "false", "0", "no"))
+_CODEGRAPH_ENABLED_VALUES = frozenset(("enabled", "enable", "on", "true", "1", "yes"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,8 +63,9 @@ def _desired_agent_sections(base_dir: Path) -> list[AgentInstructionSection]:
     sections: list[AgentInstructionSection] = []
     if _serena_configured(base_dir):
         sections.append(_serena_section())
-    if _cgc_configured(base_dir):
-        sections.append(_cgc_section())
+    if _codegraph_configured(base_dir):
+        sections.append(_codegraph_section())
+    sections.append(_development_discipline_section())
     sections.append(_envctl_workflow_section())
     return sections
 
@@ -67,8 +74,26 @@ def _serena_configured(base_dir: Path) -> bool:
     return (base_dir / ".serena" / "project.yml").is_file()
 
 
-def _cgc_configured(base_dir: Path) -> bool:
-    return (base_dir / ".cgcignore").is_file() or (base_dir / ".codegraphcontext").exists()
+def _codegraph_configured(base_dir: Path) -> bool:
+    raw = _repo_envctl_value(base_dir, "ENVCTL_WORKTREE_CODEGRAPH_INDEX").strip().lower()
+    if raw in _CODEGRAPH_DISABLED_VALUES:
+        return False
+    if raw in _CODEGRAPH_ENABLED_VALUES:
+        return True
+    return (base_dir / ".codegraph").is_dir()
+
+
+def _repo_envctl_value(base_dir: Path, key: str) -> str:
+    for filename in (".envctl", ".envctl.sh"):
+        path = base_dir / filename
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        parsed = parse_envctl_text(text)
+        if key in parsed:
+            return str(parsed.get(key, "") or "")
+    return ""
 
 
 def _serena_section() -> AgentInstructionSection:
@@ -77,8 +102,8 @@ def _serena_section() -> AgentInstructionSection:
         body=(
             "This project is configured for Serena symbolic code navigation via "
             "`.serena/project.yml`.\n\n"
-            "- Use Serena for symbol definitions, references, call paths, diagnostics, "
-            "and semantic edits.\n"
+            "- Activate the current checkout/worktree before structural code navigation.\n"
+            "- Use Serena for symbol definitions, references, diagnostics, and semantic edits.\n"
             "- Use `rg` for exact strings such as flags, env keys, log messages, "
             "config values, and docs prose.\n"
             "- After structural code changes, let Serena refresh automatically; if "
@@ -87,26 +112,32 @@ def _serena_section() -> AgentInstructionSection:
     )
 
 
-def _cgc_section() -> AgentInstructionSection:
+def _codegraph_section() -> AgentInstructionSection:
     return AgentInstructionSection(
-        heading="CodeGraphContext",
+        heading="CodeGraph",
         body=(
-            "This project uses CodeGraphContext (`cgc`) for repo-wide graph analysis. "
-            "Do not use the old `codegraph` CLI or `.codegraph/` indexes.\n\n"
-            "- Use CGC only after the current checkout has an active CGC context. In "
-            "envctl-generated worktrees, read `.envctl-state/code-intelligence.json` "
-            "and use `cgc_active_context` only when the metadata reports active graph "
-            "tooling: `cgc_index_mode` is `auto` or `enabled`, and either indexing "
-            "succeeded (`cgc_index_succeeded: true`) or the source context was reused "
-            "(`cgc_index_skipped_reason: source_context_reused`).\n"
-            "- Ignore `cgc_active_context` when metadata reports disabled or unavailable "
-            "graph tooling, or when no success/reuse signal is present.\n"
-            "- With an active context, use CGC for ownership, coupling, impact, hotspot, "
-            "dead-code, and cross-module dependency questions.\n"
-            "- Use Serena for exact symbol navigation and edits after CGC identifies "
-            "the relevant files.\n"
-            "- Use read-only `cgc query ...`, `cgc stats`, or `cgc report` when broad "
-            "graph context is useful."
+            "This project is configured for CodeGraph repo context.\n\n"
+            "- Use CodeGraph for broad structure, call-path, flow, or blast-radius questions "
+            "when the current checkout has an active index.\n"
+            "- Use direct file reads or configured symbol tooling for line-level edits and diagnostics.\n"
+            "- Skip CodeGraph entirely when this checkout has no active CodeGraph metadata or index."
+        ),
+    )
+
+
+def _development_discipline_section() -> AgentInstructionSection:
+    return AgentInstructionSection(
+        heading="Development Discipline",
+        body=(
+            "- For code changes, start with `git status --short` and inspect the relevant "
+            "diff before editing. Preserve unrelated user changes.\n"
+            "- Read the owning code path before changing it. Prefer existing local helpers, "
+            "patterns, and tests over new abstractions.\n"
+            "- Keep changes scoped to the task; avoid unrelated refactors, formatting churn, "
+            "or generated metadata changes.\n"
+            "- For behavior changes, add or update the smallest test that proves the real "
+            "contract, then report the validation actually run.\n"
+            "- If a required check cannot run, say why and name the remaining risk."
         ),
     )
 
@@ -115,25 +146,50 @@ def _envctl_workflow_section() -> AgentInstructionSection:
     return AgentInstructionSection(
         heading="Envctl Workflow",
         body=(
+            "- Keep edits inside the current checkout/worktree and preserve unrelated user changes.\n"
             "- During implementation, run `envctl test-focused` from inside the current "
             "worktree for the normal validation loop. Use broader validation only when "
             "the focused plan recommends it or the change is cross-cutting/risky.\n"
             "- For handoff, use `envctl ship -m \"<message>\"` from inside the current "
-            "worktree. `ship` stages intended files, commits, pushes, creates or updates "
-            "the PR, predicts merge conflicts, and waits for target GitHub Tests checks. "
-            "Do not run separate raw `git`/`gh` commit, push, PR, or status-check commands "
-            "unless `ship` is unavailable or fails with actionable fallback instructions.\n"
-            "- If a real subagent or background-task tool is available, delegate "
-            "`envctl ship -m \"<message>\"` there. The shipping worker should report only "
-            "failures, merge conflicts, check failures/timeouts, no-checks-reported status, "
-            "or actionable review comments; a successful ship is silent."
+            "worktree. `ship` owns commit, push, PR creation/update, and status-check "
+            "reporting. Use raw `git` or `gh` handoff commands only when `ship` is "
+            "unavailable or returns actionable fallback instructions.\n"
+            "- If shipping is delegated to a real background worker, it should report only "
+            "blockers; successful ship results stay silent.\n"
+            "- Keep envctl-generated local artifacts uncommitted."
         ),
     )
 
 
 def _render_managed_block(sections: list[AgentInstructionSection]) -> str:
-    rendered_sections = "\n".join(section.render() for section in sections).rstrip()
+    rendered_sections = _render_agents_template(sections).rstrip()
     return f"{MANAGED_AGENTS_START}\n{rendered_sections}\n{MANAGED_AGENTS_END}\n"
+
+
+def _render_agents_template(sections: list[AgentInstructionSection]) -> str:
+    rendered_by_heading = {section.heading: section.render().strip() for section in sections}
+    replacements = {
+        "SERENA_SECTION": rendered_by_heading.get("Serena", ""),
+        "CODEGRAPH_SECTION": rendered_by_heading.get("CodeGraph", ""),
+        "DEVELOPMENT_DISCIPLINE_SECTION": rendered_by_heading.get(
+            "Development Discipline",
+            "",
+        ),
+        "ENVCTL_WORKFLOW_SECTION": rendered_by_heading.get("Envctl Workflow", ""),
+    }
+    rendered_sections: list[str] = []
+    for line in _agents_template_text().splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("{{") or not stripped.endswith("}}"):
+            continue
+        key = stripped[2:-2].strip()
+        if value := replacements.get(key):
+            rendered_sections.append(value)
+    return "\n\n".join(rendered_sections)
+
+
+def _agents_template_text() -> str:
+    return (files(__package__) / AGENTS_TEMPLATE_NAME).read_text(encoding="utf-8")
 
 
 def _remove_managed_block(text: str) -> str:

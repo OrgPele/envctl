@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
+from envctl_engine.planning.worktree_code_intelligence_config import read_source_serena_project_name
 from envctl_engine.planning.worktree_code_intelligence_models import (
-    WORKTREE_CGC_INDEX_MODE_DISABLED,
+    WORKTREE_CODEGRAPH_INDEX_MODE_DISABLED,
     WORKTREE_CODE_INTELLIGENCE_PATH,
 )
 
@@ -17,12 +18,12 @@ class CodeIntelligencePromptBuilder:
     worktree: CreatedPlanWorktree | None = None
 
     def prompt_section(self) -> str:
+        root = _worktree_root(self.worktree)
         metadata = _worktree_code_intelligence_metadata(self.worktree)
-        if not metadata:
-            return ""
-        serena_line = _serena_prompt_line(metadata)
-        cgc_line = _cgc_prompt_line(metadata)
-        if not serena_line and not cgc_line:
+        serena_line = _serena_prompt_line(metadata, root=root) if metadata else ""
+        codegraph_line = _codegraph_prompt_line(metadata, root=root) if metadata else ""
+        envctl_source_line = _envctl_source_checkout_prompt_line(root)
+        if not serena_line and not codegraph_line and not envctl_source_line:
             return ""
         lines = [
             "## Worktree code intelligence",
@@ -31,8 +32,10 @@ class CodeIntelligencePromptBuilder:
         ]
         if serena_line:
             lines.append(f"- {serena_line}")
-        if cgc_line:
-            lines.append(f"- {cgc_line}")
+        if codegraph_line:
+            lines.append(f"- {codegraph_line}")
+        if envctl_source_line:
+            lines.append(f"- {envctl_source_line}")
         return "\n".join(lines)
 
 
@@ -72,10 +75,15 @@ def _worktree_code_intelligence_metadata(
     return payload
 
 
-def _serena_prompt_line(metadata: Mapping[str, object]) -> str:
-    if not _metadata_file_enabled(metadata, ".serena/project.yml"):
+def _serena_prompt_line(metadata: Mapping[str, object], *, root: Path | None = None) -> str:
+    if not (
+        _metadata_file_enabled(metadata, ".serena/project.yml", root=root)
+        or _metadata_file_enabled(metadata, ".serena/project.local.yml", root=root)
+    ):
         return ""
-    project_name = _string_value(metadata.get("serena_project_name"))
+    project_name = _string_value(read_source_serena_project_name(root)) if root is not None else ""
+    if not project_name:
+        project_name = _string_value(metadata.get("serena_project_name"))
     if project_name:
         return (
             f"Serena project `{project_name}` is configured. Use Serena for symbol definitions, references, "
@@ -84,32 +92,55 @@ def _serena_prompt_line(metadata: Mapping[str, object]) -> str:
     return "Serena is configured. Use it for symbol definitions, references, call paths, and semantic edits."
 
 
-def _cgc_prompt_line(metadata: Mapping[str, object]) -> str:
-    context = _active_cgc_context(metadata)
-    if not context:
+def _codegraph_prompt_line(metadata: Mapping[str, object], *, root: Path | None = None) -> str:
+    if not _active_codegraph_index(metadata, root=root):
         return ""
     return (
-        f"CodeGraphContext (`cgc`) context `{context}` is available. Use it for repo-wide ownership, "
-        "coupling, impact, hotspot, and dead-code questions; use exact source reads for line-level edits. "
-        "Do not use the legacy `codegraph` CLI or `.codegraph/` indexes for this envctl-managed context."
+        "CodeGraph index `.codegraph/` is available for this worktree. Use CodeGraph for broad repo "
+        "structure, call paths, flows, and blast-radius questions; in Codex prefer the CodeGraph MCP tool "
+        "when present, otherwise run `codegraph explore \"<question>\"` from the worktree root. Use Serena "
+        "for exact diagnostics and edits."
     )
 
 
-def _active_cgc_context(metadata: Mapping[str, object]) -> str:
-    mode = _string_value(metadata.get("cgc_index_mode")).casefold()
-    skipped_reason = _string_value(metadata.get("cgc_index_skipped_reason")).casefold()
-    if mode == WORKTREE_CGC_INDEX_MODE_DISABLED or skipped_reason in {"disabled", "cgc_not_available"}:
-        return ""
-    if not (_truthy(metadata.get("cgc_index_succeeded")) or skipped_reason == "source_context_reused"):
-        return ""
-    return _string_value(metadata.get("cgc_active_context")) or _string_value(metadata.get("cgc_context"))
-
-
-def _metadata_file_enabled(metadata: Mapping[str, object], name: str) -> bool:
-    files = metadata.get("files")
-    if not isinstance(files, Mapping):
+def _active_codegraph_index(metadata: Mapping[str, object], *, root: Path | None = None) -> bool:
+    mode = _string_value(metadata.get("codegraph_index_mode")).casefold()
+    skipped_reason = _string_value(metadata.get("codegraph_index_skipped_reason")).casefold()
+    if mode == WORKTREE_CODEGRAPH_INDEX_MODE_DISABLED or skipped_reason in {"disabled", "codegraph_not_available"}:
         return False
-    return _truthy(files.get(name))
+    if not _truthy(metadata.get("codegraph_index_succeeded")):
+        return False
+    return _metadata_file_enabled(metadata, ".codegraph/codegraph.db", root=root)
+
+
+def _metadata_file_enabled(metadata: Mapping[str, object], name: str, *, root: Path | None = None) -> bool:
+    if root is not None:
+        return (root / name).is_file()
+    files = metadata.get("files")
+    if isinstance(files, Mapping) and _truthy(files.get(name)):
+        return True
+    return False
+
+
+def _envctl_source_checkout_prompt_line(root: Path | None) -> str:
+    if root is None:
+        return ""
+    if not ((root / "bin" / "envctl").is_file() and (root / "python" / "envctl_engine").is_dir()):
+        return ""
+    return (
+        "This is an envctl source checkout. For envctl self-validation, prefer "
+        '`PATH="$PWD/.venv/bin:$PATH" envctl ...` or `ENVCTL_USE_REPO_WRAPPER=1 ./bin/envctl ...` '
+        "so commands run this checkout instead of an installed envctl."
+    )
+
+
+def _worktree_root(worktree: CreatedPlanWorktree | None) -> Path | None:
+    if worktree is None:
+        return None
+    try:
+        return Path(worktree.root).expanduser()
+    except TypeError:
+        return None
 
 
 def _truthy(value: object) -> bool:

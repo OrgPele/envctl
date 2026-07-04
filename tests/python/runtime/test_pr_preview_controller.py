@@ -28,6 +28,13 @@ class FakeRunner:
         start_returncode: int = 0,
         start_stdout: str = "",
         start_stderr: str = "",
+        stop_returncode: int = 0,
+        stop_stdout: str = "",
+        stop_stderr: str = "",
+        blast_returncode: int = 0,
+        blast_stdout: str = "",
+        blast_stderr: str = "",
+        import_results=None,
     ):
         self.controller = controller
         self.active_prs = active_prs or []
@@ -38,6 +45,13 @@ class FakeRunner:
         self.start_returncode = start_returncode
         self.start_stdout = start_stdout
         self.start_stderr = start_stderr
+        self.stop_returncode = stop_returncode
+        self.stop_stdout = stop_stdout
+        self.stop_stderr = stop_stderr
+        self.blast_returncode = blast_returncode
+        self.blast_stdout = blast_stdout
+        self.blast_stderr = blast_stderr
+        self.import_results = list(import_results or [])
         self.calls = []
         self.comments = []
         self.deployments = []
@@ -148,6 +162,14 @@ class FakeRunner:
         if argv and argv[0] == "docker":
             return self.ok(argv, stdout="db\nredis\n")
         if argv[:2] == ["envctl", "import"]:
+            if self.import_results:
+                result = self.import_results.pop(0)
+                return self.controller.CommandResult(
+                    argv=list(argv),
+                    returncode=result.get("returncode", 0),
+                    stdout=result.get("stdout", ""),
+                    stderr=result.get("stderr", ""),
+                )
             return self.ok(argv)
         if argv[:2] == ["envctl", "list-trees"]:
             return self.ok(argv, stdout=json.dumps(self.projects))
@@ -162,12 +184,21 @@ class FakeRunner:
             )
         if argv[:3] == ["envctl", "qa-user", "ensure"]:
             return self.ok(argv, stdout="ok\n")
-        if argv[:2] in (
-            ["envctl", "stop"],
-            ["envctl", "delete-worktree"],
-            ["envctl", "blast-worktree"],
-            ["envctl", "blast-all"],
-        ):
+        if argv[:2] == ["envctl", "stop"]:
+            return self.controller.CommandResult(
+                argv=list(argv),
+                returncode=self.stop_returncode,
+                stdout=self.stop_stdout,
+                stderr=self.stop_stderr,
+            )
+        if argv[:2] == ["envctl", "blast-worktree"]:
+            return self.controller.CommandResult(
+                argv=list(argv),
+                returncode=self.blast_returncode,
+                stdout=self.blast_stdout,
+                stderr=self.blast_stderr,
+            )
+        if argv[:2] in (["envctl", "delete-worktree"], ["envctl", "blast-all"]):
             return self.ok(argv)
         return self.ok(argv)
 
@@ -282,14 +313,36 @@ def pr_payload(*, action, labels=None, event_label=None, merged=False):
     return payload
 
 
-def pr_list_payload(number, title, head_ref="feature/demo"):
+def push_payload(
+    ref="refs/heads/feature/demo",
+    *,
+    deleted=False,
+    after="abc123456789",
+):
+    return {
+        "after": after,
+        "deleted": deleted,
+        "ref": ref,
+        "repository": {
+            "name": "pele-monorepo",
+            "owner": {"login": "OrgPele"},
+        },
+    }
+
+
+def pr_list_payload(
+    number,
+    title,
+    head_ref="feature/demo",
+    head_sha="abc123456789",
+):
     return {
         "number": number,
         "title": title,
         "url": f"https://github.com/OrgPele/pele-monorepo/pull/{number}",
         "state": "OPEN",
         "headRefName": head_ref,
-        "headRefOid": "abc123456789",
+        "headRefOid": head_sha,
         "headRepository": {
             "name": "pele-monorepo",
             "nameWithOwner": "OrgPele/pele-monorepo",
@@ -501,7 +554,7 @@ def test_overloaded_start_comments_stats_lists_other_prs_and_removes_label(
     assert "111 python 250.0 5.0" in comment
 
 
-def test_overloaded_start_stops_existing_tracked_preview_before_label_removal(
+def test_overloaded_start_stops_stale_tracked_preview_before_label_removal(
     tmp_path,
     monkeypatch,
 ):
@@ -522,7 +575,7 @@ def test_overloaded_start_stops_existing_tracked_preview_before_label_removal(
             project="feature/demo",
             root=str(tmp_path / "control" / "trees" / "imported" / "feature-demo"),
             head_ref="feature/demo",
-            head_sha="abc123456789",
+            head_sha="oldsha",
             status="running",
             label_added_at="2026-06-14T00:00:00Z",
             started_at="2026-06-14T00:00:00Z",
@@ -610,6 +663,17 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     instance = controller.PreviewController(config, runner)
     monkeypatch.setenv("GH_TOKEN", "secret")
     monkeypatch.setenv("CMUX_WORKSPACE_ID", "workspace:1")
+    monkeypatch.setenv("ENVCTL_SOURCE_PAYMENT_PROVIDER", "paddle")
+    monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_BILLING_ENABLED", "true")
+    monkeypatch.setenv(
+        "ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID",
+        "pri_growth_monthly",
+    )
+    monkeypatch.setenv("ENVCTL_BACKEND_ENV__PADDLE_BILLING_ENABLED", "true")
+    monkeypatch.setenv(
+        "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN",
+        "test-client-token",
+    )
 
     exit_code = instance.run_pull_request_event(
         pr_payload(
@@ -643,7 +707,6 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
             "--entire-system",
             "--isolated-deps",
             "--copy-db-storage",
-            "--no-resume",
         ]
     ]
     assert command_argvs(runner, "envctl", "qa-user") == [
@@ -669,9 +732,22 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     assert import_call["env"]["GH_TOKEN"] == "secret"
     assert "CMUX_WORKSPACE_ID" not in import_call["env"]
     assert import_call["env"]["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] == "false"
+    assert import_call["env"]["RUN_SH_RUNTIME_DIR"] == str(tmp_path / "runtime")
     assert "GH_TOKEN" not in start_call["env"]
     assert "CMUX_WORKSPACE_ID" not in start_call["env"]
     assert start_call["env"]["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] == "false"
+    assert start_call["env"]["RUN_SH_RUNTIME_DIR"] == str(tmp_path / "runtime")
+    assert start_call["env"]["ENVCTL_SOURCE_PAYMENT_PROVIDER"] == "paddle"
+    assert start_call["env"]["ENVCTL_SOURCE_PADDLE_BILLING_ENABLED"] == "true"
+    assert (
+        start_call["env"]["ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID"]
+        == "pri_growth_monthly"
+    )
+    assert start_call["env"]["ENVCTL_BACKEND_ENV__PADDLE_BILLING_ENABLED"] == "true"
+    assert (
+        start_call["env"]["ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN"]
+        == "test-client-token"
+    )
     assert (
         start_call["env"]["ENVCTL_BACKEND_ENV__FRONTEND_BASE_URL"]
         == "https://pele-monorepo-pr-789.srv.example.test"
@@ -765,27 +841,48 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     envctl_text = (tmp_path / "control" / ".envctl").read_text()
     assert "ENVCTL_PUBLIC_HOST=preview.getpele.test" in envctl_text
     assert "ENVCTL_UI_VISUAL_HOST=visual.getpele.test" in envctl_text
+    backend_start = envctl_text.split("ENVCTL_BACKEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+    frontend_start = envctl_text.split("ENVCTL_FRONTEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+    assert 'sh -c \'export PATH="$PWD/venv/bin:$PATH" ' in backend_start
+    assert "FRONTEND_BASE_URL=https://pele-monorepo-pr-789.srv.example.test" in (
+        backend_start
+    )
     assert (
-        'ENVCTL_BACKEND_START_CMD=sh -c \'export PATH="$PWD/venv/bin:$PATH" '
-        "FRONTEND_BASE_URL="
-        "https://pele-monorepo-pr-789.srv.example.test "
-        "BACKEND_PUBLIC_URL=https://pele-monorepo-pr-789-api.srv.example.test "
-        "CORS_ORIGINS_RAW=https://pele-monorepo-pr-789.srv.example.test "
-        "PYTHONFAULTHANDLER=1 "
-        "RUN_DB_MIGRATIONS_ON_STARTUP=true "
-        "ALLOW_LEGACY_SUPABASE_HS256=true; "
-        "exec python -m uvicorn app.main:app --host 127.0.0.1 --port "
-        "'\"'\"'{port}'\"'\"''"
-        in envctl_text
+        "BACKEND_PUBLIC_URL=https://pele-monorepo-pr-789-api.srv.example.test"
+        in backend_start
+    )
+    assert "CORS_ORIGINS_RAW=https://pele-monorepo-pr-789.srv.example.test" in (
+        backend_start
+    )
+    assert "PYTHONFAULTHANDLER=1" in backend_start
+    assert "RUN_DB_MIGRATIONS_ON_STARTUP=true" in backend_start
+    assert "ENVCTL_SOURCE_[A-Za-z_][A-Za-z0-9_]*" in backend_start
+    assert "target=${envctl_name#ENVCTL_SOURCE_}" in backend_start
+    assert 'export "$target=$value"' in backend_start
+    assert "ALLOW_LEGACY_SUPABASE_HS256=true" in backend_start
+    assert "exec python -m uvicorn app.main:app --host 127.0.0.1 --port" in (
+        backend_start
     )
     assert (
         "ENVCTL_FRONTEND_START_CMD=sh -c 'export VITE_API_URL="
-        "https://pele-monorepo-pr-789-api.srv.example.test/api/v1 "
-        "VITE_BACKEND_URL=https://pele-monorepo-pr-789-api.srv.example.test "
-        "VITE_SUPABASE_URL=https://pele-monorepo-pr-789-supabase.srv.example.test; "
-        "exec npm run dev -- --port '\"'\"'{port}'\"'\"' --host 127.0.0.1"
-        in envctl_text
+        "https://pele-monorepo-pr-789-api.srv.example.test/api/v1" in envctl_text
     )
+    assert "VITE_BACKEND_URL=https://pele-monorepo-pr-789-api.srv.example.test" in (
+        frontend_start
+    )
+    assert (
+        "VITE_SUPABASE_URL=https://pele-monorepo-pr-789-supabase.srv.example.test"
+        in frontend_start
+    )
+    assert "ENVCTL_SOURCE_[A-Za-z_][A-Za-z0-9_]*" in frontend_start
+    assert 'case "$target" in VITE_*)' in frontend_start
+    assert "exec npm run dev -- --port" in frontend_start
     assert "# >>> envctl backend launch env >>>" in envctl_text
     assert "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}" in envctl_text
     assert "REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}" in envctl_text
@@ -813,7 +910,27 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
         "TWILIO_MASTER_AUTH_TOKEN=${ENVCTL_SOURCE_TWILIO_MASTER_AUTH_TOKEN}"
         in envctl_text
     )
+    assert "PADDLE_BILLING_ENABLED=${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED}" in (
+        envctl_text
+    )
+    assert "PADDLE_ENVIRONMENT=${ENVCTL_SOURCE_PADDLE_ENVIRONMENT}" in envctl_text
     assert "PADDLE_API_KEY=${ENVCTL_SOURCE_PADDLE_API_KEY}" in envctl_text
+    assert (
+        "PADDLE_NOTIFICATION_WEBHOOK_SECRET="
+        "${ENVCTL_SOURCE_PADDLE_NOTIFICATION_WEBHOOK_SECRET}" in envctl_text
+    )
+    assert (
+        "PADDLE_GROWTH_MONTHLY_PRICE_ID="
+        "${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID}" in envctl_text
+    )
+    assert (
+        "PADDLE_GROWTH_TRIAL_DAYS=${ENVCTL_SOURCE_PADDLE_GROWTH_TRIAL_DAYS}"
+        in envctl_text
+    )
+    assert (
+        "PADDLE_VALIDATE_PRICE_TRIALS="
+        "${ENVCTL_SOURCE_PADDLE_VALIDATE_PRICE_TRIALS}" in envctl_text
+    )
     assert (
         "FRONTEND_BASE_URL="
         "https://pele-monorepo-pr-789.srv.example.test" in envctl_text
@@ -860,6 +977,84 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     assert "https://pele-monorepo-pr-789.srv.example.test" in runner.comments[-1]
     assert "https://pele-monorepo-pr-789-api.srv.example.test" in runner.comments[-1]
     assert "https://pele-monorepo-pr-789-supabase.srv.example.test" in runner.comments[-1]
+
+
+def test_labeled_event_blasts_wrong_branch_import_target_and_retries(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    target = root
+    runner = FakeRunner(
+        controller,
+        projects={
+            "projects": [
+                {"name": "feature/demo", "root": str(root), "running": True}
+            ]
+        },
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+        import_results=[
+            {
+                "returncode": 1,
+                "stderr": (
+                    "Import reuse failed: imported worktree target already "
+                    "exists on the wrong branch. actual_branch=main "
+                    f"expected_branch=feature/demo target={target}"
+                ),
+            },
+            {"returncode": 0},
+        ],
+    )
+    config = make_config(controller, tmp_path)
+    instance = controller.PreviewController(config, runner)
+
+    exit_code = instance.run_pull_request_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+
+    assert exit_code == 0
+    assert len(command_argvs(runner, "envctl", "import")) == 2
+    assert command_argvs(runner, "envctl", "blast-worktree") == [
+        ["envctl", "blast-worktree", "--project", "feature/demo", "--yes"]
+    ]
+    assert command_argvs(runner, "git", "-C") == [
+        [
+            "git",
+            "-C",
+            str(tmp_path / "control"),
+            "worktree",
+            "remove",
+            "--force",
+            str(target),
+        ],
+        ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+    ]
+    sequence = [
+        call["argv"][:2]
+        for call in runner.calls
+        if call["argv"][:2]
+        in (
+            ["envctl", "import"],
+            ["envctl", "blast-worktree"],
+            ["git", "-C"],
+            ["envctl", "start"],
+        )
+    ]
+    assert sequence == [
+        ["envctl", "import"],
+        ["envctl", "blast-worktree"],
+        ["git", "-C"],
+        ["envctl", "import"],
+        ["git", "-C"],
+        ["envctl", "start"],
+    ]
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.status == "running"
 
 
 def test_labeled_event_refreshes_legacy_generated_envctl_config(tmp_path, monkeypatch):
@@ -1165,6 +1360,130 @@ def test_manual_start_refreshes_preview_ttl_when_label_is_old(tmp_path):
     assert "2000-01-01" not in runner.comments[-1]
 
 
+def test_push_event_refreshes_preview_ttl_for_labeled_branch(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        active_prs=[pr_list_payload(789, "Preview me", head_ref="feature/demo")],
+        timeline="labeled\t2000-01-01T00:00:00Z\tdeploy-app\n",
+        projects={
+            "projects": [
+                {"name": "feature/demo", "root": str(root), "running": True}
+            ]
+        },
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+    )
+    config = make_config(controller, tmp_path, ttl_minutes=45)
+    instance = controller.PreviewController(config, runner)
+
+    exit_code = instance.run_push_event(push_payload())
+
+    assert exit_code == 0
+    state = instance.load_state(789)
+    assert state is not None
+    started_at = controller.parse_github_datetime(state.started_at)
+    expires_at = controller.parse_github_datetime(state.expires_at)
+    assert started_at is not None
+    assert expires_at is not None
+    assert (expires_at - started_at).total_seconds() > 44 * 60
+    assert "2000-01-01" not in runner.comments[-1]
+    assert "- Reason: push to labeled PR branch feature/demo" in runner.comments[-1]
+
+
+def test_push_event_uses_pushed_sha_before_same_head_skip(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        active_prs=[
+            pr_list_payload(
+                789,
+                "Preview me",
+                head_ref="feature/demo",
+                head_sha="oldsha",
+            )
+        ],
+        timeline="labeled\t2000-01-01T00:00:00Z\tdeploy-app\n",
+        projects={
+            "projects": [
+                {"name": "feature/demo", "root": str(root), "running": True}
+            ]
+        },
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+    )
+    config = make_config(controller, tmp_path, ttl_minutes=45)
+    instance = controller.PreviewController(config, runner)
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=789,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(root),
+            head_ref="feature/demo",
+            head_sha="oldsha",
+            status="running",
+            label_added_at="2026-06-14T00:00:00Z",
+            started_at="2026-06-14T00:00:00Z",
+            expires_at="2026-06-14T00:45:00Z",
+            updated_at="2026-06-14T00:00:00Z",
+            endpoints={"frontend": {"public_url": "https://preview.example"}},
+        )
+    )
+
+    exit_code = instance.run_push_event(push_payload(after="newsha"))
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "import") == [
+        [
+            "envctl",
+            "import",
+            "feature/demo",
+            "--headless",
+            "--no-infra",
+            "--isolated-deps",
+            "--no-resume",
+        ]
+    ]
+    assert command_argvs(runner, "envctl", "start") == [
+        [
+            "envctl",
+            "start",
+            "--trees",
+            "--project",
+            "feature/demo",
+            "--headless",
+            "--entire-system",
+            "--isolated-deps",
+            "--copy-db-storage",
+        ]
+    ]
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.status == "running"
+    assert state.head_sha == "newsha"
+    assert "already running for this head" not in runner.comments[-1]
+
+
+def test_push_event_ignores_unmatched_labeled_pr_branch(tmp_path):
+    controller = load_controller()
+    runner = FakeRunner(
+        controller,
+        active_prs=[pr_list_payload(789, "Other branch", head_ref="feature/other")],
+    )
+    config = make_config(controller, tmp_path)
+    instance = controller.PreviewController(config, runner)
+
+    exit_code = instance.run_push_event(push_payload())
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "import") == []
+
+
 def test_start_stops_existing_tracked_preview_before_reimport(tmp_path):
     controller = load_controller()
     root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
@@ -1217,15 +1536,61 @@ def test_start_stops_existing_tracked_preview_before_reimport(tmp_path):
     assert sequence == [
         ["envctl", "stop"],
         ["envctl", "import"],
+        ["envctl", "stop"],
         ["envctl", "start"],
     ]
     assert command_argvs(runner, "envctl", "stop") == [
-        ["envctl", "stop", "--trees", "--project", "feature/demo", "--entire-system"]
+        ["envctl", "stop", "--trees", "--project", "feature/demo", "--entire-system"],
+        ["envctl", "stop", "--trees", "--project", "feature/demo", "--entire-system"],
     ]
     state = instance.load_state(789)
     assert state is not None
     assert state.status == "running"
     assert state.head_sha == "abc123456789"
+
+
+def test_synchronize_event_reuses_current_head_preview_without_restart(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(controller)
+    config = make_config(controller, tmp_path, ttl_minutes=45)
+    instance = controller.PreviewController(config, runner)
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=789,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(root),
+            head_ref="feature/demo",
+            head_sha="abc123456789",
+            status="running",
+            label_added_at="2026-06-14T00:00:00Z",
+            started_at="2026-06-14T00:00:00Z",
+            expires_at="2026-06-14T00:45:00Z",
+            updated_at="2026-06-14T00:00:00Z",
+            endpoints={"frontend": {"public_url": "https://preview.example"}},
+            deployment_id="12345",
+        )
+    )
+
+    exit_code = instance.run_pull_request_event(
+        pr_payload(action="synchronize", labels=["deploy-app"])
+    )
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "stop") == []
+    assert command_argvs(runner, "envctl", "import") == []
+    assert command_argvs(runner, "envctl", "start") == []
+    assert command_argvs(runner, "docker", "rm") == []
+    assert runner.deployment_statuses == []
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.status == "running"
+    assert state.head_sha == "abc123456789"
+    assert state.started_at == "2026-06-14T00:00:00Z"
+    assert state.expires_at != "2026-06-14T00:45:00Z"
+    assert "already running for this head" in runner.comments[-1]
 
 
 def test_synchronize_event_redeploys_labeled_pr(tmp_path):
@@ -1242,7 +1607,7 @@ def test_synchronize_event_redeploys_labeled_pr(tmp_path):
         endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
         root_to_branch={str(root): "feature/demo"},
     )
-    config = make_config(controller, tmp_path)
+    config = make_config(controller, tmp_path, ttl_minutes=45)
     instance = controller.PreviewController(config, runner)
     instance.save_state(
         controller.PreviewState(
@@ -1275,10 +1640,60 @@ def test_synchronize_event_redeploys_labeled_pr(tmp_path):
     assert sequence == [
         ["envctl", "stop"],
         ["envctl", "import"],
+        ["envctl", "stop"],
         ["envctl", "start"],
     ]
-    assert instance.load_state(789).head_sha == "abc123456789"
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.head_sha == "abc123456789"
+    started_at = controller.parse_github_datetime(state.started_at)
+    expires_at = controller.parse_github_datetime(state.expires_at)
+    assert started_at is not None
+    assert expires_at is not None
+    assert (expires_at - started_at).total_seconds() > 44 * 60
     assert "- Reason: new commit pushed" in runner.comments[-1]
+
+
+def test_start_continues_when_pre_start_stop_has_no_selected_services(
+    tmp_path,
+    capsys,
+):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        projects={
+            "projects": [
+                {"name": "feature/demo", "root": str(root), "running": False}
+            ]
+        },
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+        stop_returncode=1,
+        stop_stdout="No matching services selected for stop.",
+    )
+    config = make_config(controller, tmp_path)
+    instance = controller.PreviewController(config, runner)
+    pr = controller.pr_from_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+
+    exit_code = instance.start(pr, reason="label added")
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "stop") == [
+        ["envctl", "stop", "--trees", "--project", "feature/demo", "--entire-system"]
+    ]
+    assert command_argvs(runner, "envctl", "start")
+    assert "pre-start stop failed; continuing" in capsys.readouterr().out
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.status == "running"
 
 
 def test_start_blasts_previous_failed_preview_before_reimport(tmp_path):
@@ -1338,6 +1753,7 @@ def test_start_blasts_previous_failed_preview_before_reimport(tmp_path):
     assert sequence == [
         ["envctl", "blast-worktree"],
         ["envctl", "import"],
+        ["envctl", "stop"],
         ["envctl", "start"],
     ]
     assert command_argvs(runner, "envctl", "blast-worktree") == [
@@ -1370,10 +1786,70 @@ def test_start_blasts_previous_failed_preview_before_reimport(tmp_path):
         "rm",
         "network-a",
     ] in command_argvs(runner, "docker", "network")
-    assert command_argvs(runner, "envctl", "stop") == []
+    assert command_argvs(runner, "envctl", "stop") == [
+        ["envctl", "stop", "--trees", "--project", "feature/demo", "--entire-system"]
+    ]
     state = instance.load_state(789)
     assert state is not None
     assert state.status == "running"
+
+
+def test_start_treats_missing_failed_preview_target_as_clean(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        projects={
+            "projects": [
+                {"name": "feature/demo", "root": str(root), "running": False}
+            ]
+        },
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+        blast_returncode=1,
+        blast_stdout="No matching targets found for: feature/demo\n",
+    )
+    config = make_config(controller, tmp_path)
+    instance = controller.PreviewController(config, runner)
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=789,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(root),
+            head_ref="feature/demo",
+            head_sha="oldsha",
+            status="start_failed",
+            label_added_at="2026-06-14T00:00:00Z",
+            started_at="2026-06-14T00:00:00Z",
+            expires_at="2026-06-14T00:45:00Z",
+            updated_at="2026-06-14T00:00:00Z",
+            endpoints={},
+        )
+    )
+    pr = controller.pr_from_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+
+    exit_code = instance.start(pr, reason="label added")
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "blast-worktree") == [
+        ["envctl", "blast-worktree", "--project", "feature/demo", "--yes"]
+    ]
+    assert [
+        "docker",
+        "ps",
+        "-aq",
+        "--filter",
+        "name=feature-demo",
+    ] in command_argvs(runner, "docker", "ps")
+    assert command_argvs(runner, "envctl", "start")
 
 
 def test_labeled_event_fails_closed_when_imported_project_is_unresolved(tmp_path):
@@ -1756,6 +2232,16 @@ def test_merged_pr_deletes_tracked_worktree_even_after_label_removed(tmp_path):
     assert command_argvs(runner, "envctl", "delete-worktree") == [
         ["envctl", "delete-worktree", "--project", "feature/demo", "--yes"]
     ]
+    assert command_argvs(runner, "git", "-C") == [
+        [
+            "git",
+            "-C",
+            str(config.control_repo),
+            "branch",
+            "-D",
+            "feature/demo",
+        ]
+    ]
     assert ["docker", "rm", "-f", "container-a", "container-b"] in command_argvs(
         runner,
         "docker",
@@ -1809,6 +2295,16 @@ def test_closed_unmerged_pr_deletes_tracked_worktree(tmp_path):
     assert command_argvs(runner, "envctl", "delete-worktree") == [
         ["envctl", "delete-worktree", "--project", "feature/demo", "--yes"]
     ]
+    assert command_argvs(runner, "git", "-C") == [
+        [
+            "git",
+            "-C",
+            str(config.control_repo),
+            "branch",
+            "-D",
+            "feature/demo",
+        ]
+    ]
     assert ["docker", "rm", "-f", "container-a", "container-b"] in command_argvs(
         runner,
         "docker",
@@ -1854,6 +2350,16 @@ def test_delete_without_worktree_cleans_branch_docker_artifacts(tmp_path):
 
     assert exit_code == 0
     assert command_argvs(runner, "envctl", "delete-worktree") == []
+    assert command_argvs(runner, "git", "-C") == [
+        [
+            "git",
+            "-C",
+            str(config.control_repo),
+            "branch",
+            "-D",
+            "codex/address-pr283-doc-hygiene",
+        ]
+    ]
     assert ["docker", "rm", "-f", "orphan-container"] in command_argvs(
         runner,
         "docker",
@@ -1950,6 +2456,7 @@ def test_sweep_redeploys_running_preview_when_head_sha_changes(tmp_path):
     assert sequence == [
         ["envctl", "stop"],
         ["envctl", "import"],
+        ["envctl", "stop"],
         ["envctl", "start"],
     ]
     assert instance.load_state(789).head_sha == "abc123456789"
@@ -2166,26 +2673,40 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
     )
 
     assert "# >>> envctl backend launch env >>>" in rendered
-    assert (
-        'ENVCTL_BACKEND_START_CMD=sh -c \'export PATH="$PWD/venv/bin:$PATH" '
-        "FRONTEND_BASE_URL="
-        "https://pele-monorepo-pr-789.srv.example.test "
+    backend_start = rendered.split("ENVCTL_BACKEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+    frontend_start = rendered.split("ENVCTL_FRONTEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+    assert backend_start.startswith(
+        'sh -c \'export PATH="$PWD/venv/bin:$PATH" '
+        "FRONTEND_BASE_URL=https://pele-monorepo-pr-789.srv.example.test "
         "BACKEND_PUBLIC_URL=https://pele-monorepo-pr-789-api.srv.example.test "
-        "CORS_ORIGINS_RAW=https://pele-monorepo-pr-789.srv.example.test "
-        "PYTHONFAULTHANDLER=1 "
-        "RUN_DB_MIGRATIONS_ON_STARTUP=true "
-        "ALLOW_LEGACY_SUPABASE_HS256=true; "
+    )
+    assert "ALLOW_LEGACY_SUPABASE_HS256=true" in backend_start
+    assert "ENVCTL_SOURCE_[A-Za-z_][A-Za-z0-9_]*" in backend_start
+    assert "target=${envctl_name#ENVCTL_SOURCE_}" in backend_start
+    assert 'export "$target=$value"' in backend_start
+    assert (
         "exec python -m uvicorn app.main:app --host 127.0.0.1 --port "
-        "'\"'\"'{port}'\"'\"''"
-        in rendered
+        "'\"'\"'{port}'\"'\"''" in backend_start
+    )
+    assert frontend_start.startswith(
+        "sh -c 'export VITE_API_URL="
+        "https://pele-monorepo-pr-789-api.srv.example.test/api/v1 "
     )
     assert (
-        "ENVCTL_FRONTEND_START_CMD=sh -c 'export VITE_API_URL="
-        "https://pele-monorepo-pr-789-api.srv.example.test/api/v1 "
-        "VITE_BACKEND_URL=https://pele-monorepo-pr-789-api.srv.example.test "
-        "VITE_SUPABASE_URL=https://pele-monorepo-pr-789-supabase.srv.example.test; "
+        "VITE_SUPABASE_URL=https://pele-monorepo-pr-789-supabase.srv.example.test"
+        in frontend_start
+    )
+    assert "ENVCTL_SOURCE_[A-Za-z_][A-Za-z0-9_]*" in frontend_start
+    assert 'case "$target" in VITE_*)' in frontend_start
+    assert (
         "exec npm run dev -- --port '\"'\"'{port}'\"'\"' --host 127.0.0.1"
-        in rendered
+        in frontend_start
     )
     assert "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}" in rendered
     assert "REDIS_URL=${ENVCTL_SOURCE_REDIS_URL}" in rendered
@@ -2220,7 +2741,48 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
         "TWILIO_MASTER_AUTH_TOKEN=${ENVCTL_SOURCE_TWILIO_MASTER_AUTH_TOKEN}"
         in rendered
     )
+    assert "CREEM_BILLING_ENABLED=${ENVCTL_SOURCE_CREEM_BILLING_ENABLED}" in (
+        rendered
+    )
+    assert "CREEM_ENVIRONMENT=${ENVCTL_SOURCE_CREEM_ENVIRONMENT}" in rendered
+    assert "CREEM_API_KEY=${ENVCTL_SOURCE_CREEM_API_KEY}" in rendered
+    assert "CREEM_WEBHOOK_SECRET=${ENVCTL_SOURCE_CREEM_WEBHOOK_SECRET}" in rendered
+    assert (
+        "CREEM_STARTER_MONTHLY_PRODUCT_ID="
+        "${ENVCTL_SOURCE_CREEM_STARTER_MONTHLY_PRODUCT_ID}" in rendered
+    )
+    assert (
+        "CREEM_PROFESSIONAL_ANNUAL_PRODUCT_ID="
+        "${ENVCTL_SOURCE_CREEM_PROFESSIONAL_ANNUAL_PRODUCT_ID}" in rendered
+    )
+    assert (
+        "CREEM_PROFESSIONAL_TRIAL_DAYS="
+        "${ENVCTL_SOURCE_CREEM_PROFESSIONAL_TRIAL_DAYS}" in rendered
+    )
+    assert "PADDLE_BILLING_ENABLED=${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED}" in (
+        rendered
+    )
+    assert "PADDLE_ENVIRONMENT=${ENVCTL_SOURCE_PADDLE_ENVIRONMENT}" in rendered
     assert "PADDLE_API_KEY=${ENVCTL_SOURCE_PADDLE_API_KEY}" in rendered
+    assert (
+        "PADDLE_CLIENT_TOKEN=${ENVCTL_SOURCE_PADDLE_CLIENT_TOKEN}" in rendered
+    )
+    assert (
+        "PADDLE_CHECKOUT_SUCCESS_URL="
+        "${ENVCTL_SOURCE_PADDLE_CHECKOUT_SUCCESS_URL}" in rendered
+    )
+    assert (
+        "PADDLE_STARTER_MONTHLY_PRICE_ID="
+        "${ENVCTL_SOURCE_PADDLE_STARTER_MONTHLY_PRICE_ID}" in rendered
+    )
+    assert (
+        "PADDLE_GROWTH_ANNUAL_PRICE_ID="
+        "${ENVCTL_SOURCE_PADDLE_GROWTH_ANNUAL_PRICE_ID}" in rendered
+    )
+    assert (
+        "PADDLE_PROFESSIONAL_TRIAL_DAYS="
+        "${ENVCTL_SOURCE_PADDLE_PROFESSIONAL_TRIAL_DAYS}" in rendered
+    )
     assert (
         "SQLALCHEMY_DATABASE_URL=${ENVCTL_SOURCE_SQLALCHEMY_DATABASE_URL}"
         in rendered
@@ -2261,6 +2823,76 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
         "https://pele-monorepo-pr-789-api.srv.example.test" in rendered
     )
     assert "# <<< envctl frontend launch env <<<" in rendered
+
+
+def test_generated_public_preview_source_env_is_forwarded_generically():
+    controller = load_controller()
+
+    rendered = controller.default_envctl_config(
+        public_host="preview.getpele.test",
+        public_urls={
+            "frontend": "https://pele-monorepo-pr-789.srv.example.test",
+            "backend": "https://pele-monorepo-pr-789-api.srv.example.test",
+            "supabase": "https://pele-monorepo-pr-789-supabase.srv.example.test",
+        },
+    )
+
+    backend_start = rendered.split("ENVCTL_BACKEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+    frontend_start = rendered.split("ENVCTL_FRONTEND_START_CMD=", 1)[1].split(
+        "\n",
+        1,
+    )[0]
+
+    assert "ENVCTL_SOURCE_[A-Za-z_][A-Za-z0-9_]*" in backend_start
+    assert "target=${envctl_name#ENVCTL_SOURCE_}" in backend_start
+    assert 'export "$target=$value"' in backend_start
+    assert "ENVCTL_SOURCE_CREEM_GROWTH_MONTHLY_PRODUCT_ID" not in backend_start
+    assert "ENVCTL_SOURCE_ANY_FUTURE_SETTING" not in backend_start
+    assert 'case "$target" in VITE_*)' in frontend_start
+    assert "ENVCTL_SOURCE_VITE_ANY_FUTURE_SETTING" not in frontend_start
+
+    backend_script = controller.shell_export_source_env_script()
+    backend_result = subprocess.run(
+        [
+            "sh",
+            "-c",
+            (
+                f"{backend_script}; "
+                'printf "%s|%s" "$CREEM_GROWTH_MONTHLY_PRODUCT_ID" '
+                '"$ANY_FUTURE_SETTING"'
+            ),
+        ],
+        check=True,
+        env={
+            "ENVCTL_SOURCE_CREEM_GROWTH_MONTHLY_PRODUCT_ID": "prod_growth_month",
+            "ENVCTL_SOURCE_ANY_FUTURE_SETTING": "future-value",
+        },
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert backend_result.stdout == "prod_growth_month|future-value"
+
+    frontend_script = controller.shell_export_source_env_script(
+        only_target_prefix="VITE_",
+    )
+    frontend_result = subprocess.run(
+        [
+            "sh",
+            "-c",
+            f"{frontend_script}; printf \"%s|%s\" \"$CREEM_API_KEY\" \"$VITE_PUBLIC\"",
+        ],
+        check=True,
+        env={
+            "ENVCTL_SOURCE_CREEM_API_KEY": "secret",
+            "ENVCTL_SOURCE_VITE_PUBLIC": "public",
+        },
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert frontend_result.stdout == "|public"
 
 
 def test_macos_memory_fallback_parses_vm_stat(monkeypatch):
@@ -2334,8 +2966,18 @@ def test_headless_envctl_env_removes_plan_agent_aliases(monkeypatch):
     monkeypatch.setenv("ACTIONS_RUNTIME_TOKEN", "secret")
     monkeypatch.setenv("ENVCTL_PREVIEW_EXTERNAL_DEPS_JSON", '{"supabase":[]}')
     monkeypatch.setenv("ENVCTL_PREVIEW_PUBLIC_LINK_TOKEN", "public-link-token")
+    monkeypatch.setenv("PADDLE_API_KEY", "wrong-paddle-api-key")
+    monkeypatch.setenv("SUPABASE_URL", "https://wrong-supabase.example.test")
+    monkeypatch.setenv("VITE_API_URL", "https://wrong-api.example.test/api/v1")
+    monkeypatch.setenv("VITE_BACKEND_URL", "https://wrong-api.example.test")
+    monkeypatch.setenv("VITE_SUPABASE_URL", "https://wrong-supabase.example.test")
     monkeypatch.setenv("ENVCTL_SOURCE_AI_PROVIDER", "gemini")
     monkeypatch.setenv("ENVCTL_SOURCE_GOOGLE_API_KEY", "google-api-key")
+    monkeypatch.setenv("ENVCTL_BACKEND_ENV__PADDLE_API_KEY", "right-paddle-api-key")
+    monkeypatch.setenv(
+        "ENVCTL_FRONTEND_ENV__VITE_API_URL",
+        "https://right-api.example.test/api/v1",
+    )
 
     env = controller.headless_envctl_env()
 
@@ -2347,8 +2989,18 @@ def test_headless_envctl_env_removes_plan_agent_aliases(monkeypatch):
     assert "ACTIONS_RUNTIME_TOKEN" not in env
     assert "ENVCTL_PREVIEW_EXTERNAL_DEPS_JSON" not in env
     assert "ENVCTL_PREVIEW_PUBLIC_LINK_TOKEN" not in env
+    assert "PADDLE_API_KEY" not in env
+    assert "SUPABASE_URL" not in env
+    assert "VITE_API_URL" not in env
+    assert "VITE_BACKEND_URL" not in env
+    assert "VITE_SUPABASE_URL" not in env
     assert env["ENVCTL_SOURCE_AI_PROVIDER"] == "gemini"
     assert env["ENVCTL_SOURCE_GOOGLE_API_KEY"] == "google-api-key"
+    assert env["ENVCTL_BACKEND_ENV__PADDLE_API_KEY"] == "right-paddle-api-key"
+    assert (
+        env["ENVCTL_FRONTEND_ENV__VITE_API_URL"]
+        == "https://right-api.example.test/api/v1"
+    )
     assert env["ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"] == "false"
     assert env["ENVCTL_UI_BACKEND"] == "non_interactive"
 
@@ -2358,6 +3010,28 @@ def test_headless_envctl_env_removes_plan_agent_aliases(monkeypatch):
     assert "RUNNER_TRACKING_ID" not in import_env
     assert "CMUX_WORKSPACE_ID" not in import_env
     assert "ACTIONS_RUNTIME_TOKEN" not in import_env
+    assert "VITE_API_URL" not in import_env
+
+
+def test_pr_preview_start_env_overrides_keep_app_launch_env(monkeypatch):
+    controller = load_controller()
+    monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_BILLING_ENABLED", "true")
+    monkeypatch.setenv("ENVCTL_BACKEND_ENV__PAYMENT_PROVIDER", "paddle")
+    monkeypatch.setenv(
+        "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN",
+        "test-client-token",
+    )
+    monkeypatch.setenv("ENVCTL_PREVIEW_PUBLIC_LINK_TOKEN", "public-link-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "secret")
+    monkeypatch.setenv("UNRELATED", "value")
+
+    env = controller.pr_preview_start_env_overrides()
+
+    assert env == {
+        "ENVCTL_SOURCE_PADDLE_BILLING_ENABLED": "true",
+        "ENVCTL_BACKEND_ENV__PAYMENT_PROVIDER": "paddle",
+        "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN": "test-client-token",
+    }
 
 
 def test_unsafe_plan_agent_config_entries_rejects_terminal_enablers(tmp_path):

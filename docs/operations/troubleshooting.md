@@ -31,6 +31,7 @@ That sequence answers four different questions:
 - Verify the install:
   - `command -v envctl`
   - `envctl --version`
+  - `envctl doctor --repo /absolute/path/to/repo --json` to see the resolved binary, Python executable, and `envctl_engine` module path
   - `pipx list`
 - Reinstall the package if needed:
   - `pipx install "git+https://github.com/kfiramar/envctl.git"`

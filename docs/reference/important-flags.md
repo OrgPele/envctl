@@ -89,8 +89,8 @@ Plan-agent handoff note: if `--plan --tmux/--omx --headless` starts the implemen
 | `--parallel-trees` | Enable parallel tree startup workers. |
 | `--parallel-trees-max <n>` | Max parallel tree startup workers. |
 | `--service-parallel` / `--service-sequential` | Run backend+frontend startup attach in parallel or sequential mode (default: parallel). |
-| `--test-parallel` / `--test-sequential` | Run backend/frontend test suites in parallel or sequential mode (default: parallel when both suites exist). |
-| `--test-parallel-max <n>` | Cap concurrent test suites in parallel mode (default: `4` shared across backend/frontend suites). |
+| `--test-parallel` / `--test-sequential` | Run backend/frontend test suites in parallel or sequential mode, and enable or disable pytest-xdist auto-injection for the current run (default: parallel when both suites exist). |
+| `--test-parallel-max <n>` | Cap concurrent test suites in parallel mode and pytest-xdist workers for the current run (default suite cap: `4`; default pytest workers: current free CPU cores). |
 | `--clear-port-state` | Clear saved port reservations/state. |
 | `--force` | Free configured ports if needed. |
 | `ENVCTL_DOCKER_PREWARM=0\|1` | Enable/disable one-shot Docker daemon prewarm before requirements startup (default: `1`). |

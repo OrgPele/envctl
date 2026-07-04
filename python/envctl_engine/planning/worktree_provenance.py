@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from envctl_engine.planning.worktree_code_intelligence_files import ensure_worktree_git_excludes
 from envctl_engine.runtime.codex_tmux_support import _tmux_session_exists
 from envctl_engine.runtime.runtime_context import resolve_process_runtime
 from envctl_engine.shared.parsing import parse_bool
@@ -31,6 +32,7 @@ def write_worktree_provenance(
     )
     if provenance is None or not target.is_dir():
         return
+    ensure_worktree_git_excludes(root=target, patterns=(".envctl-state/",))
     path = target / WORKTREE_PROVENANCE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -46,6 +48,17 @@ def build_worktree_provenance(
     created_for_fresh_ai_launch: bool = False,
     launch_transport: str = "",
 ) -> dict[str, object] | None:
+    invocation_branch = _invocation_worktree_branch(self)
+    if invocation_branch:
+        return _worktree_provenance_payload(
+            self,
+            source_branch=invocation_branch,
+            resolution_reason="invocation_worktree_branch",
+            plan_file=plan_file,
+            created_for_fresh_ai_launch=created_for_fresh_ai_launch,
+            launch_transport=launch_transport,
+        )
+
     source_branch = git_command_output(self, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
     if source_branch and source_branch != "HEAD":
         return _worktree_provenance_payload(
@@ -68,6 +81,47 @@ def build_worktree_provenance(
         created_for_fresh_ai_launch=created_for_fresh_ai_launch,
         launch_transport=launch_transport,
     )
+
+
+def _invocation_worktree_branch(self: Any) -> str:
+    raw_cwd = str(getattr(self, "env", {}).get("ENVCTL_INVOCATION_CWD") or "").strip()
+    if not raw_cwd:
+        return ""
+    try:
+        invocation_cwd = Path(raw_cwd).resolve()
+        repo_root = Path(self.config.base_dir).resolve()
+    except OSError:
+        return ""
+    root_text = git_command_output_at(self, invocation_cwd, ["rev-parse", "--show-toplevel"]).strip()
+    if not root_text:
+        return ""
+    try:
+        invocation_root = Path(root_text).resolve()
+    except OSError:
+        return ""
+    if invocation_root == repo_root:
+        return ""
+    if not _same_git_common_dir(self, repo_root, invocation_root):
+        return ""
+    branch = git_command_output_at(self, invocation_root, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    return branch if branch and branch != "HEAD" else ""
+
+
+def _same_git_common_dir(self: Any, repo_root: Path, invocation_root: Path) -> bool:
+    repo_common_dir = git_command_output_at(self, repo_root, ["rev-parse", "--git-common-dir"]).strip()
+    invocation_common_dir = git_command_output_at(self, invocation_root, ["rev-parse", "--git-common-dir"]).strip()
+    if not repo_common_dir or not invocation_common_dir:
+        return False
+    try:
+        repo_common_path = Path(repo_common_dir)
+        invocation_common_path = Path(invocation_common_dir)
+        if not repo_common_path.is_absolute():
+            repo_common_path = repo_root / repo_common_path
+        if not invocation_common_path.is_absolute():
+            invocation_common_path = invocation_root / invocation_common_path
+        return repo_common_path.resolve() == invocation_common_path.resolve()
+    except OSError:
+        return False
 
 
 def _worktree_provenance_payload(
@@ -121,9 +175,13 @@ def detect_default_branch(self: Any) -> str:
 
 
 def git_command_output(self: Any, args: list[str]) -> str:
+    return git_command_output_at(self, Path(self.config.base_dir), args)
+
+
+def git_command_output_at(self: Any, cwd: Path, args: list[str]) -> str:
     result = resolve_process_runtime(self).run(
-        ["git", "-C", str(self.config.base_dir), *args],
-        cwd=self.config.base_dir,
+        ["git", "-C", str(cwd), *args],
+        cwd=cwd,
         env=self._command_env(port=0),
         timeout=30.0,
     )

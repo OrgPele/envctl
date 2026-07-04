@@ -85,6 +85,9 @@ def run_test_plan_action_for_targets(orchestrator: object, route: Route, targets
                 "repo_root": runtime.config.base_dir,
                 "project_root": identity.root.resolve(),
                 "project_name": identity.name,
+                "env": getattr(runtime, "env", {}),
+                "config_raw": getattr(runtime.config, "raw", {}),
+                "route_flags": route.flags,
             },
         )()
         code = run_test_plan_action(context, json_output=json_output, dry_run=dry_run)

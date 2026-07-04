@@ -80,7 +80,7 @@ def build_import_worktree_add_command(
 
 
 def build_update_imported_worktree_command(*, worktree_root: Path, branch_ref: ImportedBranchRef) -> list[str]:
-    return ["git", "-C", str(worktree_root), "merge", "--ff-only", branch_ref.remote_ref]
+    return ["git", "-C", str(worktree_root), "reset", "--hard", branch_ref.remote_ref]
 
 
 def list_importable_origin_branches(

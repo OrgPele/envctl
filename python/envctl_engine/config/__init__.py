@@ -345,6 +345,10 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
             resolved.get("ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE"),
             False,
         ),
+        plan_agent_fullstack_pr_url_e2e_enable=parse_bool(
+            resolved.get("ENVCTL_PLAN_AGENT_FULLSTACK_PR_URL_E2E_ENABLE"),
+            False,
+        ),
         plan_agent_pr_review_comments_enable=parse_bool(
             resolved.get("ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE"),
             False,
