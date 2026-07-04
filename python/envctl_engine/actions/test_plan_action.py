@@ -27,7 +27,7 @@ _PREFIX_TESTS: tuple[tuple[str, str, str], ...] = (
 
 _PROMPT_PREFIX = "python/envctl_engine/runtime/prompt_templates/"
 _PROMPT_TEST = "tests/python/runtime/test_prompt_install_support_templates.py"
-_DOC_TOOLING_PREFIXES = ("docs/", "README.md", "AGENTS.md", ".serena/")
+_DOC_TOOLING_PREFIXES = ("docs/", "README.md", "AGENTS.md", ".serena/", "todo/plans/")
 _DOC_TOOLING_TESTS = (
     "tests/python/shared/test_validation_workflow_contract.py tests/python/shared/test_serena_config.py"
 )
