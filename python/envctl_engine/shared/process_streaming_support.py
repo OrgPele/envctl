@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import os
 import selectors
+import shlex
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from envctl_engine.ui.spinner import spinner, spinner_enabled, use_spinner_policy
 from envctl_engine.ui.spinner_service import resolve_spinner_policy
+
+_STREAMING_PROGRESS_SECONDS = 10.0
 
 
 class ProcessStreamingMixin:
@@ -99,14 +103,11 @@ class ProcessStreamingMixin:
                         stderr="",
                     )
 
-                selector = self._stdout_selector(process.stdout, timeout=timeout)
+                selector = self._stdout_selector(process.stdout)
                 try:
                     while True:
-                        if self._streaming_timeout_expired(
-                            selector=selector,
-                            timeout=timeout,
-                            start_time=start_time,
-                        ):
+                        wait_seconds = self._streaming_wait_seconds(timeout=timeout, start_time=start_time)
+                        if wait_seconds <= 0:
                             return self._finish_streaming_timeout(
                                 process,
                                 command=command,
@@ -115,6 +116,14 @@ class ProcessStreamingMixin:
                                 active_spinner=active_spinner,
                                 spinner_enabled=enabled,
                             )
+                        if selector is not None:
+                            events = selector.select(min(wait_seconds, _STREAMING_PROGRESS_SECONDS))
+                            if not events:
+                                if process.poll() is not None:
+                                    break
+                                if echo_output:
+                                    print(f"still running: {shlex.join(command)}", file=sys.stderr, flush=True)
+                                continue
 
                         line = process.stdout.readline()
                         if not line:
@@ -154,9 +163,7 @@ class ProcessStreamingMixin:
             )
 
     @staticmethod
-    def _stdout_selector(stdout: Any, *, timeout: float | None) -> selectors.BaseSelector | None:
-        if timeout is None:
-            return None
+    def _stdout_selector(stdout: Any) -> selectors.BaseSelector | None:
         selector = selectors.DefaultSelector()
         try:
             selector.register(stdout, selectors.EVENT_READ)
@@ -166,20 +173,10 @@ class ProcessStreamingMixin:
         return selector
 
     @staticmethod
-    def _streaming_timeout_expired(
-        *,
-        selector: selectors.BaseSelector | None,
-        timeout: float | None,
-        start_time: float,
-    ) -> bool:
+    def _streaming_wait_seconds(*, timeout: float | None, start_time: float) -> float:
         if timeout is None:
-            return False
-        remaining = timeout - (time.time() - start_time)
-        if remaining <= 0:
-            return True
-        if selector is None:
-            return False
-        return not bool(selector.select(remaining))
+            return _STREAMING_PROGRESS_SECONDS
+        return timeout - (time.time() - start_time)
 
     def _finish_streaming_timeout(
         self,

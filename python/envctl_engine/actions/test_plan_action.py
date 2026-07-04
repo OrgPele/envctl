@@ -25,6 +25,7 @@ _PREFIX_TESTS: tuple[tuple[str, str, str], ...] = (
     ("python/envctl_engine/startup/", "tests/python/startup", "startup change"),
     ("python/envctl_engine/runtime/", "tests/python/runtime", "runtime command change"),
     ("python/envctl_engine/requirements/", "tests/python/requirements", "requirements change"),
+    ("python/envctl_engine/shared/", "tests/python/shared", "shared runtime support change"),
     ("python/envctl_engine/ui/", "tests/python/ui", "UI command change"),
 )
 
