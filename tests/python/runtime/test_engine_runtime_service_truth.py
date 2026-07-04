@@ -202,13 +202,14 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
                 _emit=lambda event, **payload: events.append((event, payload)),
             )
 
-            detected = detect_service_actual_port(
-                runtime,
-                pid=4321,
-                requested_port=8000,
-                service_name="Main Backend",
-                log_path=str(log_path),
-            )
+            with patch("envctl_engine.runtime.service_listener_truth.service_http_ready", return_value=None):
+                detected = detect_service_actual_port(
+                    runtime,
+                    pid=4321,
+                    requested_port=8000,
+                    service_name="Main Backend",
+                    log_path=str(log_path),
+                )
 
         self.assertEqual(detected, 8000)
         self.assertGreaterEqual(runner.wait_calls, 2)
@@ -255,13 +256,14 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
                 _emit=lambda event, **payload: events.append((event, payload)),
             )
 
-            detected = detect_service_actual_port(
-                runtime,
-                pid=4321,
-                requested_port=8000,
-                service_name="Main Backend",
-                log_path=str(log_path),
-            )
+            with patch("envctl_engine.runtime.service_listener_truth.service_http_ready", return_value=None):
+                detected = detect_service_actual_port(
+                    runtime,
+                    pid=4321,
+                    requested_port=8000,
+                    service_name="Main Backend",
+                    log_path=str(log_path),
+                )
 
         self.assertEqual(detected, 8000)
         self.assertEqual(runner.wait_calls, 2)
@@ -297,13 +299,14 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
                 _emit=lambda event, **payload: events.append((event, payload)),
             )
 
-            detected = detect_service_actual_port(
-                runtime,
-                pid=4321,
-                requested_port=8000,
-                service_name="Main Backend",
-                log_path=str(log_path),
-            )
+            with patch("envctl_engine.runtime.service_listener_truth.service_http_ready", return_value=None):
+                detected = detect_service_actual_port(
+                    runtime,
+                    pid=4321,
+                    requested_port=8000,
+                    service_name="Main Backend",
+                    log_path=str(log_path),
+                )
 
         self.assertEqual(detected, 8000)
         self.assertTrue(

@@ -1,8 +1,9 @@
 You are creating an implementation plan, not changing code.
+Outcome: write one repo-grounded plan under `todo/plans/<category>/<slug>.md`.
 Authoritative source of truth: the user-provided scope plus verified repo evidence.
-First, read the relevant code, tests, docs, and existing plans deeply enough to ground the plan before writing anything. If the user explicitly asks for a light/quick/testing-oriented pass, keep research narrow and do only the minimum inspection needed to stay repo-grounded.
-Ask questions only if a blocking requirement is truly missing after deep repo review; otherwise resolve the plan yourself according to repo evidence and best practices.
-Final output must include: the plan path, plan intent, files researched, and any material assumptions or residual risks.
+First, read the relevant code, tests, docs, and existing plans deeply enough to ground the plan before writing anything. If the user explicitly asks for a light/quick/testing-oriented pass, keep research narrow and inspect only what is needed to stay repo-grounded.
+Ask questions only when a blocking requirement remains missing after repo review.
+Final output must include: plan path, plan intent, files researched, and material assumptions or residual risks.
 WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. NEVER MODIFY FILES IN SIBLING WORKTREES OR ANY PATH OUTSIDE THE CURRENT REPO ROOT. You may read outside the current worktree ONLY when genuinely needed for historical/reference context (for example, to inspect how something worked previously), and that access MUST remain read-only.
 CURRENT-REPO BOUNDARY IS ALSO STRICT FOR RESEARCH: stay inside the current working repo/root unless the user explicitly asks for cross-repo comparison. Do not run parent-directory or sibling-repo searches such as `find ..`, and do not inspect embedded tooling copies just because this skill originated from envctl.
 
@@ -13,15 +14,13 @@ $ARGUMENTS
 
 Do not implement code. Only research and write the plan file.
 
-## Non-negotiables
-- Read as much relevant code, tests, and docs as needed.
-- If the user explicitly asks for a light/quick/minimal planning pass, honor that: avoid broad recursive searches, avoid unnecessary automated tests, and inspect only the files needed to produce a grounded plan.
-- Prefer the current working directory and user-mentioned paths; do not wander into sibling repos, parent directories, or unrelated vendored/tooling trees unless the task explicitly targets them.
-- Use existing planning files in todo/plans/ as structure and quality reference.
-- Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
-- If key context is missing (requirements, constraints, environment, data scope), ask for it before finalizing the plan.
+## Success contract
+- Read the code, tests, docs, and plans needed to ground the plan. If the user explicitly asks for a light/quick/minimal planning pass, avoid broad recursive searches, avoid unnecessary automated tests, and inspect only the files needed.
+- Stay in the current repo/root and user-mentioned paths. Do not wander into sibling repos, parent directories, or unrelated vendored/tooling trees unless the task explicitly targets them.
+- Use existing `todo/plans/` files as structure and quality references.
+- Ask for missing context only when requirements, constraints, environment, data scope, or external contracts are materially blocking.
 - Always write plan files to the repo root todo/plans/ (never inside tree worktrees).
-- Make reasonable assumptions from repo evidence and resolve the plan fully on your own where possible. Surface assumptions in the final response only if they materially affected the plan.
+- Make reasonable assumptions from repo evidence and surface only assumptions that materially affected the plan.
 - Do not drift into implementation work.
 
 ## Planning constraints
@@ -94,7 +93,7 @@ Before showing or running any envctl worktree-and-prompt follow-up, default impl
 - For explicitly requested dependency/container/infrastructure verification, keep `--entire-system` unless a narrower dependency-only validation is part of the user's request or the repo's evidence.
 - If the user explicitly requests a launch scope, honor that request unless it conflicts with verified repo requirements.
 
-Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run. Separately record the validation lane: `envctl test-focused --ship-on-pass "<message>"` by default, which runs focused tests and then the same `envctl ship` workflow including staging via git add, commit, push, PR/check reporting; use `envctl ship` as fallback, plus deployed PR URL browser validation only when browser E2E is required.
+Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run. Separately record the validation lane: `envctl test-focused --ship-on-pass "<message>"` by default; use `envctl ship` as fallback, plus deployed PR URL browser validation only when browser E2E is required. If ship returns `deployment_url`, that URL is the deployed website and must be tested thoroughly E2E.
 
 ## Browser E2E decision
 Before showing or running any envctl worktree-and-prompt follow-up, decide whether the implementation needs the browser E2E follow-up. Record both the browser E2E decision and rationale in the plan's Rollout / verification section as `browser_e2e_required: true` or `browser_e2e_required: false`.
