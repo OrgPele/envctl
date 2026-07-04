@@ -33,6 +33,8 @@ envctl doctor --repo /absolute/path/to/repo --json
 ```
 
 `--version` does not add a runtime command and does not appear in `list-commands`.
+Launcher doctor JSON includes the resolved repo root, launcher binary path, Python executable, and
+`envctl_engine` module path so PATH or source-checkout mismatches are visible without starting a runtime.
 
 ## Command Boundary
 

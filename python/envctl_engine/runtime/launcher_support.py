@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from importlib import metadata as importlib_metadata
 import os
+import sys
 from textwrap import indent
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -296,6 +297,8 @@ def launcher_doctor_payload(
         "launcher_root": str(launcher_root),
         "repo_root": str(repo_root),
         "runtime_entrypoint": str(runtime_entrypoint),
+        "python_executable": str(sys.executable),
+        "envctl_engine_path": _envctl_engine_path(),
     }
 
 
@@ -313,8 +316,24 @@ def launcher_doctor_text(*, binary_path: str, repo_root: Path, runtime_entrypoin
             f"Launcher Root: {payload['launcher_root']}",
             f"Repo Root: {payload['repo_root']}",
             f"Runtime Entry: {payload['runtime_entrypoint']}",
+            f"Python Executable: {payload['python_executable']}",
+            f"Envctl Engine Path: {payload['envctl_engine_path']}",
         )
     )
+
+
+def _envctl_engine_path() -> str:
+    try:
+        import envctl_engine
+    except Exception:
+        return ""
+    module_file = str(getattr(envctl_engine, "__file__", "") or "").strip()
+    if not module_file:
+        return ""
+    try:
+        return str(Path(module_file).resolve())
+    except OSError:
+        return module_file
 
 
 def default_shell_file(env: dict[str, str] | None = None) -> Path:

@@ -109,21 +109,33 @@ def prepare_worktree_code_intelligence(
         "cgc_index_skipped_reason": "disabled",
     }
     cgc_mode = _worktree_cgc_index_mode(self)
-    copied_files[".serena/project.yml"] = _copy_worktree_serena_project_file(
-        source=self.config.base_dir / ".serena" / "project.yml",
-        target=target / ".serena" / "project.yml",
-        project_name=identity.serena_project_name,
-        emit=getattr(self, "_emit", None),
+    serena_project_target = target / ".serena" / "project.yml"
+    copied_files[".serena/project.yml"] = (
+        _copy_worktree_serena_project_file(
+            source=self.config.base_dir / ".serena" / "project.yml",
+            target=serena_project_target,
+            project_name=identity.serena_project_name,
+            emit=getattr(self, "_emit", None),
+        )
+        or serena_project_target.is_file()
     )
-    copied_files[".serena/.gitignore"] = _copy_worktree_code_intelligence_file(
-        source=self.config.base_dir / ".serena" / ".gitignore",
-        target=target / ".serena" / ".gitignore",
+    serena_gitignore_target = target / ".serena" / ".gitignore"
+    copied_files[".serena/.gitignore"] = (
+        _copy_worktree_code_intelligence_file(
+            source=self.config.base_dir / ".serena" / ".gitignore",
+            target=serena_gitignore_target,
+        )
+        or serena_gitignore_target.is_file()
     )
-    copied_files[".cgcignore"] = False
+    cgcignore_target = target / ".cgcignore"
+    copied_files[".cgcignore"] = cgcignore_target.is_file()
     if cgc_mode != _WORKTREE_CGC_INDEX_MODE_DISABLED:
-        copied_files[".cgcignore"] = _copy_worktree_code_intelligence_file(
-            source=self.config.base_dir / ".cgcignore",
-            target=target / ".cgcignore",
+        copied_files[".cgcignore"] = (
+            _copy_worktree_code_intelligence_file(
+                source=self.config.base_dir / ".cgcignore",
+                target=cgcignore_target,
+            )
+            or cgcignore_target.is_file()
         )
     if cgc_mode == _WORKTREE_CGC_INDEX_MODE_ENABLED:
         cgc_result = _index_worktree_with_cgc(self, target=target, context=identity.cgc_context)

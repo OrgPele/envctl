@@ -47,6 +47,53 @@ class PlanAgentWorkflowCodeIntelligenceContextTests(unittest.TestCase):
         self.assertIn("symbol definitions, references, call paths, and semantic edits", section)
         self.assertNotIn("CodeGraphContext", section)
         self.assertNotIn("legacy `codegraph`", section)
+        self.assertNotIn("envctl source checkout", section)
+
+    def test_builder_uses_existing_serena_file_when_metadata_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            (root / ".serena").mkdir(parents=True)
+            (root / ".serena" / "project.yml").write_text('project_name: "actual-worktree"\n', encoding="utf-8")
+            _write_metadata(
+                root,
+                {
+                    "schema_version": 1,
+                    "serena_project_name": "stale-generated-name",
+                    "files": {".serena/project.yml": False, ".cgcignore": False},
+                    "cgc_index_mode": "disabled",
+                    "cgc_index_requested": False,
+                    "cgc_index_skipped_reason": "disabled",
+                },
+            )
+
+            section = CodeIntelligencePromptBuilder(_worktree(root)).prompt_section()
+
+        self.assertIn("Serena project `actual-worktree`", section)
+        self.assertNotIn("stale-generated-name", section)
+
+    def test_builder_adds_envctl_source_checkout_hint_only_for_envctl_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            (root / "bin").mkdir(parents=True)
+            (root / "bin" / "envctl").write_text("#!/bin/sh\n", encoding="utf-8")
+            (root / "python" / "envctl_engine").mkdir(parents=True)
+            _write_metadata(
+                root,
+                {
+                    "schema_version": 1,
+                    "serena_project_name": "repo-feature-a-1",
+                    "files": {".serena/project.yml": True, ".cgcignore": False},
+                    "cgc_index_mode": "disabled",
+                    "cgc_index_requested": False,
+                    "cgc_index_skipped_reason": "disabled",
+                },
+            )
+
+            section = CodeIntelligencePromptBuilder(_worktree(root)).prompt_section()
+
+        self.assertIn("envctl source checkout", section)
+        self.assertIn('PATH="$PWD/.venv/bin:$PATH" envctl', section)
+        self.assertIn("ENVCTL_USE_REPO_WRAPPER=1 ./bin/envctl", section)
 
     def test_builder_renders_cgc_when_source_context_is_reused(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

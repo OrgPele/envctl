@@ -10,6 +10,7 @@ from envctl_engine.planning.worktree_code_intelligence_cgc import (
     index_worktree_with_cgc,
     reuse_or_index_worktree_with_cgc,
 )
+from envctl_engine.planning.worktree_code_intelligence import prepare_worktree_code_intelligence
 from envctl_engine.planning.worktree_code_intelligence_config import (
     WORKTREE_CGC_INDEX_MODE_AUTO,
     WORKTREE_CGC_INDEX_MODE_DISABLED,
@@ -153,6 +154,29 @@ def test_code_intelligence_copy_does_not_overwrite_existing_target(tmp_path: Pat
     assert rewrite_serena_project_name("language: python\n", project_name="repo-tree") == (
         "project_name: repo-tree\nlanguage: python\n"
     )
+
+
+def test_prepare_metadata_marks_existing_code_intelligence_files_available(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = repo / "trees" / "feature-a" / "1"
+    (repo / ".serena").mkdir(parents=True)
+    (repo / ".serena" / "project.yml").write_text("project_name: repo\n", encoding="utf-8")
+    (repo / ".serena" / ".gitignore").write_text("memories/\n", encoding="utf-8")
+    (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
+    (target / ".serena").mkdir(parents=True)
+    (target / ".serena" / "project.yml").write_text("project_name: repo\n", encoding="utf-8")
+    (target / ".cgcignore").write_text(".git/\n", encoding="utf-8")
+    runtime = _Runtime(repo)
+
+    prepare_worktree_code_intelligence(runtime, target=target, trees_root_for_worktree=_trees_root_for_worktree)
+
+    payload = json.loads((target / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
+    assert payload["files"] == {
+        ".serena/project.yml": True,
+        ".serena/.gitignore": True,
+        ".cgcignore": True,
+    }
+    assert payload["cgc_index_skipped_reason"] == "disabled"
 
 
 def test_cgc_reuse_uses_source_context_without_indexing_when_source_root_matches(tmp_path: Path) -> None:
