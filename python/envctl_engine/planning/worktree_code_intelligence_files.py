@@ -50,7 +50,22 @@ def worktree_git_exclude_path(root: Path) -> Path | None:
         git_dir = (dot_git.parent / git_dir).resolve()
     if not git_dir.exists():
         return None
-    return git_dir / "info" / "exclude"
+    common_dir = _git_common_dir(git_dir)
+    return common_dir / "info" / "exclude"
+
+
+def _git_common_dir(git_dir: Path) -> Path:
+    commondir = git_dir / "commondir"
+    try:
+        raw = commondir.read_text(encoding="utf-8").strip()
+    except OSError:
+        return git_dir
+    if not raw:
+        return git_dir
+    common_dir = Path(raw)
+    if not common_dir.is_absolute():
+        common_dir = git_dir / common_dir
+    return common_dir.resolve()
 
 
 def copy_worktree_code_intelligence_file(*, source: Path, target: Path) -> bool:

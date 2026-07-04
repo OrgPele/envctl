@@ -221,23 +221,63 @@ def test_prepare_metadata_marks_existing_code_intelligence_files_available(tmp_p
 
 
 def test_worktree_git_excludes_support_linked_worktree_gitdir(tmp_path: Path) -> None:
-    target = tmp_path / "repo" / "trees" / "feature-a" / "1"
-    git_dir = tmp_path / "repo" / ".git" / "worktrees" / "feature-a-1"
-    target.mkdir(parents=True)
-    git_dir.mkdir(parents=True)
-    (target / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+    repo = tmp_path / "repo"
+    target = tmp_path / "worktree"
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True, text=True)
+    (repo / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "tracked.txt"], check=True, capture_output=True, text=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=envctl",
+            "-c",
+            "user.email=envctl@example.test",
+            "commit",
+            "-m",
+            "init",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "worktree", "add", "-b", "feature-a", str(target)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (target / ".envctl-state").mkdir()
+    (target / ".envctl-state" / "worktree-provenance.json").write_text("{}\n", encoding="utf-8")
+    dirty = subprocess.run(
+        ["git", "-c", "core.excludesFile=/dev/null", "-C", str(target), "status", "--short"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "?? .envctl-state/" in dirty.stdout
 
     assert ensure_worktree_git_excludes(
         root=target,
         patterns=(".codegraph/", ".serena/project.local.yml", ".envctl-state/"),
     )
 
-    assert (git_dir / "info" / "exclude").read_text(encoding="utf-8") == (
-        "# envctl local generated artifacts\n"
-        ".codegraph/\n"
-        ".serena/project.local.yml\n"
-        ".envctl-state/\n"
+    common_exclude = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    assert "# envctl local generated artifacts" in common_exclude
+    for pattern in (".codegraph/", ".serena/project.local.yml", ".envctl-state/"):
+        assert pattern in common_exclude.splitlines()
+    git_dir = Path((target / ".git").read_text(encoding="utf-8").split(":", 1)[1].strip())
+    private_exclude = git_dir / "info" / "exclude"
+    assert not private_exclude.exists()
+    clean = subprocess.run(
+        ["git", "-c", "core.excludesFile=/dev/null", "-C", str(target), "status", "--short"],
+        check=True,
+        capture_output=True,
+        text=True,
     )
+    assert ".envctl-state" not in clean.stdout
 
 
 def test_codegraph_index_copies_source_index_then_syncs_target(tmp_path: Path) -> None:
