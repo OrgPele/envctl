@@ -120,6 +120,7 @@ VALUE_FLAGS = {
     "-m",
     "--commit-message",
     "--commit-message-file",
+    "--ship-on-pass",
     "--analyze-mode",
     "--review-mode",
     "--logs-tail",

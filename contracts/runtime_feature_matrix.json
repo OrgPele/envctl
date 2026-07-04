@@ -269,6 +269,7 @@
       "--shared-dependency",
       "--shared-deps",
       "--ship",
+      "--ship-on-pass",
       "--show-config",
       "--show-state",
       "--skip-startup",

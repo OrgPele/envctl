@@ -21,6 +21,10 @@ from envctl_engine.actions.action_test_status_support import (
     render_test_scope_status,
 )
 from envctl_engine.actions.action_test_service_support import additional_service_test_execution_specs
+from envctl_engine.actions.action_test_ship_on_pass_support import (
+    run_ship_on_pass_for_targets,
+    ship_on_pass_message,
+)
 from envctl_engine.actions.action_test_support import TestExecutionSpec, TestTargetContext, build_test_execution_specs
 from envctl_engine.actions.action_test_support import is_backend_only_selection
 from envctl_engine.actions.test_plan_action import run_test_plan_action
@@ -76,7 +80,11 @@ class OrchestratorTestPlanDependencies:
 def run_test_plan_action_for_targets(orchestrator: object, route: Route, targets: list[object]) -> int:
     json_output = bool(route.flags.get("json"))
     dry_run = bool(route.flags.get("dry_run"))
+    ship_message, ship_message_code = ship_on_pass_message(route, dry_run=dry_run, json_output=json_output)
+    if ship_message_code != 0:
+        return ship_message_code
     runtime = getattr(orchestrator, "runtime")
+    successful_targets: list[object] = []
     for identity in action_target_identities(targets):
         context = type(
             "TestPlanActionContext",
@@ -93,6 +101,9 @@ def run_test_plan_action_for_targets(orchestrator: object, route: Route, targets
         code = run_test_plan_action(context, json_output=json_output, dry_run=dry_run)
         if code != 0:
             return code
+        successful_targets.append(identity.target_obj)
+    if ship_message:
+        return run_ship_on_pass_for_targets(orchestrator, route, successful_targets, message=ship_message)
     return 0
 
 

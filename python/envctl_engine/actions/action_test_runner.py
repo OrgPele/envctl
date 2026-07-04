@@ -10,6 +10,11 @@ from envctl_engine.actions.action_test_execution_support import (
     resolve_suite_spinner_decision,
 )
 from envctl_engine.actions.action_test_interrupt_support import TestSuiteInterruptRegistry
+from envctl_engine.actions.action_test_ship_on_pass_support import (
+    run_ship_on_pass_for_targets,
+    ship_on_pass_message,
+    successful_outcome_targets,
+)
 from envctl_engine.actions.action_test_runner_failures import (
     clean_failure_lines as _clean_failure_lines,
     failed_summary_artifact_available as _failed_summary_artifact_available,
@@ -61,6 +66,13 @@ def run_test_action(
     resolve_spinner_policy: Callable[[dict[str, str]], Any],
 ) -> int:
     rt = orchestrator.runtime
+    ship_message, ship_message_code = ship_on_pass_message(
+        route,
+        dry_run=bool(route.flags.get("dry_run")),
+        json_output=bool(route.flags.get("json")),
+    )
+    if ship_message_code != 0:
+        return ship_message_code
     try:
         plan = build_test_action_execution_plan(orchestrator, route, targets)
     except RuntimeError as exc:
@@ -134,6 +146,13 @@ def run_test_action(
         orchestrator._emit_status(f"Test command finished for {len(targets)} target(s)")
     else:
         print(f"Executed test action for {len(targets)} target(s).")
+    if ship_message:
+        return run_ship_on_pass_for_targets(
+            orchestrator,
+            route,
+            successful_outcome_targets(targets, suite_outcomes),
+            message=ship_message,
+        )
     return 0
 
 
