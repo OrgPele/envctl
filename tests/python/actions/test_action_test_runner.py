@@ -15,6 +15,8 @@ class _Orchestrator:
         self.runtime = SimpleNamespace(env={}, config=SimpleNamespace(base_dir=Path("/repo"), raw={}))
         self.statuses: list[str] = []
         self.overviews: list[object] = []
+        self.ship_calls: list[tuple[object, list[object]]] = []
+        self.ship_code = 0
 
     def _test_suite_spinner_policy_enabled(self) -> bool:
         return False
@@ -27,6 +29,10 @@ class _Orchestrator:
 
     def _emit_status(self, message: str) -> None:
         self.statuses.append(message)
+
+    def run_ship_action(self, route, targets: list[object]) -> int:  # noqa: ANN001
+        self.ship_calls.append((route, targets))
+        return self.ship_code
 
 
 def _run(orchestrator: _Orchestrator, route, targets: list[object]) -> int:  # noqa: ANN001
@@ -75,26 +81,20 @@ class ActionTestRunnerShipOnPassTests(unittest.TestCase):
             patch.object(action_test_runner, "emit_suite_spinner_decision"),
             patch.object(action_test_runner, "emit_test_execution_mode"),
             patch.object(action_test_runner, "execute_test_suites", return_value=suite_result),
-            patch("envctl_engine.actions.action_test_ship_on_pass_support.run_ship_action") as ship,
         ):
             code = _run(orchestrator, route, targets)
 
         self.assertEqual(code, 1)
-        ship.assert_not_called()
+        self.assertEqual(orchestrator.ship_calls, [])
 
     def test_ship_on_pass_ships_after_test_success(self) -> None:
         orchestrator = _Orchestrator()
-        route = parse_route(["test", "--ship-on-pass", "Ship focused fix"], env={})
+        route = parse_route(["test", "--pr-base", "release", "--ship-on-pass", "Ship focused fix"], env={})
         targets = [SimpleNamespace(name="api", root=Path("/repo/trees/api/1"))]
         suite_result = SimpleNamespace(
             failures=[],
             outcomes=[{"index": 1, "returncode": 0, "project_name": "api", "suite": "backend"}],
         )
-        contexts = []
-
-        def fake_ship(context):  # noqa: ANN001, ANN202
-            contexts.append(context)
-            return 0
 
         with (
             patch.object(
@@ -106,14 +106,46 @@ class ActionTestRunnerShipOnPassTests(unittest.TestCase):
             patch.object(action_test_runner, "emit_suite_spinner_decision"),
             patch.object(action_test_runner, "emit_test_execution_mode"),
             patch.object(action_test_runner, "execute_test_suites", return_value=suite_result),
-            patch("envctl_engine.actions.action_test_ship_on_pass_support.run_ship_action", side_effect=fake_ship),
         ):
             code = _run(orchestrator, route, targets)
 
         self.assertEqual(code, 0)
-        self.assertEqual(len(contexts), 1)
-        self.assertEqual(contexts[0].project_name, "api")
-        self.assertEqual(contexts[0].env["ENVCTL_COMMIT_MESSAGE"], "Ship focused fix")
+        self.assertEqual(len(orchestrator.ship_calls), 1)
+        ship_route, ship_targets = orchestrator.ship_calls[0]
+        self.assertEqual(ship_route.command, "ship")
+        self.assertEqual(ship_route.projects, ["api"])
+        self.assertEqual(ship_route.flags["commit_message"], "Ship focused fix")
+        self.assertEqual(ship_route.flags["pr_base"], "release")
+        self.assertNotIn("ship_on_pass", ship_route.flags)
+        self.assertEqual(ship_targets, targets)
+
+    def test_ship_on_pass_ships_only_targets_with_executed_successful_suites(self) -> None:
+        orchestrator = _Orchestrator()
+        route = parse_route(["test", "--all", "--ship-on-pass", "Ship focused fix"], env={})
+        api = SimpleNamespace(name="api", root=Path("/repo/trees/api/1"))
+        web = SimpleNamespace(name="web", root=Path("/repo/trees/web/1"))
+        suite_result = SimpleNamespace(
+            failures=[],
+            outcomes=[{"index": 1, "returncode": 0, "project_name": "api", "suite": "backend"}],
+        )
+
+        with (
+            patch.object(
+                action_test_runner,
+                "build_test_action_execution_plan",
+                return_value=SimpleNamespace(execution_specs=[object()], interactive_command=False),
+            ),
+            patch.object(action_test_runner, "resolve_suite_spinner_decision", return_value=SimpleNamespace(use_suite_spinner_group=False, reason="test")),
+            patch.object(action_test_runner, "emit_suite_spinner_decision"),
+            patch.object(action_test_runner, "emit_test_execution_mode"),
+            patch.object(action_test_runner, "execute_test_suites", return_value=suite_result),
+        ):
+            code = _run(orchestrator, route, [api, web])
+
+        self.assertEqual(code, 0)
+        ship_route, ship_targets = orchestrator.ship_calls[0]
+        self.assertEqual(ship_route.projects, ["api"])
+        self.assertEqual(ship_targets, [api])
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from envctl_engine.actions.action_test_interrupt_support import TestSuiteInterru
 from envctl_engine.actions.action_test_ship_on_pass_support import (
     run_ship_on_pass_for_targets,
     ship_on_pass_message,
+    successful_outcome_targets,
 )
 from envctl_engine.actions.action_test_runner_failures import (
     clean_failure_lines as _clean_failure_lines,
@@ -146,7 +147,12 @@ def run_test_action(
     else:
         print(f"Executed test action for {len(targets)} target(s).")
     if ship_message:
-        return run_ship_on_pass_for_targets(orchestrator, route, targets, message=ship_message)
+        return run_ship_on_pass_for_targets(
+            orchestrator,
+            route,
+            successful_outcome_targets(targets, suite_outcomes),
+            message=ship_message,
+        )
     return 0
 
 

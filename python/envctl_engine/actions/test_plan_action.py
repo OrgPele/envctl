@@ -192,7 +192,8 @@ def _run_plan_commands(
     config_raw: Mapping[str, object] | None = None,
     route_flags: Mapping[str, object] | None = None,
 ) -> tuple[dict[str, object], int]:
-    commands = [str(item.get("command") or "").strip() for item in _command_items(payload)]
+    command_items = _command_items(payload)
+    commands = [str(item.get("command") or "").strip() for item in command_items]
     results: list[dict[str, object]] = []
     exit_code = 0
     pytest_parallel = PytestParallelPolicy(
@@ -201,22 +202,19 @@ def _run_plan_commands(
         route_flags=route_flags or {},
         include_focused_env=True,
     )
-    for index, command in enumerate(commands):
+    for index, item in enumerate(command_items):
+        command = commands[index]
         if not command:
             continue
         command_args = shlex.split(command)
         executed_args = _execution_args(command_args, cwd=cwd)
-        executed_args = parallelized_pytest_args(executed_args, cwd=cwd, policy=pytest_parallel)
+        if _allows_pytest_parallel(item):
+            executed_args = parallelized_pytest_args(executed_args, cwd=cwd, policy=pytest_parallel)
         started = time.monotonic()
-        completed = subprocess.run(
+        completed = _run_test_command(
             executed_args,
-            cwd=str(cwd),
+            cwd=cwd,
             env=_test_command_env(),
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=True,
-            text=True,
         )
         duration = round(time.monotonic() - started, 3)
         result = _command_result(
@@ -299,6 +297,54 @@ def _test_command_env() -> dict[str, str]:
     for key in _TEST_COMMAND_ENV_REMOVE:
         env_map.pop(key, None)
     return env_map
+
+
+def _run_test_command(args: list[str], *, cwd: Path, env: Mapping[str, str]) -> subprocess.CompletedProcess[str]:
+    process = subprocess.Popen(
+        args,
+        cwd=str(cwd),
+        env=dict(env),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+        text=True,
+    )
+    try:
+        stdout, stderr = process.communicate()
+    except KeyboardInterrupt:
+        _terminate_test_process_group(process)
+        raise
+    return subprocess.CompletedProcess(args=args, returncode=process.returncode, stdout=stdout, stderr=stderr)
+
+
+def _terminate_test_process_group(process: subprocess.Popen[str]) -> None:
+    pid = int(getattr(process, "pid", 0) or 0)
+    if pid <= 0:
+        return
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError:
+        return
+    try:
+        process.communicate(timeout=2.0)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        return
+    try:
+        process.communicate(timeout=2.0)
+    except subprocess.TimeoutExpired:
+        return
+
+
+def _allows_pytest_parallel(command_item: Mapping[str, object]) -> bool:
+    return not (
+        command_item.get("confidence") == "low"
+        and command_item.get("reason") == "no focused mapping matched changed files"
+    )
 
 
 def _signal_name(signal_number: int) -> str:

@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
-from envctl_engine.actions.action_command_support import build_action_extra_env
 from envctl_engine.actions.action_target_support import ActionTargetIdentity, action_target_identities
-from envctl_engine.actions.project_action_domain import ActionProjectContext, run_ship_action
 from envctl_engine.runtime.command_router import Route
 
 
@@ -31,11 +28,13 @@ def run_ship_on_pass_for_targets(orchestrator: Any, route: Route, targets: list[
     if not identities:
         print("error: --ship-on-pass could not resolve a target to ship.")
         return 1
-    for identity in identities:
-        code = run_ship_on_pass_for_identity(orchestrator, route, targets, identity, message=message)
-        if code != 0:
-            return code
-    return 0
+    ship_action = getattr(orchestrator, "run_ship_action", None)
+    if not callable(ship_action):
+        print("error: --ship-on-pass requires the normal ship action path.")
+        return 1
+    ship_targets = [identity.target_obj for identity in identities]
+    ship_route = _ship_route(route, project_names=[identity.name for identity in identities], message=message)
+    return int(ship_action(ship_route, ship_targets))
 
 
 def run_ship_on_pass_for_identity(
@@ -46,36 +45,37 @@ def run_ship_on_pass_for_identity(
     *,
     message: str,
 ) -> int:
-    runtime = getattr(orchestrator, "runtime")
-    ship_route = Route(
+    return run_ship_on_pass_for_targets(orchestrator, route, [identity.target_obj], message=message)
+
+
+def successful_outcome_targets(targets: list[object], outcomes: list[dict[str, object]]) -> list[object]:
+    successful_names = {
+        str(item.get("project_name", "")).strip()
+        for item in outcomes
+        if _outcome_returncode(item.get("returncode")) == 0 and str(item.get("project_name", "")).strip()
+    }
+    if not successful_names:
+        return []
+    return [identity.target_obj for identity in action_target_identities(targets) if identity.name in successful_names]
+
+
+def _ship_route(route: Route, *, project_names: list[str], message: str) -> Route:
+    flags = dict(route.flags)
+    flags.pop("ship_on_pass", None)
+    flags.pop("dry_run", None)
+    flags["commit_message"] = message
+    return Route(
         command="ship",
         mode=route.mode,
         raw_args=list(getattr(route, "raw_args", [])),
         passthrough_args=[],
-        projects=[identity.name],
-        flags={"commit_message": message, **({"human": True} if route.flags.get("human") else {})},
+        projects=project_names,
+        flags=flags,
     )
-    context = ActionProjectContext(
-        repo_root=Path(runtime.config.base_dir).resolve(),
-        project_root=identity.root.resolve(),
-        project_name=identity.name,
-        env=_ship_env(orchestrator, runtime, ship_route, targets, identity),
-    )
-    return run_ship_action(context)
 
 
-def _ship_env(
-    orchestrator: Any,
-    runtime: Any,
-    ship_route: Route,
-    targets: list[object],
-    identity: ActionTargetIdentity,
-) -> Mapping[str, str]:
-    extra_builder = getattr(orchestrator, "ship_action_extra_env", None)
-    extra = dict(extra_builder(ship_route) if callable(extra_builder) else build_action_extra_env(ship_route))
-    env_builder = getattr(orchestrator, "action_env", None)
-    if callable(env_builder):
-        return env_builder("ship", targets, route=ship_route, target=identity.target_obj, extra=extra)
-    env = dict(getattr(runtime, "env", {}))
-    env.update(extra)
-    return {str(key): str(value) for key, value in env.items()}
+def _outcome_returncode(value: object) -> int:
+    try:
+        return int(value if value is not None else 1)
+    except (TypeError, ValueError):
+        return 1
