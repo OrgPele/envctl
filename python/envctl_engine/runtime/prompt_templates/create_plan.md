@@ -93,7 +93,7 @@ Before showing or running any envctl worktree-and-prompt follow-up, default impl
 - For explicitly requested dependency/container/infrastructure verification, keep `--entire-system` unless a narrower dependency-only validation is part of the user's request or the repo's evidence.
 - If the user explicitly requests a launch scope, honor that request unless it conflicts with verified repo requirements.
 
-Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run. Separately record the validation lane: `envctl test-focused --ship-on-pass "<message>"` by default; use `envctl ship` as fallback, plus deployed PR URL browser validation only when browser E2E is required.
+Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run. Separately record the validation lane: `envctl test-focused --ship-on-pass "<message>"` by default; use `envctl ship` as fallback, plus deployed PR URL browser validation only when browser E2E is required. If ship returns `deployment_url`, that URL is the deployed website and must be tested thoroughly E2E.
 
 ## Browser E2E decision
 Before showing or running any envctl worktree-and-prompt follow-up, decide whether the implementation needs the browser E2E follow-up. Record both the browser E2E decision and rationale in the plan's Rollout / verification section as `browser_e2e_required: true` or `browser_e2e_required: false`.

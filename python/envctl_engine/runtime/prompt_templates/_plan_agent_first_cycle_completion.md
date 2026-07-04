@@ -6,6 +6,7 @@ Build the message as a commit/PR handoff message; its Verification section must 
 
 ## Full-stack PR-URL E2E
 For full-stack PR-URL E2E flows: Do not substitute localhost validation for deployed PR URL validation; local validation proves pre-ship readiness, while the queued browser follow-up proves the deployed app through the PR URL after ship.
+If ship returns a non-empty `deployment_url`, treat it as the deployed website and test it thoroughly E2E.
 
 ## Ship contract
 - Follow AGENTS.md for the ship workflow.
