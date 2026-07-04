@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import unittest
@@ -218,6 +219,60 @@ class TestPlanActionTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual(stdout.getvalue().splitlines(), ["passed: uv run --extra dev pytest -q tests/python/actions"])
+
+    def test_default_mode_isolates_test_subprocess_from_envctl_launcher_env(self) -> None:
+        class Context:
+            repo_root = Path("/repo")
+            project_root = Path("/repo")
+            project_name = "Main"
+            env = {"RUN_REPO_ROOT": "/runtime/repo", "KEEP_RUNTIME": "no"}
+
+        plan = {
+            "contract_version": "envctl.test_plan.v1",
+            "project": "Main",
+            "repo_root": "/repo",
+            "project_root": "/repo",
+            "changed_files": [],
+            "commands": [{"command": "uv run --extra dev pytest -q tests/python"}],
+            "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+        }
+        seen_kwargs: dict[str, object] = {}
+
+        def fake_run(args: list[str], **kwargs):  # noqa: ANN001
+            seen_kwargs.update(kwargs)
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+        dirty_parent_env = {
+            "KEEP_ME": "1",
+            "ENVCTL_ROOT_DIR": "/repo",
+            "ENVCTL_USE_REPO_WRAPPER": "1",
+            "ENVCTL_WRAPPER_ORIGINAL_ARGV0": "./bin/envctl",
+            "ENVCTL_WRAPPER_PYTHON_REEXEC": "1",
+            "ENVCTL_EXECUTION_ROOT": "/repo/trees/feature/1",
+            "RUN_ENGINE_PATH": "python:envctl_engine.runtime.cli",
+            "RUN_LAUNCHER_CONTEXT": "envctl",
+            "RUN_LAUNCHER_NAME": "envctl",
+            "RUN_REPO_ROOT": "/repo",
+            "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+        }
+        with (
+            patch.dict(os.environ, dirty_parent_env, clear=True),
+            patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+            patch("envctl_engine.actions.test_plan_action.subprocess.run", side_effect=fake_run),
+            redirect_stdout(StringIO()),
+        ):
+            code = run_test_plan_action(Context(), json_output=True)
+
+        self.assertEqual(code, 0)
+        self.assertIs(seen_kwargs["start_new_session"], True)
+        child_env = seen_kwargs["env"]
+        self.assertIsInstance(child_env, dict)
+        assert isinstance(child_env, dict)
+        self.assertEqual(child_env.get("KEEP_ME"), "1")
+        self.assertNotIn("KEEP_RUNTIME", child_env)
+        for key in dirty_parent_env:
+            if key != "KEEP_ME":
+                self.assertNotIn(key, child_env)
 
     def test_pytest_commands_use_free_core_worker_count_when_xdist_is_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
