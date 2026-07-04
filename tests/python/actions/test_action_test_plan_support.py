@@ -72,6 +72,93 @@ class ActionTestPlanSupportTests(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertEqual(calls, [("api", Path("/repo/trees/api/1"), True, False)])
 
+    def test_test_focused_ship_on_pass_rejects_blank_message_before_execution(self) -> None:
+        orchestrator = SimpleNamespace(runtime=SimpleNamespace(config=SimpleNamespace(base_dir=Path("/repo"))))
+        route = parse_route(["test-focused", "--ship-on-pass="], env={})
+        targets = [SimpleNamespace(name="api", root=Path("/repo/trees/api/1"))]
+
+        with (
+            patch(
+                "envctl_engine.actions.action_test_plan_support.run_test_plan_action",
+                side_effect=AssertionError("tests should not run"),
+            ),
+            patch("envctl_engine.actions.action_test_ship_on_pass_support.run_ship_action") as ship,
+        ):
+            code = run_test_plan_action_for_targets(orchestrator, route, targets)
+
+        self.assertEqual(code, 1)
+        ship.assert_not_called()
+
+    def test_test_focused_ship_on_pass_rejects_dry_run_before_execution(self) -> None:
+        orchestrator = SimpleNamespace(runtime=SimpleNamespace(config=SimpleNamespace(base_dir=Path("/repo"))))
+        route = parse_route(["test-focused", "--dry-run", "--ship-on-pass", "Ship focused fix"], env={})
+        targets = [SimpleNamespace(name="api", root=Path("/repo/trees/api/1"))]
+
+        with (
+            patch(
+                "envctl_engine.actions.action_test_plan_support.run_test_plan_action",
+                side_effect=AssertionError("tests should not run"),
+            ),
+            patch("envctl_engine.actions.action_test_ship_on_pass_support.run_ship_action") as ship,
+        ):
+            code = run_test_plan_action_for_targets(orchestrator, route, targets)
+
+        self.assertEqual(code, 1)
+        ship.assert_not_called()
+
+    def test_test_focused_ship_on_pass_rejects_json_before_execution(self) -> None:
+        orchestrator = SimpleNamespace(runtime=SimpleNamespace(config=SimpleNamespace(base_dir=Path("/repo"))))
+        route = parse_route(["test-focused", "--json", "--ship-on-pass", "Ship focused fix"], env={})
+        targets = [SimpleNamespace(name="api", root=Path("/repo/trees/api/1"))]
+
+        with (
+            patch(
+                "envctl_engine.actions.action_test_plan_support.run_test_plan_action",
+                side_effect=AssertionError("tests should not run"),
+            ),
+            patch("envctl_engine.actions.action_test_ship_on_pass_support.run_ship_action") as ship,
+        ):
+            code = run_test_plan_action_for_targets(orchestrator, route, targets)
+
+        self.assertEqual(code, 1)
+        ship.assert_not_called()
+
+    def test_test_focused_ship_on_pass_skips_ship_on_test_failure(self) -> None:
+        orchestrator = SimpleNamespace(runtime=SimpleNamespace(config=SimpleNamespace(base_dir=Path("/repo"))))
+        route = parse_route(["test-focused", "--ship-on-pass", "Ship focused fix"], env={})
+        targets = [SimpleNamespace(name="api", root=Path("/repo/trees/api/1"))]
+
+        with (
+            patch("envctl_engine.actions.action_test_plan_support.run_test_plan_action", return_value=3),
+            patch("envctl_engine.actions.action_test_ship_on_pass_support.run_ship_action") as ship,
+        ):
+            code = run_test_plan_action_for_targets(orchestrator, route, targets)
+
+        self.assertEqual(code, 3)
+        ship.assert_not_called()
+
+    def test_test_focused_ship_on_pass_ships_after_success_and_propagates_failure(self) -> None:
+        runtime = SimpleNamespace(config=SimpleNamespace(base_dir=Path("/repo")), env={"BASE": "1"})
+        orchestrator = SimpleNamespace(runtime=runtime)
+        route = parse_route(["test-focused", "--ship-on-pass", "Ship focused fix"], env={})
+        targets = [SimpleNamespace(name="api", root=Path("/repo/trees/api/1"))]
+        contexts = []
+
+        def fake_ship(context):  # noqa: ANN001, ANN202
+            contexts.append(context)
+            return 7
+
+        with (
+            patch("envctl_engine.actions.action_test_plan_support.run_test_plan_action", return_value=0),
+            patch("envctl_engine.actions.action_test_ship_on_pass_support.run_ship_action", side_effect=fake_ship),
+        ):
+            code = run_test_plan_action_for_targets(orchestrator, route, targets)
+
+        self.assertEqual(code, 7)
+        self.assertEqual(len(contexts), 1)
+        self.assertEqual(contexts[0].project_name, "api")
+        self.assertEqual(contexts[0].env["ENVCTL_COMMIT_MESSAGE"], "Ship focused fix")
+
     def test_test_service_selection_uses_flags_and_additional_service_names(self) -> None:
         backend_route = parse_route(["test", "--service", "backend"], env={"ENVCTL_DEFAULT_MODE": "trees"})
         frontend_route = parse_route(["test", "--service", "frontend"], env={"ENVCTL_DEFAULT_MODE": "trees"})

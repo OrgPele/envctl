@@ -34,7 +34,8 @@ def test_agent_instructions_include_serena_and_codegraph_only_when_configured(tm
     assert "Activate the current checkout/worktree before structural code navigation" in text
     assert "Read the owning code path before changing it" in text
     assert "smallest test that proves the real contract" in text
-    assert 'use `envctl ship -m "<message>"` from inside the current worktree' in text
+    assert 'use `envctl test-focused --ship-on-pass "<message>"` from inside the current worktree' in text
+    assert "stages intended non-protected changes via git add" in text
     assert "MAIN_TASK.md" not in text
     assert "pytest-xdist" not in text
     assert "ENVCTL_TEST_FOCUSED_PYTEST_WORKERS" not in text
@@ -155,5 +156,6 @@ def test_save_local_config_installs_agent_instructions(tmp_path: Path) -> None:
     text = (repo / "AGENTS.md").read_text(encoding="utf-8")
     assert "## CodeGraph" in text
     assert "Use CodeGraph for broad structure" in text
-    assert "`ship` owns commit, push, PR creation/update, and status-check reporting" in text
+    assert "stages intended non-protected changes via git add" in text
+    assert "commits, pushes, creates/updates the PR, and reports status checks" in text
     assert "ENVCTL_WORKTREE_CGC_INDEX" not in text

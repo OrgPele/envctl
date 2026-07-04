@@ -56,8 +56,9 @@ def test_agent_workflow_prefers_focused_tests_and_ship_handoff() -> None:
     assert "smallest test that proves the real\n  contract" in agents
     assert "MAIN_TASK.md" not in agents
     assert "run `envctl test-focused` from inside the current\n  worktree" in agents
-    assert 'use `envctl ship -m "<message>"` from inside the current\n  worktree' in agents
-    assert "`ship` owns commit, push, PR creation/update, and status-check\n  reporting" in agents
+    assert 'use `envctl test-focused --ship-on-pass "<message>"` from inside\n  the current worktree' in agents
+    assert "stages\n  intended non-protected changes via git add" in agents
+    assert "commits, pushes, creates/updates\n  the PR, and reports status checks" in agents
     assert "successful ship results stay silent" in agents
     assert "pytest-xdist" not in agents
     assert "ENVCTL_ACTION_TEST_PYTEST_WORKERS" not in agents

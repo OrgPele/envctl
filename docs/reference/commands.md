@@ -417,7 +417,10 @@ envctl test --failed
 envctl test --all --skip-startup --load-state
 envctl test --failed --skip-startup --load-state
 envctl test-focused
+envctl test-focused --ship-on-pass "Ship focused fix"
 ```
+
+`--ship-on-pass "<message>"` is available on `envctl test` and `envctl test-focused`. It trims the message, rejects empty messages before tests run, runs the existing `envctl ship` workflow only after tests pass, and returns the ship exit code if handoff fails. It is rejected with `--dry-run` or `--json` because those modes do not produce a single unambiguous validation-and-ship run.
 
 Pytest parallelism:
 
@@ -504,7 +507,7 @@ worktree creation. This policy applies to `--plan`, `--import`, `--setup-worktre
 
 Commit defaults:
 
-- prefer `envctl ship -m "<message>"` for normal handoff because it owns commit, push, PR creation/update, merge-conflict prediction, and check reporting
+- prefer `envctl test-focused --ship-on-pass "<message>"` when a handoff message is ready; use `envctl ship -m "<message>"` as the fallback because the ship workflow stages intended changes via git add, commits, pushes, creates/updates the PR, predicts merge conflicts, and reports checks
 - use `envctl commit -m "<message>"` only for commit-only maintenance flows or when `ship` is unavailable; `--commit-message <text>` remains the long form
 - `envctl commit` reads its fallback default commit message from the repo-local `.envctl-commit-message.md` file when you do not pass `-m`, `--commit-message`, or `--commit-message-file`
 - treat `### Envctl pointer ###` as the boundary after the last successful default commit; everything after it is the next default commit message

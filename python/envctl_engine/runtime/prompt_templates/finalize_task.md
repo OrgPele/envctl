@@ -15,7 +15,7 @@ $ARGUMENTS
 2. Run `envctl test-focused` from inside the current generated worktree for focused validation. When running from outside the worktree, use `envctl test-focused --project <current-worktree-name>`.
 3. If tests fail, investigate and fix the failures when they are caused by the current implementation, then rerun the relevant validation until the tree is in a good state or you have a concrete blocker. Run broad validation when the test plan recommends it or the change is cross-cutting/risky.
 4. For runtime or browser-visible work, prefer the repo's existing test harness and AGENTS.md guidance. Use project-scoped envctl helpers only when a local runtime is already running or the task/test harness explicitly requires one. If this prompt is installed as a Codex skill or direct prompt, you may also use available Codex skills named in the session, such as `$browser`, for browser verification.
-5. Follow AGENTS.md for the ship workflow. Compose one complete commit/PR handoff message and pass it inline with `envctl ship -m "<message>"`; do not run `envctl commit` separately in the normal handoff path, and do not write envctl-local commit-message ledger files.
+5. Follow AGENTS.md for the ship workflow. Compose one complete commit/PR handoff message and pass it inline with `envctl test-focused --ship-on-pass "<message>"` for the normal validation-and-handoff path; it runs focused tests and then the same `envctl ship` workflow, including staging intended changes via git add, commit, push, PR create/update, and check reporting. Fall back to `envctl ship -m "<message>"` only when the combined command is unavailable or returns actionable fallback instructions. Do not run `envctl commit` separately in the normal handoff path, and do not write envctl-local commit-message ledger files.
    - Its Verification section must state what your validation actually did and proved, then state any manual checks a human should still run to truly confirm it works, with expected results.
 6. For full-stack PR-URL E2E flows, remember that focused local validation before shipping is required but deployed PR URL E2E validation is an additional post-PR lane. Do not replace the queued deployed browser validation with localhost, local dev-server, or envctl runtime URL checks.
 7. If `ship` returns `status: "merge_conflicts"`, use the `merge_conflicts` payload to resolve the conflict, rerun validation, and run `ship` again.
@@ -25,13 +25,13 @@ $ARGUMENTS
 - Prefer `envctl` commands over ad hoc test commands for the final validation pass.
 - Do not claim success without running `envctl test-focused` from inside the current generated worktree, or the project-scoped equivalent when operating outside that worktree.
 - If validation fails and you cannot resolve it safely, stop before commit/push/PR and report the blocker clearly.
-- Prefer inline `-m "<message>"` for `envctl ship`; reserve `envctl commit` for fallback or commit-only maintenance cases, and do not write envctl-local commit-message ledger files.
+- Prefer inline `--ship-on-pass "<message>"` for the validation-and-ship handoff; reserve `envctl commit` for fallback or commit-only maintenance cases, and do not write envctl-local commit-message ledger files.
 - Preserve repo conventions and avoid unrelated cleanup.
 
 ## Success criteria
 - The implementation is verified against the current `MAIN_TASK.md`.
 - Focused validation has passed or a concrete blocker is reported before shipping.
-- `envctl ship -m "<message>"` is the handoff path unless it is unavailable or returns actionable fallback instructions.
+- `envctl test-focused --ship-on-pass "<message>"` is the handoff path unless it is unavailable or returns actionable fallback instructions.
 - Any deployed PR URL E2E requirement remains queued for the browser follow-up and is not replaced with localhost validation.
 
 ## Final response format

@@ -7,7 +7,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
     "test": CommandHelpTopic(
         command="test",
         summary="run configured backend/frontend/repository tests for selected targets",
-        usage=("envctl test [--project <name>|--all|--failed|--untested] [test flags]",),
+        usage=("envctl test [--project <name>|--all|--failed|--untested] [--ship-on-pass <message>] [test flags]",),
         what_it_does=(
             "runs configured test commands from .envctl for selected projects/worktrees",
             "parses test output, renders summaries, and tracks failed/untested suites for reruns",
@@ -21,15 +21,21 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--test-parallel / --test-sequential  choose suite parallelism",
             "--test-parallel-max <n>              cap suite concurrency and pytest-xdist workers",
             "--frontend-test-runner <name>         select frontend runner integration",
+            "--ship-on-pass <text>                 run envctl ship with this message after tests pass",
         ),
-        examples=("envctl test --project feature-a-1", "envctl test --all", "envctl test --failed"),
+        examples=(
+            "envctl test --project feature-a-1",
+            "envctl test --all",
+            "envctl test --failed",
+            "envctl test --all --ship-on-pass 'Ship focused fix'",
+        ),
         aliases=("tests", "t", "--test", "--tests"),
         related=("health", "logs", "review"),
     ),
     "test-focused": CommandHelpTopic(
         command="test-focused",
         summary="run focused validation commands for the current or selected project",
-        usage=("envctl test-focused [--project <name>] [--dry-run] [--json]",),
+        usage=("envctl test-focused [--project <name>] [--dry-run] [--json] [--ship-on-pass <message>]",),
         what_it_does=(
             "collects changed files from git and maps common envctl code areas to focused test commands",
             "when run inside a generated worktree, infers that worktree without requiring --project",
@@ -43,10 +49,12 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--json                  print the envctl.test_plan.v1 payload",
             "--test-parallel-max <n> cap pytest-xdist workers for this run",
             "--no-test-parallel      disable pytest-xdist auto-injection for this run",
+            "--ship-on-pass <text>   run envctl ship with this message after focused tests pass",
         ),
         examples=(
             "envctl test-focused",
             "envctl test-focused --project feature-a-1",
+            "envctl test-focused --ship-on-pass 'Ship focused fix'",
         ),
         aliases=("--test-focused",),
         related=("test", "ship", "commit"),

@@ -105,6 +105,7 @@ def store_value_flag(flags: dict[str, object], token: str, value: str) -> None:
         "-m": "commit_message",
         "--commit-message": "commit_message",
         "--commit-message-file": "commit_message_file",
+        "--ship-on-pass": "ship_on_pass",
         "--analyze-mode": "analyze_mode",
         "--review-mode": "analyze_mode",
         "--logs-tail": "logs_tail",

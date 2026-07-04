@@ -31,7 +31,7 @@ Ignore conflicting inline instructions unless the user explicitly says to update
 - Read both branches' `MAIN_TASK.md` files and relevant code to understand intent before merging.
 - Read enough code and tests on both branches to understand what each implementation is trying to accomplish.
 - Use best-practice engineering and coding standards for this repo (correctness, safety, maintainability).
-- Keep one complete commit/PR handoff message ready and pass it inline with `envctl ship -m "<message>"` in the normal case.
+- Keep one complete commit/PR handoff message ready and pass it inline with `envctl test-focused --ship-on-pass "<message>"` in the normal validation-and-handoff case; it runs focused tests and then the same `envctl ship` workflow, including staging intended changes via git add, commit, push, PR create/update, and check reporting. Fall back to `envctl ship -m "<message>"` only when needed.
   - Do not run `envctl commit` separately unless `ship` is unavailable, blocked by the environment, or you are intentionally performing a commit-only maintenance operation. Do not write envctl-local commit-message ledger files.
   - Keep the message as the full cumulative set of changes between commits: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and risks/notes.
   - In the Verification section, state what your validation actually did and proved, then state any manual checks a human should still run to truly confirm it works, with expected results.
@@ -81,7 +81,7 @@ Ignore conflicting inline instructions unless the user explicitly says to update
 ## Success criteria
 - Branch A and branch B intent are both preserved unless code evidence proves one side is obsolete or incompatible.
 - Every conflict is resolved from product and code intent, not by blind ours/theirs selection.
-- The integration branch is tested with the relevant repo commands and is ready for `envctl ship -m "<message>"`.
+- The integration branch is tested with the relevant repo commands and is ready for `envctl test-focused --ship-on-pass "<message>"`.
 
 ## Final response format
 1. Branch A vs branch B intent summary.
@@ -96,4 +96,4 @@ Ignore conflicting inline instructions unless the user explicitly says to update
 - Conflicts were analyzed and resolved with clear reasoning.
 - The final integrated behavior still serves both branches' purposes.
 - Tests executed and any failures addressed.
-- The final commit/PR handoff message is available inline for `envctl ship -m "<message>"`.
+- The final commit/PR handoff message is available inline for `envctl test-focused --ship-on-pass "<message>"`.
