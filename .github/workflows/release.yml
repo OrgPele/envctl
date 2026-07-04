@@ -223,12 +223,23 @@ jobs:
             if [ -n "$pr_number" ]; then
               gh pr edit "$pr_number" --repo "$GITHUB_REPOSITORY" --title "Release envctl ${NEW_VERSION}" --body-file "$body" || true
             else
-              gh pr create \
+              manual_pr_url="https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}?expand=1"
+              if ! gh pr create \
                 --repo "$GITHUB_REPOSITORY" \
                 --base main \
                 --head "$branch" \
                 --title "Release envctl ${NEW_VERSION}" \
-                --body-file "$body"
+                --body-file "$body"; then
+                echo "::notice::could not create the release PR automatically; open ${manual_pr_url}"
+                {
+                  echo "## Release PR required"
+                  echo
+                  echo "The release metadata branch was pushed to \`${branch}\`, but this workflow token could not create the PR."
+                  echo
+                  echo "Open the release PR manually: ${manual_pr_url}"
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
               pr_number=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq '.[0].number // ""')
             fi
 

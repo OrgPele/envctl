@@ -38,6 +38,15 @@ def test_release_workflow_uses_release_token_for_pr_merge_and_github_release() -
     assert "GH_TOKEN: ${{ secrets.ENVCTL_RELEASE_TOKEN || secrets.ENVCTL_RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}" in workflow
 
 
+def test_release_workflow_prints_manual_pr_handoff_when_token_cannot_create_pr() -> None:
+    workflow = _release_workflow()
+
+    assert 'manual_pr_url="https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}?expand=1"' in workflow
+    assert "could not create the release PR automatically" in workflow
+    assert "Release PR required" in workflow
+    assert "Open the release PR manually" in workflow
+
+
 def test_release_workflow_prefers_checked_in_release_notes_file_before_generated_notes() -> None:
     workflow = _release_workflow()
 
