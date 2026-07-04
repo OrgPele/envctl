@@ -13,7 +13,7 @@ from typing import Any, Callable, Mapping, Sequence
 from envctl_engine.ui.spinner import spinner, spinner_enabled, use_spinner_policy
 from envctl_engine.ui.spinner_service import resolve_spinner_policy
 
-_STREAMING_PROGRESS_SECONDS = 10.0
+_STREAMING_PROGRESS_SECONDS = 3.0
 
 
 class ProcessStreamingMixin:

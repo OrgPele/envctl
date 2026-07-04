@@ -373,9 +373,9 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_REQUIREMENTS_PARALLEL_MAX` | `4` | Max concurrently starting managed dependencies when requirement parallel mode is enabled. |
 | `ENVCTL_ACTION_TEST_PARALLEL` | `true` | Run backend/frontend test suites in parallel when both suites are detected. |
 | `ENVCTL_ACTION_TEST_PARALLEL_MAX` | `4` | Max concurrently running test suites when parallel test mode is enabled. |
-| `ENVCTL_ACTION_TEST_PYTEST_PARALLEL` | `true` | Enable pytest-xdist auto-injection for `envctl test` and `envctl test-focused` when the command runs `python -m pytest`, pytest-xdist is installed, and the command does not already set xdist flags. |
+| `ENVCTL_ACTION_TEST_PYTEST_PARALLEL` | `true` for `envctl test`, `false` for `envctl test-focused` unless explicitly configured | Enable pytest-xdist auto-injection when the command runs `python -m pytest`, pytest-xdist is installed, and the command does not already set xdist flags. |
 | `ENVCTL_ACTION_TEST_PYTEST_WORKERS` | free CPU cores | Cap pytest-xdist workers for both `envctl test` and `envctl test-focused`. Without an explicit cap, envctl uses current CPU load to estimate free cores. |
-| `ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL` | follows `ENVCTL_ACTION_TEST_PYTEST_PARALLEL` | Focused-only pytest-xdist auto-injection override for `envctl test-focused`. |
+| `ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL` | `false` | Focused-only pytest-xdist auto-injection override for `envctl test-focused`. Set `true` or use `--test-parallel` to opt in. |
 | `ENVCTL_TEST_FOCUSED_PYTEST_WORKERS` | follows `ENVCTL_ACTION_TEST_PYTEST_WORKERS` | Focused-only pytest-xdist worker cap for `envctl test-focused`. |
 
 ## Plan Agent Launch

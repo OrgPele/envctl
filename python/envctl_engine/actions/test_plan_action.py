@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import IO, Iterable, Mapping
+from typing import IO, Callable, Iterable, Mapping
 
 from envctl_engine.actions.action_pytest_parallel_support import (
     PytestParallelPolicy,
@@ -37,6 +37,17 @@ _DOC_TOOLING_TESTS = (
 )
 _TEST_COMMAND_ENV_REMOVE = {
     "ENVCTL_EXECUTION_ROOT",
+    "ENVCTL_ACTION_COMMAND",
+    "ENVCTL_ACTION_HUMAN",
+    "ENVCTL_ACTION_INTERACTIVE",
+    "ENVCTL_ACTION_JSON",
+    "ENVCTL_ACTION_PROJECT",
+    "ENVCTL_ACTION_PROJECTS",
+    "ENVCTL_ACTION_PROJECT_ROOT",
+    "ENVCTL_ACTION_REPO_ROOT",
+    "ENVCTL_ACTION_RUN_ID",
+    "ENVCTL_ACTION_RUNTIME_ROOT",
+    "ENVCTL_ACTION_TREE_DIFFS_ROOT",
     "ENVCTL_INVOCATION_CWD",
     "ENVCTL_ROOT_DIR",
     "ENVCTL_USE_REPO_WRAPPER",
@@ -48,7 +59,7 @@ _TEST_COMMAND_ENV_REMOVE = {
     "RUN_REPO_ROOT",
     "RUN_SH_RUNTIME_DIR",
 }
-_TEST_COMMAND_PROGRESS_SECONDS = 10.0
+_TEST_COMMAND_PROGRESS_SECONDS = 3.0
 
 
 def build_test_plan(
@@ -165,6 +176,7 @@ def run_test_plan_action(context: object, *, json_output: bool = False, dry_run:
             env=_context_mapping(context, "env", os.environ),
             config_raw=_context_mapping(context, "config_raw", {}),
             route_flags=_context_mapping(context, "route_flags", {}),
+            progress_callback=lambda message: print(message, file=sys.stderr, flush=True),
         )
         payload["run"] = run_payload
     if json_output:
@@ -196,6 +208,7 @@ def _run_plan_commands(
     env: Mapping[str, object] | None = None,
     config_raw: Mapping[str, object] | None = None,
     route_flags: Mapping[str, object] | None = None,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> tuple[dict[str, object], int]:
     command_items = _command_items(payload)
     commands = [str(item.get("command") or "").strip() for item in command_items]
@@ -214,6 +227,8 @@ def _run_plan_commands(
         command_args = shlex.split(command)
         executed_args = _execution_args(command_args, cwd=cwd)
         executed_args = parallelized_pytest_args(executed_args, cwd=cwd, policy=pytest_parallel)
+        if callable(progress_callback):
+            progress_callback(f"running: {command}")
         started = time.monotonic()
         completed = _run_test_command(
             executed_args,
@@ -317,8 +332,8 @@ def _run_test_command(args: list[str], *, cwd: Path, env: Mapping[str, str]) -> 
     )
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
-    stdout_thread = _start_pipe_reader(process.stdout, stdout_chunks)
-    stderr_thread = _start_pipe_reader(process.stderr, stderr_chunks)
+    stdout_thread = _start_pipe_reader(process.stdout, stdout_chunks, sink=sys.stdout)
+    stderr_thread = _start_pipe_reader(process.stderr, stderr_chunks, sink=sys.stderr)
     try:
         _wait_for_test_process(process, args)
     except KeyboardInterrupt:
@@ -344,15 +359,23 @@ def _wait_for_test_process(process: subprocess.Popen[str], args: list[str]) -> N
             print(f"still running: {shlex.join(args)}", file=sys.stderr, flush=True)
 
 
-def _start_pipe_reader(pipe: IO[str] | None, chunks: list[str]) -> threading.Thread | None:
+def _start_pipe_reader(
+    pipe: IO[str] | None,
+    chunks: list[str],
+    *,
+    sink: IO[str] | None = None,
+) -> threading.Thread | None:
     if pipe is None:
         return None
 
     def read_pipe() -> None:
-        for chunk in iter(lambda: pipe.read(8192), ""):
+        for chunk in iter(lambda: pipe.read(1), ""):
             if not chunk:
                 break
             chunks.append(chunk)
+            if sink is not None:
+                sink.write(chunk)
+                sink.flush()
 
     thread = threading.Thread(target=read_pipe, daemon=True)
     thread.start()
