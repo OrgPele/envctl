@@ -12,8 +12,8 @@ Use Serena for precise, symbol-aware code work:
 How to use Serena:
 - Codex and opencode can use the globally configured Serena MCP server; activate
   this repo with Serena when doing code navigation or architecture work.
-- In Codex, call Serena's `initial_instructions` once, then activate this repo
-  with `/Users/kfiramar/projects/envctl` before architecture or navigation work.
+- In Codex, call Serena's `initial_instructions` once, then activate the
+  current checkout/worktree path before architecture or navigation work.
 - In opencode, use the globally configured `serena` MCP server; it starts with
   `serena start-mcp-server --context=ide --project-from-cwd`.
 - Start with `get_symbols_overview` when you know the file but not the symbol.
@@ -81,6 +81,9 @@ CGC boundaries:
 
 ## Envctl Workflow
 
+- In envctl source checkouts, prefer `PATH="$PWD/.venv/bin:$PATH" envctl ...`
+  or `ENVCTL_USE_REPO_WRAPPER=1 ./bin/envctl ...` so validation and shipping
+  run the current checkout instead of an installed `envctl`.
 - During implementation, run `envctl test-focused` from inside the current
   worktree for the normal validation loop. Use broader validation only when the
   focused plan recommends it or the change is cross-cutting/risky.

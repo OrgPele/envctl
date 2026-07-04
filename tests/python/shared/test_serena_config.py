@@ -46,10 +46,19 @@ def test_agent_tooling_prefers_cgc_over_legacy_codegraph() -> None:
     assert "CODEGRAPH_START" not in agents
 
 
+def test_agent_tooling_activates_serena_against_current_checkout() -> None:
+    agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "activate the\n  current checkout/worktree path" in agents
+    assert "/Users/kfiramar/projects/envctl" not in agents
+
+
 def test_agent_workflow_prefers_focused_tests_and_ship_handoff() -> None:
     agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
     assert agents.count("## Envctl Workflow") == 1
+    assert 'PATH="$PWD/.venv/bin:$PATH" envctl ...' in agents
+    assert "run the current checkout instead of an installed `envctl`" in agents
     assert "run `envctl test-focused` from inside the current\n  worktree" in agents
     assert 'use `envctl ship -m "<message>"` from inside the current\n  worktree' in agents
     assert "Do not run separate raw `git`/`gh` commit, push, PR, or status-check\n  commands" in agents
