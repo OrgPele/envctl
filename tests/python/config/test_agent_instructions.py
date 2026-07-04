@@ -35,6 +35,8 @@ def test_agent_instructions_include_serena_and_codegraph_only_when_configured(tm
     assert "Read the owning code path before changing it" in text
     assert "smallest test that proves the real contract" in text
     assert 'use `envctl test-focused --ship-on-pass "<message>"` from inside the current worktree' in text
+    assert "single envctl local validation-and-handoff command" in text
+    assert "do not run standalone `envctl test-focused`" in text
     assert "stages intended non-protected changes via git add" in text
     assert "MAIN_TASK.md" not in text
     assert "pytest-xdist" not in text

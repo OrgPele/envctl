@@ -231,11 +231,13 @@ class TestPlanActionTests(unittest.TestCase):
             patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
             patch("envctl_engine.actions.test_plan_action._run_test_command", side_effect=fake_run),
             redirect_stdout(StringIO()) as stdout,
+            redirect_stderr(StringIO()) as stderr,
         ):
             code = run_test_plan_action(Context())
 
         self.assertEqual(code, 0)
         self.assertEqual(stdout.getvalue().splitlines(), ["passed: uv run --extra dev pytest -q tests/python/actions"])
+        self.assertEqual(stderr.getvalue().splitlines(), ["running: uv run --extra dev pytest -q tests/python/actions"])
 
     def test_default_mode_isolates_test_subprocess_from_envctl_launcher_env(self) -> None:
         class Context:
@@ -266,6 +268,11 @@ class TestPlanActionTests(unittest.TestCase):
             "ENVCTL_WRAPPER_ORIGINAL_ARGV0": "./bin/envctl",
             "ENVCTL_WRAPPER_PYTHON_REEXEC": "1",
             "ENVCTL_EXECUTION_ROOT": "/repo/trees/feature/1",
+            "ENVCTL_ACTION_COMMAND": "test-focused",
+            "ENVCTL_ACTION_PROJECT": "feature-1",
+            "ENVCTL_ACTION_PROJECT_ROOT": "/repo/trees/feature/1",
+            "ENVCTL_ACTION_REPO_ROOT": "/repo",
+            "ENVCTL_ACTION_INTERACTIVE": "1",
             "RUN_ENGINE_PATH": "python:envctl_engine.runtime.cli",
             "RUN_LAUNCHER_CONTEXT": "envctl",
             "RUN_LAUNCHER_NAME": "envctl",
@@ -290,7 +297,7 @@ class TestPlanActionTests(unittest.TestCase):
             if key != "KEEP_ME":
                 self.assertNotIn(key, child_env)
 
-    def test_pytest_commands_use_free_core_worker_count_when_xdist_is_available(self) -> None:
+    def test_pytest_commands_use_free_core_worker_count_when_xdist_is_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             python = repo / ".venv" / "bin" / "python"
@@ -304,7 +311,7 @@ class TestPlanActionTests(unittest.TestCase):
                 project_name = "Main"
                 env: dict[str, str] = {}
                 config_raw: dict[str, str] = {}
-                route_flags: dict[str, object] = {}
+                route_flags = {"test_parallel": True}
 
             plan = {
                 "contract_version": "envctl.test_plan.v1",
@@ -349,7 +356,10 @@ class TestPlanActionTests(unittest.TestCase):
                 repo_root = repo
                 project_root = repo
                 project_name = "Main"
-                env = {"ENVCTL_TEST_FOCUSED_PYTEST_WORKERS": "3"}
+                env = {
+                    "ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL": "true",
+                    "ENVCTL_TEST_FOCUSED_PYTEST_WORKERS": "3",
+                }
                 config_raw: dict[str, str] = {}
                 route_flags: dict[str, object] = {}
 
@@ -383,7 +393,7 @@ class TestPlanActionTests(unittest.TestCase):
             [["uv", "run", "--extra", "dev", "pytest", "-n", "3", "-q", "tests/python/actions"]],
         )
 
-    def test_pytest_parallel_can_be_disabled_for_focused_runs(self) -> None:
+    def test_pytest_parallel_is_disabled_by_default_for_focused_runs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             python = repo / ".venv" / "bin" / "python"
@@ -395,7 +405,7 @@ class TestPlanActionTests(unittest.TestCase):
                 repo_root = repo
                 project_root = repo
                 project_name = "Main"
-                env = {"ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL": "false"}
+                env: dict[str, str] = {}
                 config_raw: dict[str, str] = {}
                 route_flags: dict[str, object] = {}
 
@@ -425,7 +435,48 @@ class TestPlanActionTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python/actions"]])
 
-    def test_low_confidence_full_fallback_uses_bounded_xdist(self) -> None:
+    def test_runtime_focused_pytest_runs_without_xdist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            (repo / ".venv" / "lib" / "python3.12" / "site-packages" / "xdist").mkdir(parents=True)
+
+            class Context:
+                repo_root = repo
+                project_root = repo
+                project_name = "Main"
+                env: dict[str, str] = {}
+                config_raw: dict[str, str] = {}
+                route_flags: dict[str, object] = {}
+
+            plan = {
+                "contract_version": "envctl.test_plan.v1",
+                "project": "Main",
+                "repo_root": str(repo),
+                "project_root": str(repo),
+                "changed_files": ["python/envctl_engine/runtime/command_router.py"],
+                "commands": [{"command": "uv run --extra dev pytest -q tests/python/runtime"}],
+                "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+            }
+            calls: list[list[str]] = []
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                calls.append(args)
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+            with (
+                patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+                patch("envctl_engine.actions.test_plan_action.shutil.which", return_value="/usr/bin/uv"),
+                patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=8),
+                patch("envctl_engine.actions.test_plan_action._run_test_command", side_effect=fake_run),
+                redirect_stdout(StringIO()),
+                redirect_stderr(StringIO()),
+            ):
+                code = run_test_plan_action(Context())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python/runtime"]])
+
+    def test_low_confidence_full_fallback_runs_single_thread_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             python = repo / ".venv" / "bin" / "python"
@@ -473,7 +524,7 @@ class TestPlanActionTests(unittest.TestCase):
                 code = run_test_plan_action(Context())
 
         self.assertEqual(code, 0)
-        self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-n", "8", "-q", "tests/python"]])
+        self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python"]])
 
     def test_focused_pytest_parallel_respects_plugin_autoload_disable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -489,7 +540,7 @@ class TestPlanActionTests(unittest.TestCase):
                 project_name = "Main"
                 env = {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
                 config_raw: dict[str, str] = {}
-                route_flags: dict[str, object] = {}
+                route_flags = {"test_parallel": True}
 
             plan = {
                 "contract_version": "envctl.test_plan.v1",
@@ -724,6 +775,7 @@ class TestPlanActionTests(unittest.TestCase):
         with (
             patch("envctl_engine.actions.test_plan_action.subprocess.Popen", return_value=process),
             patch("envctl_engine.actions.test_plan_action._TEST_COMMAND_PROGRESS_SECONDS", 0.01),
+            redirect_stdout(StringIO()) as stdout,
             redirect_stderr(StringIO()) as stderr,
         ):
             completed = test_plan_action._run_test_command(["pytest", "-q"], cwd=Path("/repo"), env={"KEEP": "1"})
@@ -731,7 +783,9 @@ class TestPlanActionTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0)
         self.assertEqual(completed.stdout, "stdout\n")
         self.assertEqual(completed.stderr, "stderr\n")
-        self.assertEqual(stderr.getvalue().splitlines(), ["still running: pytest -q"])
+        self.assertEqual(stdout.getvalue().splitlines(), ["stdout"])
+        self.assertIn("stderr", stderr.getvalue().splitlines())
+        self.assertIn("still running: pytest -q", stderr.getvalue().splitlines())
 
     def test_default_mode_reports_success_after_all_focused_commands_pass(self) -> None:
         class Context:

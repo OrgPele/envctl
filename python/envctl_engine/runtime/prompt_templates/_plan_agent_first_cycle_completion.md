@@ -9,4 +9,4 @@ For full-stack PR-URL E2E flows: Do not substitute localhost validation for depl
 
 ## Ship contract
 - Follow AGENTS.md for the ship workflow.
-- Use `envctl test-focused --ship-on-pass "<message>"` for the handoff unless it is unavailable or returns actionable fallback instructions; it runs focused tests and then the same `envctl ship` workflow, including staging intended changes via git add, commit, push, PR create/update, and check reporting. Then fall back to `envctl ship -m "<message>"`.
+- Use `envctl test-focused --ship-on-pass "<message>"` for the handoff unless it is unavailable or returns actionable fallback instructions; it runs focused tests and then the same `envctl ship` workflow, including staging intended changes via git add, commit, push, PR create/update, and check reporting. Do not run standalone `envctl test-focused` first or repeat it afterward. Then fall back to `envctl ship -m "<message>"`.

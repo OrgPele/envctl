@@ -41,7 +41,7 @@ class PytestParallelPolicy:
             self.env.get("ENVCTL_ACTION_TEST_PYTEST_PARALLEL"),
             self.config_raw.get("ENVCTL_ACTION_TEST_PYTEST_PARALLEL"),
         )
-        return parse_bool(configured, True)
+        return parse_bool(configured, not self.include_focused_env)
 
     def workers(self) -> int:
         focused_values = (
