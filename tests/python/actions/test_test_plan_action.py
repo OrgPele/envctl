@@ -130,6 +130,9 @@ class TestPlanActionTests(unittest.TestCase):
 
         self.assertEqual(result["changed_files"], ["new_tool.py", "python/envctl_engine/config/__init__.py"])
         self.assertTrue(is_envctl_local_artifact_path(".envctl-commit-message.md"))
+        self.assertTrue(is_envctl_local_artifact_path(".codegraph/codegraph.db"))
+        self.assertTrue(is_envctl_local_artifact_path(".serena/project.local.yml"))
+        self.assertFalse(is_envctl_local_artifact_path(".serena/project.yml"))
         self.assertFalse(is_envctl_local_artifact_path("docs/reference/.envctl.example"))
 
     def test_default_mode_executes_focused_commands_until_first_failure(self) -> None:
@@ -215,6 +218,138 @@ class TestPlanActionTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual(stdout.getvalue().splitlines(), ["passed: uv run --extra dev pytest -q tests/python/actions"])
+
+    def test_pytest_commands_use_free_core_worker_count_when_xdist_is_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            python = repo / ".venv" / "bin" / "python"
+            (repo / ".venv" / "lib" / "python3.12" / "site-packages" / "xdist").mkdir(parents=True)
+            python.parent.mkdir(parents=True, exist_ok=True)
+            python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+
+            class Context:
+                repo_root = repo
+                project_root = repo
+                project_name = "Main"
+                env: dict[str, str] = {}
+                config_raw: dict[str, str] = {}
+                route_flags: dict[str, object] = {}
+
+            plan = {
+                "contract_version": "envctl.test_plan.v1",
+                "project": "Main",
+                "repo_root": str(repo),
+                "project_root": str(repo),
+                "changed_files": ["python/envctl_engine/actions/test_plan_action.py"],
+                "commands": [{"command": "uv run --extra dev pytest -q tests/python/actions"}],
+                "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+            }
+            calls: list[list[str]] = []
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                calls.append(args)
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+            with (
+                patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+                patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=8),
+                patch("envctl_engine.actions.action_pytest_parallel_support.os.getloadavg", return_value=(2.1, 1.0, 1.0)),
+                patch("envctl_engine.actions.test_plan_action.subprocess.run", side_effect=fake_run),
+                redirect_stdout(StringIO()),
+            ):
+                code = run_test_plan_action(Context())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            calls,
+            [[str(python.resolve()), "-m", "pytest", "-n", "5", "-q", "tests/python/actions"]],
+        )
+
+    def test_pytest_parallel_worker_count_can_be_capped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            python = repo / ".venv" / "bin" / "python"
+            (repo / ".venv" / "lib" / "python3.12" / "site-packages" / "xdist").mkdir(parents=True)
+            python.parent.mkdir(parents=True, exist_ok=True)
+            python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+
+            class Context:
+                repo_root = repo
+                project_root = repo
+                project_name = "Main"
+                env = {"ENVCTL_TEST_FOCUSED_PYTEST_WORKERS": "3"}
+                config_raw: dict[str, str] = {}
+                route_flags: dict[str, object] = {}
+
+            plan = {
+                "contract_version": "envctl.test_plan.v1",
+                "project": "Main",
+                "repo_root": str(repo),
+                "project_root": str(repo),
+                "changed_files": ["python/envctl_engine/actions/test_plan_action.py"],
+                "commands": [{"command": "uv run --extra dev pytest -q tests/python/actions"}],
+                "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+            }
+            calls: list[list[str]] = []
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                calls.append(args)
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+            with (
+                patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+                patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=8),
+                patch("envctl_engine.actions.test_plan_action.subprocess.run", side_effect=fake_run),
+                redirect_stdout(StringIO()),
+            ):
+                code = run_test_plan_action(Context())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            calls,
+            [[str(python.resolve()), "-m", "pytest", "-n", "3", "-q", "tests/python/actions"]],
+        )
+
+    def test_pytest_parallel_can_be_disabled_for_focused_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            python = repo / ".venv" / "bin" / "python"
+            (repo / ".venv" / "lib" / "python3.12" / "site-packages" / "xdist").mkdir(parents=True)
+            python.parent.mkdir(parents=True, exist_ok=True)
+            python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+
+            class Context:
+                repo_root = repo
+                project_root = repo
+                project_name = "Main"
+                env = {"ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL": "false"}
+                config_raw: dict[str, str] = {}
+                route_flags: dict[str, object] = {}
+
+            plan = {
+                "contract_version": "envctl.test_plan.v1",
+                "project": "Main",
+                "repo_root": str(repo),
+                "project_root": str(repo),
+                "changed_files": ["python/envctl_engine/actions/test_plan_action.py"],
+                "commands": [{"command": "uv run --extra dev pytest -q tests/python/actions"}],
+                "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+            }
+            calls: list[list[str]] = []
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                calls.append(args)
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+            with (
+                patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+                patch("envctl_engine.actions.test_plan_action.subprocess.run", side_effect=fake_run),
+                redirect_stdout(StringIO()),
+            ):
+                code = run_test_plan_action(Context())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [[str(python.resolve()), "-m", "pytest", "-q", "tests/python/actions"]])
 
     def test_default_mode_prints_failure_output_in_non_json(self) -> None:
         class Context:

@@ -273,7 +273,10 @@ class ReleaseShipabilityGateCliTests(unittest.TestCase):
             (repo / "MAIN_TASK.md").write_text("task\n", encoding="utf-8")
             excludes_path = Path(tmpdir) / "git" / "ignore"
             excludes_path.parent.mkdir(parents=True, exist_ok=True)
-            excludes_path.write_text(".envctl*\nMAIN_TASK.md\nOLD_TASK_*.md\ntrees/\ntrees-*\n", encoding="utf-8")
+            excludes_path.write_text(
+                ".envctl*\n.codegraph/\n.serena/project.local.yml\nMAIN_TASK.md\nOLD_TASK_*.md\ntrees/\ntrees-*\n",
+                encoding="utf-8",
+            )
             env = self._isolated_git_env(tmpdir, excludes_path=excludes_path)
 
             result = subprocess.run(

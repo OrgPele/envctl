@@ -157,6 +157,12 @@ uv run --extra dev pytest -q -n 4 --dist=loadscope --maxfail=25 --ff --junitxml=
 
 `--dist=loadscope` keeps tests from the same module or class on the same worker, which reduces fixture churn and keeps failure ordering easier to interpret while still running the suite in parallel.
 
+`envctl test` and `envctl test-focused` add pytest-xdist workers automatically for
+`python -m pytest` commands when xdist is available. The worker count is based on
+current free CPU cores unless capped by `--test-parallel-max <n>` or
+`ENVCTL_ACTION_TEST_PYTEST_WORKERS=<n>`. Use
+`ENVCTL_TEST_FOCUSED_PYTEST_WORKERS=<n>` for a focused-only cap.
+
 For an inventory of suite size, helpers, markers, skipped or slow tests, and duplicate test-name clusters:
 
 ```bash
@@ -180,9 +186,10 @@ serena project health-check
 Serena is not a CI gate for this repository. Keep CI-style validation centered on pytest, ruff, build, and the release
 shipability gate. Use Serena as an interactive symbol/reference layer before broad text search.
 
-CodeGraphContext (`cgc`) is the repo-wide graph analysis layer for ownership, coupling, impact, and hotspot questions.
-Use `cgc` commands such as `cgc stats --context Envctl`, `cgc report --context Envctl`, and read-only `cgc query ...`
-when the question crosses many modules. Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl.
+CodeGraph is the repo-wide graph context layer for call paths, flows, blast radius, and affected-test questions.
+Use `codegraph explore "<question>"`, `codegraph node <symbol>`, or the CodeGraph MCP tool when the question crosses
+many modules. Envctl-generated worktrees should use their own `.codegraph/` index; trust it only when
+`.envctl-state/code-intelligence.json` reports `codegraph_index_succeeded: true`.
 Use `rg` for exact strings such as flags, log messages, config keys, and docs prose.
 
 Use narrower scopes while iterating, then widen before finishing. Targeted `unittest` runs remain useful for focused module work, but `pytest -q` is the authoritative repo-wide signal.

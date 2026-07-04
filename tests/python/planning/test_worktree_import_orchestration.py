@@ -117,6 +117,15 @@ class WorktreeImportOrchestrationTests(unittest.TestCase):
             self.assertEqual(provenance["imported_branch"], "feature/foo")
             self.assertEqual(provenance["import_remote"], "origin")
             self.assertEqual(provenance["remote_ref"], "origin/feature/foo")
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "-C", str(created.root), "status", "--short", "--untracked-files=all"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout,
+                "",
+            )
             self.assertEqual(result.raw_projects, [("feature-foo", created.root)])
             event_names = [event for event, _payload in events]
             self.assertEqual(

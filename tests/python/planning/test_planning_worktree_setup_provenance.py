@@ -54,6 +54,12 @@ class PlanningWorktreeSetupProvenanceTests(PlanningWorktreeSetupTestCase):
             self.assertTrue((repo / "trees" / "feature-a" / "1" / "frontend" / "node_modules").is_symlink())
             self.assertEqual(
                 (repo / "trees" / "feature-a" / "1" / ".serena" / "project.yml").read_text(encoding="utf-8"),
+                'project_name: "repo"\n',
+            )
+            self.assertEqual(
+                (repo / "trees" / "feature-a" / "1" / ".serena" / "project.local.yml").read_text(
+                    encoding="utf-8"
+                ),
                 'project_name: "repo-feature-a-1"\n',
             )
             self.assertEqual(
@@ -77,8 +83,11 @@ class PlanningWorktreeSetupProvenanceTests(PlanningWorktreeSetupTestCase):
                 metadata.get("files"),
                 {
                     ".serena/project.yml": True,
+                    ".serena/project.local.yml": True,
                     ".serena/.gitignore": True,
                     ".cgcignore": False,
+                    ".codegraph/.gitignore": False,
+                    ".codegraph/codegraph.db": False,
                 },
             )
             self.assertFalse(metadata.get("cgc_index_requested"))
@@ -133,6 +142,12 @@ class PlanningWorktreeSetupProvenanceTests(PlanningWorktreeSetupTestCase):
             self.assertEqual(provenance.get("plan_file"), "implementations/task.md")
             self.assertEqual(
                 (repo / "trees" / "implementations_task" / "1" / ".serena" / "project.yml").read_text(encoding="utf-8"),
+                'project_name: "repo"\n',
+            )
+            self.assertEqual(
+                (repo / "trees" / "implementations_task" / "1" / ".serena" / "project.local.yml").read_text(
+                    encoding="utf-8"
+                ),
                 'project_name: "repo-implementations_task-1"\n',
             )
 

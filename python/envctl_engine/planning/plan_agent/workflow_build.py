@@ -44,7 +44,7 @@ class PlanAgentWorkflowBuilder:
         return _PlanAgentWorkflow(
             mode=_PLAN_AGENT_WORKFLOW_CODEX_CYCLES,
             codex_cycles=bounded_cycles,
-            steps=tuple(self._codex_cycle_steps(bounded_cycles, requires_goal=requires_goal)),
+            steps=tuple(self._codex_cycle_steps(bounded_cycles, requires_goal=False)),
         )
 
     def _initial_step(self, *, normalized_cli: str, requires_goal: bool) -> _PlanAgentWorkflowStep:

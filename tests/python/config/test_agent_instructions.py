@@ -14,11 +14,12 @@ from envctl_engine.config.git_global_ignore import GlobalIgnoreStatus
 from envctl_engine.config.persistence import ManagedConfigValues, PortDefaults, save_local_config
 
 
-def test_agent_instructions_include_serena_and_cgc_only_when_configured(tmp_path: Path) -> None:
+def test_agent_instructions_include_serena_and_codegraph_only_when_configured(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     (repo / ".serena").mkdir(parents=True)
     (repo / ".serena" / "project.yml").write_text('project_name: "demo"\n', encoding="utf-8")
-    (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
+    (repo / ".codegraph").mkdir()
+    (repo / ".codegraph" / ".gitignore").write_text("*\n!.gitignore\n", encoding="utf-8")
 
     status = ensure_repo_agent_instructions(repo)
 
@@ -26,13 +27,17 @@ def test_agent_instructions_include_serena_and_cgc_only_when_configured(tmp_path
     assert status.updated is True
     assert MANAGED_AGENTS_START in text
     assert "## Serena" in text
-    assert "## CodeGraphContext" in text
+    assert "## CodeGraph" in text
+    assert "## Development Discipline" in text
     assert "## Envctl Workflow" in text
-    assert "Do not use the old `codegraph` CLI or `.codegraph/` indexes" in text
-    assert "Use CGC only after the current checkout has an active CGC context" in text
-    assert "read `.envctl-state/code-intelligence.json`" in text
-    assert "`cgc_index_mode` is `auto` or `enabled`" in text
-    assert "Ignore `cgc_active_context` when metadata reports disabled" in text
+    assert "This project is configured for CodeGraph repo context" in text
+    assert "Activate the current checkout/worktree before structural code navigation" in text
+    assert "Read the owning code path before changing it" in text
+    assert "smallest test that proves the real contract" in text
+    assert 'use `envctl ship -m "<message>"` from inside the current worktree' in text
+    assert "MAIN_TASK.md" not in text
+    assert "pytest-xdist" not in text
+    assert "ENVCTL_TEST_FOCUSED_PYTEST_WORKERS" not in text
     assert "ENVCTL_WORKTREE_CGC_INDEX" not in text
 
 
@@ -46,19 +51,50 @@ def test_agent_instructions_file_write_is_idempotent(tmp_path: Path) -> None:
     assert first.updated is True
     assert second.updated is False
     assert text.count(MANAGED_AGENTS_START) == 1
+    assert text.count("## Development Discipline") == 1
     assert text.count("## Envctl Workflow") == 1
 
 
-def test_agent_instructions_without_tool_configs_only_add_envctl_workflow(tmp_path: Path) -> None:
+def test_agent_instructions_without_tool_configs_add_general_workflow(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
 
     status = ensure_repo_agent_instructions(repo)
 
     text = (repo / "AGENTS.md").read_text(encoding="utf-8")
     assert status.updated is True
+    assert "## Development Discipline" in text
     assert "## Envctl Workflow" in text
     assert "## Serena" not in text
-    assert "## CodeGraphContext" not in text
+    assert "## CodeGraph" not in text
+    assert "MAIN_TASK.md" not in text
+
+
+def test_agent_instructions_skip_codegraph_when_explicitly_disabled(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".envctl").write_text("ENVCTL_WORKTREE_CODEGRAPH_INDEX=false\n", encoding="utf-8")
+    (repo / ".codegraph").mkdir()
+    (repo / ".codegraph" / ".gitignore").write_text("*\n!.gitignore\n", encoding="utf-8")
+
+    status = ensure_repo_agent_instructions(repo)
+
+    text = (repo / "AGENTS.md").read_text(encoding="utf-8")
+    assert status.updated is True
+    assert "## Envctl Workflow" in text
+    assert "## CodeGraph" not in text
+
+
+def test_agent_instructions_include_codegraph_when_explicitly_enabled(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".envctl").write_text("ENVCTL_WORKTREE_CODEGRAPH_INDEX=true\n", encoding="utf-8")
+
+    status = ensure_repo_agent_instructions(repo)
+
+    text = (repo / "AGENTS.md").read_text(encoding="utf-8")
+    assert status.updated is True
+    assert "## CodeGraph" in text
+    assert "This project is configured for CodeGraph repo context" in text
 
 
 def test_agent_instructions_do_not_duplicate_existing_sections(tmp_path: Path) -> None:
@@ -72,6 +108,7 @@ def test_agent_instructions_do_not_duplicate_existing_sections(tmp_path: Path) -
 
     assert first == second
     assert first.count("## Serena") == 1
+    assert first.count("## Development Discipline") == 1
     assert first.count("## Envctl Workflow") == 1
     assert MANAGED_AGENTS_END in first
 
@@ -79,7 +116,8 @@ def test_agent_instructions_do_not_duplicate_existing_sections(tmp_path: Path) -
 def test_save_local_config_installs_agent_instructions(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
+    (repo / ".codegraph").mkdir()
+    (repo / ".codegraph" / ".gitignore").write_text("*\n!.gitignore\n", encoding="utf-8")
     state = LocalConfigState(
         base_dir=repo,
         config_file_path=repo / ".envctl",
@@ -115,6 +153,7 @@ def test_save_local_config_installs_agent_instructions(tmp_path: Path) -> None:
     assert result.agent_instructions_status.updated is True
     assert result.agent_instructions_status.path == repo / "AGENTS.md"
     text = (repo / "AGENTS.md").read_text(encoding="utf-8")
-    assert "## CodeGraphContext" in text
-    assert "Use CGC only after the current checkout has an active CGC context" in text
+    assert "## CodeGraph" in text
+    assert "Use CodeGraph for broad structure" in text
+    assert "`ship` owns commit, push, PR creation/update, and status-check reporting" in text
     assert "ENVCTL_WORKTREE_CGC_INDEX" not in text

@@ -7,6 +7,7 @@ from typing import Any
 
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanWorktreeSyncResult
 from envctl_engine.planning.worktree_code_intelligence import prepare_worktree_code_intelligence
+from envctl_engine.planning.worktree_code_intelligence_files import ensure_worktree_git_excludes
 from envctl_engine.planning.worktree_git_hooks import worktree_git_hooks_disabled
 from envctl_engine.planning.worktree_import_commands import (
     ImportedBranchRef,
@@ -225,6 +226,7 @@ def import_remote_branch_worktree(self: Any, *, branch_input: str) -> PlanWorktr
 def _write_import_provenance(self: Any, *, target: Path, branch_ref: ImportedBranchRef) -> Path | None:
     if not target.is_dir():
         return None
+    ensure_worktree_git_excludes(root=target, patterns=(".envctl-state/",))
     payload: dict[str, object] = {
         "schema_version": WORKTREE_PROVENANCE_SCHEMA_VERSION,
         "source_branch": branch_ref.branch,

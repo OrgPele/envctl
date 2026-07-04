@@ -20,6 +20,8 @@ The Python runtime expects a repo-local `.envctl` for normal operational command
 That global-ignore contract covers the current envctl local artifact set:
 
 - `.envctl*`
+- `.codegraph/`
+- `.serena/project.local.yml`
 - `MAIN_TASK.md`
 - `OLD_TASK_*.md`
 - `trees/`
@@ -27,7 +29,7 @@ That global-ignore contract covers the current envctl local artifact set:
 
 On config save, `envctl` updates the envctl-managed block in your configured Git global excludes file. If `core.excludesFile` is not configured, `envctl config` configures it to `~/.gitignore_global` and writes the envctl-managed artifact patterns there.
 
-On the same save path, `envctl` also creates or updates a repo-local `AGENTS.md` envctl-managed block. The block always includes the envctl implementation and handoff workflow, and it conditionally adds Serena or CodeGraphContext guidance when the repo has `.serena/project.yml`, `.cgcignore`, or `.codegraphcontext` configuration.
+On the same save path, `envctl` also creates or updates a repo-local `AGENTS.md` envctl-managed block from `python/envctl_engine/config/AGENTS.md.tpl`. The block always includes the concise envctl validation and `envctl ship` handoff workflow, and it conditionally adds Serena or CodeGraph guidance when the repo has `.serena/project.yml` or CodeGraph is enabled by `.codegraph/` or `ENVCTL_WORKTREE_CODEGRAPH_INDEX=true`. `ENVCTL_WORKTREE_CODEGRAPH_INDEX=false` suppresses CodeGraph guidance.
 
 Useful commands:
 
@@ -354,8 +356,9 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 ## Worktree Code Intelligence
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ENVCTL_WORKTREE_CODE_INTELLIGENCE` | `auto` | Bootstrap repo-local agent configuration into envctl-created worktrees. The default copies Serena project files when present; set to `false` to disable all code-intelligence bootstrap behavior. |
-| `ENVCTL_WORKTREE_CGC_INDEX` | unset | Opt-in graph tooling for generated worktrees. Unset/`false` skips `.cgcignore`, `.codegraphcontext`, and all `cgc` calls. `auto` reuses a verified source CGC context when repo graph markers exist and falls back to indexing a generated context. `true` always tries to create and index the generated worktree context. |
+| `ENVCTL_WORKTREE_CODE_INTELLIGENCE` | `auto` | Bootstrap repo-local agent configuration into envctl-created worktrees. The default copies versioned Serena project files when present, writes the generated identity to `.serena/project.local.yml`, and prepares a worktree-local CodeGraph index only when CodeGraph is opted in; set to `false` to disable all code-intelligence bootstrap behavior. |
+| `ENVCTL_WORKTREE_CODEGRAPH_INDEX` | `auto` | Prepare CodeGraph for generated worktrees. `auto` follows an existing source `.codegraph/` opt-in; `true` syncs or initializes the source `.codegraph/` index, copies it into the new worktree when possible, then runs `codegraph sync <worktree>` so the worktree index is hermetic and current. Set to `false` to skip all CodeGraph calls and suppress CodeGraph prompt guidance. |
+| `ENVCTL_WORKTREE_CGC_INDEX` | unset | Legacy opt-in CGC graph tooling for generated worktrees. Unset/`false` skips `.cgcignore`, `.codegraphcontext`, and all `cgc` calls. `auto` reuses a verified source CGC context when repo graph markers exist and falls back to indexing a generated context. `true` always tries to create and index the generated worktree context. |
 | `ENVCTL_WORKTREE_SERENA_PROJECT_TEMPLATE` | `{project}-{worktree}` | Template for generated Serena project names. Supports `{project}`, `{worktree}`, `{feature}`, and `{iteration}`. |
 | `ENVCTL_WORKTREE_CGC_CONTEXT_TEMPLATE` | `{project}-{worktree}` | Template for generated CGC contexts when `ENVCTL_WORKTREE_CGC_INDEX` is `auto` or `true`. Supports `{project}`, `{worktree}`, `{feature}`, and `{iteration}`. |
 | `ENVCTL_WORKTREE_CGC_SOURCE_CONTEXT` | source Serena project/title | Source CGC context to verify when `ENVCTL_WORKTREE_CGC_INDEX=auto`. |
@@ -370,6 +373,10 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_REQUIREMENTS_PARALLEL_MAX` | `4` | Max concurrently starting managed dependencies when requirement parallel mode is enabled. |
 | `ENVCTL_ACTION_TEST_PARALLEL` | `true` | Run backend/frontend test suites in parallel when both suites are detected. |
 | `ENVCTL_ACTION_TEST_PARALLEL_MAX` | `4` | Max concurrently running test suites when parallel test mode is enabled. |
+| `ENVCTL_ACTION_TEST_PYTEST_PARALLEL` | `true` | Enable pytest-xdist auto-injection for `envctl test` and `envctl test-focused` when the command runs `python -m pytest`, pytest-xdist is installed, and the command does not already set xdist flags. |
+| `ENVCTL_ACTION_TEST_PYTEST_WORKERS` | free CPU cores | Cap pytest-xdist workers for both `envctl test` and `envctl test-focused`. Without an explicit cap, envctl uses current CPU load to estimate free cores. |
+| `ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL` | follows `ENVCTL_ACTION_TEST_PYTEST_PARALLEL` | Focused-only pytest-xdist auto-injection override for `envctl test-focused`. |
+| `ENVCTL_TEST_FOCUSED_PYTEST_WORKERS` | follows `ENVCTL_ACTION_TEST_PYTEST_WORKERS` | Focused-only pytest-xdist worker cap for `envctl test-focused`. |
 
 ## Plan Agent Launch
 | Variable | Default | Purpose |

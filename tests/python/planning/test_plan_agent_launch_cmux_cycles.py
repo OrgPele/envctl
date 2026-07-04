@@ -111,6 +111,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_direct_prompt_ready", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._queue_codex_message", return_value=True),
             ):
                 _ImmediateThread.created = []
@@ -347,6 +348,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_direct_prompt_ready", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_codex_queue_ready", return_value=True),
                 patch(
                     "envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text",

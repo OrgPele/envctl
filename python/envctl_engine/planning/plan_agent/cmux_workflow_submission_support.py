@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from envctl_engine.planning.plan_agent.constants import (
+    _PROMPT_PRE_SUBMIT_DELAY_SECONDS,
+    _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS,
+)
 from envctl_engine.planning.plan_agent.models import (
     CreatedPlanWorktree,
     PlanAgentLaunchConfig,
@@ -26,7 +31,8 @@ SendPromptTextFn = Callable[..., str | None]
 SendSurfaceKeyFn = Callable[..., str | None]
 PasteSurfaceTextFn = Callable[..., str | None]
 ReadSurfaceScreenFn = Callable[..., str]
-WaitForPromptReadyFn = Callable[..., None]
+WaitForPromptReadyFn = Callable[..., str | None]
+WaitForDirectPromptReadyFn = Callable[..., str | None]
 WorkflowStepPromptTextFn = Callable[..., tuple[str, str | None]]
 QueueCodexMessageFn = Callable[..., bool]
 CodexGoalTextForWorktreeFn = Callable[..., str]
@@ -95,13 +101,15 @@ def submit_prompt_workflow_step(
     for error in final_errors:
         if error is not None:
             return error
-    wait_for_prompt_picker_ready_fn(
+    picker_error = wait_for_prompt_picker_ready_fn(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
         cli=cli,
         prompt_text=prompt_text,
     )
+    if picker_error is not None:
+        return picker_error
     submit_error = send_surface_key_fn(
         runtime,
         workspace_id=workspace_id,
@@ -111,13 +119,15 @@ def submit_prompt_workflow_step(
     )
     if submit_error is not None:
         return submit_error
-    wait_for_prompt_submit_ready_fn(
+    submit_ready_error = wait_for_prompt_submit_ready_fn(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
         cli=cli,
         prompt_text=prompt_text,
     )
+    if submit_ready_error is not None:
+        return submit_ready_error
     return send_surface_key_fn(
         runtime,
         workspace_id=workspace_id,
@@ -136,6 +146,8 @@ def submit_direct_prompt_workflow_step(
     failure_event: str = "planning.agent_launch.failed",
     paste_surface_text_fn: PasteSurfaceTextFn,
     send_surface_key_fn: SendSurfaceKeyFn,
+    wait_for_direct_prompt_ready_fn: WaitForDirectPromptReadyFn,
+    sleep_fn: Sleeper = time.sleep,
 ) -> str | None:
     paste_error = paste_surface_text_fn(
         runtime,
@@ -146,6 +158,27 @@ def submit_direct_prompt_workflow_step(
     )
     if paste_error is not None:
         return paste_error
+    ready_error = wait_for_direct_prompt_ready_fn(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        prompt_text=prompt_text,
+    )
+    if ready_error is not None:
+        return ready_error
+    codex_goal_picker_prompt = str(prompt_text).lstrip().startswith("/go ")
+    if codex_goal_picker_prompt:
+        sleep_fn(_PROMPT_SUBMIT_READY_TIMEOUT_SECONDS)
+    enter_error = send_surface_key_fn(
+        runtime,
+        workspace_id=workspace_id,
+        surface_id=surface_id,
+        key="enter",
+        failure_event=failure_event,
+    )
+    if enter_error is not None or not codex_goal_picker_prompt:
+        return enter_error
+    sleep_fn(_PROMPT_PRE_SUBMIT_DELAY_SECONDS)
     return send_surface_key_fn(
         runtime,
         workspace_id=workspace_id,

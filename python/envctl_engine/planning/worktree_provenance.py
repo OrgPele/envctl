@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from envctl_engine.planning.worktree_code_intelligence_files import ensure_worktree_git_excludes
 from envctl_engine.runtime.codex_tmux_support import _tmux_session_exists
 from envctl_engine.runtime.runtime_context import resolve_process_runtime
 from envctl_engine.shared.parsing import parse_bool
@@ -31,6 +32,7 @@ def write_worktree_provenance(
     )
     if provenance is None or not target.is_dir():
         return
+    ensure_worktree_git_excludes(root=target, patterns=(".envctl-state/",))
     path = target / WORKTREE_PROVENANCE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     try:

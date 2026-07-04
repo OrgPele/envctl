@@ -24,10 +24,12 @@ def _write_metadata(root: Path, payload: dict[str, object]) -> None:
 
 
 class PlanAgentWorkflowCodeIntelligenceContextTests(unittest.TestCase):
-    def test_builder_renders_serena_only_when_cgc_is_disabled(self) -> None:
+    def test_builder_renders_serena_only_when_codegraph_is_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "repo"
             root.mkdir()
+            (root / ".serena").mkdir()
+            (root / ".serena" / "project.yml").write_text('project_name: "repo-feature-a-1"\n', encoding="utf-8")
             _write_metadata(
                 root,
                 {
@@ -37,6 +39,9 @@ class PlanAgentWorkflowCodeIntelligenceContextTests(unittest.TestCase):
                     "cgc_index_mode": "disabled",
                     "cgc_index_requested": False,
                     "cgc_index_skipped_reason": "disabled",
+                    "codegraph_index_mode": "disabled",
+                    "codegraph_index_requested": False,
+                    "codegraph_index_skipped_reason": "disabled",
                 },
             )
 
@@ -46,7 +51,7 @@ class PlanAgentWorkflowCodeIntelligenceContextTests(unittest.TestCase):
         self.assertIn("Serena project `repo-feature-a-1`", section)
         self.assertIn("symbol definitions, references, call paths, and semantic edits", section)
         self.assertNotIn("CodeGraphContext", section)
-        self.assertNotIn("legacy `codegraph`", section)
+        self.assertNotIn("CodeGraph index", section)
         self.assertNotIn("envctl source checkout", section)
 
     def test_builder_uses_existing_serena_file_when_metadata_is_stale(self) -> None:
@@ -70,6 +75,30 @@ class PlanAgentWorkflowCodeIntelligenceContextTests(unittest.TestCase):
 
         self.assertIn("Serena project `actual-worktree`", section)
         self.assertNotIn("stale-generated-name", section)
+
+    def test_builder_uses_serena_project_local_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            (root / ".serena").mkdir(parents=True)
+            (root / ".serena" / "project.yml").write_text('project_name: "base"\n', encoding="utf-8")
+            (root / ".serena" / "project.local.yml").write_text(
+                'project_name: "generated-worktree"\n',
+                encoding="utf-8",
+            )
+            _write_metadata(
+                root,
+                {
+                    "schema_version": 1,
+                    "serena_project_name": "metadata-name",
+                    "files": {".serena/project.local.yml": True},
+                },
+            )
+
+            section = CodeIntelligencePromptBuilder(_worktree(root)).prompt_section()
+
+        self.assertIn("Serena project `generated-worktree`", section)
+        self.assertNotIn("metadata-name", section)
+        self.assertNotIn("Serena project `base`", section)
 
     def test_builder_adds_envctl_source_checkout_hint_only_for_envctl_sources(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -95,7 +124,47 @@ class PlanAgentWorkflowCodeIntelligenceContextTests(unittest.TestCase):
         self.assertIn('PATH="$PWD/.venv/bin:$PATH" envctl', section)
         self.assertIn("ENVCTL_USE_REPO_WRAPPER=1 ./bin/envctl", section)
 
-    def test_builder_renders_cgc_when_source_context_is_reused(self) -> None:
+    def test_builder_adds_envctl_source_checkout_hint_without_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            (root / "bin").mkdir(parents=True)
+            (root / "bin" / "envctl").write_text("#!/bin/sh\n", encoding="utf-8")
+            (root / "python" / "envctl_engine").mkdir(parents=True)
+
+            section = CodeIntelligencePromptBuilder(_worktree(root)).prompt_section()
+
+        self.assertIn("envctl source checkout", section)
+        self.assertNotIn("Serena project", section)
+        self.assertNotIn("CodeGraph index", section)
+
+    def test_builder_renders_codegraph_when_worktree_index_succeeded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            (root / ".codegraph").mkdir(parents=True)
+            (root / ".codegraph" / "codegraph.db").write_text("index\n", encoding="utf-8")
+            _write_metadata(
+                root,
+                {
+                    "schema_version": 1,
+                    "files": {
+                        ".serena/project.yml": False,
+                        ".codegraph/codegraph.db": True,
+                    },
+                    "codegraph_index_mode": "auto",
+                    "codegraph_index_requested": True,
+                    "codegraph_index_succeeded": True,
+                },
+            )
+
+            section = CodeIntelligencePromptBuilder(_worktree(root)).prompt_section()
+
+        self.assertIn("## Worktree code intelligence", section)
+        self.assertIn("CodeGraph index `.codegraph/` is available", section)
+        self.assertIn("broad repo structure, call paths, flows, and blast-radius questions", section)
+        self.assertIn('codegraph explore "<question>"', section)
+        self.assertNotIn("Serena project", section)
+
+    def test_builder_ignores_codegraph_success_metadata_when_database_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "repo"
             root.mkdir()
@@ -103,23 +172,16 @@ class PlanAgentWorkflowCodeIntelligenceContextTests(unittest.TestCase):
                 root,
                 {
                     "schema_version": 1,
-                    "files": {".serena/project.yml": False, ".cgcignore": True},
-                    "cgc_context": "Repo-feature-a-1",
-                    "cgc_active_context": "Repo",
-                    "cgc_index_mode": "auto",
-                    "cgc_index_requested": False,
-                    "cgc_context_managed": False,
-                    "cgc_index_skipped_reason": "source_context_reused",
+                    "files": {".serena/project.yml": False, ".codegraph/codegraph.db": True},
+                    "codegraph_index_mode": "enabled",
+                    "codegraph_index_requested": True,
+                    "codegraph_index_succeeded": True,
                 },
             )
 
             section = CodeIntelligencePromptBuilder(_worktree(root)).prompt_section()
 
-        self.assertIn("## Worktree code intelligence", section)
-        self.assertIn("CodeGraphContext (`cgc`) context `Repo`", section)
-        self.assertIn("repo-wide ownership, coupling, impact, hotspot, and dead-code questions", section)
-        self.assertIn("Do not use the legacy `codegraph` CLI or `.codegraph/` indexes", section)
-        self.assertNotIn("Serena project", section)
+        self.assertNotIn("CodeGraph index", section)
 
     def test_append_returns_original_prompt_when_metadata_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -134,7 +196,7 @@ class PlanAgentWorkflowCodeIntelligenceContextTests(unittest.TestCase):
 
         self.assertEqual(result, "Implement")
 
-    def test_append_ignores_unavailable_cgc_metadata(self) -> None:
+    def test_append_ignores_unavailable_codegraph_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "repo"
             root.mkdir()
@@ -142,13 +204,11 @@ class PlanAgentWorkflowCodeIntelligenceContextTests(unittest.TestCase):
                 root,
                 {
                     "schema_version": 1,
-                    "files": {".serena/project.yml": False, ".cgcignore": True},
-                    "cgc_context": "Repo-feature-a-1",
-                    "cgc_active_context": "Repo-feature-a-1",
-                    "cgc_index_mode": "enabled",
-                    "cgc_index_requested": True,
-                    "cgc_available": False,
-                    "cgc_index_skipped_reason": "cgc_not_available",
+                    "files": {".serena/project.yml": False, ".codegraph/codegraph.db": False},
+                    "codegraph_index_mode": "enabled",
+                    "codegraph_index_requested": True,
+                    "codegraph_available": False,
+                    "codegraph_index_skipped_reason": "codegraph_not_available",
                 },
             )
 

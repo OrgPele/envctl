@@ -10,6 +10,9 @@ from envctl_engine.planning.worktree_code_intelligence_models import (
     WORKTREE_CGC_INDEX_MODE_AUTO,
     WORKTREE_CGC_INDEX_MODE_DISABLED,
     WORKTREE_CGC_INDEX_MODE_ENABLED,
+    WORKTREE_CODEGRAPH_INDEX_MODE_AUTO,
+    WORKTREE_CODEGRAPH_INDEX_MODE_DISABLED,
+    WORKTREE_CODEGRAPH_INDEX_MODE_ENABLED,
     WorktreeCodeIntelligenceIdentity,
 )
 
@@ -19,6 +22,9 @@ WORKTREE_CODE_INTELLIGENCE_ENABLED_VALUES = frozenset(("auto", "enabled", "enabl
 WORKTREE_CGC_INDEX_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "false", "0", "no"))
 WORKTREE_CGC_INDEX_ENABLED_VALUES = frozenset(("enabled", "enable", "on", "true", "1", "yes"))
 WORKTREE_CGC_INDEX_AUTO_VALUES = frozenset(("auto",))
+WORKTREE_CODEGRAPH_INDEX_DISABLED_VALUES = frozenset(("disabled", "disable", "off", "false", "0", "no"))
+WORKTREE_CODEGRAPH_INDEX_ENABLED_VALUES = frozenset(("enabled", "enable", "on", "true", "1", "yes"))
+WORKTREE_CODEGRAPH_INDEX_AUTO_VALUES = frozenset(("auto",))
 
 
 def worktree_code_intelligence_enabled(runtime: Any) -> bool:
@@ -57,6 +63,37 @@ def worktree_cgc_index_mode(runtime: Any) -> str:
         "Invalid ENVCTL_WORKTREE_CGC_INDEX value. "
         "Use auto/on/true to enable CGC graph tooling or off/false to disable it."
     )
+
+
+def worktree_codegraph_index_mode(runtime: Any) -> str:
+    raw_value = runtime.env.get("ENVCTL_WORKTREE_CODEGRAPH_INDEX")
+    if raw_value is None or str(raw_value).strip() == "":
+        raw_value = runtime.config.raw.get("ENVCTL_WORKTREE_CODEGRAPH_INDEX")
+    if raw_value is None or str(raw_value).strip() == "":
+        return (
+            WORKTREE_CODEGRAPH_INDEX_MODE_AUTO
+            if _source_codegraph_configured(runtime.config.base_dir)
+            else WORKTREE_CODEGRAPH_INDEX_MODE_DISABLED
+        )
+    raw = str(raw_value).strip().lower()
+    if raw in WORKTREE_CODEGRAPH_INDEX_ENABLED_VALUES:
+        return WORKTREE_CODEGRAPH_INDEX_MODE_ENABLED
+    if raw in WORKTREE_CODEGRAPH_INDEX_DISABLED_VALUES:
+        return WORKTREE_CODEGRAPH_INDEX_MODE_DISABLED
+    if raw in WORKTREE_CODEGRAPH_INDEX_AUTO_VALUES:
+        return (
+            WORKTREE_CODEGRAPH_INDEX_MODE_AUTO
+            if _source_codegraph_configured(runtime.config.base_dir)
+            else WORKTREE_CODEGRAPH_INDEX_MODE_DISABLED
+        )
+    raise RuntimeError(
+        "Invalid ENVCTL_WORKTREE_CODEGRAPH_INDEX value. "
+        "Use auto/on/true to enable CodeGraph worktree indexing or off/false to disable it."
+    )
+
+
+def _source_codegraph_configured(repo_root: Path) -> bool:
+    return (repo_root / ".codegraph").is_dir()
 
 
 def worktree_code_intelligence_identity(
@@ -109,13 +146,16 @@ def worktree_code_intelligence_identity(
 
 
 def read_source_serena_project_name(repo_root: Path) -> str:
-    path = repo_root / ".serena" / "project.yml"
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    match = re.search(r"^project_name:\s*[\"']?(.*?)[\"']?\s*$", text, flags=re.MULTILINE)
-    return str(match.group(1)).strip() if match else ""
+    for filename in ("project.local.yml", "project.yml"):
+        path = repo_root / ".serena" / filename
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        match = re.search(r"^project_name:\s*[\"']?(.*?)[\"']?\s*$", text, flags=re.MULTILINE)
+        if match:
+            return str(match.group(1)).strip()
+    return ""
 
 
 def worktree_identity_parts(

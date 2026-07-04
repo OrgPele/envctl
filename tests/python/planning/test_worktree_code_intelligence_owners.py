@@ -10,18 +10,27 @@ from envctl_engine.planning.worktree_code_intelligence_cgc import (
     index_worktree_with_cgc,
     reuse_or_index_worktree_with_cgc,
 )
+from envctl_engine.planning.worktree_code_intelligence_codegraph import (
+    index_worktree_with_codegraph,
+)
 from envctl_engine.planning.worktree_code_intelligence import prepare_worktree_code_intelligence
 from envctl_engine.planning.worktree_code_intelligence_config import (
     WORKTREE_CGC_INDEX_MODE_AUTO,
     WORKTREE_CGC_INDEX_MODE_DISABLED,
     WORKTREE_CGC_INDEX_MODE_ENABLED,
+    WORKTREE_CODEGRAPH_INDEX_MODE_AUTO,
+    WORKTREE_CODEGRAPH_INDEX_MODE_DISABLED,
+    WORKTREE_CODEGRAPH_INDEX_MODE_ENABLED,
     worktree_cgc_index_mode,
+    worktree_codegraph_index_mode,
     worktree_code_intelligence_identity,
 )
 from envctl_engine.planning.worktree_code_intelligence_files import (
     copy_worktree_code_intelligence_file,
     copy_worktree_serena_project_file,
+    ensure_worktree_git_excludes,
     rewrite_serena_project_name,
+    write_worktree_serena_project_local_file,
 )
 from envctl_engine.planning.worktree_code_intelligence_metadata import (
     write_worktree_code_intelligence_metadata,
@@ -55,15 +64,17 @@ class _Runtime:
         env: dict[str, str] | None = None,
         runner: _Runner | None = None,
         command_exists: bool = True,
+        available_commands: tuple[str, ...] = ("cgc",),
     ) -> None:
         self.config = _Config(base_dir=repo, raw={})
         self.env = env or {}
         self.process_runner = runner
         self.command_exists = command_exists
+        self.available_commands = set(available_commands)
         self.emitted: list[dict[str, object]] = []
 
     def _command_exists(self, name: str) -> bool:
-        return name == "cgc" and self.command_exists
+        return name in self.available_commands and self.command_exists
 
     def _command_env(self, *, port: int) -> dict[str, str]:
         return {"PORT": str(port)}
@@ -118,24 +129,41 @@ def test_cgc_index_mode_auto_requires_cgc_artifacts(tmp_path: Path) -> None:
     assert worktree_cgc_index_mode(runtime) == WORKTREE_CGC_INDEX_MODE_ENABLED
 
 
-def test_serena_project_copy_rewrites_name_and_reports_success(tmp_path: Path) -> None:
-    source = tmp_path / "source.yml"
-    target = tmp_path / "target" / "project.yml"
-    events: list[dict[str, object]] = []
-    source.write_text("project_name: old\nlanguage: python\n", encoding="utf-8")
+def test_codegraph_index_mode_auto_requires_repo_opt_in_and_can_be_forced(tmp_path: Path) -> None:
+    runtime = _Runtime(tmp_path / "repo")
+    runtime.config.base_dir.mkdir()
 
-    copied = copy_worktree_serena_project_file(
-        source=source,
+    assert worktree_codegraph_index_mode(runtime) == WORKTREE_CODEGRAPH_INDEX_MODE_DISABLED
+
+    (runtime.config.base_dir / ".codegraph").mkdir()
+    assert worktree_codegraph_index_mode(runtime) == WORKTREE_CODEGRAPH_INDEX_MODE_AUTO
+
+    runtime.env["ENVCTL_WORKTREE_CODEGRAPH_INDEX"] = "off"
+    assert worktree_codegraph_index_mode(runtime) == WORKTREE_CODEGRAPH_INDEX_MODE_DISABLED
+
+    (runtime.config.base_dir / ".codegraph").rmdir()
+    runtime.env["ENVCTL_WORKTREE_CODEGRAPH_INDEX"] = "auto"
+    assert worktree_codegraph_index_mode(runtime) == WORKTREE_CODEGRAPH_INDEX_MODE_DISABLED
+
+    runtime.env["ENVCTL_WORKTREE_CODEGRAPH_INDEX"] = "true"
+    assert worktree_codegraph_index_mode(runtime) == WORKTREE_CODEGRAPH_INDEX_MODE_ENABLED
+
+
+def test_serena_local_project_file_writes_generated_name_and_reports_success(tmp_path: Path) -> None:
+    target = tmp_path / "target" / "project.local.yml"
+    events: list[dict[str, object]] = []
+
+    written = write_worktree_serena_project_local_file(
         target=target,
         project_name="new-name",
         emit=lambda event, **payload: events.append({"event": event, **payload}),
     )
 
-    assert copied is True
-    assert target.read_text(encoding="utf-8") == "project_name: new-name\nlanguage: python\n"
+    assert written is True
+    assert target.read_text(encoding="utf-8") == 'project_name: "new-name"\n'
     assert events == [
         {
-            "event": "setup.worktree.code_intelligence.serena_config",
+            "event": "setup.worktree.code_intelligence.serena_local_config",
             "target": str(target),
             "project_name": "new-name",
             "success": True,
@@ -151,6 +179,15 @@ def test_code_intelligence_copy_does_not_overwrite_existing_target(tmp_path: Pat
 
     assert copy_worktree_code_intelligence_file(source=source, target=target) is False
     assert target.read_text(encoding="utf-8") == "existing\n"
+    copied_project = tmp_path / "copied" / "project.yml"
+    source.write_text("project_name: old\nlanguage: python\n", encoding="utf-8")
+    assert copy_worktree_serena_project_file(
+        source=source,
+        target=copied_project,
+        project_name="repo-tree",
+        emit=None,
+    )
+    assert copied_project.read_text(encoding="utf-8") == "project_name: repo-tree\nlanguage: python\n"
     assert rewrite_serena_project_name("language: python\n", project_name="repo-tree") == (
         "project_name: repo-tree\nlanguage: python\n"
     )
@@ -173,10 +210,107 @@ def test_prepare_metadata_marks_existing_code_intelligence_files_available(tmp_p
     payload = json.loads((target / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
     assert payload["files"] == {
         ".serena/project.yml": True,
+        ".serena/project.local.yml": True,
         ".serena/.gitignore": True,
         ".cgcignore": True,
+        ".codegraph/.gitignore": False,
+        ".codegraph/codegraph.db": False,
     }
     assert payload["cgc_index_skipped_reason"] == "disabled"
+    assert payload["codegraph_index_skipped_reason"] == "disabled"
+
+
+def test_worktree_git_excludes_support_linked_worktree_gitdir(tmp_path: Path) -> None:
+    target = tmp_path / "repo" / "trees" / "feature-a" / "1"
+    git_dir = tmp_path / "repo" / ".git" / "worktrees" / "feature-a-1"
+    target.mkdir(parents=True)
+    git_dir.mkdir(parents=True)
+    (target / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+
+    assert ensure_worktree_git_excludes(
+        root=target,
+        patterns=(".codegraph/", ".serena/project.local.yml", ".envctl-state/"),
+    )
+
+    assert (git_dir / "info" / "exclude").read_text(encoding="utf-8") == (
+        "# envctl local generated artifacts\n"
+        ".codegraph/\n"
+        ".serena/project.local.yml\n"
+        ".envctl-state/\n"
+    )
+
+
+def test_codegraph_index_copies_source_index_then_syncs_target(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = repo / "trees" / "feature-a" / "1"
+    source_index = repo / ".codegraph"
+    repo.mkdir(parents=True)
+    target.mkdir(parents=True)
+    source_index.mkdir()
+    (source_index / ".gitignore").write_text("*\n!.gitignore\n", encoding="utf-8")
+    (source_index / "codegraph.db").write_text("sqlite-ish\n", encoding="utf-8")
+    runner = _Runner(
+        {
+            ("codegraph", "sync", str(repo.resolve())): subprocess.CompletedProcess(
+                args=["codegraph"],
+                returncode=0,
+                stdout="source synced\n",
+                stderr="",
+            ),
+            ("codegraph", "sync", str(target.resolve())): subprocess.CompletedProcess(
+                args=["codegraph"],
+                returncode=0,
+                stdout="target synced\n",
+                stderr="",
+            ),
+        }
+    )
+    runtime = _Runtime(repo, runner=runner, available_commands=("codegraph",))
+
+    result = index_worktree_with_codegraph(runtime, target=target, mode=WORKTREE_CODEGRAPH_INDEX_MODE_AUTO)
+
+    assert [call[0] for call in runner.calls] == [
+        ["codegraph", "sync", str(repo.resolve())],
+        ["codegraph", "sync", str(target.resolve())],
+    ]
+    assert (target / ".codegraph" / ".gitignore").is_file()
+    assert (target / ".codegraph" / "codegraph.db").read_text(encoding="utf-8") == "sqlite-ish\n"
+    assert result["codegraph_source_index_succeeded"] is True
+    assert result["codegraph_copied_from_source"] is True
+    assert result["codegraph_copy_succeeded"] is True
+    assert result["codegraph_index_succeeded"] is True
+
+
+def test_codegraph_index_requires_target_database_after_successful_command(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = repo / "trees" / "feature-a" / "1"
+    repo.mkdir(parents=True)
+    target.mkdir(parents=True)
+    runner = _Runner(
+        {
+            ("codegraph", "init", str(repo.resolve())): subprocess.CompletedProcess(
+                args=["codegraph"],
+                returncode=0,
+                stdout="source initialized\n",
+                stderr="",
+            ),
+            ("codegraph", "init", str(target.resolve())): subprocess.CompletedProcess(
+                args=["codegraph"],
+                returncode=0,
+                stdout="target initialized\n",
+                stderr="",
+            ),
+        }
+    )
+    runtime = _Runtime(repo, runner=runner, available_commands=("codegraph",))
+
+    result = index_worktree_with_codegraph(runtime, target=target, mode=WORKTREE_CODEGRAPH_INDEX_MODE_ENABLED)
+
+    assert result["codegraph_index_returncode"] == 0
+    assert result["codegraph_index_succeeded"] is False
+    assert result["codegraph_index_skipped_reason"] == "index_failed"
+
+
 
 
 def test_cgc_reuse_uses_source_context_without_indexing_when_source_root_matches(tmp_path: Path) -> None:
@@ -263,6 +397,7 @@ def test_metadata_writer_preserves_cgc_result_overrides(tmp_path: Path) -> None:
             serena_project_name="repo-feature-a-1",
         ),
         copied_files={".serena/project.yml": True},
+        codegraph_result={"codegraph_index_mode": "auto", "codegraph_index_succeeded": True},
         cgc_database="kuzudb",
         cgc_result={"cgc_active_context": "Repo", "cgc_index_mode": "auto"},
     )
@@ -271,4 +406,5 @@ def test_metadata_writer_preserves_cgc_result_overrides(tmp_path: Path) -> None:
     assert payload["schema_version"] == 1
     assert payload["cgc_context"] == "Repo-feature-a-1"
     assert payload["cgc_active_context"] == "Repo"
+    assert payload["codegraph_index_succeeded"] is True
     assert payload["files"] == {".serena/project.yml": True}

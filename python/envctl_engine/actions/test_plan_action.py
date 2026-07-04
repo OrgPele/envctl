@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import signal
 import subprocess
@@ -8,6 +9,10 @@ import time
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from envctl_engine.actions.action_pytest_parallel_support import (
+    PytestParallelPolicy,
+    parallelized_pytest_args,
+)
 from envctl_engine.config.local_artifacts import is_envctl_local_artifact_path
 
 _PREFIX_TESTS: tuple[tuple[str, str, str], ...] = (
@@ -136,7 +141,13 @@ def run_test_plan_action(context: object, *, json_output: bool = False, dry_run:
     payload = build_test_plan(repo_root=repo_root, project_root=project_root, project_name=project_name)
     exit_code = 0
     if not dry_run:
-        run_payload, exit_code = _run_plan_commands(payload, cwd=project_root)
+        run_payload, exit_code = _run_plan_commands(
+            payload,
+            cwd=project_root,
+            env=_context_mapping(context, "env", os.environ),
+            config_raw=_context_mapping(context, "config_raw", {}),
+            route_flags=_context_mapping(context, "route_flags", {}),
+        )
         payload["run"] = run_payload
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -160,15 +171,29 @@ def run_test_plan_action(context: object, *, json_output: bool = False, dry_run:
     return exit_code
 
 
-def _run_plan_commands(payload: Mapping[str, object], *, cwd: Path) -> tuple[dict[str, object], int]:
+def _run_plan_commands(
+    payload: Mapping[str, object],
+    *,
+    cwd: Path,
+    env: Mapping[str, object] | None = None,
+    config_raw: Mapping[str, object] | None = None,
+    route_flags: Mapping[str, object] | None = None,
+) -> tuple[dict[str, object], int]:
     commands = [str(item.get("command") or "").strip() for item in _command_items(payload)]
     results: list[dict[str, object]] = []
     exit_code = 0
+    pytest_parallel = PytestParallelPolicy(
+        env=env or {},
+        config_raw=config_raw or {},
+        route_flags=route_flags or {},
+        include_focused_env=True,
+    )
     for index, command in enumerate(commands):
         if not command:
             continue
         command_args = shlex.split(command)
         executed_args = _execution_args(command_args, cwd=cwd)
+        executed_args = parallelized_pytest_args(executed_args, cwd=cwd, policy=pytest_parallel)
         started = time.monotonic()
         completed = subprocess.run(
             executed_args,
@@ -217,6 +242,11 @@ def _execution_args(command_args: list[str], *, cwd: Path) -> list[str]:
     if tool_path.is_file():
         return [str(tool_path), *tool_args]
     return command_args
+
+
+def _context_mapping(context: object, name: str, default: Mapping[str, object]) -> Mapping[str, object]:
+    value = getattr(context, name, default)
+    return value if isinstance(value, Mapping) else default
 
 
 def _command_result(

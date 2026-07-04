@@ -2,98 +2,45 @@
 
 This project is configured for Serena symbolic code navigation via `.serena/project.yml`.
 
-Use Serena for precise, symbol-aware code work:
-- Finding where a class, function, method, or variable is defined.
-- Reading a symbol body without opening a whole file.
-- Finding references or implementations before a refactor.
-- Checking diagnostics for files you changed.
-- Making targeted symbol-level edits when the editing tool supports it.
-
-How to use Serena:
-- Codex and opencode can use the globally configured Serena MCP server; activate
-  this repo with Serena when doing code navigation or architecture work.
-- In Codex, call Serena's `initial_instructions` once, then activate the
-  current checkout/worktree path before architecture or navigation work.
-- In opencode, use the globally configured `serena` MCP server; it starts with
-  `serena start-mcp-server --context=ide --project-from-cwd`.
-- Start with `get_symbols_overview` when you know the file but not the symbol.
-- Use `find_symbol` when you know the symbol name.
-- Use `find_referencing_symbols` before changing public or cross-module symbols.
-- Use `get_diagnostics_for_file` after editing Python files.
+Use Serena for precise, symbol-aware code work when it is available:
+- Activate the current checkout/worktree path before structural navigation.
+- Use symbol lookup, reference lookup, and diagnostics for definitions,
+  refactors, call-path work, and changed Python files.
+- Use `rg` for exact strings such as flags, env keys, log messages, docs prose,
+  and error text.
 
 Serena boundaries:
-- Prefer Serena over `rg` for structural questions such as "where is this
-  defined?", "what references this?", and "what would this rename affect?".
-- Use `rg` for literal text only: log strings, comments, config keys, CLI flags,
-  docs prose, and error messages.
-- For cross-module dependency questions, use Serena symbol discovery and
-  reference lookup before falling back to grep.
 - After structural code changes, let Serena refresh automatically. If results
   look stale, run `serena project health-check` from the repo root.
 - Use `.serena/project.local.yml` for machine-specific overrides; keep
   `.serena/project.yml` versioned.
 
-## CodeGraphContext
+## Development Discipline
 
-This project uses CodeGraphContext (`cgc`) for repo-wide graph analysis. Do not
-use the old `codegraph` CLI or `.codegraph/` indexes in this repo.
-
-Use CGC for broad graph questions:
-- Repo-wide stats and inventory.
-- Complexity hotspots and god nodes.
-- Dead-code candidates.
-- Cross-module coupling and dependency reports.
-- Cypher-style graph queries across many files.
-- Generating a persistent analysis report for planning or review.
-
-How to use CGC in this checkout:
-- This main checkout uses the main Serena project identity and CGC context.
-  Envctl-generated worktrees use generated Serena project names. In a worktree,
-  use the `cgc_active_context` recorded in
-  `.envctl-state/code-intelligence.json` only when the metadata reports active
-  graph tooling: `cgc_index_mode` is `auto` or `enabled`, and either indexing
-  succeeded (`cgc_index_succeeded: true`) or the source context was reused
-  (`cgc_index_skipped_reason: source_context_reused`). Ignore
-  `cgc_active_context` when the metadata reports disabled or unavailable graph
-  tooling, or when no success/reuse signal is present.
-- If worktree metadata says `cgc_context_managed: true`, envctl created or
-  reused an isolated worktree CGC context; otherwise a valid
-  `cgc_active_context` can point at the reused source checkout context.
-- Health check: `cgc doctor`
-- Confirm the indexed repo: `cgc list --context Envctl`
-- Get graph stats: `cgc stats --context Envctl`
-- Generate a report: `cgc report --context Envctl`
-- Re-index after structural changes in the checkout whose context you are using:
-  `cgc index . --context Envctl`
-- Run a read-only query:
-  `cgc query "MATCH (r:Repository) RETURN r.name, r.path" --context Envctl`
-
-CGC boundaries:
-- Prefer Serena for exact symbol navigation, references, diagnostics, and code
-  edits.
-- Prefer CGC when the question crosses many files or needs aggregate graph
-  data.
-- Do not use CGC query output as the only proof for a line-level edit; use
-  Serena or direct file reads once CGC has identified the relevant files.
-- Keep `.cgcignore` repo-local so graph-enabled generated worktrees inherit
-  CGC ignore behavior.
-- If CGC looks unhealthy, run `cgc doctor` before relying on graph results.
+- For code changes, start with `git status --short` and inspect the relevant
+  diff before editing. Preserve unrelated user changes.
+- Read the owning code path before changing it. Prefer existing local helpers,
+  patterns, and tests over new abstractions.
+- Keep changes scoped to the task; avoid unrelated refactors, formatting churn,
+  or generated metadata changes.
+- For behavior changes, add or update the smallest test that proves the real
+  contract, then report the validation actually run.
+- If a required check cannot run, say why and name the remaining risk.
 
 ## Envctl Workflow
 
 - In envctl source checkouts, prefer `PATH="$PWD/.venv/bin:$PATH" envctl ...`
   or `ENVCTL_USE_REPO_WRAPPER=1 ./bin/envctl ...` so validation and shipping
   run the current checkout instead of an installed `envctl`.
+- Keep edits inside the current checkout/worktree and preserve unrelated user
+  changes.
 - During implementation, run `envctl test-focused` from inside the current
   worktree for the normal validation loop. Use broader validation only when the
   focused plan recommends it or the change is cross-cutting/risky.
 - For handoff, use `envctl ship -m "<message>"` from inside the current
-  worktree. `ship` stages intended files, commits, pushes, creates or updates
-  the PR, predicts merge conflicts, and waits for the target GitHub Tests
-  checks. Do not run separate raw `git`/`gh` commit, push, PR, or status-check
-  commands unless `ship` is unavailable or fails with actionable fallback
-  instructions.
-- If a real subagent or background-task tool is available, delegate
-  `envctl ship -m "<message>"` there. The shipping worker should report only
-  failures, merge conflicts, check failures/timeouts, no-checks-reported status,
-  or actionable review comments; a successful ship is silent.
+  worktree. `ship` owns commit, push, PR creation/update, and status-check
+  reporting. Use raw `git` or `gh` handoff commands only when `ship` is
+  unavailable or returns actionable fallback instructions.
+- If shipping is delegated to a real background worker, it should report only
+  blockers; successful ship results stay silent.
+- Keep envctl-generated local artifacts uncommitted.

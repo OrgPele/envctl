@@ -24,7 +24,7 @@ PrepareSurfaceFn = Callable[..., str | None]
 TabTitleForWorktreeFn = Callable[[str], str]
 SurfaceRespawnCommandFn = Callable[..., str]
 LaunchCliBootstrapCommandsFn = Callable[..., tuple[str | None, ...] | list[str | None]]
-WaitForCliReadyFn = Callable[..., Any]
+WaitForCliReadyFn = Callable[..., str | None]
 MaybeSubmitSurfaceCodexGoalFn = Callable[..., str | None]
 WorkflowStepPromptTextFn = Callable[..., tuple[str, str | None]]
 SubmitPromptWorkflowStepFn = Callable[..., str | None]
@@ -236,12 +236,14 @@ def run_surface_bootstrap(
     for send_error in send_errors:
         if send_error is not None:
             return send_error
-    wait_for_cli_ready_fn(
+    ready_error = wait_for_cli_ready_fn(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
         cli=launch_config.cli,
     )
+    if ready_error is not None:
+        return ready_error
     goal_error = maybe_submit_surface_codex_goal_fn(
         runtime,
         workspace_id=workspace_id,
@@ -253,12 +255,14 @@ def run_surface_bootstrap(
     if goal_error is not None:
         return goal_error
     if launch_config.codex_goal_enable and launch_config.cli == "codex":
-        wait_for_cli_ready_fn(
+        ready_error = wait_for_cli_ready_fn(
             runtime,
             workspace_id=workspace_id,
             surface_id=surface_id,
             cli=launch_config.cli,
         )
+        if ready_error is not None:
+            return ready_error
     initial_step = workflow.steps[0]
     prompt_text, resolution_error = workflow_step_prompt_text_fn(
         runtime,
@@ -370,12 +374,14 @@ def run_review_surface_bootstrap(
     for send_error in send_errors:
         if send_error is not None:
             return send_error
-    wait_for_cli_ready_fn(
+    ready_error = wait_for_cli_ready_fn(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
         cli=launch_config.cli,
     )
+    if ready_error is not None:
+        return ready_error
     review_arguments = review_prompt_arguments_fn(
         project_name=project_name,
         project_root=project_root,
