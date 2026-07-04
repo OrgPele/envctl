@@ -215,9 +215,17 @@ jobs:
             if gh pr edit "$existing_url" --title "Release envctl ${NEW_VERSION}" --body-file "$body"; then
               echo "Release PR already exists: $existing_url"
             else
-              echo "::error::release branch was pushed, but the workflow token could not update the existing release PR: $existing_url" >&2
-              echo "::error::configure ENVCTL_RELEASE_PR_TOKEN with contents:write and pull_requests:write to let Actions update release PRs under restrictive repository policies." >&2
-              exit 1
+              echo "::warning::release branch was pushed, but the workflow token could not update the existing release PR: $existing_url" >&2
+              echo "::notice::configure ENVCTL_RELEASE_PR_TOKEN with contents:write and pull_requests:write, or update the release PR manually." >&2
+              {
+                echo "### Manual release PR update required"
+                echo
+                echo "Release branch pushed: \`$branch\`"
+                echo
+                echo "Existing release PR: $existing_url"
+                echo
+                echo "Configure \`ENVCTL_RELEASE_PR_TOKEN\` with contents and pull-request write permissions to let this workflow update release PRs automatically."
+              } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
             fi
           else
             create_output="$(
@@ -231,9 +239,18 @@ jobs:
             if [ "$create_status" -eq 0 ]; then
               echo "$create_output"
             elif echo "$create_output" | grep -qi "not permitted to create.*pull requests"; then
-              echo "::error::release branch was pushed, but this repository does not permit GitHub Actions to create pull requests with the configured token." >&2
-              echo "::error::open the release PR manually from https://github.com/${GITHUB_REPOSITORY}/pull/new/${branch}, or configure ENVCTL_RELEASE_PR_TOKEN with contents:write and pull_requests:write." >&2
-              exit 1
+              manual_url="https://github.com/${GITHUB_REPOSITORY}/pull/new/${branch}"
+              echo "::warning::release branch was pushed, but this repository does not permit GitHub Actions to create pull requests with the configured token." >&2
+              echo "::notice::open the release PR manually from ${manual_url}, or configure ENVCTL_RELEASE_PR_TOKEN with contents:write and pull_requests:write." >&2
+              {
+                echo "### Manual release PR creation required"
+                echo
+                echo "Release branch pushed: \`$branch\`"
+                echo
+                echo "Open the release PR manually: $manual_url"
+                echo
+                echo "Configure \`ENVCTL_RELEASE_PR_TOKEN\` with contents and pull-request write permissions to let this workflow create release PRs automatically."
+              } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
             else
               echo "$create_output" >&2
               exit "$create_status"

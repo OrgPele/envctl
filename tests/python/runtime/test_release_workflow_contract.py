@@ -34,10 +34,12 @@ def test_release_workflow_handles_restrictive_actions_pr_policy_after_branch_pus
     assert "secrets.ENVCTL_RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN" in workflow
     push_index = workflow.index("git push --force-with-lease origin \"$branch\"")
     policy_index = workflow.index("not permitted to create.*pull requests")
-    error_index = workflow.index("::error::release branch was pushed, but this repository does not permit")
-    assert push_index < policy_index < error_index
+    warning_index = workflow.index("::warning::release branch was pushed, but this repository does not permit")
+    assert push_index < policy_index < warning_index
     assert "configure ENVCTL_RELEASE_PR_TOKEN" in workflow
-    assert "::warning::release branch was pushed" not in workflow
+    assert "Manual release PR creation required" in workflow
+    assert "Open the release PR manually: $manual_url" in workflow
+    assert "::error::release branch was pushed" not in workflow
 
 
 def test_release_workflow_prefers_checked_in_release_notes_file_before_generated_notes() -> None:
