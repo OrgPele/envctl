@@ -16,7 +16,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 ## Non-negotiables
 - Read as much relevant code as needed. If you're unsure, the answer is: read more code.
 - Implement the entire feature from top to bottom. No TODOs, no stubs, no "left as an exercise".
-- Do not run manual staging commands such as `git add .` during normal implementation. `envctl commit`, `envctl ship`, and `envctl test-focused --ship-on-pass "<message>"` stage intended non-protected paths themselves (the git add step) and skip envctl-local artifacts.
+- Do not run manual staging commands such as `git add .` during normal implementation; use `envctl test-focused --ship-on-pass "<message>"` or `envctl ship -m "<message>"` for handoff and let envctl handle intended files.
 - Use TDD: write/adjust tests first so they fail for the right reason -> implement -> make tests pass -> refactor -> ensure everything still passes.
 - Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
 - During implementation, follow AGENTS.md for the focused validation and handoff workflow. Run broader validation when the focused plan recommends it or the change is cross-cutting/risky.
@@ -29,7 +29,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Do not stop after partial implementation.
 
 ## Handoff
-- Follow the AGENTS.md ship workflow. Keep one complete commit/PR handoff message ready and pass it inline with `envctl test-focused --ship-on-pass "<message>"` for the normal validation-and-handoff path; it runs focused tests and then the same `envctl ship` workflow, including staging intended changes via git add, commit, push, PR create/update, and check reporting. Fall back to `envctl ship -m "<message>"` only when the combined command is unavailable or returns actionable fallback instructions. Do not run `envctl commit` separately unless `ship` is unavailable, blocked by the environment, or you are intentionally performing a commit-only maintenance operation. Do not write envctl-local commit-message ledger files.
+- Follow the AGENTS.md ship workflow. Keep one complete commit/PR handoff message ready and pass it inline with `envctl test-focused --ship-on-pass "<message>"`; it validates and then runs the standard ship workflow. Fall back to `envctl ship -m "<message>"` only when the combined command is unavailable or returns actionable fallback instructions. Do not run `envctl commit` separately unless `ship` is unavailable, blocked by the environment, or you are intentionally performing a commit-only maintenance operation. Do not write envctl-local commit-message ledger files.
 - The handoff message must cover scope, behavior changes, touched files/modules, tests and results, config/env/migrations, risks/notes, and the full cumulative set of changes between commits. In the Verification section, state what your validation actually did and proved, then state any manual checks a human should still run to truly confirm it works, with expected results.
 
 ## Validation and E2E protocol

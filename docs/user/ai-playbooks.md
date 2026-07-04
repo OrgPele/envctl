@@ -73,7 +73,7 @@ Create-plan skill behavior:
 Prompt editing standard:
 
 - Put the outcome and source of truth before procedure.
-- Keep true invariants explicit: worktree boundaries, `MAIN_TASK.md`, TDD, `envctl test-focused`, `envctl ship -m "<message>"`, PR status/URL reporting, and browser E2E when required.
+- Keep true invariants explicit: worktree boundaries, `MAIN_TASK.md`, TDD, `envctl test-focused --ship-on-pass "<message>"`, `envctl ship` fallback, PR status/URL reporting, and browser E2E when required.
 - Prefer success criteria and decision rules over repeated absolute prose.
 - Delimit dynamic inputs such as `$ARGUMENTS`, plan selectors, and launch commands clearly.
 - Cover prompt edits with tests that prove required behavior, compactness, and removal of deprecated or confusing phrasing.
