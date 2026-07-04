@@ -1,17 +1,14 @@
 name: Release
 
-# Protected-main release flow:
+# Manual release flow:
 #
-#   1. A manual dispatch computes the next version, generates release notes,
-#      updates release metadata, and opens a release PR from
-#      `release/envctl-<version>`.
-#   2. Repository rules merge that version bump through the normal PR path.
-#   3. When that release PR is merged, this workflow builds artifacts from
-#      `main`, tags `<version>`, and creates the GitHub Release with the
-#      checked-in release notes file.
+#   1. A manual dispatch computes the next version, generates release notes, and
+#      updates release metadata.
+#   2. The workflow validates once, commits the release metadata directly to
+#      `main`, tags that commit, and creates the GitHub Release with artifacts.
 #
-# Trigger from the Actions tab to prepare the release PR. Publish happens after
-# that PR is merged.
+# Repository rules must allow this workflow token to push release commits to
+# `main`. No release PR or approval step is used.
 
 on:
   workflow_dispatch:
@@ -29,24 +26,17 @@ on:
         description: "Optional explicit MAJOR.MINOR.PATCH version (overrides bump)."
         required: false
         type: string
-  pull_request:
-    types:
-      - closed
-    branches:
-      - main
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  prepare:
-    name: prepare release PR
-    if: github.event_name == 'workflow_dispatch'
+  release:
+    name: build and publish release
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout main
@@ -55,7 +45,7 @@ jobs:
           ref: main
           fetch-depth: 0
           fetch-tags: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.ENVCTL_RELEASE_TOKEN || secrets.ENVCTL_RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -76,6 +66,7 @@ jobs:
       - name: Resolve previous and next versions
         id: version
         env:
+          GH_TOKEN: ${{ secrets.ENVCTL_RELEASE_TOKEN || secrets.ENVCTL_RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
           BUMP: ${{ inputs.bump }}
           OVERRIDE: ${{ inputs.version }}
         run: |
@@ -94,9 +85,13 @@ jobs:
             previous_tag="v${previous}"
           fi
 
+          tag_exists=false
           if git rev-parse -q --verify "refs/tags/${new}" >/dev/null; then
-            echo "::error::tag ${new} already exists; pick a different version" >&2
-            exit 1
+            if gh release view "$new" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "::error::release ${new} already exists; pick a different version" >&2
+              exit 1
+            fi
+            tag_exists=true
           fi
           if git rev-parse -q --verify "refs/tags/v${new}" >/dev/null; then
             echo "::error::tag v${new} already exists; pick a different version" >&2
@@ -108,6 +103,7 @@ jobs:
             echo "previous_tag=$previous_tag"
             echo "new=$new"
             echo "tag=$new"
+            echo "tag_exists=$tag_exists"
           } >> "$GITHUB_OUTPUT"
           echo "Preparing ${previous} -> ${new} (previous tag: ${previous_tag:-<none>})"
 
@@ -169,174 +165,48 @@ jobs:
               --notes-body-file .release-tmp/notes-body.md
           fi
 
-      - name: Build release artifacts for validation
+      - name: Build release artifacts
         run: |
           set -euo pipefail
           rm -rf dist build ./*.egg-info
           uv run --extra dev python -m build --wheel --sdist
 
-      - name: Open release PR
+      - name: Commit, tag, and publish release
         env:
-          GH_TOKEN: ${{ secrets.ENVCTL_RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.ENVCTL_RELEASE_TOKEN || secrets.ENVCTL_RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.version.outputs.new }}
+          TAG_EXISTS: ${{ steps.version.outputs.tag_exists }}
         run: |
           set -euo pipefail
-          branch="release/envctl-${NEW_VERSION}"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
-          git add pyproject.toml README.md "docs/changelog/RELEASE_NOTES_${NEW_VERSION}.md"
-
-          if git diff --cached --quiet; then
-            echo "::error::release preparation produced no version metadata changes" >&2
-            exit 1
-          fi
-
-          git commit -m "Release envctl ${NEW_VERSION}"
-          git push --force-with-lease origin "$branch"
-
-          body=".release-tmp/release-pr-body.md"
-          {
-            echo "## Summary"
-            echo "- Release envctl ${NEW_VERSION}."
-            echo "- Update pyproject metadata, README badges, and release notes."
-            echo
-            echo "## Validation"
-            echo "- uv run --extra dev python scripts/release_shipability_gate.py --repo ."
-            echo "- uv run --extra dev python -m build --wheel --sdist"
-            echo
-            echo "## Publish"
-            echo "Merging this PR triggers the Release workflow publish job, which tags ${NEW_VERSION} and creates the GitHub Release."
-          } > "$body"
-
-          existing_url=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json url --jq '.[0].url // ""')
-          if [ -n "$existing_url" ]; then
-            if gh pr edit "$existing_url" --title "Release envctl ${NEW_VERSION}" --body-file "$body"; then
-              echo "Release PR already exists: $existing_url"
-            else
-              echo "::warning::release branch was pushed, but the workflow token could not update the existing release PR: $existing_url" >&2
-              echo "::notice::configure ENVCTL_RELEASE_PR_TOKEN with contents:write and pull_requests:write, or update the release PR manually." >&2
-              {
-                echo "### Manual release PR update required"
-                echo
-                echo "Release branch pushed: \`$branch\`"
-                echo
-                echo "Existing release PR: $existing_url"
-                echo
-                echo "Configure \`ENVCTL_RELEASE_PR_TOKEN\` with contents and pull-request write permissions to let this workflow update release PRs automatically."
-              } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-            fi
-          else
-            create_output="$(
-              gh pr create \
-                --repo "$GITHUB_REPOSITORY" \
-                --base main \
-                --head "$branch" \
-                --title "Release envctl ${NEW_VERSION}" \
-                --body-file "$body" 2>&1
-            )" && create_status=0 || create_status=$?
-            if [ "$create_status" -eq 0 ]; then
-              echo "$create_output"
-            elif echo "$create_output" | grep -qi "not permitted to create.*pull requests"; then
-              manual_url="https://github.com/${GITHUB_REPOSITORY}/pull/new/${branch}"
-              echo "::warning::release branch was pushed, but this repository does not permit GitHub Actions to create pull requests with the configured token." >&2
-              echo "::notice::open the release PR manually from ${manual_url}, or configure ENVCTL_RELEASE_PR_TOKEN with contents:write and pull_requests:write." >&2
-              {
-                echo "### Manual release PR creation required"
-                echo
-                echo "Release branch pushed: \`$branch\`"
-                echo
-                echo "Open the release PR manually: $manual_url"
-                echo
-                echo "Configure \`ENVCTL_RELEASE_PR_TOKEN\` with contents and pull-request write permissions to let this workflow create release PRs automatically."
-              } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-            else
-              echo "$create_output" >&2
-              exit "$create_status"
-            fi
-          fi
-
-  publish:
-    name: publish merged release
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.merged == true &&
-      startsWith(github.event.pull_request.head.ref, 'release/envctl-')
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - name: Checkout main
-        uses: actions/checkout@v6
-        with:
-          ref: main
-          fetch-depth: 0
-          fetch-tags: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
-        with:
-          enable-cache: false
-
-      - name: Sync validation environment
-        run: uv sync --extra dev --python 3.12
-
-      - name: Resolve release metadata
-        id: release
-        run: |
-          set -euo pipefail
-          version=$(python -c "import tomllib; print(tomllib.loads(open('pyproject.toml','rb').read().decode())['project']['version'])")
-          notes="docs/changelog/RELEASE_NOTES_${version}.md"
+          notes="docs/changelog/RELEASE_NOTES_${NEW_VERSION}.md"
           if [ ! -s "$notes" ]; then
             echo "::error::release notes file is missing or empty: $notes" >&2
             exit 1
           fi
-          if git rev-parse -q --verify "refs/tags/${version}" >/dev/null; then
-            echo "::notice::tag ${version} already exists; skipping publish"
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "notes=$notes" >> "$GITHUB_OUTPUT"
 
-      - name: Release shipability gate
-        if: steps.release.outputs.publish == 'true'
-        run: uv run --extra dev python scripts/release_shipability_gate.py --repo .
-
-      - name: Build wheel and sdist
-        if: steps.release.outputs.publish == 'true'
-        run: |
-          set -euo pipefail
-          rm -rf dist build ./*.egg-info
-          uv run --extra dev python -m build --wheel --sdist
-
-      - name: Create tag
-        if: steps.release.outputs.publish == 'true'
-        env:
-          NEW_VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$NEW_VERSION" -m "envctl ${NEW_VERSION}"
-          git push origin "$NEW_VERSION"
+          git add pyproject.toml README.md "$notes"
 
-      - name: Create GitHub Release
-        if: steps.release.outputs.publish == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEW_VERSION: ${{ steps.release.outputs.version }}
-          NOTES_FILE: ${{ steps.release.outputs.notes }}
-        run: |
-          set -euo pipefail
+          if git diff --cached --quiet; then
+            current=$(python -c "import tomllib; print(tomllib.loads(open('pyproject.toml','rb').read().decode())['project']['version'])")
+            if [ "$current" != "$NEW_VERSION" ]; then
+              echo "::error::release preparation produced no version metadata changes" >&2
+              exit 1
+            fi
+            echo "::notice::release metadata is already committed for ${NEW_VERSION}; continuing"
+          else
+            git commit -m "Release envctl ${NEW_VERSION}"
+            git push origin "HEAD:main"
+          fi
+
+          if [ "${TAG_EXISTS:-false}" != "true" ]; then
+            git tag -a "$NEW_VERSION" -m "envctl ${NEW_VERSION}"
+            git push origin "$NEW_VERSION"
+          fi
+
           gh release create "$NEW_VERSION" \
             --repo "$GITHUB_REPOSITORY" \
             --title "envctl ${NEW_VERSION}" \
-            --notes-file "$NOTES_FILE" \
+            --notes-file "$notes" \
             dist/*

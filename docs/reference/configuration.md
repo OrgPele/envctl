@@ -458,6 +458,7 @@ Superset transport notes:
 | --- | --- | --- |
 | `ENVCTL_SHIP_PR_LABEL_ENABLE` | `false` | Opt in to programmatic PR labeling during `envctl ship`. When true, envctl ensures the configured label exists in the GitHub repository and applies it to the shipped PR after the PR URL is known. |
 | `ENVCTL_SHIP_PR_LABEL` | `deploy-app` | Label name applied when `ENVCTL_SHIP_PR_LABEL_ENABLE=true`. Blank disables label application even when the feature flag is enabled. |
+| `ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS` | `15` | Seconds `envctl ship` waits after the pushed head appears before reporting `no_checks_reported` when GitHub has not attached any target PR check contexts yet. |
 
 ## Debug and Diagnostics
 | Variable | Default | Purpose |
