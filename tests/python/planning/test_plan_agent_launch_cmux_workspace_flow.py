@@ -4,7 +4,6 @@ from __future__ import annotations
 from tests.python.planning.plan_agent_launch_support_test_support import *
 
 
-
 class PlanAgentLaunchCmuxWorkspaceFlowTests(PlanAgentLaunchSupportTestCase):
     def test_launch_sequence_supports_opencode_and_default_implementation_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -35,7 +34,9 @@ class PlanAgentLaunchCmuxWorkspaceFlowTests(PlanAgentLaunchSupportTestCase):
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
-                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="Loading workspace...\n", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"], returncode=0, stdout="Loading workspace...\n", stderr=""
+                    ),
                     subprocess.CompletedProcess(
                         args=["cmux"],
                         returncode=0,
@@ -93,9 +94,18 @@ class PlanAgentLaunchCmuxWorkspaceFlowTests(PlanAgentLaunchSupportTestCase):
                 ["cmux", "respawn-pane", "--workspace", "workspace:8", "--surface", "surface:12", "--command", "zsh"],
                 rt.process_runner.calls,
             )
-            self.assertIn(["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", f"cd {repo}"], rt.process_runner.calls)
-            self.assertIn(["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "enter"], rt.process_runner.calls)
-            self.assertIn(["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", "opencode"], rt.process_runner.calls)
+            self.assertIn(
+                ["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", f"cd {repo}"],
+                rt.process_runner.calls,
+            )
+            self.assertIn(
+                ["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "Enter"],
+                rt.process_runner.calls,
+            )
+            self.assertIn(
+                ["cmux", "send", "--workspace", "workspace:8", "--surface", "surface:12", "opencode"],
+                rt.process_runner.calls,
+            )
             direct_prompt_calls = [
                 call
                 for call in rt.process_runner.calls
@@ -104,16 +114,30 @@ class PlanAgentLaunchCmuxWorkspaceFlowTests(PlanAgentLaunchSupportTestCase):
             self.assertEqual(len(direct_prompt_calls), 1)
             self.assertTrue(str(direct_prompt_calls[0][-1]).startswith("/ulw-loop You are implementing real code"))
             self.assertIn(
-                ["cmux", "paste-buffer", "--name", "envctl-surface-12", "--workspace", "workspace:8", "--surface", "surface:12"],
+                [
+                    "cmux",
+                    "paste-buffer",
+                    "--name",
+                    "envctl-surface-12",
+                    "--workspace",
+                    "workspace:8",
+                    "--surface",
+                    "surface:12",
+                ],
                 rt.process_runner.calls,
             )
             self.assertEqual(len(_ImmediateThread.created), 1)
             self.assertTrue(_ImmediateThread.created[0].started)
             self.assertEqual(_ImmediateThread.created[0].daemon, False)
-            self.assertGreaterEqual(rt.process_runner.calls.count(["cmux", "read-screen", "--workspace", "workspace:8", "--surface", "surface:12", "--lines", "80"]), 2)
             self.assertGreaterEqual(
                 rt.process_runner.calls.count(
-                    ["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "enter"]
+                    ["cmux", "read-screen", "--workspace", "workspace:8", "--surface", "surface:12", "--lines", "80"]
+                ),
+                2,
+            )
+            self.assertGreaterEqual(
+                rt.process_runner.calls.count(
+                    ["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "Enter"]
                 ),
                 2,
             )
@@ -166,8 +190,12 @@ class PlanAgentLaunchCmuxWorkspaceFlowTests(PlanAgentLaunchSupportTestCase):
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
-                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_picker_ready", return_value=None),
-                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_submit_ready", return_value=None),
+                patch(
+                    "envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_picker_ready", return_value=None
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent.cmux_transport._wait_for_prompt_submit_ready", return_value=None
+                ),
             ):
                 _ImmediateThread.created = []
                 result = launch_plan_agent_terminals(
@@ -196,7 +224,10 @@ class PlanAgentLaunchCmuxWorkspaceFlowTests(PlanAgentLaunchSupportTestCase):
                 ["cmux", "respawn-pane", "--workspace", "workspace:9", "--surface", "surface:77", "--command", "zsh"],
                 rt.process_runner.calls,
             )
-            self.assertIn(["cmux", "send", "--workspace", "workspace:9", "--surface", "surface:77", f"cd {repo}"], rt.process_runner.calls)
+            self.assertIn(
+                ["cmux", "send", "--workspace", "workspace:9", "--surface", "surface:77", f"cd {repo}"],
+                rt.process_runner.calls,
+            )
             self.assertIn(
                 [
                     "cmux",
@@ -217,7 +248,16 @@ class PlanAgentLaunchCmuxWorkspaceFlowTests(PlanAgentLaunchSupportTestCase):
                 )
             )
             self.assertIn(
-                ["cmux", "paste-buffer", "--name", "envctl-surface-77", "--workspace", "workspace:9", "--surface", "surface:77"],
+                [
+                    "cmux",
+                    "paste-buffer",
+                    "--name",
+                    "envctl-surface-77",
+                    "--workspace",
+                    "workspace:9",
+                    "--surface",
+                    "surface:77",
+                ],
                 rt.process_runner.calls,
             )
             self.assertEqual(len(_ImmediateThread.created), 1)

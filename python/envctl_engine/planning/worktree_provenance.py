@@ -46,6 +46,17 @@ def build_worktree_provenance(
     created_for_fresh_ai_launch: bool = False,
     launch_transport: str = "",
 ) -> dict[str, object] | None:
+    invocation_branch = _invocation_worktree_branch(self)
+    if invocation_branch:
+        return _worktree_provenance_payload(
+            self,
+            source_branch=invocation_branch,
+            resolution_reason="invocation_worktree_branch",
+            plan_file=plan_file,
+            created_for_fresh_ai_launch=created_for_fresh_ai_launch,
+            launch_transport=launch_transport,
+        )
+
     source_branch = git_command_output(self, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
     if source_branch and source_branch != "HEAD":
         return _worktree_provenance_payload(
@@ -68,6 +79,28 @@ def build_worktree_provenance(
         created_for_fresh_ai_launch=created_for_fresh_ai_launch,
         launch_transport=launch_transport,
     )
+
+
+def _invocation_worktree_branch(self: Any) -> str:
+    raw_cwd = str(getattr(self, "env", {}).get("ENVCTL_INVOCATION_CWD") or "").strip()
+    if not raw_cwd:
+        return ""
+    try:
+        invocation_cwd = Path(raw_cwd).resolve()
+        repo_root = Path(self.config.base_dir).resolve()
+    except OSError:
+        return ""
+    root_text = git_command_output_at(self, invocation_cwd, ["rev-parse", "--show-toplevel"]).strip()
+    if not root_text:
+        return ""
+    try:
+        invocation_root = Path(root_text).resolve()
+    except OSError:
+        return ""
+    if invocation_root == repo_root:
+        return ""
+    branch = git_command_output_at(self, invocation_root, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    return branch if branch and branch != "HEAD" else ""
 
 
 def _worktree_provenance_payload(
@@ -121,9 +154,13 @@ def detect_default_branch(self: Any) -> str:
 
 
 def git_command_output(self: Any, args: list[str]) -> str:
+    return git_command_output_at(self, Path(self.config.base_dir), args)
+
+
+def git_command_output_at(self: Any, cwd: Path, args: list[str]) -> str:
     result = resolve_process_runtime(self).run(
-        ["git", "-C", str(self.config.base_dir), *args],
-        cwd=self.config.base_dir,
+        ["git", "-C", str(cwd), *args],
+        cwd=cwd,
         env=self._command_env(port=0),
         timeout=30.0,
     )

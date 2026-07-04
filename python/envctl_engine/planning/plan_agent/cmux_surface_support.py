@@ -111,9 +111,10 @@ def send_surface_key(
     emit_failure_event: bool = True,
     failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
+    key_name = {"enter": "Enter"}.get(str(key).strip().lower(), key)
     return run_cmux_command(
         runtime,
-        ["cmux", "send-key", "--workspace", workspace_id, "--surface", surface_id, key],
+        ["cmux", "send-key", "--workspace", workspace_id, "--surface", surface_id, key_name],
         emit_failure_event=emit_failure_event,
         failure_event=failure_event,
     )

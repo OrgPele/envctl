@@ -12,6 +12,7 @@ from envctl_engine.planning.plan_agent.cmux_surface_support import (
     paste_surface_text,
     prepare_surface,
     run_cmux_command,
+    send_surface_key,
 )
 
 
@@ -81,6 +82,23 @@ class PlanAgentCmuxSurfaceSupportTests(unittest.TestCase):
                     {"reason": "cmux_command_failed", "command": "send-key", "error": "cmux exploded"},
                 )
             ],
+        )
+
+    def test_send_surface_key_maps_enter_for_current_cmux(self) -> None:
+        runner = _RecordingRunner()
+        runtime = _runtime(runner)
+
+        self.assertIsNone(
+            send_surface_key(
+                runtime,
+                workspace_id="workspace:7",
+                surface_id="surface:42",
+                key="enter",
+            )
+        )
+        self.assertEqual(
+            runner.commands,
+            [["cmux", "send-key", "--workspace", "workspace:7", "--surface", "surface:42", "Enter"]],
         )
 
     def test_paste_surface_text_uses_stable_buffer_name_and_paste_command(self) -> None:
