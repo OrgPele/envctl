@@ -246,6 +246,10 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertTrue(route.flags.get("skip_startup"))
         self.assertTrue(route.flags.get("load_state"))
 
+        route = parse_route(["test", "--ship-on-pass", "Ship focused fix"], env={})
+        self.assertEqual(route.command, "test")
+        self.assertEqual(route.flags.get("ship_on_pass"), "Ship focused fix")
+
         route = parse_route(["test", "--failed"], env={})
         self.assertEqual(route.command, "test")
         self.assertTrue(route.flags.get("failed"))
@@ -286,6 +290,13 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertTrue(route.flags.get("skip_startup"))
         self.assertTrue(route.flags.get("load_state"))
 
+        route = parse_route(["test-focused", "--project=feature-a-1", "--ship-on-pass=Ship focused fix"], env={})
+        self.assertEqual(route.command, "test-focused")
+        self.assertEqual(route.projects, ["feature-a-1"])
+        self.assertEqual(route.flags.get("ship_on_pass"), "Ship focused fix")
+        self.assertTrue(route.flags.get("skip_startup"))
+        self.assertTrue(route.flags.get("load_state"))
+
         route = parse_route(["test-focused", "--project=feature-a-1", "--dry-run"], env={})
         self.assertEqual(route.command, "test-focused")
         self.assertEqual(route.projects, ["feature-a-1"])
@@ -303,6 +314,8 @@ class CliRouterParityTests(unittest.TestCase):
             parse_route(["test-plan", "--project=feature-a-1"], env={})
         with self.assertRaisesRegex(RouteError, "Unknown option"):
             parse_route(["--test-plan", "--project=feature-a-1"], env={})
+        with self.assertRaisesRegex(RouteError, "Missing value for --ship-on-pass"):
+            parse_route(["test-focused", "--ship-on-pass"], env={})
 
         route = parse_route(["review", "--review-mode=grouped"], env={})
         self.assertEqual(route.command, "review")

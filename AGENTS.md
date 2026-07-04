@@ -37,10 +37,12 @@ Serena boundaries:
 - During implementation, run `envctl test-focused` from inside the current
   worktree for the normal validation loop. Use broader validation only when the
   focused plan recommends it or the change is cross-cutting/risky.
-- For handoff, use `envctl ship -m "<message>"` from inside the current
-  worktree. `ship` owns commit, push, PR creation/update, and status-check
-  reporting. Use raw `git` or `gh` handoff commands only when `ship` is
-  unavailable or returns actionable fallback instructions.
+- For handoff, use `envctl test-focused --ship-on-pass "<message>"` from inside
+  the current worktree when a handoff message is ready; fall back to `envctl
+  ship -m "<message>"` only when needed. Both use the ship workflow: it stages
+  intended non-protected changes via git add, commits, pushes, creates/updates
+  the PR, and reports status checks. Use raw `git` or `gh` handoff commands
+  only when `ship` is unavailable or returns actionable fallback instructions.
 - If shipping is delegated to a real background worker, it should report only
   blockers; successful ship results stay silent.
 - Keep envctl-generated local artifacts uncommitted.
