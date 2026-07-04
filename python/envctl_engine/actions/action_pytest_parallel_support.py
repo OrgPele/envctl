@@ -64,9 +64,10 @@ class PytestParallelPolicy:
 
 
 def parallelized_pytest_args(args: list[str], *, cwd: Path, policy: PytestParallelPolicy) -> list[str]:
+    insert_index = pytest_parallel_insert_index(args)
     if (
         not policy.enabled()
-        or not is_python_pytest_command(args)
+        or insert_index is None
         or pytest_parallel_already_configured(args)
         or pytest_plugin_autoload_disabled(args, env=policy.env)
     ):
@@ -74,11 +75,17 @@ def parallelized_pytest_args(args: list[str], *, cwd: Path, policy: PytestParall
     workers = policy.workers()
     if workers <= 1 or not pytest_xdist_available(args, cwd=cwd):
         return args
-    return [*args[:3], "-n", str(workers), *args[3:]]
+    return [*args[:insert_index], "-n", str(workers), *args[insert_index:]]
 
 
-def is_python_pytest_command(args: list[str]) -> bool:
-    return len(args) >= 3 and args[1:3] == ["-m", "pytest"]
+def pytest_parallel_insert_index(args: list[str]) -> int | None:
+    if len(args) >= 3 and args[1:3] == ["-m", "pytest"]:
+        return 3
+    if len(args) >= 3 and Path(args[0]).name == "uv" and args[1] == "run":
+        for index, token in enumerate(args[2:], start=2):
+            if token == "pytest":
+                return index + 1
+    return None
 
 
 def pytest_parallel_already_configured(args: list[str]) -> bool:
@@ -101,13 +108,9 @@ def pytest_plugin_autoload_disabled(args: list[str], *, env: dict[str, str]) -> 
 
 
 def pytest_xdist_available(args: list[str], *, cwd: Path) -> bool:
-    _ = cwd
     if not args:
         return False
-    python = Path(args[0])
-    if not python.is_absolute():
-        python = cwd / python
-    venv = python.parent.parent if python.parent.name == "bin" else None
+    venv = pytest_command_venv(args, cwd=cwd)
     if venv is None or not venv.is_dir():
         return False
     for lib_dir_name in ("lib", "lib64"):
@@ -118,6 +121,17 @@ def pytest_xdist_available(args: list[str], *, cwd: Path) -> bool:
             if (site_packages / "xdist").is_dir():
                 return True
     return False
+
+
+def pytest_command_venv(args: list[str], *, cwd: Path) -> Path | None:
+    if len(args) >= 3 and args[1:3] == ["-m", "pytest"]:
+        python = Path(args[0])
+        if not python.is_absolute():
+            python = cwd / python
+        return python.parent.parent if python.parent.name == "bin" else None
+    if len(args) >= 3 and Path(args[0]).name == "uv" and args[1] == "run":
+        return cwd / ".venv"
+    return None
 
 
 def free_cpu_worker_count(*, cpu_count: int) -> int:
