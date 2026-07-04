@@ -99,7 +99,7 @@ class PlanAgentLaunchCmuxWorkspaceFlowTests(PlanAgentLaunchSupportTestCase):
                 rt.process_runner.calls,
             )
             self.assertIn(
-                ["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "Enter"],
+                ["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "enter"],
                 rt.process_runner.calls,
             )
             self.assertIn(
@@ -137,7 +137,7 @@ class PlanAgentLaunchCmuxWorkspaceFlowTests(PlanAgentLaunchSupportTestCase):
             )
             self.assertGreaterEqual(
                 rt.process_runner.calls.count(
-                    ["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "Enter"]
+                    ["cmux", "send-key", "--workspace", "workspace:8", "--surface", "surface:12", "enter"]
                 ),
                 2,
             )

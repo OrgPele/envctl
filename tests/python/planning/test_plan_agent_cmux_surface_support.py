@@ -88,7 +88,7 @@ class PlanAgentCmuxSurfaceSupportTests(unittest.TestCase):
             ],
         )
 
-    def test_send_surface_key_maps_enter_for_current_cmux(self) -> None:
+    def test_send_surface_key_keeps_enter_lowercase_for_cmux(self) -> None:
         runner = _RecordingRunner()
         runtime = _runtime(runner)
 
@@ -102,10 +102,10 @@ class PlanAgentCmuxSurfaceSupportTests(unittest.TestCase):
         )
         self.assertEqual(
             runner.commands,
-            [["cmux", "send-key", "--workspace", "workspace:7", "--surface", "surface:42", "Enter"]],
+            [["cmux", "send-key", "--workspace", "workspace:7", "--surface", "surface:42", "enter"]],
         )
 
-    def test_send_surface_key_maps_escape_for_current_cmux(self) -> None:
+    def test_send_surface_key_keeps_escape_lowercase_for_cmux(self) -> None:
         runner = _RecordingRunner()
         runtime = _runtime(runner)
 
@@ -119,7 +119,7 @@ class PlanAgentCmuxSurfaceSupportTests(unittest.TestCase):
         )
         self.assertEqual(
             runner.commands,
-            [["cmux", "send-key", "--workspace", "workspace:7", "--surface", "surface:42", "Escape"]],
+            [["cmux", "send-key", "--workspace", "workspace:7", "--surface", "surface:42", "escape"]],
         )
 
     def test_paste_surface_text_uses_stable_buffer_name_and_paste_command(self) -> None:

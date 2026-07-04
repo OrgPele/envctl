@@ -101,8 +101,27 @@ def _invocation_worktree_branch(self: Any) -> str:
         return ""
     if invocation_root == repo_root:
         return ""
+    if not _same_git_common_dir(self, repo_root, invocation_root):
+        return ""
     branch = git_command_output_at(self, invocation_root, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
     return branch if branch and branch != "HEAD" else ""
+
+
+def _same_git_common_dir(self: Any, repo_root: Path, invocation_root: Path) -> bool:
+    repo_common_dir = git_command_output_at(self, repo_root, ["rev-parse", "--git-common-dir"]).strip()
+    invocation_common_dir = git_command_output_at(self, invocation_root, ["rev-parse", "--git-common-dir"]).strip()
+    if not repo_common_dir or not invocation_common_dir:
+        return False
+    try:
+        repo_common_path = Path(repo_common_dir)
+        invocation_common_path = Path(invocation_common_dir)
+        if not repo_common_path.is_absolute():
+            repo_common_path = repo_root / repo_common_path
+        if not invocation_common_path.is_absolute():
+            invocation_common_path = invocation_root / invocation_common_path
+        return repo_common_path.resolve() == invocation_common_path.resolve()
+    except OSError:
+        return False
 
 
 def _worktree_provenance_payload(

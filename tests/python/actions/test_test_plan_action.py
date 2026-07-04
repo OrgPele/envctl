@@ -351,6 +351,48 @@ class TestPlanActionTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(calls, [[str(python.resolve()), "-m", "pytest", "-q", "tests/python/actions"]])
 
+    def test_focused_pytest_parallel_respects_plugin_autoload_disable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            python = repo / ".venv" / "bin" / "python"
+            (repo / ".venv" / "lib" / "python3.12" / "site-packages" / "xdist").mkdir(parents=True)
+            python.parent.mkdir(parents=True, exist_ok=True)
+            python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+
+            class Context:
+                repo_root = repo
+                project_root = repo
+                project_name = "Main"
+                env = {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}
+                config_raw: dict[str, str] = {}
+                route_flags: dict[str, object] = {}
+
+            plan = {
+                "contract_version": "envctl.test_plan.v1",
+                "project": "Main",
+                "repo_root": str(repo),
+                "project_root": str(repo),
+                "changed_files": ["python/envctl_engine/actions/test_plan_action.py"],
+                "commands": [{"command": "uv run --extra dev pytest -q tests/python/actions"}],
+                "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+            }
+            calls: list[list[str]] = []
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                calls.append(args)
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+            with (
+                patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+                patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=8),
+                patch("envctl_engine.actions.test_plan_action.subprocess.run", side_effect=fake_run),
+                redirect_stdout(StringIO()),
+            ):
+                code = run_test_plan_action(Context())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [[str(python.resolve()), "-m", "pytest", "-q", "tests/python/actions"]])
+
     def test_default_mode_prints_failure_output_in_non_json(self) -> None:
         class Context:
             repo_root = Path("/repo")

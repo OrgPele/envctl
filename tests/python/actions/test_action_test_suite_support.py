@@ -147,6 +147,55 @@ class ActionTestSuiteSupportTests(unittest.TestCase):
 
         self.assertEqual(command, [str(python), "-m", "pytest", "-n", "6", "-q", "tests"])
 
+    def test_envctl_test_pytest_xdist_detection_keeps_venv_symlink_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            base_python = root / "base" / "python"
+            python = root / ".venv" / "bin" / "python"
+            (root / ".venv" / "lib" / "python3.12" / "site-packages" / "xdist").mkdir(parents=True)
+            base_python.parent.mkdir(parents=True)
+            base_python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+            python.parent.mkdir(parents=True)
+            python.symlink_to(base_python)
+            executor = _TestSuiteExecutor.__new__(_TestSuiteExecutor)
+            executor.runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
+            executor.route = parse_route(["test"], env={})
+
+            with (
+                patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=4),
+                patch("envctl_engine.actions.action_pytest_parallel_support.os.getloadavg", return_value=(0.1, 1.0, 1.0)),
+            ):
+                command = executor._execution_command(
+                    [str(python), "-m", "pytest", "-q", "tests"],
+                    cwd=root,
+                )
+
+        self.assertEqual(command, [str(python), "-m", "pytest", "-n", "3", "-q", "tests"])
+
+    def test_envctl_test_pytest_parallel_respects_plugin_opt_outs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            python = root / ".venv" / "bin" / "python"
+            (root / ".venv" / "lib" / "python3.12" / "site-packages" / "xdist").mkdir(parents=True)
+            python.parent.mkdir(parents=True, exist_ok=True)
+            python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+
+            for args, env in (
+                ([str(python), "-m", "pytest", "-pno:xdist", "-q", "tests"], {}),
+                ([str(python), "-m", "pytest", "-p=no:xdist", "-q", "tests"], {}),
+                ([str(python), "-m", "pytest", "--disable-plugin-autoload", "-q", "tests"], {}),
+                ([str(python), "-m", "pytest", "-q", "tests"], {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"}),
+            ):
+                with self.subTest(args=args, env=env):
+                    executor = _TestSuiteExecutor.__new__(_TestSuiteExecutor)
+                    executor.runtime = SimpleNamespace(env=env, config=SimpleNamespace(raw={}))
+                    executor.route = parse_route(["test"], env={})
+
+                    with patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=4):
+                        command = executor._execution_command(args, cwd=root)
+
+                    self.assertEqual(command, args)
+
     def test_envctl_test_pytest_workers_can_be_capped_without_focused_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

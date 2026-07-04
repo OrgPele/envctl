@@ -64,7 +64,12 @@ class PytestParallelPolicy:
 
 
 def parallelized_pytest_args(args: list[str], *, cwd: Path, policy: PytestParallelPolicy) -> list[str]:
-    if not policy.enabled() or not is_python_pytest_command(args) or pytest_parallel_already_configured(args):
+    if (
+        not policy.enabled()
+        or not is_python_pytest_command(args)
+        or pytest_parallel_already_configured(args)
+        or pytest_plugin_autoload_disabled(args, env=policy.env)
+    ):
         return args
     workers = policy.workers()
     if workers <= 1 or not pytest_xdist_available(args, cwd=cwd):
@@ -84,7 +89,15 @@ def pytest_parallel_already_configured(args: list[str]) -> bool:
             return True
         if token == "-p" and index + 1 < len(args) and args[index + 1] == "no:xdist":
             return True
+        if token in {"-pno:xdist", "-p=no:xdist"}:
+            return True
     return False
+
+
+def pytest_plugin_autoload_disabled(args: list[str], *, env: dict[str, str]) -> bool:
+    if env.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "").strip().lower() not in {"", "0", "false", "no"}:
+        return True
+    return "--disable-plugin-autoload" in args
 
 
 def pytest_xdist_available(args: list[str], *, cwd: Path) -> bool:
@@ -92,10 +105,8 @@ def pytest_xdist_available(args: list[str], *, cwd: Path) -> bool:
     if not args:
         return False
     python = Path(args[0])
-    try:
-        python = python.resolve()
-    except OSError:
-        return False
+    if not python.is_absolute():
+        python = cwd / python
     venv = python.parent.parent if python.parent.name == "bin" else None
     if venv is None or not venv.is_dir():
         return False
