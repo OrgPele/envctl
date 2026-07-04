@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import time
@@ -243,6 +244,8 @@ def _run_plan_commands(
 
 def _execution_args(command_args: list[str], *, cwd: Path) -> list[str]:
     if command_args[:4] != ["uv", "run", "--extra", "dev"] or len(command_args) < 5:
+        return command_args
+    if shutil.which("uv") is not None:
         return command_args
     tool = command_args[4]
     tool_args = command_args[5:]

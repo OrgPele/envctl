@@ -305,6 +305,7 @@ class TestPlanActionTests(unittest.TestCase):
 
             with (
                 patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+                patch("envctl_engine.actions.test_plan_action.shutil.which", return_value="/usr/bin/uv"),
                 patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=8),
                 patch("envctl_engine.actions.action_pytest_parallel_support.os.getloadavg", return_value=(2.1, 1.0, 1.0)),
                 patch("envctl_engine.actions.test_plan_action._run_test_command", side_effect=fake_run),
@@ -315,7 +316,7 @@ class TestPlanActionTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(
             calls,
-            [[str(python.resolve()), "-m", "pytest", "-n", "5", "-q", "tests/python/actions"]],
+            [["uv", "run", "--extra", "dev", "pytest", "-n", "5", "-q", "tests/python/actions"]],
         )
 
     def test_pytest_parallel_worker_count_can_be_capped(self) -> None:
@@ -351,6 +352,7 @@ class TestPlanActionTests(unittest.TestCase):
 
             with (
                 patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+                patch("envctl_engine.actions.test_plan_action.shutil.which", return_value="/usr/bin/uv"),
                 patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=8),
                 patch("envctl_engine.actions.test_plan_action._run_test_command", side_effect=fake_run),
                 redirect_stdout(StringIO()),
@@ -360,7 +362,7 @@ class TestPlanActionTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(
             calls,
-            [[str(python.resolve()), "-m", "pytest", "-n", "3", "-q", "tests/python/actions"]],
+            [["uv", "run", "--extra", "dev", "pytest", "-n", "3", "-q", "tests/python/actions"]],
         )
 
     def test_pytest_parallel_can_be_disabled_for_focused_runs(self) -> None:
@@ -396,13 +398,14 @@ class TestPlanActionTests(unittest.TestCase):
 
             with (
                 patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+                patch("envctl_engine.actions.test_plan_action.shutil.which", return_value="/usr/bin/uv"),
                 patch("envctl_engine.actions.test_plan_action._run_test_command", side_effect=fake_run),
                 redirect_stdout(StringIO()),
             ):
                 code = run_test_plan_action(Context())
 
         self.assertEqual(code, 0)
-        self.assertEqual(calls, [[str(python.resolve()), "-m", "pytest", "-q", "tests/python/actions"]])
+        self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python/actions"]])
 
     def test_low_confidence_full_fallback_runs_without_xdist(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -443,6 +446,7 @@ class TestPlanActionTests(unittest.TestCase):
 
             with (
                 patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+                patch("envctl_engine.actions.test_plan_action.shutil.which", return_value="/usr/bin/uv"),
                 patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=8),
                 patch("envctl_engine.actions.test_plan_action._run_test_command", side_effect=fake_run),
                 redirect_stdout(StringIO()),
@@ -450,7 +454,7 @@ class TestPlanActionTests(unittest.TestCase):
                 code = run_test_plan_action(Context())
 
         self.assertEqual(code, 0)
-        self.assertEqual(calls, [[str(python.resolve()), "-m", "pytest", "-q", "tests/python"]])
+        self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python"]])
 
     def test_focused_pytest_parallel_respects_plugin_autoload_disable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -485,6 +489,7 @@ class TestPlanActionTests(unittest.TestCase):
 
             with (
                 patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+                patch("envctl_engine.actions.test_plan_action.shutil.which", return_value="/usr/bin/uv"),
                 patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=8),
                 patch("envctl_engine.actions.test_plan_action._run_test_command", side_effect=fake_run),
                 redirect_stdout(StringIO()),
@@ -492,7 +497,7 @@ class TestPlanActionTests(unittest.TestCase):
                 code = run_test_plan_action(Context())
 
         self.assertEqual(code, 0)
-        self.assertEqual(calls, [[str(python.resolve()), "-m", "pytest", "-q", "tests/python/actions"]])
+        self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python/actions"]])
 
     def test_default_mode_prints_failure_output_in_non_json(self) -> None:
         class Context:
@@ -534,7 +539,41 @@ class TestPlanActionTests(unittest.TestCase):
             ],
         )
 
-    def test_default_mode_uses_repo_venv_for_uv_dev_pytest_command_when_available(self) -> None:
+    def test_default_mode_prefers_uv_when_available_for_uv_dev_command(self) -> None:
+        class Context:
+            repo_root = Path("/repo")
+            project_root = Path("/repo")
+            project_name = "Main"
+
+        plan = {
+            "contract_version": "envctl.test_plan.v1",
+            "project": "Main",
+            "repo_root": "/repo",
+            "project_root": "/repo",
+            "changed_files": [],
+            "commands": [{"command": "uv run --extra dev pytest -q tests/python"}],
+            "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+        }
+        calls: list[list[str]] = []
+
+        def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+            calls.append(args)
+            return subprocess.CompletedProcess(args=args, returncode=0)
+
+        with (
+            patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+            patch("envctl_engine.actions.test_plan_action.shutil.which", return_value="/usr/bin/uv"),
+            patch("envctl_engine.actions.test_plan_action._run_test_command", side_effect=fake_run),
+            redirect_stdout(StringIO()) as stdout,
+        ):
+            code = run_test_plan_action(Context(), json_output=True)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python"]])
+        payload = json.loads(stdout.getvalue())
+        self.assertNotIn("executed_command", payload["run"]["results"][0])
+
+    def test_default_mode_uses_repo_venv_for_uv_dev_pytest_command_when_uv_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             python_path = repo.resolve() / ".venv" / "bin" / "python"
@@ -564,6 +603,7 @@ class TestPlanActionTests(unittest.TestCase):
 
             with (
                 patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+                patch("envctl_engine.actions.test_plan_action.shutil.which", return_value=None),
                 patch("envctl_engine.actions.test_plan_action._run_test_command", side_effect=fake_run),
                 redirect_stdout(StringIO()) as stdout,
             ):

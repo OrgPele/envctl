@@ -147,6 +147,25 @@ class ActionTestSuiteSupportTests(unittest.TestCase):
 
         self.assertEqual(command, [str(python), "-m", "pytest", "-n", "6", "-q", "tests"])
 
+    def test_envctl_test_uv_pytest_command_uses_free_core_worker_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".venv" / "lib" / "python3.12" / "site-packages" / "xdist").mkdir(parents=True)
+            executor = _TestSuiteExecutor.__new__(_TestSuiteExecutor)
+            executor.runtime = SimpleNamespace(env={}, config=SimpleNamespace(raw={}))
+            executor.route = parse_route(["test"], env={})
+
+            with (
+                patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=10),
+                patch("envctl_engine.actions.action_pytest_parallel_support.os.getloadavg", return_value=(3.4, 1.0, 1.0)),
+            ):
+                command = executor._execution_command(
+                    ["uv", "run", "pytest", "-q", "tests"],
+                    cwd=root,
+                )
+
+        self.assertEqual(command, ["uv", "run", "pytest", "-n", "6", "-q", "tests"])
+
     def test_envctl_test_pytest_xdist_detection_keeps_venv_symlink_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
