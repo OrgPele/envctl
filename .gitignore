@@ -15,3 +15,6 @@ htmlcov/
 
 # Serena local overrides and generated caches
 .serena/project.local.yml
+
+# CodeGraph local indexes
+.codegraph/

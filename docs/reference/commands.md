@@ -33,6 +33,8 @@ envctl doctor --repo /absolute/path/to/repo --json
 ```
 
 `--version` does not add a runtime command and does not appear in `list-commands`.
+Launcher doctor JSON includes the resolved repo root, launcher binary path, Python executable, and
+`envctl_engine` module path so PATH or source-checkout mismatches are visible without starting a runtime.
 
 ## Command Boundary
 
@@ -414,7 +416,16 @@ envctl test --all
 envctl test --failed
 envctl test --all --skip-startup --load-state
 envctl test --failed --skip-startup --load-state
+envctl test-focused
 ```
+
+Pytest parallelism:
+
+- when `envctl test` or `envctl test-focused` executes a `python -m pytest` command and pytest-xdist is installed, envctl adds `-n <free-cores>` using current CPU load to estimate the number of free cores
+- envctl does not add xdist flags when the pytest command already includes `-n`, `--numprocesses`, or `-p no:xdist`
+- use `--test-parallel-max <n>` to cap both envctl's suite concurrency and pytest-xdist workers for the current run
+- persistent pytest-specific controls are `ENVCTL_ACTION_TEST_PYTEST_PARALLEL`, `ENVCTL_ACTION_TEST_PYTEST_WORKERS`, `ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL`, and `ENVCTL_TEST_FOCUSED_PYTEST_WORKERS`
+- `ENVCTL_ACTION_TEST_PARALLEL` and `ENVCTL_ACTION_TEST_PARALLEL_MAX` remain suite-concurrency settings; they do not silently replace the free-core pytest worker estimate
 
 Logs and inspection:
 
@@ -457,7 +468,7 @@ envctl config
 printf '%s\n' '{"default_mode":"trees"}' | envctl config --stdin-json
 ```
 
-`envctl config` saves `.envctl`, protects envctl-local artifacts through the configured Git global excludes file, and creates or updates the repo-local `AGENTS.md` envctl-managed agent guidance block.
+`envctl config` saves `.envctl`, protects envctl-local artifacts through the configured Git global excludes file, and creates or updates the repo-local `AGENTS.md` envctl-managed agent guidance block from `python/envctl_engine/config/AGENTS.md.tpl`.
 
 Planning and worktrees:
 
@@ -498,7 +509,7 @@ Commit defaults:
 - `envctl commit` reads its fallback default commit message from the repo-local `.envctl-commit-message.md` file when you do not pass `-m`, `--commit-message`, or `--commit-message-file`
 - treat `### Envctl pointer ###` as the boundary after the last successful default commit; everything after it is the next default commit message
 - write one complete next commit message in `.envctl-commit-message.md` rather than multiple fragmented summaries only when using the fallback ledger
-- envctl-local control artifacts (`.envctl*`, `MAIN_TASK.md`, `OLD_TASK_*.md`, `trees/`) stay local; if a broad `git add .` stages them, `envctl commit` unstages those protected paths before committing normal changes
+- envctl-local control artifacts (`.envctl*`, `.codegraph/`, `.serena/project.local.yml`, `MAIN_TASK.md`, `OLD_TASK_*.md`, `trees/`) stay local; if a broad `git add .` stages them, `envctl commit` unstages those protected paths before committing normal changes
 
 Optional plan-agent launch config for `--plan` and `--import`:
 

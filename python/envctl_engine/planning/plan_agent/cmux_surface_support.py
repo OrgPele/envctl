@@ -13,8 +13,10 @@ from envctl_engine.planning.plan_agent.constants import (
     _SURFACE_READY_DELAY_SECONDS,
 )
 from envctl_engine.planning.plan_agent.terminal_screen import (
+    _normalized_screen_text,
     _prompt_picker_screen_looks_ready,
     _prompt_submit_screen_looks_ready,
+    _screen_excerpt,
     _screen_looks_ready,
 )
 from envctl_engine.planning.plan_agent.cmux_workspace_support import surface_id_from_output
@@ -111,9 +113,10 @@ def send_surface_key(
     emit_failure_event: bool = True,
     failure_event: str = "planning.agent_launch.failed",
 ) -> str | None:
+    key_name = str(key).strip().lower()
     return run_cmux_command(
         runtime,
-        ["cmux", "send-key", "--workspace", workspace_id, "--surface", surface_id, key],
+        ["cmux", "send-key", "--workspace", workspace_id, "--surface", surface_id, key_name],
         emit_failure_event=emit_failure_event,
         failure_event=failure_event,
     )
@@ -157,18 +160,20 @@ def wait_for_cli_ready(
     surface_id: str,
     cli: str,
     cli_ready_delay_seconds: float,
-) -> None:
+) -> str | None:
     normalized_cli = str(cli).strip().lower()
     timeout_seconds = cli_ready_delay_seconds
     if normalized_cli not in {"codex", "opencode"}:
         time.sleep(timeout_seconds)
-        return
+        return None
     deadline = time.monotonic() + timeout_seconds
+    last_screen = ""
     while time.monotonic() < deadline:
-        screen = read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
-        if _screen_looks_ready(normalized_cli, screen):
-            return
+        last_screen = read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
+        if _screen_looks_ready(normalized_cli, last_screen):
+            return None
         time.sleep(_CLI_READY_POLL_INTERVAL_SECONDS)
+    return _ready_timeout_error(f"{normalized_cli}_ready_timeout", last_screen)
 
 
 def read_surface_screen(runtime: Any, *, workspace_id: str, surface_id: str) -> str:
@@ -199,18 +204,47 @@ def wait_for_prompt_submit_ready(
     surface_id: str,
     cli: str,
     prompt_text: str,
-) -> None:
+) -> str | None:
     normalized_cli = str(cli).strip().lower()
     if normalized_cli != "opencode":
         if normalized_cli != "codex":
             time.sleep(_PROMPT_SUBMIT_READY_DELAY_SECONDS)
-            return
+            return None
     deadline = time.monotonic() + _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS
+    last_screen = ""
     while time.monotonic() < deadline:
-        screen = read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
-        if _prompt_submit_screen_looks_ready(normalized_cli, screen, prompt_text):
-            return
+        last_screen = read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
+        if _prompt_submit_screen_looks_ready(normalized_cli, last_screen, prompt_text):
+            return None
         time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
+    return _ready_timeout_error(f"{normalized_cli}_prompt_submit_ready_timeout", last_screen)
+
+
+def wait_for_direct_prompt_ready(
+    runtime: Any,
+    *,
+    workspace_id: str,
+    surface_id: str,
+    prompt_text: str,
+) -> str | None:
+    deadline = time.monotonic() + _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS
+    last_screen = ""
+    while time.monotonic() < deadline:
+        last_screen = read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
+        if _direct_prompt_text_is_visible(last_screen, prompt_text):
+            return None
+        time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
+    return _ready_timeout_error("direct_prompt_ready_timeout", last_screen)
+
+
+def _direct_prompt_text_is_visible(screen: str, prompt_text: str) -> bool:
+    normalized_screen = _normalized_screen_text(screen)
+    normalized_prompt = _normalized_screen_text(prompt_text)
+    if not normalized_screen or not normalized_prompt:
+        return False
+    if len(normalized_prompt) >= 500 and "pasted content" in normalized_screen:
+        return True
+    return normalized_prompt[:80] in normalized_screen
 
 
 def wait_for_prompt_picker_ready(
@@ -220,17 +254,26 @@ def wait_for_prompt_picker_ready(
     surface_id: str,
     cli: str,
     prompt_text: str,
-) -> None:
+) -> str | None:
     normalized_cli = str(cli).strip().lower()
     if normalized_cli not in {"codex", "opencode"}:
         time.sleep(_PROMPT_PRE_SUBMIT_DELAY_SECONDS)
-        return
+        return None
     deadline = time.monotonic() + _PROMPT_SUBMIT_READY_TIMEOUT_SECONDS
+    last_screen = ""
     while time.monotonic() < deadline:
-        screen = read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
-        if _prompt_picker_screen_looks_ready(normalized_cli, screen, prompt_text):
-            return
+        last_screen = read_surface_screen(runtime, workspace_id=workspace_id, surface_id=surface_id)
+        if _prompt_picker_screen_looks_ready(normalized_cli, last_screen, prompt_text):
+            return None
         time.sleep(_PROMPT_SUBMIT_READY_POLL_INTERVAL_SECONDS)
+    return _ready_timeout_error(f"{normalized_cli}_prompt_picker_ready_timeout", last_screen)
+
+
+def _ready_timeout_error(reason: str, screen: str) -> str:
+    excerpt = _screen_excerpt(screen)
+    if not excerpt:
+        return reason
+    return f"{reason}: {excerpt}"
 
 
 def prepare_surface(

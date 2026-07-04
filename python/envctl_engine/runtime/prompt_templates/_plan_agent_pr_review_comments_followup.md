@@ -12,10 +12,5 @@ Inspect unresolved PR review comments and review threads on the current branch P
 Build the message as a commit/PR handoff message; its Verification section must state what your validation actually did and proved, then state any manual checks a human should still run to truly confirm it works, with expected results.
 
 ## Ship contract
-- Run bare `envctl ship` from inside the current worktree/project directory; add `--project <current-worktree-name>` only when operating from elsewhere.
-- If a real subagent or background-task tool is available, delegate `envctl ship -m "<message>"` there; otherwise run it normally.
-- `ship` creates a PR when none exists, reuses or updates the existing PR otherwise, waits for target GitHub Tests checks until they pass, fail, time out, or report no target check contexts, and returns JSON by default with `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`, `failing_checks`, `pending_checks`, and `checks_error`.
-- Do not run raw `git`, `gh`, or separate commit/PR/status commands unless `ship` is unavailable or failed with actionable fallback instructions.
-- The shipping subagent must report commit/push/PR failures, merge conflicts, failed checks, pending-check timeout, no-checks-reported status, and any new actionable review comments immediately.
-- Keep doing useful local work while CI is pending; do not wait for a successful ship result, and only return to the shipping lane if the subagent reports an issue.
-- A successful ship result is silent: the shipping subagent must not send a success summary, JSON payload, or completion message back to the main agent.
+- Follow AGENTS.md for the ship workflow.
+- Use `envctl ship -m "<message>"` for the handoff unless it is unavailable or returns actionable fallback instructions.

@@ -47,7 +47,7 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
             cgc_calls: list[tuple[list[str], Path | None]] = []
 
-            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true"})
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true", "ENVCTL_WORKTREE_CODEGRAPH_INDEX": "off"})
 
             def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
                 _ = env, timeout
@@ -95,7 +95,7 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
                 ],
             )
 
-    def test_setup_worktree_rewrites_serena_project_name_and_preserves_config(self) -> None:
+    def test_setup_worktree_writes_serena_local_project_name_and_preserves_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             repo = root / "repo"
@@ -133,10 +133,14 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             self.assertIsNone(error)
             self.assertEqual(
                 (target_root / ".serena" / "project.yml").read_text(encoding="utf-8"),
-                "project_name: envctl-feature-a_with_spaces-1\n"
+                "project_name: envctl\n"
                 "language: python\n"
                 "ignored_paths:\n"
                 "  - trees/**\n",
+            )
+            self.assertEqual(
+                (target_root / ".serena" / "project.local.yml").read_text(encoding="utf-8"),
+                'project_name: "envctl-feature-a_with_spaces-1"\n',
             )
 
     def test_setup_worktree_prepends_serena_project_name_when_missing(self) -> None:
@@ -171,7 +175,11 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             self.assertIsNone(error)
             self.assertEqual(
                 (target_root / ".serena" / "project.yml").read_text(encoding="utf-8"),
-                "project_name: repo-feature-a-1\nlanguage: python\n",
+                "language: python\n",
+            )
+            self.assertEqual(
+                (target_root / ".serena" / "project.local.yml").read_text(encoding="utf-8"),
+                'project_name: "repo-feature-a-1"\n',
             )
 
     def test_setup_worktree_code_intelligence_templates_override_identity(self) -> None:
@@ -193,6 +201,7 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
                     "ENVCTL_WORKTREE_SERENA_PROJECT_TEMPLATE": "serena_{worktree}",
                     "ENVCTL_WORKTREE_CGC_DATABASE": "custom db",
                     "ENVCTL_WORKTREE_CGC_INDEX": "true",
+                    "ENVCTL_WORKTREE_CODEGRAPH_INDEX": "off",
                 },
             )
             cgc_calls: list[list[str]] = []
@@ -223,7 +232,11 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             self.assertIsNone(error)
             self.assertEqual(
                 (target_root / ".serena" / "project.yml").read_text(encoding="utf-8"),
-                "project_name: serena_feature-a-1\n",
+                "project_name: repo\n",
+            )
+            self.assertEqual(
+                (target_root / ".serena" / "project.local.yml").read_text(encoding="utf-8"),
+                'project_name: "serena_feature-a-1"\n',
             )
             self.assertEqual(cgc_calls[0], ["cgc", "context", "create", "ctx_Repo_feature-a_1", "--database", "custom_db"])
             self.assertEqual(
@@ -242,7 +255,7 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             (repo / ".serena" / "project.yml").write_text('project_name: "repo"\n', encoding="utf-8")
             cgc_calls: list[list[str]] = []
 
-            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true"})
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true", "ENVCTL_WORKTREE_CODEGRAPH_INDEX": "off"})
 
             def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
                 _ = cwd, env, timeout
@@ -268,6 +281,10 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             self.assertEqual(cgc_calls, [])
             self.assertEqual(
                 (target_root / ".serena" / "project.yml").read_text(encoding="utf-8"),
+                'project_name: "repo"\n',
+            )
+            self.assertEqual(
+                (target_root / ".serena" / "project.local.yml").read_text(encoding="utf-8"),
                 'project_name: "repo-feature-a-1"\n',
             )
             metadata = json.loads((target_root / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
@@ -288,7 +305,7 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             emitted: list[dict[str, object]] = []
             cgc_calls: list[list[str]] = []
 
-            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "auto"})
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "auto", "ENVCTL_WORKTREE_CODEGRAPH_INDEX": "off"})
             engine._emit = lambda event, **payload: emitted.append({"event": event, **payload})  # type: ignore[method-assign]
 
             def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
@@ -350,7 +367,7 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
             cgc_calls: list[list[str]] = []
 
-            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "auto"})
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "auto", "ENVCTL_WORKTREE_CODEGRAPH_INDEX": "off"})
 
             def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
                 _ = cwd, env, timeout
@@ -449,7 +466,7 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             emitted: list[dict[str, object]] = []
 
-            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true"})
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true", "ENVCTL_WORKTREE_CODEGRAPH_INDEX": "off"})
             engine._emit = lambda event, **payload: emitted.append({"event": event, **payload})  # type: ignore[method-assign]
 
             def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
@@ -495,7 +512,7 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             emitted: list[dict[str, object]] = []
             cgc_calls: list[list[str]] = []
 
-            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true"})
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true", "ENVCTL_WORKTREE_CODEGRAPH_INDEX": "off"})
             engine._emit = lambda event, **payload: emitted.append({"event": event, **payload})  # type: ignore[method-assign]
 
             def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
@@ -547,7 +564,7 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             emitted: list[dict[str, object]] = []
             cgc_calls: list[list[str]] = []
 
-            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true"})
+            engine = self._runtime(repo, runtime, env={"ENVCTL_WORKTREE_CGC_INDEX": "true", "ENVCTL_WORKTREE_CODEGRAPH_INDEX": "off"})
             engine._emit = lambda event, **payload: emitted.append({"event": event, **payload})  # type: ignore[method-assign]
 
             def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
@@ -625,35 +642,38 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             self.assertFalse((target_root / ".serena").exists())
             self.assertFalse((target_root / ".cgcignore").exists())
 
-    def test_setup_worktree_real_git_smoke_writes_isolated_code_intelligence(self) -> None:
+    def test_setup_worktree_real_git_smoke_copies_and_syncs_codegraph_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             repo = root / "repo"
             runtime = root / "runtime"
             bin_dir = root / "bin"
-            cgc_log = root / "cgc.log"
+            codegraph_log = root / "codegraph.log"
             repo.mkdir(parents=True, exist_ok=True)
             bin_dir.mkdir(parents=True, exist_ok=True)
             subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
             subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
             subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
             (repo / "README.md").write_text("# repo\n", encoding="utf-8")
-            subprocess.run(["git", "add", "."], cwd=repo, check=True)
-            subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=repo, check=True)
             (repo / ".serena").mkdir(parents=True, exist_ok=True)
             (repo / ".serena" / "project.yml").write_text("project_name: repo\nlanguage: python\n", encoding="utf-8")
-            (repo / ".cgcignore").write_text(".git/\n", encoding="utf-8")
-            cgc = bin_dir / "cgc"
-            cgc.write_text(
+            (repo / ".serena" / ".gitignore").write_text("/project.local.yml\n/cache\n/logs\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=repo, check=True)
+            (repo / ".codegraph").mkdir(parents=True, exist_ok=True)
+            (repo / ".codegraph" / ".gitignore").write_text("*\n!.gitignore\n", encoding="utf-8")
+            (repo / ".codegraph" / "codegraph.db").write_text("source-index\n", encoding="utf-8")
+            codegraph = bin_dir / "codegraph"
+            codegraph.write_text(
                 "#!/bin/sh\n"
-                f"printf '%s\\n' \"$*\" >> {cgc_log}\n"
+                f"printf '%s\\n' \"$*\" >> {codegraph_log}\n"
                 "exit 0\n",
                 encoding="utf-8",
             )
-            cgc.chmod(0o755)
+            codegraph.chmod(0o755)
 
             env = {
-                "ENVCTL_WORKTREE_CGC_INDEX": "true",
+                "ENVCTL_WORKTREE_CODEGRAPH_INDEX": "true",
                 "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
             }
             engine = self._runtime(repo, runtime, env=env)
@@ -666,18 +686,37 @@ class PlanningWorktreeSetupCodeIntelligenceTests(PlanningWorktreeSetupTestCase):
             self.assertTrue((target / ".git").exists())
             self.assertEqual(
                 (target / ".serena" / "project.yml").read_text(encoding="utf-8"),
-                "project_name: repo-feature-a-1\nlanguage: python\n",
+                "project_name: repo\nlanguage: python\n",
             )
-            self.assertEqual((target / ".cgcignore").read_text(encoding="utf-8"), ".git/\n")
+            self.assertEqual(
+                (target / ".serena" / "project.local.yml").read_text(encoding="utf-8"),
+                'project_name: "repo-feature-a-1"\n',
+            )
+            self.assertEqual((target / ".codegraph" / "codegraph.db").read_text(encoding="utf-8"), "source-index\n")
+            self.assertTrue((target / ".codegraph" / ".gitignore").is_file())
             metadata = json.loads((target / ".envctl-state" / "code-intelligence.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata.get("serena_project_name"), "repo-feature-a-1")
-            self.assertEqual(metadata.get("cgc_context"), "Repo-feature-a-1")
-            self.assertEqual(metadata.get("cgc_database"), "kuzudb")
-            self.assertTrue(metadata.get("cgc_index_succeeded"))
+            self.assertEqual(metadata.get("codegraph_index_mode"), "enabled")
+            self.assertTrue(metadata.get("codegraph_source_index_succeeded"))
+            self.assertTrue(metadata.get("codegraph_copied_from_source"))
+            self.assertTrue(metadata.get("codegraph_index_succeeded"))
+            self.assertTrue(metadata["files"][".serena/project.local.yml"])
+            self.assertTrue(metadata["files"][".codegraph/.gitignore"])
+            self.assertTrue(metadata["files"][".codegraph/codegraph.db"])
             self.assertEqual(
-                cgc_log.read_text(encoding="utf-8").splitlines(),
+                subprocess.run(
+                    ["git", "status", "--short"],
+                    cwd=target,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                ).stdout,
+                "",
+            )
+            self.assertEqual(
+                codegraph_log.read_text(encoding="utf-8").splitlines(),
                 [
-                    "context create Repo-feature-a-1 --database kuzudb",
-                    f"index {target.resolve()} --context Repo-feature-a-1",
+                    f"sync {repo.resolve()}",
+                    f"sync {target.resolve()}",
                 ],
             )

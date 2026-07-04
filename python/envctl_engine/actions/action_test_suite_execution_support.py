@@ -7,6 +7,7 @@ from pathlib import Path
 import time
 from typing import Any
 
+from envctl_engine.actions.action_pytest_parallel_support import PytestParallelPolicy, parallelized_pytest_args
 from envctl_engine.actions.action_test_execution_support import TestActionExecutionPlan
 from envctl_engine.actions.action_test_interrupt_support import TestSuiteInterruptRegistry
 from envctl_engine.actions.action_test_runner_failures import summarize_failure_output as _summarize_failure_output
@@ -159,7 +160,7 @@ class _TestSuiteExecutor:
         else:
             self.progress_tracker.mark_running(execution)
 
-        command = [*spec.command, *args]
+        command = self._execution_command([*spec.command, *args], cwd=spec.cwd)
         started_at = time.monotonic()
         self.events.emit_start(execution, command=command)
 
@@ -223,6 +224,14 @@ class _TestSuiteExecutor:
             )
             return 1, error
         return 0, ""
+
+    def _execution_command(self, command: list[str], *, cwd: Path) -> list[str]:
+        policy = PytestParallelPolicy(
+            env=getattr(self.runtime, "env", {}),
+            config_raw=getattr(getattr(self.runtime, "config", None), "raw", {}),
+            route_flags=self.route.flags,
+        )
+        return parallelized_pytest_args(command, cwd=cwd, policy=policy)
 
     def _build_runner(self, execution: Any, *, render_output: bool) -> Any:
         def emit_test_event(event_name: str, data: dict[str, Any]) -> None:

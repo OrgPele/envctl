@@ -26,47 +26,56 @@ def test_serena_workflow_is_documented_as_symbol_navigation() -> None:
 
     assert "serena project health-check" in text
     assert "symbol/reference layer" in text
-    assert "CodeGraphContext (`cgc`)" in text
-    assert "Do not use the legacy `codegraph` CLI" in text
+    assert "CodeGraph is the repo-wide graph context layer" in text
+    assert "codegraph_index_succeeded: true" in text
 
 
-def test_agent_tooling_prefers_cgc_over_legacy_codegraph() -> None:
+def test_agent_tooling_does_not_unconditionally_inject_codegraph() -> None:
     agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
-    assert "CodeGraphContext (`cgc`)" in agents
-    assert agents.count("## CodeGraphContext") == 1
-    assert "Do not\nuse the old `codegraph` CLI" in agents
-    assert "use the `cgc_active_context` recorded in" in agents
-    assert "`cgc_index_mode` is `auto` or `enabled`" in agents
-    assert "succeeded (`cgc_index_succeeded: true`) or the source context was reused" in agents
-    assert "`cgc_active_context` when the metadata reports disabled" in agents
+    assert "## CodeGraph" not in agents
     assert "ENVCTL_WORKTREE_CGC_INDEX" not in agents
-    assert "codegraph init" not in agents
-    assert "codegraph_*" not in agents
     assert "CODEGRAPH_START" not in agents
+
+
+def test_agent_tooling_activates_serena_against_current_checkout() -> None:
+    agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "Activate the current checkout/worktree path" in agents
+    assert "/Users/kfiramar/projects/envctl" not in agents
 
 
 def test_agent_workflow_prefers_focused_tests_and_ship_handoff() -> None:
     agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
+    assert agents.count("## Development Discipline") == 1
     assert agents.count("## Envctl Workflow") == 1
+    assert 'PATH="$PWD/.venv/bin:$PATH" envctl ...' in agents
+    assert "run the current checkout instead of an installed `envctl`" in agents
+    assert "Read the owning code path before changing it" in agents
+    assert "smallest test that proves the real\n  contract" in agents
+    assert "MAIN_TASK.md" not in agents
     assert "run `envctl test-focused` from inside the current\n  worktree" in agents
     assert 'use `envctl ship -m "<message>"` from inside the current\n  worktree' in agents
-    assert "Do not run separate raw `git`/`gh` commit, push, PR, or status-check\n  commands" in agents
-    assert "a successful ship is silent" in agents
+    assert "`ship` owns commit, push, PR creation/update, and status-check\n  reporting" in agents
+    assert "successful ship results stay silent" in agents
+    assert "pytest-xdist" not in agents
+    assert "ENVCTL_ACTION_TEST_PYTEST_WORKERS" not in agents
 
 
-def test_python_code_does_not_shell_out_to_legacy_codegraph() -> None:
+def test_python_code_uses_codegraph_only_in_worktree_code_intelligence() -> None:
     violations: list[str] = []
     allowed_compatibility_markers = {
         ENGINE_ROOT / "planning" / "worktree_code_intelligence_config.py",
+        ENGINE_ROOT / "planning" / "worktree_code_intelligence.py",
+        ENGINE_ROOT / "planning" / "worktree_code_intelligence_codegraph.py",
     }
     legacy_command_markers = ('["codegraph"', "['codegraph'", '"codegraph ', "'codegraph ", "codegraph init")
     for path in ENGINE_ROOT.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         if "codegraph" not in text.lower():
             continue
-        if path in allowed_compatibility_markers and ".codegraphcontext" in text:
+        if path in allowed_compatibility_markers:
             continue
         if not any(marker in text for marker in legacy_command_markers):
             continue

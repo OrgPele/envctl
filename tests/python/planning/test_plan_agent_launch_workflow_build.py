@@ -323,5 +323,4 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
             pr_review_comments_followup_enable=True,
         )
 
-        self.assertTrue(workflow.steps[0].requires_goal)
-        self.assertTrue(all(not step.requires_goal for step in workflow.steps[1:]))
+        self.assertTrue(all(not step.requires_goal for step in workflow.steps))

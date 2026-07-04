@@ -224,16 +224,16 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout=ready_screen, stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout=active_goal_screen, stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout=active_goal_screen, stderr=""),
-                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout=active_goal_screen, stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                 ]
             )
-
             with (
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_direct_prompt_ready", return_value=None),
             ):
                 _ImmediateThread.created = []
                 result = launch_plan_agent_terminals(
@@ -247,7 +247,7 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                 index
                 for index, call in enumerate(rt.process_runner.calls)
                 if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                and str(call[-1]).startswith("/goal ")
+                and str(call[-1]).startswith("/go ")
             )
             implementation_buffer_index = next(
                 index
@@ -310,6 +310,8 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                 patch("envctl_engine.planning.plan_agent.cmux_transport._launch_cli_bootstrap_commands", return_value=[None]),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text", side_effect=fake_paste),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_direct_prompt_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._submit_prompt_workflow_step", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", return_value=None),
                 patch(
                     "envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen",
@@ -332,7 +334,7 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
 
         self.assertIsNone(error)
         self.assertEqual(len(pasted_texts), 2)
-        self.assertTrue(pasted_texts[0].startswith("/goal "))
+        self.assertTrue(pasted_texts[0].startswith("/go "))
         self.assertEqual(pasted_texts[1], "IMPLEMENT PROMPT")
 
     def test_cmux_codex_goal_inactive_screen_blocks_implementation_prompt(self) -> None:
@@ -377,6 +379,8 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                     "envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text",
                     side_effect=lambda *_args, text, **_kwargs: pasted_texts.append(text) or None,
                 ),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_direct_prompt_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._submit_prompt_workflow_step", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen", return_value=ready_screen),
                 patch(
@@ -396,5 +400,4 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
 
         self.assertEqual(error, "codex_goal_active_timeout")
         self.assertEqual(len(pasted_texts), 1)
-        self.assertTrue(pasted_texts[0].startswith("/goal "))
-
+        self.assertTrue(pasted_texts[0].startswith("/go "))

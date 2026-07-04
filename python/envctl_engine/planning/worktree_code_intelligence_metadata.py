@@ -16,6 +16,7 @@ def write_worktree_code_intelligence_metadata(
     target: Path,
     identity: WorktreeCodeIntelligenceIdentity,
     copied_files: Mapping[str, bool],
+    codegraph_result: Mapping[str, object],
     cgc_database: str,
     cgc_result: Mapping[str, object],
 ) -> None:
@@ -32,6 +33,7 @@ def write_worktree_code_intelligence_metadata(
         "files": dict(copied_files),
         "cgc_database": cgc_database,
     }
+    payload.update(dict(codegraph_result))
     payload.update(dict(cgc_result))
     path = target / WORKTREE_CODE_INTELLIGENCE_PATH
     try:

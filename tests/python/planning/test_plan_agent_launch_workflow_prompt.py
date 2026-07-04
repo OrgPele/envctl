@@ -72,16 +72,22 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
             metadata_path = worktree_root / ".envctl-state" / "code-intelligence.json"
             prompt_path.parent.mkdir(parents=True, exist_ok=True)
             metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            (worktree_root / ".serena").mkdir(parents=True, exist_ok=True)
+            (worktree_root / ".serena" / "project.local.yml").write_text(
+                'project_name: "repo-feature-a-1"\n',
+                encoding="utf-8",
+            )
+            (worktree_root / ".codegraph").mkdir(parents=True, exist_ok=True)
+            (worktree_root / ".codegraph" / "codegraph.db").write_text("index\n", encoding="utf-8")
             prompt_path.write_text("Implement this task carefully.\n", encoding="utf-8")
             metadata_path.write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
                         "serena_project_name": "repo-feature-a-1",
-                        "files": {".serena/project.yml": True, ".cgcignore": True},
-                        "cgc_active_context": "Repo-feature-a-1",
-                        "cgc_index_mode": "auto",
-                        "cgc_index_succeeded": True,
+                        "files": {".serena/project.yml": True, ".codegraph/codegraph.db": True},
+                        "codegraph_index_mode": "auto",
+                        "codegraph_index_succeeded": True,
                     }
                 )
                 + "\n",
@@ -112,7 +118,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
         self.assertIn("Implement this task carefully.", prompt_text)
         self.assertIn("## Worktree code intelligence", prompt_text)
         self.assertIn("Serena project `repo-feature-a-1`", prompt_text)
-        self.assertIn("CodeGraphContext (`cgc`) context `Repo-feature-a-1`", prompt_text)
+        self.assertIn("CodeGraph index `.codegraph/` is available", prompt_text)
 
     def test_workflow_step_prompt_text_preserves_literal_arguments_mentions_in_review_prompt(self) -> None:
         self.assertIsNotNone(_workflow_step_prompt_text)

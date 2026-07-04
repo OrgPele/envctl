@@ -135,62 +135,41 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("Do not write envctl-local commit-message ledger files", codex)
         self.assertIn("Do not run manual staging commands such as `git add .`", codex)
         self.assertIn("Inspect the baseline with `git status --short`; do not stage files manually", codex)
-        self.assertIn("use `envctl test-focused` from inside the current generated worktree", codex)
-        self.assertIn("use `envctl test-focused --project <current-worktree-name>`", codex)
+        self.assertIn("follow AGENTS.md for the focused validation and handoff workflow", codex)
         self.assertNotIn("envctl test-focused --project <current-worktree-name> --dry-run --json", codex)
-        self.assertIn('use `envctl ship -m "<message>"` from inside the current generated worktree', codex)
+        self.assertIn("Follow the AGENTS.md ship workflow", codex)
         self.assertIn("Full-stack PR-URL E2E delivery lane", codex)
         self.assertIn("frontend and backend surfaces", codex)
         self.assertIn("deployed PR URL", codex)
-        self.assertIn("Run bare `envctl ship` from inside the current worktree/project directory", codex)
-        self.assertIn("GitHub CLI checks only if `ship` is unavailable", codex)
-        self.assertIn("creates a PR when none exists", codex)
-        self.assertIn(
-            "waits for target GitHub Tests checks until they pass, fail, time out, or report no target check contexts",
-            codex,
-        )
-        self.assertIn(
-            "returns JSON by default with the PR URL, `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`",
-            codex,
-        )
-        self.assertIn("If a real subagent or background-task tool is available", codex)
-        self.assertIn('delegate `envctl ship -m "<message>"` there', codex)
-        self.assertIn("If no real background tool is available, run `envctl ship -m \"<message>\"` normally", codex)
-        self.assertIn("Do not run raw `git`, `gh`, or separate commit/PR/status commands", codex)
-        self.assertIn("do not block the main agent waiting for a successful ship result", codex)
-        self.assertIn("send a message back only for commit/push/PR failures", codex)
-        self.assertIn(
-            "A successful ship result is silent: the shipping subagent must not send a success summary",
-            codex,
-        )
-        self.assertIn("keep the main implementation thread moving on non-overlapping work", codex)
+        self.assertNotIn("Run bare `envctl ship` from inside the current worktree/project directory", codex)
+        self.assertNotIn("returns JSON by default with the PR URL", codex)
+        self.assertNotIn("`pr_created`, `operation_statuses`, `checks_state`", codex)
+        self.assertNotIn("A successful ship result is silent", codex)
         self.assertIn("Only inspect PR review comments when `ship` reports actionable review-comment status", codex)
         self.assertNotIn("Inspect unresolved PR review comments after the PR exists", codex)
         self.assertIn("PR status and URL", codex)
         self.assertIn("full cumulative set of changes between commits", codex)
         self.assertIn("Do not start or deploy a local envctl runtime as the default proof path", codex)
-        self.assertIn("run `envctl test-focused` when ready", codex)
-        self.assertIn("ship with `envctl ship -m \"<message>\"`", codex)
+        self.assertIn("follow AGENTS.md for final validation and handoff", codex)
         self.assertIn("Start local envctl services only when the authoritative task", codex)
         self.assertIn("the final browser-visible proof is the deployed PR URL", codex)
-        self.assertIn("## Handoff and ship contract", codex)
+        self.assertIn("## Handoff", codex)
         self.assertNotIn("Default to `envctl --entire-system --headless`", codex)
         self.assertNotIn("envctl --backend --headless", codex)
         self.assertNotIn("envctl --frontend --headless", codex)
         self.assertNotIn("envctl --fullstack --headless", codex)
         self.assertNotIn("envctl --dependencies --headless", codex)
         self.assertNotIn("envctl --entire-system --headless", codex)
-        self.assertIn("Codex skills and envctl validation helpers", codex)
+        self.assertIn("Tooling and validation context", codex)
         self.assertIn("$browser", codex)
         self.assertNotIn("$browser-use", codex)
-        self.assertIn("Use the injected worktree code-intelligence context when envctl adds one", codex)
-        self.assertIn("use `rg` for exact strings", codex)
-        self.assertIn("only use Serena, CGC/CodeGraphContext, CodeGraph, or another graph tool", codex)
+        self.assertIn("Follow the active AGENTS.md and any injected worktree code-intelligence context", codex)
+        self.assertIn("Use graph or symbol tooling only when it is configured", codex)
         self.assertNotIn("use CodeGraphContext (`cgc`) for repo-wide ownership", codex)
         self.assertNotIn("Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl", codex)
-        self.assertIn("envctl endpoints --project <actual-project-name> --json", codex)
-        self.assertIn("envctl qa-user ensure --project <actual-project-name>", codex)
-        self.assertIn("envctl playwright --project <actual-project-name> -- <executable> [args...]", codex)
+        self.assertNotIn("envctl endpoints --project <actual-project-name> --json", codex)
+        self.assertNotIn("envctl qa-user ensure --project <actual-project-name>", codex)
+        self.assertNotIn("envctl playwright --project <actual-project-name>", codex)
         self.assertIn("stop exactly what you started before final handoff", codex)
         self.assertIn("At the end of every implementation, run the final relevant validation yourself", codex)
         self.assertIn("If no runtime was started, say so", codex)
@@ -222,38 +201,24 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("deployed PR URL E2E validation is an additional post-PR lane", finalize_prompt.body)
         self.assertIn("use `envctl test-focused --project <current-worktree-name>`", finalize_prompt.body)
         self.assertNotIn("envctl test-focused --project <current-worktree-name> --dry-run --json", finalize_prompt.body)
-        self.assertIn("envctl endpoints --project <current-worktree-name> --json", finalize_prompt.body)
-        self.assertIn("envctl qa-user ensure --project <current-worktree-name>", finalize_prompt.body)
-        self.assertIn("envctl playwright --project <current-worktree-name> -- <command>", finalize_prompt.body)
+        self.assertNotIn("envctl endpoints --project <current-worktree-name> --json", finalize_prompt.body)
+        self.assertNotIn("envctl qa-user ensure --project <current-worktree-name>", finalize_prompt.body)
+        self.assertNotIn("envctl playwright --project <current-worktree-name>", finalize_prompt.body)
         self.assertIn("$browser", finalize_prompt.body)
         self.assertNotIn("$browser-use", finalize_prompt.body)
         self.assertIn("Use the injected worktree code-intelligence context if envctl added one", finalize_prompt.body)
         self.assertIn("use `rg` for exact strings", finalize_prompt.body)
-        self.assertIn("do not assume Serena, CGC/CodeGraphContext, CodeGraph, or any other graph tool exists", finalize_prompt.body)
+        self.assertIn("do not assume Serena, CodeGraph, or any other graph tool exists", finalize_prompt.body)
         self.assertNotIn("CodeGraphContext (`cgc`) for repo-wide ownership", finalize_prompt.body)
         self.assertNotIn("Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl", finalize_prompt.body)
-        self.assertIn('Run `envctl ship -m "<message>"` from inside the current generated worktree', finalize_prompt.body)
+        self.assertIn("Follow AGENTS.md for the ship workflow", finalize_prompt.body)
         self.assertIn("one complete commit/PR handoff message", finalize_prompt.body)
         self.assertIn("what your validation actually did and proved", finalize_prompt.body)
         self.assertIn("manual checks a human should still run to truly confirm it works", finalize_prompt.body)
-        self.assertIn("Run bare `envctl ship` from inside the current worktree/project directory", finalize_prompt.body)
-        self.assertIn('`envctl ship --project <current-worktree-name> -m "<message>"`', finalize_prompt.body)
-        self.assertIn("GitHub CLI checks only if `ship` is unavailable", finalize_prompt.body)
-        self.assertIn("creates a PR when none exists", finalize_prompt.body)
-        self.assertIn(
-            "returns JSON by default with current status, `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`",
-            finalize_prompt.body,
-        )
-        self.assertIn("If a real subagent or background-task tool is available", finalize_prompt.body)
-        self.assertIn("delegate this `ship` run there", finalize_prompt.body)
-        self.assertIn('If no real background tool is available, run `envctl ship -m "<message>"` normally', finalize_prompt.body)
-        self.assertIn("Do not run raw `git`, `gh`, or separate commit/PR/status commands", finalize_prompt.body)
-        self.assertIn("do not block the main agent waiting for a successful ship result", finalize_prompt.body)
-        self.assertIn("should send a message back only for merge conflicts", finalize_prompt.body)
-        self.assertIn(
-            "A successful ship result is silent: the shipping subagent must not send a success summary",
-            finalize_prompt.body,
-        )
+        self.assertNotIn("Run bare `envctl ship` from inside the current worktree/project directory", finalize_prompt.body)
+        self.assertNotIn("returns JSON by default with current status", finalize_prompt.body)
+        self.assertNotIn("`pr_created`, `operation_statuses`, `checks_state`", finalize_prompt.body)
+        self.assertNotIn("A successful ship result is silent", finalize_prompt.body)
         self.assertIn("Only inspect PR review comments when `ship` reports actionable review-comment status", finalize_prompt.body)
         self.assertNotIn("Inspect unresolved PR review comments", finalize_prompt.body)
 
@@ -265,18 +230,10 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("what your validation actually did and proved", intermediate_prompt)
         self.assertIn("manual checks a human should still run to truly confirm it works", intermediate_prompt)
         self.assertIn("instead of a separate commit/push/PR flow", intermediate_prompt)
-        self.assertIn("creates a PR when none exists", intermediate_prompt)
-        self.assertIn(
-            "`pr_created`, `operation_statuses`, `checks_state`, `passed_checks`, `failing_checks`",
-            intermediate_prompt,
-        )
-        self.assertIn("do not wait for a successful ship result", intermediate_prompt)
-        self.assertIn("If no real background tool is available, run `envctl ship -m \"<message>\"` normally", intermediate_prompt)
-        self.assertIn("only return to the shipping lane if the subagent reports an issue", intermediate_prompt)
-        self.assertIn(
-            "A successful ship result is silent: the shipping subagent must not send a success summary",
-            intermediate_prompt,
-        )
+        self.assertIn("Follow AGENTS.md for the ship workflow", intermediate_prompt)
+        self.assertNotIn("creates a PR when none exists", intermediate_prompt)
+        self.assertNotIn("`pr_created`, `operation_statuses`, `checks_state`", intermediate_prompt)
+        self.assertNotIn("A successful ship result is silent", intermediate_prompt)
 
         first_cycle_prompt = _load_template("_plan_agent_first_cycle_completion").body
         self.assertIn("## Ship contract", first_cycle_prompt)
@@ -284,10 +241,8 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("Build the message as a commit/PR handoff message", first_cycle_prompt)
         self.assertIn("what your validation actually did and proved", first_cycle_prompt)
         self.assertIn("manual checks a human should still run to truly confirm it works", first_cycle_prompt)
-        self.assertIn(
-            "A successful ship result is silent: the shipping subagent must not send a success summary",
-            first_cycle_prompt,
-        )
+        self.assertIn("Follow AGENTS.md for the ship workflow", first_cycle_prompt)
+        self.assertNotIn("A successful ship result is silent", first_cycle_prompt)
 
         review_comments_prompt = _load_template("_plan_agent_pr_review_comments_followup").body
         self.assertIn("## Comment triage", review_comments_prompt)
@@ -297,10 +252,8 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn("manual checks a human should still run to truly confirm it works", review_comments_prompt)
         self.assertIn("Inspect unresolved PR review comments", review_comments_prompt)
         self.assertIn("address all actionable comments", review_comments_prompt)
-        self.assertIn(
-            "A successful ship result is silent: the shipping subagent must not send a success summary",
-            review_comments_prompt,
-        )
+        self.assertIn("Follow AGENTS.md for the ship workflow", review_comments_prompt)
+        self.assertNotIn("A successful ship result is silent", review_comments_prompt)
 
         browser_e2e_prompt = _load_template("_plan_agent_browser_e2e_followup").body
         self.assertIn("## Objective", browser_e2e_prompt)
@@ -343,7 +296,7 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertNotIn("Changelog entry appended.", plan_prompt.body)
         self.assertIn("Default to `rg` for exact strings", plan_prompt.body)
         self.assertIn("Use repo-local AGENTS.md/tooling guidance and any injected code-intelligence context", plan_prompt.body)
-        self.assertIn("use Serena, CGC/CodeGraphContext, CodeGraph, or another graph tool only when", plan_prompt.body)
+        self.assertIn("use Serena, CodeGraph, or another graph tool only when", plan_prompt.body)
         self.assertNotIn("use CodeGraphContext (`cgc`) for repo-wide ownership", plan_prompt.body)
         self.assertNotIn("Do not use the legacy `codegraph` CLI or `.codegraph/` indexes in envctl", plan_prompt.body)
         self.assertIn("envctl --headless --plan <selector>", plan_prompt.body)
