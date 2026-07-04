@@ -19,18 +19,19 @@ def test_release_workflow_runs_shipability_gate_before_version_bump() -> None:
     assert gate_index < bump_index
 
 
-def test_release_workflow_publishes_directly_without_release_pr() -> None:
+def test_release_workflow_merges_release_metadata_through_pr_rule() -> None:
     workflow = _release_workflow()
 
     assert "pull_request:" not in workflow
-    assert "pull-requests: write" not in workflow
-    assert "release/envctl-" not in workflow
-    assert "gh pr create" not in workflow
-    assert "git push origin \"HEAD:main\"" in workflow
+    assert "pull-requests: write" in workflow
+    assert 'branch="release/envctl-${NEW_VERSION}"' in workflow
+    assert "gh pr create" in workflow
+    assert "gh pr merge" in workflow
+    assert 'git push origin "HEAD:main"' not in workflow
     assert "gh release create" in workflow
 
 
-def test_release_workflow_uses_release_token_for_main_push_and_github_release() -> None:
+def test_release_workflow_uses_release_token_for_pr_merge_and_github_release() -> None:
     workflow = _release_workflow()
 
     assert "secrets.ENVCTL_RELEASE_TOKEN || secrets.ENVCTL_RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN" in workflow
@@ -49,24 +50,27 @@ def test_release_workflow_prefers_checked_in_release_notes_file_before_generated
     assert "--- generated notes preview ---" in workflow
 
 
-def test_release_workflow_pushes_main_before_tagging_and_publishing() -> None:
+def test_release_workflow_merges_release_pr_before_tagging_and_publishing() -> None:
     workflow = _release_workflow()
 
     commit_index = workflow.index("git commit -m \"Release envctl ${NEW_VERSION}\"")
-    main_index = workflow.index("git push origin \"HEAD:main\"")
+    branch_index = workflow.index("HEAD:refs/heads/${branch}")
+    merge_index = workflow.index("gh pr merge")
+    fetch_index = workflow.index("git fetch origin main --tags")
     tag_index = workflow.index("git tag -a \"$NEW_VERSION\"")
     release_index = workflow.index("gh release create")
 
-    assert commit_index < main_index < tag_index < release_index
+    assert commit_index < branch_index < merge_index < fetch_index < tag_index < release_index
 
 
-def test_release_workflow_can_resume_after_partial_direct_publish() -> None:
+def test_release_workflow_can_resume_after_metadata_already_merged() -> None:
     workflow = _release_workflow()
 
     assert 'gh release view "$new"' in workflow
     assert 'echo "tag_exists=$tag_exists"' in workflow
     assert "release metadata is already committed" in workflow
-    assert 'if [ "${TAG_EXISTS:-false}" != "true" ]; then' in workflow
+    assert 'tag_commit=$(git rev-list -n 1 "$NEW_VERSION")' in workflow
+    assert 'expected ${release_commit}' in workflow
 
 
 def test_release_workflow_cleans_dist_before_uploading_artifacts() -> None:
