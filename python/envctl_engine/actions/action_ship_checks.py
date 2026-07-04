@@ -29,10 +29,11 @@ from envctl_engine.actions.action_ship_failure_logs import (
 )
 
 TERMINAL_SHIP_CHECK_STATES = {"checks_passed", "checks_failed", "gh_unavailable", "no_checks_reported"}
+SHIP_NO_CHECKS_GRACE_ENV = "ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS"
 DEFAULT_CHECK_TIMEOUT_SECONDS = 120.0
 DEFAULT_CHECK_POLL_INTERVAL_SECONDS = 5.0
 DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS = 10.0
-DEFAULT_NO_CHECKS_GRACE_SECONDS = 10.0
+DEFAULT_NO_CHECKS_GRACE_SECONDS = 15.0
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
 GhPathResolver = Callable[[], str | None]
@@ -75,7 +76,7 @@ class ShipCheckTiming:
             ),
             no_checks_grace_seconds=_resolved_timing_value(
                 explicit=no_checks_grace_seconds,
-                env_name="ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS",
+                env_name=SHIP_NO_CHECKS_GRACE_ENV,
                 default=DEFAULT_NO_CHECKS_GRACE_SECONDS,
                 minimum=0.0,
             ),
@@ -295,6 +296,7 @@ __all__ = [
     "RunCommand",
     "ShipCheckPoller",
     "ShipCheckTiming",
+    "SHIP_NO_CHECKS_GRACE_ENV",
     "Sleeper",
     "TERMINAL_SHIP_CHECK_STATES",
     "failed_checks_with_log_excerpts",

@@ -15,6 +15,7 @@ from envctl_engine.actions.action_pr_label_support import (
     SHIP_PR_LABEL_ENABLE_ENV,
     SHIP_PR_LABEL_ENV,
 )
+from envctl_engine.actions.action_ship_checks import SHIP_NO_CHECKS_GRACE_ENV
 from envctl_engine.actions.action_migrate_support import (
     MigrateProjectContext as _MigrateProjectContext,
     migrate_backend_cwd as migrate_backend_cwd_impl,
@@ -157,7 +158,7 @@ class ActionCommandProjectFacadeMixin:
         extra = self.action_extra_env(route)
         config_raw = getattr(getattr(_runtime(self), "config", None), "raw", {})
         if isinstance(config_raw, Mapping):
-            for key in (SHIP_PR_LABEL_ENABLE_ENV, SHIP_PR_LABEL_ENV):
+            for key in (SHIP_PR_LABEL_ENABLE_ENV, SHIP_PR_LABEL_ENV, SHIP_NO_CHECKS_GRACE_ENV):
                 if key in config_raw:
                     extra[key] = str(config_raw[key])
         return extra

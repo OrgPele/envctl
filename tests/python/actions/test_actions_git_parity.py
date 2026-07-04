@@ -440,7 +440,8 @@ class ActionsGitParityTests(_ActionsParityTestCase):
             (repo / ".git").mkdir(parents=True, exist_ok=True)
             (repo / ".envctl").write_text(
                 "ENVCTL_SHIP_PR_LABEL_ENABLE=true\n"
-                "ENVCTL_SHIP_PR_LABEL=codex-generated\n",
+                "ENVCTL_SHIP_PR_LABEL=codex-generated\n"
+                "ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS=180\n",
                 encoding="utf-8",
             )
 
@@ -451,6 +452,7 @@ class ActionsGitParityTests(_ActionsParityTestCase):
 
             self.assertEqual(extra.get("ENVCTL_SHIP_PR_LABEL_ENABLE"), "true")
             self.assertEqual(extra.get("ENVCTL_SHIP_PR_LABEL"), "codex-generated")
+            self.assertEqual(extra.get("ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS"), "180")
 
     def test_git_actions_fallback_to_system_python_when_repo_has_no_venv(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

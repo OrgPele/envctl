@@ -51,6 +51,7 @@ def _build_defaults() -> dict[str, str]:
         "ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE": "false",
         "ENVCTL_SHIP_PR_LABEL_ENABLE": "false",
         "ENVCTL_SHIP_PR_LABEL": "deploy-app",
+        "ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS": "15",
         "ENVCTL_PLAN_AGENT_SHELL": "zsh",
         "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "true",
         "ENVCTL_PLAN_AGENT_CLI_CMD": "",
