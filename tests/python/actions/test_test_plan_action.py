@@ -114,11 +114,15 @@ class TestPlanActionTests(unittest.TestCase):
 
             def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
                 if args[:3] == ["git", "diff", "--name-only"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="python/envctl_engine/config/__init__.py\n")
+                    return subprocess.CompletedProcess(
+                        args=args, returncode=0, stdout="python/envctl_engine/config/__init__.py\n"
+                    )
                 if args[:4] == ["git", "diff", "--cached", "--name-only"]:
                     return subprocess.CompletedProcess(args=args, returncode=0, stdout="MAIN_TASK.md\n")
                 if args[:3] == ["git", "ls-files", "--others"]:
-                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=".envctl-state/run.json\nnew_tool.py\n")
+                    return subprocess.CompletedProcess(
+                        args=args, returncode=0, stdout=".envctl-state/run.json\nnew_tool.py\n"
+                    )
                 return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="unexpected")
 
             with patch("envctl_engine.actions.test_plan_action.subprocess.run", side_effect=fake_run):
@@ -151,7 +155,12 @@ class TestPlanActionTests(unittest.TestCase):
         def fake_run(args: list[str], **kwargs):  # noqa: ANN001
             calls.append(args)
             self.assertEqual(kwargs["cwd"], "/repo")
-            return subprocess.CompletedProcess(args=args, returncode=1 if len(calls) == 1 else 0)
+            self.assertEqual(kwargs["stdout"], subprocess.PIPE)
+            self.assertEqual(kwargs["stderr"], subprocess.PIPE)
+            self.assertIs(kwargs["text"], True)
+            return subprocess.CompletedProcess(
+                args=args, returncode=1 if len(calls) == 1 else 0, stdout="failure stdout\n", stderr="failure stderr\n"
+            )
 
         with (
             patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
@@ -164,8 +173,88 @@ class TestPlanActionTests(unittest.TestCase):
         self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python/actions"]])
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["run"]["status"], "failed")
-        self.assertEqual(payload["run"]["results"][0]["returncode"], 1)
-        self.assertEqual(payload["run"]["skipped_commands"], ["uv run --extra dev ruff check python/envctl_engine/actions/test_plan_action.py"])
+        result = payload["run"]["results"][0]
+        self.assertEqual(result["returncode"], 1)
+        self.assertEqual(result["stdout"], "failure stdout\n")
+        self.assertEqual(result["stderr"], "failure stderr\n")
+        self.assertEqual(
+            payload["run"]["skipped_commands"],
+            ["uv run --extra dev ruff check python/envctl_engine/actions/test_plan_action.py"],
+        )
+
+    def test_default_mode_hides_success_output_in_non_json(self) -> None:
+        class Context:
+            repo_root = Path("/repo")
+            project_root = Path("/repo")
+            project_name = "Main"
+
+        plan = {
+            "contract_version": "envctl.test_plan.v1",
+            "project": "Main",
+            "repo_root": "/repo",
+            "project_root": "/repo",
+            "changed_files": ["python/envctl_engine/actions/test_plan_action.py"],
+            "commands": [{"command": "uv run --extra dev pytest -q tests/python/actions"}],
+            "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+        }
+
+        def fake_run(args: list[str], **kwargs):  # noqa: ANN001
+            self.assertEqual(kwargs["stdout"], subprocess.PIPE)
+            self.assertEqual(kwargs["stderr"], subprocess.PIPE)
+            self.assertIs(kwargs["text"], True)
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="noisy stdout\n", stderr="noisy stderr\n"
+            )
+
+        with (
+            patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+            patch("envctl_engine.actions.test_plan_action.subprocess.run", side_effect=fake_run),
+            redirect_stdout(StringIO()) as stdout,
+        ):
+            code = run_test_plan_action(Context())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stdout.getvalue().splitlines(), ["passed: uv run --extra dev pytest -q tests/python/actions"])
+
+    def test_default_mode_prints_failure_output_in_non_json(self) -> None:
+        class Context:
+            repo_root = Path("/repo")
+            project_root = Path("/repo")
+            project_name = "Main"
+
+        plan = {
+            "contract_version": "envctl.test_plan.v1",
+            "project": "Main",
+            "repo_root": "/repo",
+            "project_root": "/repo",
+            "changed_files": ["python/envctl_engine/actions/test_plan_action.py"],
+            "commands": [{"command": "uv run --extra dev pytest -q tests/python/actions"}],
+            "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+        }
+
+        def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+            return subprocess.CompletedProcess(
+                args=args, returncode=2, stdout="failure stdout\n", stderr="failure stderr\n"
+            )
+
+        with (
+            patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+            patch("envctl_engine.actions.test_plan_action.subprocess.run", side_effect=fake_run),
+            redirect_stdout(StringIO()) as stdout,
+        ):
+            code = run_test_plan_action(Context())
+
+        self.assertEqual(code, 2)
+        self.assertEqual(
+            stdout.getvalue().splitlines(),
+            [
+                "failed: uv run --extra dev pytest -q tests/python/actions",
+                "stdout:",
+                "failure stdout",
+                "stderr:",
+                "failure stderr",
+            ],
+        )
 
     def test_default_mode_uses_repo_venv_for_uv_dev_pytest_command_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -265,7 +354,9 @@ class TestPlanActionTests(unittest.TestCase):
 
         def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
             calls.append(args)
-            return subprocess.CompletedProcess(args=args, returncode=0)
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="noisy stdout\n", stderr="noisy stderr\n"
+            )
 
         with (
             patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
@@ -279,6 +370,7 @@ class TestPlanActionTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["run"]["status"], "passed")
         self.assertEqual([item["status"] for item in payload["run"]["results"]], ["passed", "passed"])
+        self.assertTrue(all("stdout" not in item and "stderr" not in item for item in payload["run"]["results"]))
         self.assertEqual(payload["run"]["skipped_commands"], [])
 
     def test_dry_run_mode_prints_focused_commands_without_running_them(self) -> None:

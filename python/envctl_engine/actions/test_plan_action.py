@@ -24,8 +24,7 @@ _PROMPT_PREFIX = "python/envctl_engine/runtime/prompt_templates/"
 _PROMPT_TEST = "tests/python/runtime/test_prompt_install_support_templates.py"
 _DOC_TOOLING_PREFIXES = ("docs/", "README.md", "AGENTS.md", ".serena/")
 _DOC_TOOLING_TESTS = (
-    "tests/python/shared/test_validation_workflow_contract.py "
-    "tests/python/shared/test_serena_config.py"
+    "tests/python/shared/test_validation_workflow_contract.py tests/python/shared/test_serena_config.py"
 )
 
 
@@ -150,6 +149,11 @@ def run_test_plan_action(context: object, *, json_output: bool = False, dry_run:
             for result in result_items:
                 if isinstance(result, Mapping):
                     print(f"{result.get('status', 'unknown')}: {result.get('command', '')}")
+                    for name in ("stdout", "stderr"):
+                        text = result.get(name)
+                        if isinstance(text, str) and text:
+                            print(f"{name}:")
+                            print(text, end="" if text.endswith("\n") else "\n")
         else:
             for command in _command_items(payload):
                 print(command.get("command", ""))
@@ -166,13 +170,22 @@ def _run_plan_commands(payload: Mapping[str, object], *, cwd: Path) -> tuple[dic
         command_args = shlex.split(command)
         executed_args = _execution_args(command_args, cwd=cwd)
         started = time.monotonic()
-        completed = subprocess.run(executed_args, cwd=str(cwd), check=False)
+        completed = subprocess.run(
+            executed_args,
+            cwd=str(cwd),
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         duration = round(time.monotonic() - started, 3)
         result = _command_result(
             command=command,
             executed_args=executed_args,
             returncode=completed.returncode,
             duration=duration,
+            stdout=completed.stdout,
+            stderr=completed.stderr,
         )
         results.append(result)
         if completed.returncode != 0:
@@ -206,7 +219,15 @@ def _execution_args(command_args: list[str], *, cwd: Path) -> list[str]:
     return command_args
 
 
-def _command_result(*, command: str, executed_args: list[str], returncode: int, duration: float) -> dict[str, object]:
+def _command_result(
+    *,
+    command: str,
+    executed_args: list[str],
+    returncode: int,
+    duration: float,
+    stdout: str | None = None,
+    stderr: str | None = None,
+) -> dict[str, object]:
     status = "passed" if returncode == 0 else "failed"
     result: dict[str, object] = {
         "command": command,
@@ -217,6 +238,9 @@ def _command_result(*, command: str, executed_args: list[str], returncode: int, 
     executed_command = shlex.join(executed_args)
     if executed_command != command:
         result["executed_command"] = executed_command
+    if returncode != 0:
+        result["stdout"] = stdout or ""
+        result["stderr"] = stderr or ""
     if returncode < 0:
         signal_number = abs(returncode)
         result["status"] = "terminated_by_signal"
