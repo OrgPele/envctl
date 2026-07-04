@@ -225,7 +225,7 @@ class ActionTestSuiteSupportTests(unittest.TestCase):
             executor = _TestSuiteExecutor.__new__(_TestSuiteExecutor)
             executor.runtime = SimpleNamespace(
                 env={
-                    "ENVCTL_ACTION_TEST_PYTEST_WORKERS": "4",
+                    "ENVCTL_ACTION_TEST_PYTEST_WORKERS": "6",
                     "ENVCTL_TEST_FOCUSED_PYTEST_WORKERS": "2",
                 },
                 config=SimpleNamespace(raw={}),
@@ -238,7 +238,7 @@ class ActionTestSuiteSupportTests(unittest.TestCase):
                     cwd=root,
                 )
 
-        self.assertEqual(command, [str(python), "-m", "pytest", "-n", "4", "-q", "tests"])
+        self.assertEqual(command, [str(python), "-m", "pytest", "-n", "6", "-q", "tests"])
 
     def test_envctl_test_pytest_workers_can_be_capped_by_route_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

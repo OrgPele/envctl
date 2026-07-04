@@ -7,6 +7,8 @@ from pathlib import Path
 
 from envctl_engine.shared.parsing import parse_bool, parse_int
 
+_DEFAULT_MAX_PYTEST_WORKERS = 8
+
 
 class PytestParallelPolicy:
     def __init__(
@@ -140,7 +142,7 @@ def free_cpu_worker_count(*, cpu_count: int) -> int:
     except (AttributeError, OSError):
         load_1m = 0.0
     free_cores = cpu_count - math.ceil(load_1m)
-    return max(1, min(cpu_count, free_cores))
+    return max(1, min(cpu_count, free_cores, _DEFAULT_MAX_PYTEST_WORKERS))
 
 
 def first_configured_value(*values: object) -> object | None:

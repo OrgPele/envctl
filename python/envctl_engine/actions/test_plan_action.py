@@ -7,9 +7,10 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import IO, Iterable, Mapping
 
 from envctl_engine.actions.action_pytest_parallel_support import (
     PytestParallelPolicy,
@@ -46,7 +47,7 @@ _TEST_COMMAND_ENV_REMOVE = {
     "RUN_REPO_ROOT",
     "RUN_SH_RUNTIME_DIR",
 }
-_TEST_COMMAND_PROGRESS_SECONDS = 25.0
+_TEST_COMMAND_PROGRESS_SECONDS = 10.0
 
 
 def build_test_plan(
@@ -211,8 +212,7 @@ def _run_plan_commands(
             continue
         command_args = shlex.split(command)
         executed_args = _execution_args(command_args, cwd=cwd)
-        if _allows_pytest_parallel(item):
-            executed_args = parallelized_pytest_args(executed_args, cwd=cwd, policy=pytest_parallel)
+        executed_args = parallelized_pytest_args(executed_args, cwd=cwd, policy=pytest_parallel)
         started = time.monotonic()
         completed = _run_test_command(
             executed_args,
@@ -314,20 +314,53 @@ def _run_test_command(args: list[str], *, cwd: Path, env: Mapping[str, str]) -> 
         start_new_session=True,
         text=True,
     )
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    stdout_thread = _start_pipe_reader(process.stdout, stdout_chunks)
+    stderr_thread = _start_pipe_reader(process.stderr, stderr_chunks)
     try:
-        stdout, stderr = _communicate_test_process(process, args)
+        _wait_for_test_process(process, args)
     except KeyboardInterrupt:
         _terminate_test_process_group(process)
         raise
-    return subprocess.CompletedProcess(args=args, returncode=process.returncode, stdout=stdout, stderr=stderr)
+    finally:
+        _join_pipe_reader(stdout_thread)
+        _join_pipe_reader(stderr_thread)
+    return subprocess.CompletedProcess(
+        args=args,
+        returncode=process.returncode,
+        stdout="".join(stdout_chunks),
+        stderr="".join(stderr_chunks),
+    )
 
 
-def _communicate_test_process(process: subprocess.Popen[str], args: list[str]) -> tuple[str, str]:
+def _wait_for_test_process(process: subprocess.Popen[str], args: list[str]) -> None:
     while True:
         try:
-            return process.communicate(timeout=_TEST_COMMAND_PROGRESS_SECONDS)
+            process.wait(timeout=_TEST_COMMAND_PROGRESS_SECONDS)
+            return
         except subprocess.TimeoutExpired:
             print(f"still running: {shlex.join(args)}", file=sys.stderr, flush=True)
+
+
+def _start_pipe_reader(pipe: IO[str] | None, chunks: list[str]) -> threading.Thread | None:
+    if pipe is None:
+        return None
+
+    def read_pipe() -> None:
+        for chunk in iter(lambda: pipe.read(8192), ""):
+            if not chunk:
+                break
+            chunks.append(chunk)
+
+    thread = threading.Thread(target=read_pipe, daemon=True)
+    thread.start()
+    return thread
+
+
+def _join_pipe_reader(thread: threading.Thread | None) -> None:
+    if thread is not None:
+        thread.join()
 
 
 def _terminate_test_process_group(process: subprocess.Popen[str]) -> None:
@@ -339,7 +372,7 @@ def _terminate_test_process_group(process: subprocess.Popen[str]) -> None:
     except OSError:
         return
     try:
-        process.communicate(timeout=2.0)
+        process.wait(timeout=2.0)
         return
     except subprocess.TimeoutExpired:
         pass
@@ -348,16 +381,9 @@ def _terminate_test_process_group(process: subprocess.Popen[str]) -> None:
     except OSError:
         return
     try:
-        process.communicate(timeout=2.0)
+        process.wait(timeout=2.0)
     except subprocess.TimeoutExpired:
         return
-
-
-def _allows_pytest_parallel(command_item: Mapping[str, object]) -> bool:
-    return not (
-        command_item.get("confidence") == "low"
-        and command_item.get("reason") == "no focused mapping matched changed files"
-    )
 
 
 def _signal_name(signal_number: int) -> str:

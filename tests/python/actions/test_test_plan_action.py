@@ -407,7 +407,7 @@ class TestPlanActionTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python/actions"]])
 
-    def test_low_confidence_full_fallback_runs_without_xdist(self) -> None:
+    def test_low_confidence_full_fallback_uses_bounded_xdist(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             python = repo / ".venv" / "bin" / "python"
@@ -447,14 +447,15 @@ class TestPlanActionTests(unittest.TestCase):
             with (
                 patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
                 patch("envctl_engine.actions.test_plan_action.shutil.which", return_value="/usr/bin/uv"),
-                patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=8),
+                patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=18),
+                patch("envctl_engine.actions.action_pytest_parallel_support.os.getloadavg", return_value=(0.1, 0.1, 0.1)),
                 patch("envctl_engine.actions.test_plan_action._run_test_command", side_effect=fake_run),
                 redirect_stdout(StringIO()),
             ):
                 code = run_test_plan_action(Context())
 
         self.assertEqual(code, 0)
-        self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python"]])
+        self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-n", "8", "-q", "tests/python"]])
 
     def test_focused_pytest_parallel_respects_plugin_autoload_disable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -656,15 +657,17 @@ class TestPlanActionTests(unittest.TestCase):
             returncode = -15
 
             def __init__(self) -> None:
-                self.communicate_calls = 0
+                self.stdout = StringIO("")
+                self.stderr = StringIO("")
+                self.wait_calls = 0
 
-            def communicate(self, timeout: float | None = None):  # noqa: ANN001, ANN202
-                self.communicate_calls += 1
-                if self.communicate_calls == 1:
+            def wait(self, timeout: float | None = None):  # noqa: ANN001, ANN202
+                self.wait_calls += 1
+                if self.wait_calls == 1:
                     raise KeyboardInterrupt
-                if self.communicate_calls == 2:
+                if self.wait_calls == 2:
                     raise subprocess.TimeoutExpired(cmd=["pytest"], timeout=timeout)
-                return "", ""
+                return self.returncode
 
         process = FakeProcess()
         kill_calls: list[tuple[int, int]] = []
@@ -689,13 +692,15 @@ class TestPlanActionTests(unittest.TestCase):
             returncode = 0
 
             def __init__(self) -> None:
-                self.communicate_calls = 0
+                self.stdout = StringIO("stdout\n")
+                self.stderr = StringIO("stderr\n")
+                self.wait_calls = 0
 
-            def communicate(self, timeout: float | None = None):  # noqa: ANN001, ANN202
-                self.communicate_calls += 1
-                if self.communicate_calls == 1:
+            def wait(self, timeout: float | None = None):  # noqa: ANN001, ANN202
+                self.wait_calls += 1
+                if self.wait_calls == 1:
                     raise subprocess.TimeoutExpired(cmd=["pytest", "-q"], timeout=timeout)
-                return "stdout\n", "stderr\n"
+                return self.returncode
 
         process = FakeProcess()
         with (
