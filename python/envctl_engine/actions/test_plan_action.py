@@ -6,6 +6,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -45,6 +46,7 @@ _TEST_COMMAND_ENV_REMOVE = {
     "RUN_REPO_ROOT",
     "RUN_SH_RUNTIME_DIR",
 }
+_TEST_COMMAND_PROGRESS_SECONDS = 25.0
 
 
 def build_test_plan(
@@ -313,11 +315,19 @@ def _run_test_command(args: list[str], *, cwd: Path, env: Mapping[str, str]) -> 
         text=True,
     )
     try:
-        stdout, stderr = process.communicate()
+        stdout, stderr = _communicate_test_process(process, args)
     except KeyboardInterrupt:
         _terminate_test_process_group(process)
         raise
     return subprocess.CompletedProcess(args=args, returncode=process.returncode, stdout=stdout, stderr=stderr)
+
+
+def _communicate_test_process(process: subprocess.Popen[str], args: list[str]) -> tuple[str, str]:
+    while True:
+        try:
+            return process.communicate(timeout=_TEST_COMMAND_PROGRESS_SECONDS)
+        except subprocess.TimeoutExpired:
+            print(f"still running: {shlex.join(args)}", file=sys.stderr, flush=True)
 
 
 def _terminate_test_process_group(process: subprocess.Popen[str]) -> None:

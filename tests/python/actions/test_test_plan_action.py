@@ -4,7 +4,7 @@ import os
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 import json
 import signal
@@ -682,6 +682,33 @@ class TestPlanActionTests(unittest.TestCase):
         popen.assert_called_once()
         self.assertIs(popen.call_args.kwargs["start_new_session"], True)
         self.assertEqual(kill_calls, [(4321, signal.SIGTERM), (4321, signal.SIGKILL)])
+
+    def test_run_test_command_emits_progress_while_waiting(self) -> None:
+        class FakeProcess:
+            pid = 4321
+            returncode = 0
+
+            def __init__(self) -> None:
+                self.communicate_calls = 0
+
+            def communicate(self, timeout: float | None = None):  # noqa: ANN001, ANN202
+                self.communicate_calls += 1
+                if self.communicate_calls == 1:
+                    raise subprocess.TimeoutExpired(cmd=["pytest", "-q"], timeout=timeout)
+                return "stdout\n", "stderr\n"
+
+        process = FakeProcess()
+        with (
+            patch("envctl_engine.actions.test_plan_action.subprocess.Popen", return_value=process),
+            patch("envctl_engine.actions.test_plan_action._TEST_COMMAND_PROGRESS_SECONDS", 0.01),
+            redirect_stderr(StringIO()) as stderr,
+        ):
+            completed = test_plan_action._run_test_command(["pytest", "-q"], cwd=Path("/repo"), env={"KEEP": "1"})
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(completed.stdout, "stdout\n")
+        self.assertEqual(completed.stderr, "stderr\n")
+        self.assertEqual(stderr.getvalue().splitlines(), ["still running: pytest -q"])
 
     def test_default_mode_reports_success_after_all_focused_commands_pass(self) -> None:
         class Context:
