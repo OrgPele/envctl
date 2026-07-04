@@ -74,8 +74,9 @@ class CreatePlanPromptContractTests(unittest.TestCase):
     def test_create_plan_prompt_distinguishes_launch_scope_from_validation(self) -> None:
         self.assertContainsCluster(
             "Treat this as plan-agent scope metadata and dependency-prep intent, not as an instruction for the implementation prompt to start local services or prove the feature through local deployment.",
-            'Separately record the validation lane: `envctl test-focused --ship-on-pass "<message>"` by default, which runs focused tests and then the same `envctl ship` workflow including staging via git add, commit, push, PR/check reporting.',
+            'Separately record the validation lane: `envctl test-focused --ship-on-pass "<message>"` by default, which validates and then runs the standard ship workflow including staging via git add, commit, push, PR/check reporting.',
             "Do not record or recommend standalone `envctl test-focused`",
+            "If ship returns `deployment_url`, that URL is the deployed website and must be tested thoroughly E2E.",
             'explain that launch-scope flags select the implementation surface for the plan-agent workflow; they do not replace `envctl test-focused --ship-on-pass "<message>"`, `envctl ship` fallback, or deployed PR URL validation',
             "they never justify standalone `envctl test-focused`",
         )

@@ -66,14 +66,14 @@ class TestPlanActionTests(unittest.TestCase):
             [item["command"] for item in result["commands"]],
         )
 
-    def test_documentation_changes_recommend_shared_doc_contracts_without_full_fallback(self) -> None:
+    def test_documentation_and_plan_changes_recommend_shared_doc_contracts_without_full_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             result = build_test_plan(
                 repo_root=repo,
                 project_root=repo,
                 project_name="Main",
-                changed_files=("docs/developer/testing-and-validation.md", "AGENTS.md"),
+                changed_files=("docs/developer/testing-and-validation.md", "AGENTS.md", "todo/plans/features/task.md"),
             )
 
         commands = [item["command"] for item in result["commands"]]
