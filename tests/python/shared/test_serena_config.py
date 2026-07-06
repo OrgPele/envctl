@@ -55,9 +55,12 @@ def test_agent_workflow_prefers_focused_tests_and_ship_handoff() -> None:
     assert "Read the owning code path before changing it" in agents
     assert "smallest test that proves the real\n  contract" in agents
     assert "MAIN_TASK.md" not in agents
-    assert 'use `envctl test-focused --ship-on-pass\n  "<message>"` from inside the current worktree' in agents
-    assert "single envctl local\n  validation-and-handoff command" in agents
-    assert "do not run standalone `envctl test-focused`" in agents
+    assert "focused validation has not already passed\n  for the final tree" in agents
+    assert 'use `envctl test-focused --ship-on-pass "<message>"` from\n  inside the current worktree' in agents
+    assert "single envctl local validation-and-handoff" in agents
+    assert "Do not run standalone\n  `envctl test-focused`" in agents
+    assert 'use\n  `envctl ship -m "<message>"` and do not rerun tests' in agents
+    assert "Full suites are CI-owned" in agents
     assert "stages intended non-protected changes via git add" in agents
     assert "commits,\n  pushes, creates/updates the PR, and reports status checks" in agents
     assert "successful ship results stay silent" in agents

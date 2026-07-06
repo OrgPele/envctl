@@ -411,4 +411,3 @@ class ActionsParityTests(_ActionsParityTestCase):
             self.assertIn("feature-b-1", rendered)
             self.assertIn("Backend (pytest)", rendered)
             self.assertIn("Frontend (package test)", rendered)
-

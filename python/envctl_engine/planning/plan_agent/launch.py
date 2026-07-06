@@ -24,6 +24,7 @@ from envctl_engine.planning.plan_agent.tmux_transport import (
     _launch_plan_agent_tmux_terminals,
     _run_tmux_existing_session_workflow,
 )
+from envctl_engine.planning.plan_agent.workflow_build import _tab_title_for_worktree
 
 
 def inspect_plan_agent_launch(runtime: Any, *, route: object) -> dict[str, object]:
@@ -110,10 +111,19 @@ def launch_plan_agent_terminals(
             base_payload=base_payload,
         )
 
-    workspace_target = _ensure_workspace_id(runtime, launch_config)
+    fallback_workspace_title = _tab_title_for_worktree(created_worktrees[0].name)
+    workspace_target = _ensure_workspace_id(
+        runtime,
+        launch_config,
+        fallback_workspace_title=fallback_workspace_title,
+    )
     target_workspace = launch_config.cmux_workspace
     if workspace_target is None and not target_workspace:
-        target_workspace = _default_target_workspace_title(runtime, launch_config)
+        target_workspace = _default_target_workspace_title(
+            runtime,
+            launch_config,
+            fallback_workspace_title=fallback_workspace_title,
+        )
     if workspace_target is None and target_workspace:
         _print_launch_summary("Plan agent launch failed: unable to resolve or create the configured cmux workspace.")
         return PlanAgentLaunchResult(status="failed", reason="workspace_unavailable")

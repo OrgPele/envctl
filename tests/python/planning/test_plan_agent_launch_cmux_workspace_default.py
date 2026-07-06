@@ -52,6 +52,67 @@ class PlanAgentLaunchCmuxWorkspaceDefaultTests(PlanAgentLaunchSupportTestCase):
             self.assertEqual(rt.process_runner.calls[4], ["cmux", "list-pane-surfaces", "--workspace", "workspace:9"])
             self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:9"], rt.process_runner.calls)
 
+    def test_no_context_launch_names_created_workspace_from_worktree_not_command_title(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            command_title = (
+                "ENVCTL_USE_REPO_WRAPPER=1 ./bin/envctl --cmux --preset implement_task --no-infra --headless "
+                "--new-session implementation --plan broken/quiet-successful-test-focused-output"
+            )
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT": "false",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout=f"* workspace:7  {command_title}  [selected]\n",
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:66\n", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="workspace:9\n", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:10\n", stderr=""),
+                ]
+            )
+
+            with (
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._start_background_surface_bootstrap", return_value=None),
+            ):
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "broken/quiet-successful-test-focused-output", "--cmux"], env={}),
+                    created_worktrees=(
+                        CreatedPlanWorktree(
+                            name="quiet-successful-test-focused-output-1",
+                            root=repo,
+                            plan_file="broken/quiet-successful-test-focused-output.md",
+                        ),
+                    ),
+                )
+
+            self.assertEqual(result.status, "launched")
+            self.assertIn(
+                [
+                    "cmux",
+                    "rename-workspace",
+                    "--workspace",
+                    "workspace:9",
+                    "quiet-successful-test-focused-output-1 implementation",
+                ],
+                rt.process_runner.calls,
+            )
+            self.assertNotIn(["cmux", "new-surface", "--workspace", "workspace:7"], rt.process_runner.calls)
+
     def test_cmux_alias_resolves_uuid_workspace_context_before_default_launch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

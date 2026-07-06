@@ -6,7 +6,7 @@ This command must be run from OpenCode or another agent/runtime that can create 
 $ARGUMENTS
 
 ## Workflow
-1. Follow the full `create_plan` prompt contract: research the repo, write exactly one plan under `todo/plans/<category>/<slug>.md`, and record the intended launch scope.
+1. Follow the full `create_plan` prompt contract: research the repo, write exactly one plan under `todo/plans/<category>/<slug>.md`, record the intended launch scope, and add the Manual / real-world check.
 2. Validate the plan path exists and derive `<category>/<slug>` by removing `todo/plans/` and `.md`.
 3. Launch OpenCode implementation from the repo root with the shared `implement_task` preset:
 

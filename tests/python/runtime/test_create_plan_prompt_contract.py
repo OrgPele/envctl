@@ -48,6 +48,7 @@ class CreatePlanPromptContractTests(unittest.TestCase):
             "- ## Root cause(s) / gaps",
             "- ## Tests (add these)",
             "- ## Rollout / verification",
+            "- ## Manual / real-world check",
             "- ## Definition of done",
             "- ## Risk register (trade‑offs or missing tests)",
         )
@@ -74,11 +75,22 @@ class CreatePlanPromptContractTests(unittest.TestCase):
     def test_create_plan_prompt_distinguishes_launch_scope_from_validation(self) -> None:
         self.assertContainsCluster(
             "Treat this as plan-agent scope metadata and dependency-prep intent, not as an instruction for the implementation prompt to start local services or prove the feature through local deployment.",
-            'Separately record the validation lane: `envctl test-focused --ship-on-pass "<message>"` by default, which validates and then runs the standard ship workflow including staging via git add, commit, push, PR/check reporting.',
+            'Separately record the validation lane: `envctl test-focused --ship-on-pass "<message>"` by default when focused validation has not already passed for the final tree',
+            'if focused validation already passed, use `envctl ship -m "<message>"` and do not rerun tests',
             "Do not record or recommend standalone `envctl test-focused`",
-            "If ship returns `deployment_url`, that URL is the deployed website and must be tested thoroughly E2E.",
+            "full-suite validation is CI-owned",
+            "If ship returns `deployment_url`, that URL is the deployed website and `_plan_agent_browser_e2e_followup.md` must use the `$browser` skill to test it thoroughly E2E.",
             'explain that launch-scope flags select the implementation surface for the plan-agent workflow; they do not replace `envctl test-focused --ship-on-pass "<message>"`, `envctl ship` fallback, or deployed PR URL validation',
             "they never justify standalone `envctl test-focused`",
+        )
+
+    def test_create_plan_prompt_requires_manual_real_world_check(self) -> None:
+        self.assertContainsCluster(
+            "Include a concrete Manual / real-world check",
+            "for UI work, name the route/page, section, controls, user actions, expected visible result",
+            "for non-UI work, name the real CLI/API/log/doc check and expected result",
+            "make the plan's Manual / real-world check detailed enough for `_plan_agent_browser_e2e_followup.md` to execute against the shipped `deployment_url`",
+            "real route/page, UI section, controls, actions, expected state, and required test data",
         )
 
 

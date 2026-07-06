@@ -422,13 +422,15 @@ envctl test-focused --ship-on-pass "Ship focused fix"
 
 `--ship-on-pass "<message>"` is available on `envctl test` and `envctl test-focused`. It trims the message, rejects empty messages before tests run, runs the existing `envctl ship` workflow only after tests pass, and returns the ship exit code if handoff fails. It is rejected with `--dry-run` or `--json` because those modes do not produce a single unambiguous validation-and-ship run.
 
-Pytest parallelism:
+Test parallelism:
 
-- when `envctl test` or `envctl test-focused` executes a `python -m pytest` command and pytest-xdist is installed, envctl adds `-n <free-cores>` using current CPU load to estimate the number of free cores
+- `envctl test` runs multiple detected suites in parallel by default, using one worker on tiny hosts and roughly half the CPU cores on larger hosts, capped at `4`; use `--sequential` or `ENVCTL_ACTION_TEST_PARALLEL=false` to force one suite at a time
+- if a default parallel suite run fails, envctl retries the full suite list sequentially and reports the sequential result
+- `envctl test` and `envctl test-focused` do not add pytest-xdist flags by default; use `ENVCTL_ACTION_TEST_PYTEST_PARALLEL=true` for `envctl test`, or pass `envctl test-focused --parallel` / `ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL=true` for focused runs
 - envctl does not add xdist flags when the pytest command already includes `-n`, `--numprocesses`, or `-p no:xdist`
-- use `--test-parallel-max <n>` to cap both envctl's suite concurrency and pytest-xdist workers for the current run
+- use `--test-parallel-max <n>` to cap envctl's suite concurrency and pytest-xdist workers when either parallel mode is enabled
 - persistent pytest-specific controls are `ENVCTL_ACTION_TEST_PYTEST_PARALLEL`, `ENVCTL_ACTION_TEST_PYTEST_WORKERS`, `ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL`, and `ENVCTL_TEST_FOCUSED_PYTEST_WORKERS`
-- `ENVCTL_ACTION_TEST_PARALLEL` and `ENVCTL_ACTION_TEST_PARALLEL_MAX` remain suite-concurrency settings; they do not silently replace the free-core pytest worker estimate
+- `ENVCTL_ACTION_TEST_PARALLEL` and `ENVCTL_ACTION_TEST_PARALLEL_MAX` remain suite-concurrency settings; they do not enable pytest-xdist by themselves
 
 Logs and inspection:
 

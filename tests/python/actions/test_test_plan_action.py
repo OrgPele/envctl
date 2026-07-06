@@ -435,6 +435,49 @@ class TestPlanActionTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python/actions"]])
 
+    def test_focused_pytest_sequential_flag_overrides_parallel_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            python = repo / ".venv" / "bin" / "python"
+            (repo / ".venv" / "lib" / "python3.12" / "site-packages" / "xdist").mkdir(parents=True)
+            python.parent.mkdir(parents=True, exist_ok=True)
+            python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+
+            class Context:
+                repo_root = repo
+                project_root = repo
+                project_name = "Main"
+                env = {"ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL": "true"}
+                config_raw: dict[str, str] = {}
+                route_flags = {"test_parallel": False}
+
+            plan = {
+                "contract_version": "envctl.test_plan.v1",
+                "project": "Main",
+                "repo_root": str(repo),
+                "project_root": str(repo),
+                "changed_files": ["python/envctl_engine/actions/test_plan_action.py"],
+                "commands": [{"command": "uv run --extra dev pytest -q tests/python/actions"}],
+                "full_gate": {"recommended": False, "command": "uv run --extra dev pytest -q tests/python"},
+            }
+            calls: list[list[str]] = []
+
+            def fake_run(args: list[str], **_kwargs):  # noqa: ANN001
+                calls.append(args)
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+            with (
+                patch("envctl_engine.actions.test_plan_action.build_test_plan", return_value=plan),
+                patch("envctl_engine.actions.test_plan_action.shutil.which", return_value="/usr/bin/uv"),
+                patch("envctl_engine.actions.action_pytest_parallel_support.os.cpu_count", return_value=8),
+                patch("envctl_engine.actions.test_plan_action._run_test_command", side_effect=fake_run),
+                redirect_stdout(StringIO()),
+            ):
+                code = run_test_plan_action(Context())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [["uv", "run", "--extra", "dev", "pytest", "-q", "tests/python/actions"]])
+
     def test_runtime_focused_pytest_runs_without_xdist(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)

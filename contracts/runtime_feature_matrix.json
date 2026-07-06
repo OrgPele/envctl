@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-06-29T14:23:58+00:00",
+  "generated_at": "2026-07-06T17:49:55+00:00",
   "inventory_sources": {
     "python_supported_commands": [
       "blast-all",
@@ -203,6 +203,7 @@
       "--only-frontend",
       "--opencode",
       "--output-dir",
+      "--parallel",
       "--parallel-deps",
       "--parallel-plan",
       "--parallel-trees",
@@ -249,6 +250,7 @@
       "--separate-dependencies",
       "--separate-dependency",
       "--separate-deps",
+      "--sequential",
       "--sequential-deps",
       "--sequential-plan",
       "--service",
@@ -350,6 +352,7 @@
       "--only-backend",
       "--only-frontend",
       "--opencode",
+      "--parallel",
       "--parallel-deps",
       "--parallel-plan",
       "--parallel-trees",
@@ -364,6 +367,7 @@
       "--review-base",
       "--seed-requirements-from-base",
       "--separate-deps",
+      "--sequential",
       "--sequential-deps",
       "--sequential-plan",
       "--service",

@@ -144,6 +144,18 @@ def handle_special_flag(flags: dict[str, object], token: str) -> None:
         flags["frontend_test_runner"] = token.split("=", 1)[1]
 
 
+def handle_command_scoped_flag(command: str, flags: dict[str, object], token: str) -> bool:
+    if command not in {"test", "test-focused"}:
+        return False
+    if token == "--parallel":
+        flags["test_parallel"] = True
+        return True
+    if token == "--sequential":
+        flags["test_parallel"] = False
+        return True
+    return False
+
+
 def set_runtime_scope(flags: dict[str, object], scope: str) -> None:
     existing = flags.get("runtime_scope")
     if existing is not None and existing != scope:

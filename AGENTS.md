@@ -4,10 +4,11 @@ This project is configured for Serena symbolic code navigation via `.serena/proj
 
 Use Serena for precise, symbol-aware code work when it is available:
 - Activate the current checkout/worktree path before structural navigation.
-- Use symbol lookup, reference lookup, and diagnostics for definitions,
-  refactors, call-path work, and changed Python files.
-- Use `rg` for exact strings such as flags, env keys, log messages, docs prose,
-  and error text.
+- Use Serena for Python symbol definitions, references, diagnostics, call-path
+  checks, and semantic edits.
+- Use normal shell/file tools for exact strings, docs, prompts, tests, git,
+  envctl commands, and other literal-text workflows; use `rg` for flags, env
+  keys, log messages, config values, docs prose, and error text.
 
 Serena boundaries:
 - After structural code changes, let Serena refresh automatically. If results
@@ -34,17 +35,22 @@ Serena boundaries:
   run the current checkout instead of an installed `envctl`.
 - Keep edits inside the current checkout/worktree and preserve unrelated user
   changes.
-- When a handoff message is ready, use `envctl test-focused --ship-on-pass
-  "<message>"` from inside the current worktree as the single envctl local
-  validation-and-handoff command; do not run standalone `envctl test-focused`
-  first or repeat it afterward. Use additional repo-specific test commands only
-  when diagnosing a failure or when the focused plan explicitly recommends
-  broader validation for a cross-cutting/risky change.
-- Fall back to `envctl ship -m "<message>"` only when the combined command is
-  unavailable or returns actionable fallback instructions. Both use the ship
+- When a handoff message is ready and focused validation has not already passed
+  for the final tree, use `envctl test-focused --ship-on-pass "<message>"` from
+  inside the current worktree as the single envctl local validation-and-handoff
+  command. If focused validation already passed for the final tree, use
+  `envctl ship -m "<message>"` and do not rerun tests. Do not run standalone
+  `envctl test-focused`, repeat passing tests, or run `envctl test --all` /
+  other broad local suites before handoff. Full suites are CI-owned; use narrow
+  diagnostic commands only when a focused validation failure needs investigation.
+- Fall back to `envctl ship -m "<message>"` when the combined command is
+  unavailable, returns actionable fallback instructions, or focused validation
+  already passed for the final tree. Both use the ship
   workflow: it stages intended non-protected changes via git add, commits,
   pushes, creates/updates the PR, and reports status checks. Use raw `git` or
   `gh` handoff commands only when `ship` is unavailable.
+- At the end of implementation/fix/change work, report the PR URL if one
+  exists, preferably as the final line of the response.
 - If shipping is delegated to a real background worker, it should report only
   blockers; successful ship results stay silent.
 - Keep envctl-generated local artifacts uncommitted.

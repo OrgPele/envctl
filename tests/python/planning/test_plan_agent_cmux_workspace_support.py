@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from envctl_engine.planning.plan_agent.cmux_workspace_support import (
     default_workspace_target,
+    looks_like_envctl_plan_command_title,
     surface_ids_from_list_output,
     workspace_entries_from_list_output,
     workspace_ref_from_identify_output,
@@ -54,6 +55,23 @@ class PlanAgentCmuxWorkspaceSupportTests(unittest.TestCase):
         )
 
         self.assertEqual(workspace_ref_from_identify_output(payload), "workspace:4")
+
+    def test_envctl_plan_command_title_detection_handles_wrappers_and_launcher_flags(self) -> None:
+        command_titles = (
+            "ENVCTL_PLAN_AGENT_CODEX_CYCLES=1 envctl --plan broken/task --cmux",
+            "ENVCTL_USE_REPO_WRAPPER=1 ./bin/envctl --no-infra --headless --plan broken/task",
+            "/repo/bin/envctl --preset implement_task --plan=broken/task",
+            "envctl plan broken/task --cmux",
+            "envctl parallel-plan broken/task --cmux",
+            "envctl --parallel-plan broken/task --cmux",
+            "envctl --sequential-plan broken/task --cmux",
+        )
+
+        for title in command_titles:
+            with self.subTest(title=title):
+                self.assertTrue(looks_like_envctl_plan_command_title(title))
+
+        self.assertFalse(looks_like_envctl_plan_command_title("envctl implementation"))
 
     def test_default_workspace_target_uses_current_workspace_title_and_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
