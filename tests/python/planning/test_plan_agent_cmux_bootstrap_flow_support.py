@@ -118,6 +118,36 @@ class PlanAgentCmuxBootstrapFlowSupportTests(unittest.TestCase):
         self.assertIn(("direct", "direct prompt"), calls)
         self.assertNotIn(("prompt", None), calls)
 
+    def test_run_surface_bootstrap_uses_picker_submission_for_codex_skill_command(self) -> None:
+        calls: list[tuple[str, object]] = []
+
+        error = run_surface_bootstrap(
+            _Runtime(),
+            workspace_id="workspace-1",
+            surface_id="surface-1",
+            launch_config=_launch_config(cli="codex", direct_prompt_enabled=True),
+            worktree=_worktree(),
+            build_plan_agent_workflow_fn=lambda **_kwargs: _PlanAgentWorkflow(
+                mode="direct",
+                codex_cycles=1,
+                steps=(_PlanAgentWorkflowStep(kind="submit_direct_prompt", text="initial"),),
+            ),
+            prepare_surface_fn=lambda *_args, **_kwargs: None,
+            tab_title_for_worktree_fn=lambda name: f"tab:{name}",
+            surface_respawn_command_fn=lambda *_args, **_kwargs: "exec zsh",
+            launch_cli_bootstrap_commands_fn=lambda *_args, **_kwargs: (),
+            wait_for_cli_ready_fn=lambda *_args, **_kwargs: None,
+            maybe_submit_surface_codex_goal_fn=lambda *_args, **_kwargs: None,
+            workflow_step_prompt_text_fn=lambda *_args, **_kwargs: ("$envctl-implement-task", None),
+            submit_direct_prompt_workflow_step_fn=lambda *_args, **_kwargs: calls.append(("direct", None)) or None,
+            submit_prompt_workflow_step_fn=lambda *_args, **kwargs: calls.append(("prompt", kwargs["prompt_text"])) or None,
+            queue_codex_workflow_steps_fn=lambda *_args, **_kwargs: None,
+            queue_failure_event_context_fn=lambda _reason: {},
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(calls, [("prompt", "$envctl-implement-task")])
+
     def test_run_surface_bootstrap_emits_queue_fallback_without_failing_launch(self) -> None:
         runtime = _Runtime()
 
@@ -176,7 +206,7 @@ class PlanAgentCmuxBootstrapFlowSupportTests(unittest.TestCase):
             tab_title_for_worktree_fn=lambda name: f"tab:{name}",
             launch_cli_bootstrap_commands_fn=lambda *_args, **_kwargs: (),
             wait_for_cli_ready_fn=lambda *_args, **_kwargs: None,
-            review_prompt_arguments_fn=lambda **kwargs: {"project": kwargs["project_name"]},
+            review_prompt_arguments_fn=lambda **kwargs: str(kwargs["project_name"]),
             review_original_plan_path_fn=lambda *_args, **_kwargs: Path("/repo/MAIN_TASK.md"),
             resolve_preset_submission_text_fn=lambda *_args, **_kwargs: ("review prompt", None),
             uses_direct_submission_fn=lambda **_kwargs: True,
@@ -201,7 +231,7 @@ class PlanAgentCmuxBootstrapFlowSupportTests(unittest.TestCase):
             tab_title_for_worktree_fn=lambda name: name,
             launch_cli_bootstrap_commands_fn=lambda *_args, **_kwargs: (),
             wait_for_cli_ready_fn=lambda *_args, **_kwargs: None,
-            review_prompt_arguments_fn=lambda **_kwargs: {},
+            review_prompt_arguments_fn=lambda **_kwargs: "",
             review_original_plan_path_fn=lambda *_args, **_kwargs: None,
             resolve_preset_submission_text_fn=lambda *_args, **_kwargs: ("", "preset failed"),
             uses_direct_submission_fn=lambda **_kwargs: False,

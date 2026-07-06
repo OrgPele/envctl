@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -116,7 +115,7 @@ class PlanAgentWorkflowQueueSupportTests(unittest.TestCase):
         self.assertEqual(error.step_index, 0)
         self.assertEqual(error.step_kind, "queue_direct_prompt")
 
-    def test_queue_support_sends_multiline_prompt_as_single_file_backed_queue_message(self) -> None:
+    def test_queue_support_collapses_multiline_message_to_single_terminal_input(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
         sent: list[str] = []
         confirmed: list[tuple[str, bool]] = []
@@ -128,38 +127,29 @@ class PlanAgentWorkflowQueueSupportTests(unittest.TestCase):
             steps=(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="cycle"),),
         )
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            worktree_root = Path(tmpdir) / "repo"
-            worktree_root.mkdir(parents=True, exist_ok=True)
-            worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="a.md")
+        worktree = CreatedPlanWorktree(name="feature-a-1", root=Path("/repo/trees/feature-a/1"), plan_file="a.md")
 
-            error = run_codex_workflow_queue(
-                runtime,
-                worktree=worktree,
-                workflow=workflow,
-                queued_steps=workflow.steps,
-                launch_config=_launch_config(codex_goal_enable=False),
-                cli="codex",
-                transport="cmux",
-                event_context={"workspace_id": "workspace:1", "surface_id": "surface:2"},
-                codex_goal_text_for_worktree_fn=lambda **_kwargs: "goal text",
-                workflow_step_prompt_text_fn=lambda *_args, **_kwargs: (queued_prompt, None),
-                send_text_fn=lambda text: sent.append(text) or None,
-                queue_message_fn=lambda text, *, require_text_match: confirmed.append((text, require_text_match))
-                or True,
-            )
+        error = run_codex_workflow_queue(
+            runtime,
+            worktree=worktree,
+            workflow=workflow,
+            queued_steps=workflow.steps,
+            launch_config=_launch_config(codex_goal_enable=False),
+            cli="codex",
+            transport="cmux",
+            event_context={"workspace_id": "workspace:1", "surface_id": "surface:2"},
+            codex_goal_text_for_worktree_fn=lambda **_kwargs: "goal text",
+            workflow_step_prompt_text_fn=lambda *_args, **_kwargs: (queued_prompt, None),
+            send_text_fn=lambda text: sent.append(text) or None,
+            queue_message_fn=lambda text, *, require_text_match: confirmed.append((text, require_text_match)) or True,
+        )
 
-            expected_queue_text = (
-                "Read and follow the queued follow-up prompt from the current worktree: "
-                ".envctl-state/plan-agent-queue/000-queue-direct-prompt.md"
-            )
-            prompt_file = worktree_root / ".envctl-state" / "plan-agent-queue" / "000-queue-direct-prompt.md"
+        expected_queue_text = "First, read MAIN_TASK.md. Then inspect relevant code before editing."
 
-            self.assertIsNone(error)
-            self.assertEqual(sent, [expected_queue_text])
-            self.assertNotIn("\n", sent[0])
-            self.assertEqual(confirmed, [(expected_queue_text, False)])
-            self.assertEqual(prompt_file.read_text(encoding="utf-8"), queued_prompt)
+        self.assertIsNone(error)
+        self.assertEqual(sent, [expected_queue_text])
+        self.assertNotIn("\n", sent[0])
+        self.assertEqual(confirmed, [(expected_queue_text, False)])
 
 
 if __name__ == "__main__":

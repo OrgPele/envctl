@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping
-from pathlib import Path
 from typing import Any
 
 from envctl_engine.planning.plan_agent.models import (
@@ -18,8 +16,6 @@ WorkflowStepPromptTextFn = Callable[..., tuple[str, str | None]]
 CodexGoalTextForWorktreeFn = Callable[..., str]
 SendQueueTextFn = Callable[[str], str | None]
 QueueMessageFn = Callable[[str], bool]
-
-_QUEUE_PROMPT_DIR = Path(".envctl-state") / "plan-agent-queue"
 
 
 def run_codex_workflow_queue(
@@ -66,17 +62,8 @@ def run_codex_workflow_queue(
         )
         if resolution_error is not None:
             return _QueueFailure("queue_prompt_resolution_failed", step_index=step_index, step_kind=step.kind)
-        queued_terminal_text, queue_text_error = _queue_terminal_prompt_text(
-            worktree=worktree,
-            text=queued_text,
-            step_index=step_index,
-            step_kind=step.kind,
-        )
-        if queue_text_error is not None:
-            return queue_text_error
-
         prompt_error = _send_and_confirm_queue_message(
-            text=queued_terminal_text,
+            text=_queue_terminal_text(queued_text),
             send_text_fn=send_text_fn,
             queue_message_fn=queue_message_fn,
             send_failure="queue_send_failed",
@@ -117,38 +104,8 @@ def _queued_goal_text(
     return f"/goal {goal_text}"
 
 
-def _queue_terminal_prompt_text(
-    *,
-    worktree: CreatedPlanWorktree,
-    text: str,
-    step_index: int,
-    step_kind: str,
-) -> tuple[str, _QueueFailure | None]:
-    if not _needs_file_backed_queue_message(text):
-        return text, None
-
-    relative_path = _queue_prompt_relative_path(step_index=step_index, step_kind=step_kind)
-    prompt_path = worktree.root / relative_path
-    try:
-        prompt_path.parent.mkdir(parents=True, exist_ok=True)
-        prompt_path.write_text(text, encoding="utf-8")
-    except OSError:
-        return "", _QueueFailure("queue_prompt_file_write_failed", step_index=step_index, step_kind=step_kind)
-    return _queue_prompt_pointer_text(relative_path), None
-
-
-def _needs_file_backed_queue_message(text: str) -> bool:
-    return len(str(text).splitlines()) > 1
-
-
-def _queue_prompt_relative_path(*, step_index: int, step_kind: str) -> Path:
-    safe_kind = re.sub(r"[^A-Za-z0-9]+", "-", step_kind).strip("-").lower()
-    filename = f"{step_index:03d}-{safe_kind or 'step'}.md"
-    return _QUEUE_PROMPT_DIR / filename
-
-
-def _queue_prompt_pointer_text(relative_path: Path) -> str:
-    return f"Read and follow the queued follow-up prompt from the current worktree: {relative_path.as_posix()}"
+def _queue_terminal_text(text: str) -> str:
+    return " ".join(str(text).split())
 
 
 def _send_and_confirm_queue_message(

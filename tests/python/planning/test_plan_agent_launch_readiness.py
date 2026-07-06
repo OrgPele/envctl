@@ -23,7 +23,7 @@ class PlanAgentLaunchReadinessTests(PlanAgentLaunchSupportTestCase):
             "│ >_ OpenAI Codex (v0.115.0)                        │\n"
             "│ model:     loading   /model to change             │\n"
             "│ directory: ~/repo                                 │\n"
-            "› /prompts:implement_task\n"
+            "› $envctl-implement-task\n"
         )
         ready = (
             "╭───────────────────────────────────────────────────╮\n"
@@ -76,6 +76,19 @@ class PlanAgentLaunchReadinessTests(PlanAgentLaunchSupportTestCase):
         self.assertFalse(_prompt_submit_screen_looks_ready("opencode", pending, "/implement_task"))
         self.assertFalse(_prompt_submit_screen_looks_ready("opencode", broken, "/implement_task"))
         self.assertTrue(_prompt_submit_screen_looks_ready("opencode", ready, "/implement_task"))
+
+    def test_codex_prompt_picker_accepts_skill_selector(self) -> None:
+        screen = (
+            "╭───────────────────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.142.5)                        │\n"
+            "› $envctl-continue-task\n"
+            "\n"
+            "  Envctl Continue Task  [Skill] Resume an incomplete envctl implementation pass\n"
+            "\n"
+            "  Press enter to insert or esc to close\n"
+        )
+
+        self.assertTrue(terminal_screen._prompt_picker_screen_looks_ready("codex", screen, "$envctl-continue-task"))
 
     def test_opencode_post_submit_rejects_unchanged_composer(self) -> None:
         prompt = "/ulw-loop\n\nImplement task"

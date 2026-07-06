@@ -94,7 +94,7 @@ class CodexQueueMessageInteractor:
         if (
             not self.prompt_picker_enabled
             or picker_submitted
-            or not normalized_text.startswith("/")
+            or not _codex_prompt_picker_command(normalized_text)
             or not _prompt_picker_screen_looks_ready("codex", screen, normalized_text)
         ):
             return None
@@ -102,3 +102,8 @@ class CodexQueueMessageInteractor:
             return False
         self.sleep(self.poll_interval_seconds)
         return True
+
+
+def _codex_prompt_picker_command(text: str) -> bool:
+    normalized = str(text).strip()
+    return normalized.startswith("/") or normalized.startswith("$")

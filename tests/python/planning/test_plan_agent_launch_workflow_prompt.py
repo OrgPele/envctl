@@ -36,43 +36,36 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
         self.assertIsNone(error)
         self.assertEqual(prompt_text, "/ulw-loop Implement this directly.")
 
-    def test_workflow_step_prompt_text_loads_direct_codex_prompt_body(self) -> None:
+    def test_workflow_step_prompt_text_uses_codex_skill_command_for_direct_steps(self) -> None:
         self.assertIsNotNone(_workflow_step_prompt_text)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            prompt_path = Path(tmpdir) / ".config" / "envctl" / "codex" / "prompts" / "implement_task.md"
-            prompt_path.parent.mkdir(parents=True, exist_ok=True)
-            prompt_path.write_text("Implement this task carefully.\n", encoding="utf-8")
-            runtime = _RuntimeHarness(
-                config=load_config(
-                    {
-                        "RUN_REPO_ROOT": "/tmp/repo",
-                        "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
-                    }
-                ),
-                env={"HOME": tmpdir},
-                process_runner=_RecordingRunner(),
-            )
-            step = workflow._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")
+        runtime = _RuntimeHarness(
+            config=load_config(
+                {
+                    "RUN_REPO_ROOT": "/tmp/repo",
+                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                }
+            ),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+        step = workflow._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")
 
-            prompt_text, error = _workflow_step_prompt_text(
-                runtime,
-                launch_config=_launch_config_for_tests(cli="codex"),
-                cli="codex",
-                step=step,
-            )
+        prompt_text, error = _workflow_step_prompt_text(
+            runtime,
+            launch_config=_launch_config_for_tests(cli="codex"),
+            cli="codex",
+            step=step,
+        )
 
         self.assertIsNone(error)
-        self.assertEqual(prompt_text, "Implement this task carefully.\n")
+        self.assertEqual(prompt_text, "$envctl-implement-task")
 
-    def test_workflow_step_prompt_text_injects_worktree_code_intelligence_context(self) -> None:
+    def test_workflow_step_prompt_text_keeps_codex_skill_command_single_line_with_worktree_context(self) -> None:
         self.assertIsNotNone(_workflow_step_prompt_text)
         with tempfile.TemporaryDirectory() as tmpdir:
-            prompt_path = Path(tmpdir) / ".config" / "envctl" / "codex" / "prompts" / "implement_task.md"
             worktree_root = Path(tmpdir) / "repo" / "trees" / "feature-a" / "1"
             metadata_path = worktree_root / ".envctl-state" / "code-intelligence.json"
-            prompt_path.parent.mkdir(parents=True, exist_ok=True)
             metadata_path.parent.mkdir(parents=True, exist_ok=True)
-            prompt_path.write_text("Implement this task carefully.\n", encoding="utf-8")
             metadata_path.write_text(
                 json.dumps(
                     {
@@ -94,7 +87,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
                         "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
                     }
                 ),
-                env={"HOME": tmpdir},
+                env={},
                 process_runner=_RecordingRunner(),
             )
             step = workflow._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")
@@ -109,42 +102,35 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
             )
 
         self.assertIsNone(error)
-        self.assertIn("Implement this task carefully.", prompt_text)
-        self.assertIn("## Worktree code intelligence", prompt_text)
-        self.assertIn("Serena project `repo-feature-a-1`", prompt_text)
-        self.assertIn("CodeGraphContext (`cgc`) context `Repo-feature-a-1`", prompt_text)
+        self.assertEqual(prompt_text, "$envctl-implement-task")
+        self.assertNotIn("\n", prompt_text)
 
-    def test_workflow_step_prompt_text_preserves_literal_arguments_mentions_in_review_prompt(self) -> None:
+    def test_codex_preset_submission_text_collapses_arguments_into_skill_command(self) -> None:
         self.assertIsNotNone(_workflow_step_prompt_text)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            prompt_path = Path(tmpdir) / ".config" / "envctl" / "codex" / "prompts" / "review_worktree_imp.md"
-            prompt_path.parent.mkdir(parents=True, exist_ok=True)
-            prompt_path.write_text(
-                "Inputs:\n$ARGUMENTS\nKeep `$ARGUMENTS` literal in prose.\n",
-                encoding="utf-8",
-            )
-            runtime = _RuntimeHarness(
-                config=load_config(
-                    {
-                        "RUN_REPO_ROOT": "/tmp/repo",
-                        "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
-                    }
-                ),
-                env={"HOME": tmpdir},
-                process_runner=_RecordingRunner(),
-            )
-            prompt_text, error = workflow._resolve_preset_submission_text(
-                runtime,
-                launch_config=_launch_config_for_tests(cli="codex"),
-                cli="codex",
-                preset="review_worktree_imp",
-                arguments="Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree",
-            )
+        runtime = _RuntimeHarness(
+            config=load_config(
+                {
+                    "RUN_REPO_ROOT": "/tmp/repo",
+                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
+                }
+            ),
+            env={},
+            process_runner=_RecordingRunner(),
+        )
+        prompt_text, error = workflow._resolve_preset_submission_text(
+            runtime,
+            launch_config=_launch_config_for_tests(cli="codex"),
+            cli="codex",
+            preset="review_worktree_imp",
+            arguments="Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree",
+        )
 
         self.assertIsNone(error)
-        self.assertIn("Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree", prompt_text)
-        self.assertIn("Keep `$ARGUMENTS` literal in prose.", prompt_text)
-        self.assertEqual(prompt_text.count("$ARGUMENTS"), 1)
+        self.assertEqual(
+            prompt_text,
+            "$envctl-review-worktree Review bundle: /tmp/review.md Worktree directory: /tmp/tree",
+        )
+        self.assertNotIn("\n", prompt_text)
 
     def test_resolve_preset_submission_text_returns_opencode_direct_body_when_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

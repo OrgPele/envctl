@@ -467,6 +467,10 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
             "and one OMX-managed Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`",
             plan_prompt.body,
         )
+        self.assertIn(
+            "For Codex, envctl submits the installed `$envctl-implement-task` skill invocation",
+            plan_prompt.body,
+        )
         self.assertIn("do not tell the user to manually type `/prompts:implement_task`, `$envctl-implement-task`, or any other in-session command", plan_prompt.body)
         self.assertIn("keep research narrow", plan_prompt.body)
         self.assertIn("CURRENT-REPO BOUNDARY IS ALSO STRICT FOR RESEARCH", plan_prompt.body)

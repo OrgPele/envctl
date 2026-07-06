@@ -53,8 +53,8 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
 
             self.assertIsNone(error)
             self.assertEqual(send_text_mock.call_count, 0)
-            self.assertEqual(send_prompt_mock.call_count, 4)
-            self.assertEqual(queue_mock.call_count, 4)
+            self.assertEqual(send_prompt_mock.call_count, 3)
+            self.assertEqual(queue_mock.call_count, 3)
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queued"),
                 [
@@ -66,8 +66,8 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
                         "cli": "codex",
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 2,
-                        "queued_steps": 4,
-                        "queued_steps_confirmed": 4,
+                        "queued_steps": 3,
+                        "queued_steps_confirmed": 3,
                         "transport": "tmux",
                     }
                 ],
@@ -251,7 +251,6 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
             [(step.kind, step.text) for step in workflow.steps],
             [
                 ("submit_direct_prompt", "implement_task"),
-                ("queue_message", _first_cycle_completion_instruction_text()),
                 ("queue_direct_prompt", "continue_task"),
                 ("queue_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
@@ -270,10 +269,8 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
             [(step.kind, step.text) for step in workflow.steps],
             [
                 ("submit_direct_prompt", "implement_task"),
-                ("queue_message", _first_cycle_completion_instruction_text()),
                 ("queue_direct_prompt", "continue_task"),
                 ("queue_direct_prompt", "implement_task"),
-                ("queue_message", _intermediate_cycle_completion_instruction_text()),
                 ("queue_direct_prompt", "continue_task"),
                 ("queue_direct_prompt", "implement_task"),
                 ("queue_direct_prompt", "finalize_task"),
@@ -311,7 +308,7 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
 
         self.assertEqual(workflow.mode, "codex_cycles")
         self.assertEqual(workflow.codex_cycles, 3)
-        self.assertEqual(len(workflow.steps), 1 + (1 + 3 * (workflow.codex_cycles - 1)))
+        self.assertEqual(len(workflow.steps), 2 * workflow.codex_cycles)
 
     def test_codex_cycle_queued_steps_do_not_request_goal_frames(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)

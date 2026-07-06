@@ -189,7 +189,7 @@ class PlanAgentLaunchSupersetTests(PlanAgentLaunchSupportTestCase):
         self.assertEqual(payload["version"], 1)
         self.assertTrue(payload["goal"].startswith("Implement the envctl plan-agent task for a.md"))
         self.assertIn("Workflow mode: single_prompt.", payload["goal"])
-        self.assertIn("Authoritative source of truth", payload["prompt"])
+        self.assertEqual(payload["prompt"], "$envctl-implement-task")
         self.assertEqual(create_call[-1], "--json")
         self.assertEqual(rt.process_runner.calls[2], ["superset", "workspaces", "open", "ws-123"])
         self.assertIsNotNone(host_agent_row)

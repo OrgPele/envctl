@@ -61,9 +61,9 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                         args=["cmux"],
                         returncode=0,
                         stdout=(
-                            "  /prompts:implement_task\n"
-                            "  /prompts:implement_task.bak-20260313-192914\n"
-                            "  /prompts:implement_task\n"
+                            "  $envctl-implement-task\n"
+                            "  $envctl-implement-task.bak-20260313-192914\n"
+                            "  $envctl-implement-task\n"
                             "  Sisyphus (Ultraworker)\n"
                         ),
                         stderr="",
@@ -72,7 +72,7 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                     subprocess.CompletedProcess(
                         args=["cmux"],
                         returncode=0,
-                        stdout="  /prompts:implement_task\n  Sisyphus (Ultraworker)\n",
+                        stdout="  $envctl-implement-task\n  Sisyphus (Ultraworker)\n",
                         stderr="",
                     ),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
@@ -111,8 +111,8 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
             )
             self.assertTrue(
                 any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+                    call[:2] == ["cmux", "send"]
+                    and str(call[-1]) == "$envctl-implement-task"
                     for call in rt.process_runner.calls
                 )
             )
@@ -178,7 +178,7 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
             )
         )
 
-    def test_cmux_codex_launch_waits_for_active_goal_before_implementation_prompt(self) -> None:
+    def test_cmux_codex_launch_waits_for_active_goal_before_implementation_skill(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -252,8 +252,8 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
             implementation_buffer_index = next(
                 index
                 for index, call in enumerate(rt.process_runner.calls)
-                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+                if call[:2] == ["cmux", "send"]
+                and str(call[-1]) == "$envctl-implement-task"
             )
             intervening_reads = [
                 call
@@ -397,4 +397,3 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
         self.assertEqual(error, "codex_goal_active_timeout")
         self.assertEqual(len(pasted_texts), 1)
         self.assertTrue(pasted_texts[0].startswith("/goal "))
-

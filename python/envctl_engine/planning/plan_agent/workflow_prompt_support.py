@@ -19,7 +19,7 @@ from envctl_engine.planning.plan_agent.workflow_e2e_prompt_context import (
     _shape_queue_message_text as _shape_queue_message_text,
 )
 from envctl_engine.runtime.prompt_install_support import (
-    resolve_codex_direct_prompt_body,
+    resolve_codex_direct_prompt_body as resolve_codex_direct_prompt_body,
     resolve_opencode_direct_prompt_body,
 )
 from envctl_engine.runtime.runtime_context import optional_state_repository as optional_state_repository
@@ -72,14 +72,10 @@ def _resolve_preset_submission_text(
         direct_prompt_enabled=launch_config.direct_prompt_enabled,
     )
     try:
-        if not direct_prompt:
+        if normalized_cli == "codex":
             resolved = _slash_command(cli, preset, arguments=arguments)
-        elif normalized_cli == "codex":
-            resolved = resolve_codex_direct_prompt_body(
-                preset=preset,
-                env=getattr(runtime, "env", {}),
-                arguments=arguments,
-            )
+        elif not direct_prompt:
+            resolved = _slash_command(cli, preset, arguments=arguments)
         elif normalized_cli == "opencode":
             resolved = resolve_opencode_direct_prompt_body(
                 preset=preset,
@@ -90,7 +86,7 @@ def _resolve_preset_submission_text(
             resolved = _slash_command(cli, preset, arguments=arguments)
     except (LookupError, OSError, ValueError) as exc:
         return "", f"prompt_resolution_failed: {exc}"
-    if direct_prompt:
+    if direct_prompt and normalized_cli != "codex":
         resolved = _append_runtime_addresses_for_preset(
             runtime,
             preset=preset,

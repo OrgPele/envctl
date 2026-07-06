@@ -57,6 +57,14 @@ def _prompt_picker_screen_looks_ready(cli: str, screen: str, prompt_text: str) -
     normalized_prompt = str(prompt_text).strip().lower()
     if not normalized_prompt:
         return False
+    if (
+        normalized_cli == "codex"
+        and normalized_prompt.startswith("$")
+        and normalized_prompt in lower_text
+        and "[skill]" in lower_text
+        and "press enter to insert" in lower_text
+    ):
+        return True
     return lower_text.count(normalized_prompt) > 1
 
 

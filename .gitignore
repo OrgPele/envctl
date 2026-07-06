@@ -7,7 +7,6 @@ dist/
 tmp/
 .pytest_cache/
 .ruff_cache/
-.envctl-state/plan-agent-queue/
 .coverage
 .coverage.*
 htmlcov/
