@@ -80,8 +80,8 @@ def test_github_pr_checks_reports_unavailable_gh_without_running_checks(tmp_path
 def test_github_pr_checks_default_timeout_is_two_minute_wait_window() -> None:
     assert action_ship_checks.DEFAULT_CHECK_TIMEOUT_SECONDS == 120.0
 
-def test_github_pr_checks_default_no_checks_grace_is_ten_seconds() -> None:
-    assert action_ship_checks.DEFAULT_NO_CHECKS_GRACE_SECONDS == 10.0
+def test_github_pr_checks_default_no_checks_grace_is_fifteen_seconds() -> None:
+    assert action_ship_checks.DEFAULT_NO_CHECKS_GRACE_SECONDS == 15.0
 
 def test_github_pr_checks_default_polling_is_more_responsive_than_progress_heartbeat() -> None:
     assert action_ship_checks.DEFAULT_CHECK_POLL_INTERVAL_SECONDS == 5.0
@@ -117,7 +117,7 @@ def test_ship_check_timing_rejects_non_finite_values(monkeypatch: Any) -> None:
     assert timing.progress_interval_seconds == action_ship_checks.DEFAULT_CHECK_PROGRESS_INTERVAL_SECONDS
     assert timing.no_checks_grace_seconds == action_ship_checks.DEFAULT_NO_CHECKS_GRACE_SECONDS
 
-def test_github_pr_checks_reports_no_checks_after_ten_second_grace_for_expected_head(tmp_path: Path) -> None:
+def test_github_pr_checks_reports_no_checks_after_default_grace_for_expected_head(tmp_path: Path) -> None:
     clock = {"now": 0.0}
     calls: list[list[str]] = []
 
@@ -143,15 +143,15 @@ def test_github_pr_checks_reports_no_checks_after_ten_second_grace_for_expected_
         tmp_path,
         expected_head_sha="newsha",
         timeout_seconds=120.0,
-        poll_interval_seconds=10.0,
+        poll_interval_seconds=5.0,
         run_command=fake_run,
         monotonic=lambda: clock["now"],
         sleep=fake_sleep,
     )
 
     assert checks["state"] == "no_checks_reported"
-    assert checks["duration_seconds"] == 10.0
-    assert len(calls) == 2
+    assert checks["duration_seconds"] == 15.0
+    assert len(calls) == 4
 
 def test_github_pr_checks_emits_progress_every_progress_interval_while_pending(tmp_path: Path) -> None:
     clock = {"now": 0.0}
@@ -174,6 +174,8 @@ def test_github_pr_checks_emits_progress_every_progress_interval_while_pending(t
     ]
 
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["/usr/bin/gh", "api"]:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="[]", stderr="")
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
 
     def fake_sleep(seconds: float) -> None:
@@ -213,6 +215,8 @@ def test_github_pr_checks_ignores_non_test_checks_after_target_tests_pass(tmp_pa
     ]
 
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["/usr/bin/gh", "api"]:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="[]", stderr="")
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
 
     def fake_sleep(seconds: float) -> None:
@@ -272,6 +276,8 @@ def test_github_pr_checks_can_detect_success_before_next_progress_heartbeat(tmp_
     ]
 
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["/usr/bin/gh", "api"]:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="[]", stderr="")
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
 
     def fake_sleep(seconds: float) -> None:
@@ -339,6 +345,8 @@ def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(tm
 
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(args)
+        if args[:2] == ["/usr/bin/gh", "api"]:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="[]", stderr="")
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
 
     checks = github_pr_checks(
@@ -359,7 +367,7 @@ def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(tm
             "link": "https://github.com/acme/repo/actions/runs/2/job/2",
         }
     ]
-    assert [call[:4] for call in calls] == [
+    assert [call[:4] for call in calls if call[1:3] == ["pr", "view"]] == [
         ["/usr/bin/gh", "pr", "view", "feature/demo"],
         ["/usr/bin/gh", "pr", "view", "feature/demo"],
         ["/usr/bin/gh", "pr", "view", "feature/demo"],

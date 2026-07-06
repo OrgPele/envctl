@@ -576,7 +576,7 @@ class ActionsTestSummaryParityTests(_ActionsParityTestCase):
                 patch("envctl_engine.actions.action_command_orchestrator.TestRunner", _PerProjectFailingRunner),
                 patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"),
             ):
-                route = parse_route(["test", "--all", "frontend=false"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                route = parse_route(["test", "--all", "--parallel", "frontend=false"], env={"ENVCTL_DEFAULT_MODE": "trees"})
                 rendered_out = StringIO()
                 with redirect_stdout(rendered_out):
                     code = engine.dispatch(route)
@@ -609,4 +609,3 @@ class ActionsTestSummaryParityTests(_ActionsParityTestCase):
             self.assertIn(first_short, rendered)
             self.assertIn("feature-b-1", rendered)
             self.assertIn(second_short, rendered)
-

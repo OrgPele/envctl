@@ -6,6 +6,33 @@ from tests.python.planning.plan_agent_launch_support_test_support import *
 
 
 class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
+    def test_codex_goal_text_is_compact_and_outcome_first(self) -> None:
+        goal = workflow._codex_goal_text_for_worktree(
+            worktree=CreatedPlanWorktree(name="feature-a-1", root=Path("/repo"), plan_file="features/a.md"),
+            preset="implement_task",
+            workflow_mode="codex_cycles",
+            omx_workflow="",
+        )
+
+        self.assertTrue(goal.startswith("Implement features/a.md in this worktree."))
+        self.assertIn("Source: MAIN_TASK.md.", goal)
+        self.assertIn("Flow: preset implement_task; mode codex_cycles.", goal)
+        self.assertIn('`envctl ship -m "<message>"` opens or updates the PR', goal)
+        self.assertNotIn("Authoritative source", goal)
+        self.assertNotIn("Complete the implementation, run relevant tests", goal)
+        self.assertLessEqual(len(goal), 230)
+
+    def test_codex_goal_text_preserves_omx_completion_contract(self) -> None:
+        goal = workflow._codex_goal_text_for_worktree(
+            worktree=CreatedPlanWorktree(name="feature-a-1", root=Path("/repo"), plan_file="features/a.md"),
+            preset="implement_task",
+            workflow_mode="single_prompt",
+            omx_workflow="Ultragoal",
+        )
+
+        self.assertIn("OMX: $ultragoal completion contract remains active.", goal)
+        self.assertLessEqual(len(goal), 290)
+
     def test_launch_sequence_uses_cmux_commands_for_codex(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
@@ -128,13 +155,13 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
             self.assertEqual(sleep_mock.call_args_list[0].args[0], 0.15)
 
     def test_codex_goal_screen_detects_observed_active_goal_frame(self) -> None:
-        goal_text = "Implement the envctl plan-agent task for features/a.md in this worktree."
+        goal_text = "Implement features/a.md in this worktree."
 
         self.assertTrue(
             terminal_screen._codex_goal_screen_looks_active(
                 "╭────────────────────────╮\n"
                 "│ >_ OpenAI Codex        │\n"
-                "• Goal active Objective: Implement the envctl plan-agent task for features/a.md in this worktree.\n"
+                "• Goal active Objective: Implement features/a.md in this worktree.\n"
                 "› Explain this codebase\n",
                 goal_text,
             )
@@ -205,7 +232,7 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                 "│ >_ OpenAI Codex (v0.115.0)                        │\n"
                 "│ model:     gpt-5.4 high   fast   /model to change │\n"
                 "│ directory: ~/repo                                 │\n"
-                "│ Goal active Objective: Implement the envctl plan-agent task for a.md in this worktree. │\n"
+                "│ Goal active Objective: Implement a.md in this worktree. Source: MAIN_TASK.md. Flow: preset implement_task. │\n"
                 "› Explain this codebase\n"
             )
             rt.process_runner = _RecordingRunner(
@@ -224,16 +251,16 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout=ready_screen, stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout=active_goal_screen, stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout=active_goal_screen, stderr=""),
-                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout=active_goal_screen, stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
                 ]
             )
-
             with (
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_direct_prompt_ready", return_value=None),
             ):
                 _ImmediateThread.created = []
                 result = launch_plan_agent_terminals(
@@ -295,7 +322,7 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                     "╭────────────────────────╮\n│ >_ OpenAI Codex        │\n│ model: gpt-5.4         │\n› Explain this codebase\n",
                     "╭────────────────────────╮\n"
                     "│ >_ OpenAI Codex        │\n"
-                    "• Goal active Objective: Implement the envctl plan-agent task for features/a.md in this worktree.\n"
+                    "• Goal active Objective: Implement features/a.md in this worktree. Source: MAIN_TASK.md. Flow: preset implement_task.\n"
                     "› Explain this codebase\n",
                     "╭────────────────────────╮\n│ >_ OpenAI Codex        │\n│ model: gpt-5.4         │\n│ directory: ~/repo      │\n› Explain this codebase\n",
                 ]
@@ -310,6 +337,8 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                 patch("envctl_engine.planning.plan_agent.cmux_transport._launch_cli_bootstrap_commands", return_value=[None]),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text", side_effect=fake_paste),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_direct_prompt_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._submit_prompt_workflow_step", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", return_value=None),
                 patch(
                     "envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen",
@@ -377,6 +406,8 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                     "envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text",
                     side_effect=lambda *_args, text, **_kwargs: pasted_texts.append(text) or None,
                 ),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_direct_prompt_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._submit_prompt_workflow_step", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen", return_value=ready_screen),
                 patch(

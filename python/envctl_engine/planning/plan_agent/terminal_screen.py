@@ -208,6 +208,8 @@ def _codex_queue_message_needs_tab(screen: str, text: str, *, require_text_match
     normalized_text = _normalized_screen_text(text)
     if not normalized_text:
         return False
+    if _collapsed_paste_represents_text(normalized_screen, normalized_text):
+        return True
     if normalized_text in normalized_screen:
         return True
     first_visible_line = next((line.strip() for line in str(text).splitlines() if line.strip()), "")
@@ -218,6 +220,12 @@ def _codex_queue_message_needs_tab(screen: str, text: str, *, require_text_match
     if not first_visible_line:
         return False
     return _normalized_screen_text(first_visible_line) in normalized_screen
+
+
+def _collapsed_paste_represents_text(normalized_screen: str, normalized_text: str) -> bool:
+    return len(normalized_text) >= 500 and (
+        "pasted content" in normalized_screen or _CODEX_QUEUE_READY_HINT in normalized_screen
+    )
 
 
 def _codex_queue_screen_confirms_queued(screen: str, text: str, *, require_text_match: bool = True) -> bool:

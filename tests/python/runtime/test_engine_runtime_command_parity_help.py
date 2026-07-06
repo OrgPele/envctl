@@ -192,6 +192,10 @@ class EngineRuntimeCommandParityHelpTests(EngineRuntimeCommandParityTestCase):
         self.assertEqual(code, 0)
         self.assertIn("--dry-run", output)
         self.assertIn("runs the focused commands by default", output)
+        self.assertIn("single-threaded by default", output)
+        self.assertIn("--parallel", output)
+        self.assertIn("--test-parallel-max", output)
+        self.assertIn("pytest-xdist", output)
         self.assertIn("test-focused", output)
 
     def test_ship_help_mentions_pr_conflicts_and_check_payloads(self) -> None:

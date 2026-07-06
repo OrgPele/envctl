@@ -54,6 +54,12 @@ class PlanningWorktreeSetupProvenanceTests(PlanningWorktreeSetupTestCase):
             self.assertTrue((repo / "trees" / "feature-a" / "1" / "frontend" / "node_modules").is_symlink())
             self.assertEqual(
                 (repo / "trees" / "feature-a" / "1" / ".serena" / "project.yml").read_text(encoding="utf-8"),
+                'project_name: "repo"\n',
+            )
+            self.assertEqual(
+                (repo / "trees" / "feature-a" / "1" / ".serena" / "project.local.yml").read_text(
+                    encoding="utf-8"
+                ),
                 'project_name: "repo-feature-a-1"\n',
             )
             self.assertEqual(
@@ -77,8 +83,11 @@ class PlanningWorktreeSetupProvenanceTests(PlanningWorktreeSetupTestCase):
                 metadata.get("files"),
                 {
                     ".serena/project.yml": True,
+                    ".serena/project.local.yml": True,
                     ".serena/.gitignore": True,
                     ".cgcignore": False,
+                    ".codegraph/.gitignore": False,
+                    ".codegraph/codegraph.db": False,
                 },
             )
             self.assertFalse(metadata.get("cgc_index_requested"))
@@ -101,7 +110,9 @@ class PlanningWorktreeSetupProvenanceTests(PlanningWorktreeSetupTestCase):
                 _ = cwd, env, timeout
                 command = [str(token) for token in cmd]
                 if command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
-                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="release/2026.03\n", stderr="")
+                    return subprocess.CompletedProcess(
+                        args=command, returncode=0, stdout="release/2026.03\n", stderr=""
+                    )
                 if command[3:] == ["rev-parse", "--verify", "origin/release/2026.03"]:
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
                 if "worktree" in command:
@@ -130,11 +141,131 @@ class PlanningWorktreeSetupProvenanceTests(PlanningWorktreeSetupTestCase):
             self.assertEqual(provenance.get("source_ref"), "origin/release/2026.03")
             self.assertEqual(provenance.get("plan_file"), "implementations/task.md")
             self.assertEqual(
-                (repo / "trees" / "implementations_task" / "1" / ".serena" / "project.yml").read_text(
+                (repo / "trees" / "implementations_task" / "1" / ".serena" / "project.yml").read_text(encoding="utf-8"),
+                'project_name: "repo"\n',
+            )
+            self.assertEqual(
+                (repo / "trees" / "implementations_task" / "1" / ".serena" / "project.local.yml").read_text(
                     encoding="utf-8"
                 ),
                 'project_name: "repo-implementations_task-1"\n',
             )
+
+    def test_plan_sync_prefers_invocation_worktree_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            invocation = repo / "trees" / "current" / "1"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            invocation.mkdir(parents=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_INVOCATION_CWD": str(invocation)})
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                git_cwd = command[2]
+                if git_cwd == str(invocation.resolve()) and command[3:] == ["rev-parse", "--show-toplevel"]:
+                    return subprocess.CompletedProcess(
+                        args=command, returncode=0, stdout=f"{invocation.resolve()}\n", stderr=""
+                    )
+                if git_cwd == str(repo.resolve()) and command[3:] == ["rev-parse", "--git-common-dir"]:
+                    return subprocess.CompletedProcess(
+                        args=command, returncode=0, stdout=f"{repo / '.git'}\n", stderr=""
+                    )
+                if git_cwd == str(invocation.resolve()) and command[3:] == ["rev-parse", "--git-common-dir"]:
+                    return subprocess.CompletedProcess(
+                        args=command, returncode=0, stdout=f"{repo / '.git'}\n", stderr=""
+                    )
+                if git_cwd == str(invocation.resolve()) and command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(
+                        args=command, returncode=0, stdout="feature/current\n", stderr=""
+                    )
+                if git_cwd == str(repo.resolve()) and command[3:] == [
+                    "rev-parse",
+                    "--verify",
+                    "origin/feature/current",
+                ]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    index = self._worktree_add_index(command)
+                    self.assertEqual(command[index + 5], "origin/feature/current")
+                    target = Path(command[index + 4])
+                    target.mkdir(parents=True, exist_ok=True)
+                    (target / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+
+            error = engine._create_feature_worktrees(  # noqa: SLF001
+                feature="implementations_task",
+                count=1,
+                plan_file="implementations/task.md",
+            )
+
+            self.assertIsNone(error)
+            provenance = self._read_provenance(repo / "trees" / "implementations_task" / "1")
+            self.assertEqual(provenance.get("source_branch"), "feature/current")
+            self.assertEqual(provenance.get("source_ref"), "origin/feature/current")
+            self.assertEqual(provenance.get("resolution_reason"), "invocation_worktree_branch")
+
+    def test_plan_sync_ignores_invocation_checkout_from_different_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            unrelated = root / "unrelated"
+            runtime = root / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (unrelated / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "plans" / "implementations" / "task.md").write_text("# task\n", encoding="utf-8")
+
+            engine = self._runtime(repo, runtime, env={"ENVCTL_INVOCATION_CWD": str(unrelated)})
+
+            def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+                _ = cwd, env, timeout
+                command = [str(token) for token in cmd]
+                git_cwd = command[2]
+                if git_cwd == str(unrelated.resolve()) and command[3:] == ["rev-parse", "--show-toplevel"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout=f"{unrelated}\n", stderr="")
+                if git_cwd == str(repo.resolve()) and command[3:] == ["rev-parse", "--git-common-dir"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout=f"{repo / '.git'}\n", stderr="")
+                if git_cwd == str(unrelated.resolve()) and command[3:] == ["rev-parse", "--git-common-dir"]:
+                    return subprocess.CompletedProcess(
+                        args=command, returncode=0, stdout=f"{unrelated / '.git'}\n", stderr=""
+                    )
+                if git_cwd == str(unrelated.resolve()) and command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    raise AssertionError("unrelated checkout branch should not be used")
+                if git_cwd == str(repo.resolve()) and command[3:] == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="dev\n", stderr="")
+                if git_cwd == str(repo.resolve()) and command[3:] == ["rev-parse", "--verify", "origin/dev"]:
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="deadbeef\n", stderr="")
+                if "worktree" in command:
+                    index = self._worktree_add_index(command)
+                    self.assertEqual(command[index + 5], "origin/dev")
+                    target = Path(command[index + 4])
+                    target.mkdir(parents=True, exist_ok=True)
+                    (target / ".git").write_text("gitdir: /tmp/worktree-1\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+                return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected")
+
+            engine.process_runner.run = fake_run  # type: ignore[method-assign]
+
+            error = engine._create_feature_worktrees(  # noqa: SLF001
+                feature="implementations_task",
+                count=1,
+                plan_file="implementations/task.md",
+            )
+
+            self.assertIsNone(error)
+            provenance = self._read_provenance(repo / "trees" / "implementations_task" / "1")
+            self.assertEqual(provenance.get("source_branch"), "dev")
+            self.assertEqual(provenance.get("source_ref"), "origin/dev")
+            self.assertEqual(provenance.get("resolution_reason"), "attached_branch")
 
     def test_setup_worktree_creation_resets_existing_branch_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -222,7 +353,9 @@ class PlanningWorktreeSetupProvenanceTests(PlanningWorktreeSetupTestCase):
             engine.process_runner.run = fake_run  # type: ignore[method-assign]
             route = parse_route(["--setup-worktree", "feature-a", "1", "--setup-worktree-recreate"], env={})
 
-            with patch("envctl_engine.planning.worktree_domain.delete_worktree_path", side_effect=fake_delete_worktree_path):
+            with patch(
+                "envctl_engine.planning.worktree_domain.delete_worktree_path", side_effect=fake_delete_worktree_path
+            ):
                 selected = engine._apply_setup_worktree_selection(route, contexts)  # noqa: SLF001
 
             self.assertTrue(selected)

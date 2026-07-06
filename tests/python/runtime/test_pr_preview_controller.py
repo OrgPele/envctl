@@ -862,28 +862,9 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     )
     assert "PYTHONFAULTHANDLER=1" in backend_start
     assert "RUN_DB_MIGRATIONS_ON_STARTUP=true" in backend_start
-    assert 'PAYMENT_PROVIDER="${ENVCTL_SOURCE_PAYMENT_PROVIDER:-}"' in backend_start
-    assert (
-        'CREEM_BILLING_ENABLED="${ENVCTL_SOURCE_CREEM_BILLING_ENABLED:-}"'
-        in backend_start
-    )
-    assert 'CREEM_ENVIRONMENT="${ENVCTL_SOURCE_CREEM_ENVIRONMENT:-}"' in (
-        backend_start
-    )
-    assert 'CREEM_API_KEY="${ENVCTL_SOURCE_CREEM_API_KEY:-}"' in backend_start
-    assert (
-        'CREEM_STARTER_MONTHLY_PRODUCT_ID="'
-        '${ENVCTL_SOURCE_CREEM_STARTER_MONTHLY_PRODUCT_ID:-}"' in backend_start
-    )
-    assert (
-        'PADDLE_BILLING_ENABLED="${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED:-}"'
-        in backend_start
-    )
-    assert 'PADDLE_API_KEY="${ENVCTL_SOURCE_PADDLE_API_KEY:-}"' in backend_start
-    assert (
-        'PADDLE_GROWTH_MONTHLY_PRICE_ID="'
-        '${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID:-}"' in backend_start
-    )
+    assert "ENVCTL_SOURCE_[A-Za-z_][A-Za-z0-9_]*" in backend_start
+    assert "target=${envctl_name#ENVCTL_SOURCE_}" in backend_start
+    assert 'export "$target=$value"' in backend_start
     assert "ALLOW_LEGACY_SUPABASE_HS256=true" in backend_start
     assert "exec python -m uvicorn app.main:app --host 127.0.0.1 --port" in (
         backend_start
@@ -899,10 +880,8 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
         "VITE_SUPABASE_URL=https://pele-monorepo-pr-789-supabase.srv.example.test"
         in frontend_start
     )
-    assert (
-        'VITE_PADDLE_CLIENT_TOKEN="${ENVCTL_SOURCE_VITE_PADDLE_CLIENT_TOKEN:-}"'
-        in frontend_start
-    )
+    assert "ENVCTL_SOURCE_[A-Za-z_][A-Za-z0-9_]*" in frontend_start
+    assert 'case "$target" in VITE_*)' in frontend_start
     assert "exec npm run dev -- --port" in frontend_start
     assert "# >>> envctl backend launch env >>>" in envctl_text
     assert "DATABASE_URL=${ENVCTL_SOURCE_DATABASE_URL}" in envctl_text
@@ -2708,18 +2687,9 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
         "BACKEND_PUBLIC_URL=https://pele-monorepo-pr-789-api.srv.example.test "
     )
     assert "ALLOW_LEGACY_SUPABASE_HS256=true" in backend_start
-    assert 'PAYMENT_PROVIDER="${ENVCTL_SOURCE_PAYMENT_PROVIDER:-}"' in backend_start
-    assert 'CREEM_API_KEY="${ENVCTL_SOURCE_CREEM_API_KEY:-}"' in backend_start
-    assert (
-        'CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID="'
-        '${ENVCTL_SOURCE_CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID:-}"'
-        in backend_start
-    )
-    assert 'PADDLE_API_KEY="${ENVCTL_SOURCE_PADDLE_API_KEY:-}"' in backend_start
-    assert (
-        'PADDLE_GROWTH_MONTHLY_PRICE_ID="'
-        '${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID:-}"' in backend_start
-    )
+    assert "ENVCTL_SOURCE_[A-Za-z_][A-Za-z0-9_]*" in backend_start
+    assert "target=${envctl_name#ENVCTL_SOURCE_}" in backend_start
+    assert 'export "$target=$value"' in backend_start
     assert (
         "exec python -m uvicorn app.main:app --host 127.0.0.1 --port "
         "'\"'\"'{port}'\"'\"''" in backend_start
@@ -2732,14 +2702,8 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
         "VITE_SUPABASE_URL=https://pele-monorepo-pr-789-supabase.srv.example.test"
         in frontend_start
     )
-    assert (
-        'VITE_PADDLE_CLIENT_TOKEN="${ENVCTL_SOURCE_VITE_PADDLE_CLIENT_TOKEN:-}"'
-        in frontend_start
-    )
-    assert (
-        'VITE_PADDLE_ENVIRONMENT="${ENVCTL_SOURCE_VITE_PADDLE_ENVIRONMENT:-}"'
-        in frontend_start
-    )
+    assert "ENVCTL_SOURCE_[A-Za-z_][A-Za-z0-9_]*" in frontend_start
+    assert 'case "$target" in VITE_*)' in frontend_start
     assert (
         "exec npm run dev -- --port '\"'\"'{port}'\"'\"' --host 127.0.0.1"
         in frontend_start
@@ -2861,31 +2825,8 @@ def test_generated_envctl_config_can_persist_public_route_launch_env_sections():
     assert "# <<< envctl frontend launch env <<<" in rendered
 
 
-def test_generated_public_preview_provider_env_stays_in_launch_sections(monkeypatch):
+def test_generated_public_preview_source_env_is_forwarded_generically():
     controller = load_controller()
-    monkeypatch.setenv("ENVCTL_SOURCE_PAYMENT_PROVIDER", "creem")
-    monkeypatch.setenv("ENVCTL_SOURCE_CREEM_BILLING_ENABLED", "true")
-    monkeypatch.setenv("ENVCTL_SOURCE_CREEM_ENVIRONMENT", "test")
-    monkeypatch.setenv("ENVCTL_SOURCE_CREEM_API_KEY", "test-api-key")
-    monkeypatch.setenv("ENVCTL_SOURCE_CREEM_WEBHOOK_SECRET", "test-webhook-secret")
-    monkeypatch.setenv(
-        "ENVCTL_SOURCE_CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID",
-        "prod_professional_monthly",
-    )
-    monkeypatch.setenv("ENVCTL_SOURCE_CREEM_PROFESSIONAL_TRIAL_DAYS", "0")
-    monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_BILLING_ENABLED", "true")
-    monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_ENVIRONMENT", "sandbox")
-    monkeypatch.setenv("ENVCTL_SOURCE_PADDLE_API_KEY", "test-api-key")
-    monkeypatch.setenv(
-        "ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID",
-        "pri_growth_monthly",
-    )
-    monkeypatch.setenv("ENVCTL_BACKEND_ENV__PADDLE_GROWTH_TRIAL_DAYS", "0")
-    monkeypatch.setenv(
-        "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN",
-        "test-client-token",
-    )
-    monkeypatch.setenv("ENVCTL_SOURCE_VITE_PADDLE_ENVIRONMENT", "sandbox")
 
     rendered = controller.default_envctl_config(
         public_host="preview.getpele.test",
@@ -2905,92 +2846,53 @@ def test_generated_public_preview_provider_env_stays_in_launch_sections(monkeypa
         1,
     )[0]
 
-    assert 'PAYMENT_PROVIDER="${ENVCTL_SOURCE_PAYMENT_PROVIDER:-}"' in backend_start
-    assert (
-        'CREEM_BILLING_ENABLED="${ENVCTL_SOURCE_CREEM_BILLING_ENABLED:-}"'
-        in backend_start
+    assert "ENVCTL_SOURCE_[A-Za-z_][A-Za-z0-9_]*" in backend_start
+    assert "target=${envctl_name#ENVCTL_SOURCE_}" in backend_start
+    assert 'export "$target=$value"' in backend_start
+    assert "ENVCTL_SOURCE_CREEM_GROWTH_MONTHLY_PRODUCT_ID" not in backend_start
+    assert "ENVCTL_SOURCE_ANY_FUTURE_SETTING" not in backend_start
+    assert 'case "$target" in VITE_*)' in frontend_start
+    assert "ENVCTL_SOURCE_VITE_ANY_FUTURE_SETTING" not in frontend_start
+
+    backend_script = controller.shell_export_source_env_script()
+    backend_result = subprocess.run(
+        [
+            "sh",
+            "-c",
+            (
+                f"{backend_script}; "
+                'printf "%s|%s" "$CREEM_GROWTH_MONTHLY_PRODUCT_ID" '
+                '"$ANY_FUTURE_SETTING"'
+            ),
+        ],
+        check=True,
+        env={
+            "ENVCTL_SOURCE_CREEM_GROWTH_MONTHLY_PRODUCT_ID": "prod_growth_month",
+            "ENVCTL_SOURCE_ANY_FUTURE_SETTING": "future-value",
+        },
+        stdout=subprocess.PIPE,
+        text=True,
     )
-    assert 'CREEM_ENVIRONMENT="${ENVCTL_SOURCE_CREEM_ENVIRONMENT:-}"' in (
-        backend_start
+    assert backend_result.stdout == "prod_growth_month|future-value"
+
+    frontend_script = controller.shell_export_source_env_script(
+        only_target_prefix="VITE_",
     )
-    assert 'CREEM_API_KEY="${ENVCTL_SOURCE_CREEM_API_KEY:-}"' in backend_start
-    assert (
-        'CREEM_WEBHOOK_SECRET="${ENVCTL_SOURCE_CREEM_WEBHOOK_SECRET:-}"'
-        in backend_start
+    frontend_result = subprocess.run(
+        [
+            "sh",
+            "-c",
+            f"{frontend_script}; printf \"%s|%s\" \"$CREEM_API_KEY\" \"$VITE_PUBLIC\"",
+        ],
+        check=True,
+        env={
+            "ENVCTL_SOURCE_CREEM_API_KEY": "secret",
+            "ENVCTL_SOURCE_VITE_PUBLIC": "public",
+        },
+        stdout=subprocess.PIPE,
+        text=True,
     )
-    assert (
-        'CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID="'
-        '${ENVCTL_SOURCE_CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID:-}"'
-        in backend_start
-    )
-    assert (
-        'CREEM_PROFESSIONAL_TRIAL_DAYS="'
-        '${ENVCTL_SOURCE_CREEM_PROFESSIONAL_TRIAL_DAYS:-}"' in backend_start
-    )
-    assert (
-        'PADDLE_BILLING_ENABLED="${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED:-}"'
-        in backend_start
-    )
-    assert 'PADDLE_ENVIRONMENT="${ENVCTL_SOURCE_PADDLE_ENVIRONMENT:-}"' in (
-        backend_start
-    )
-    assert 'PADDLE_API_KEY="${ENVCTL_SOURCE_PADDLE_API_KEY:-}"' in backend_start
-    assert (
-        'PADDLE_GROWTH_MONTHLY_PRICE_ID="'
-        '${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID:-}"' in backend_start
-    )
-    assert (
-        'PADDLE_GROWTH_TRIAL_DAYS="${ENVCTL_SOURCE_PADDLE_GROWTH_TRIAL_DAYS:-}"'
-        in backend_start
-    )
-    assert (
-        'VITE_PADDLE_CLIENT_TOKEN="${ENVCTL_SOURCE_VITE_PADDLE_CLIENT_TOKEN:-}"'
-        in frontend_start
-    )
-    assert (
-        'VITE_PADDLE_ENVIRONMENT="${ENVCTL_SOURCE_VITE_PADDLE_ENVIRONMENT:-}"'
-        in frontend_start
-    )
-    assert "PAYMENT_PROVIDER=${ENVCTL_SOURCE_PAYMENT_PROVIDER}" in rendered
-    assert (
-        "CREEM_BILLING_ENABLED=${ENVCTL_SOURCE_CREEM_BILLING_ENABLED}"
-        in rendered
-    )
-    assert "CREEM_ENVIRONMENT=${ENVCTL_SOURCE_CREEM_ENVIRONMENT}" in rendered
-    assert "CREEM_API_KEY=${ENVCTL_SOURCE_CREEM_API_KEY}" in rendered
-    assert "CREEM_WEBHOOK_SECRET=${ENVCTL_SOURCE_CREEM_WEBHOOK_SECRET}" in rendered
-    assert (
-        "CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID="
-        "${ENVCTL_SOURCE_CREEM_PROFESSIONAL_MONTHLY_PRODUCT_ID}" in rendered
-    )
-    assert (
-        "CREEM_PROFESSIONAL_TRIAL_DAYS="
-        "${ENVCTL_SOURCE_CREEM_PROFESSIONAL_TRIAL_DAYS}" in rendered
-    )
-    assert (
-        "PADDLE_BILLING_ENABLED=${ENVCTL_SOURCE_PADDLE_BILLING_ENABLED}"
-        in rendered
-    )
-    assert "PADDLE_ENVIRONMENT=${ENVCTL_SOURCE_PADDLE_ENVIRONMENT}" in rendered
-    assert "PADDLE_API_KEY=${ENVCTL_SOURCE_PADDLE_API_KEY}" in rendered
-    assert (
-        "PADDLE_GROWTH_MONTHLY_PRICE_ID="
-        "${ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID}" in rendered
-    )
-    assert (
-        "PADDLE_GROWTH_TRIAL_DAYS=${ENVCTL_SOURCE_PADDLE_GROWTH_TRIAL_DAYS}"
-        in rendered
-    )
-    assert (
-        "VITE_PADDLE_CLIENT_TOKEN=${ENVCTL_SOURCE_VITE_PADDLE_CLIENT_TOKEN}"
-        in rendered
-    )
-    assert (
-        "VITE_PADDLE_ENVIRONMENT=${ENVCTL_SOURCE_VITE_PADDLE_ENVIRONMENT}"
-        in rendered
-    )
-    assert "test-api-key" not in rendered
-    assert "test-client-token" not in rendered
+    assert frontend_result.stdout == "|public"
 
 
 def test_macos_memory_fallback_parses_vm_stat(monkeypatch):

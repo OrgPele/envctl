@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from typing import Any, Literal
 
 from envctl_engine.planning.plan_agent.config import PlanAgentLaunchConfig
@@ -22,10 +23,16 @@ def resolve_workspace_id(
     launch_config: PlanAgentLaunchConfig,
     *,
     workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
+    fallback_workspace_title: str | None = None,
 ) -> str | None:
     if launch_config.cmux_workspace:
         return resolve_configured_workspace_id(runtime, launch_config.cmux_workspace)
-    _, target_ref = default_workspace_target(runtime, launch_config, workspace_mode=workspace_mode)
+    _, target_ref = default_workspace_target(
+        runtime,
+        launch_config,
+        workspace_mode=workspace_mode,
+        fallback_workspace_title=fallback_workspace_title,
+    )
     return target_ref
 
 
@@ -35,10 +42,16 @@ def ensure_workspace_id(
     *,
     workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
     event_prefix: str = "planning.agent_launch",
+    fallback_workspace_title: str | None = None,
 ) -> _WorkspaceLaunchTarget | None:
     if launch_config.cmux_workspace:
         return ensure_configured_workspace_id(runtime, launch_config.cmux_workspace, event_prefix=event_prefix)
-    target_title, resolved = default_workspace_target(runtime, launch_config, workspace_mode=workspace_mode)
+    target_title, resolved = default_workspace_target(
+        runtime,
+        launch_config,
+        workspace_mode=workspace_mode,
+        fallback_workspace_title=fallback_workspace_title,
+    )
     if not target_title:
         return None
     if resolved:
@@ -55,8 +68,14 @@ def default_target_workspace_title(
     launch_config: PlanAgentLaunchConfig,
     *,
     workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
+    fallback_workspace_title: str | None = None,
 ) -> str | None:
-    current_title, _ = default_workspace_target(runtime, launch_config, workspace_mode=workspace_mode)
+    current_title, _ = default_workspace_target(
+        runtime,
+        launch_config,
+        workspace_mode=workspace_mode,
+        fallback_workspace_title=fallback_workspace_title,
+    )
     return current_title
 
 
@@ -65,6 +84,7 @@ def default_workspace_target(
     launch_config: PlanAgentLaunchConfig,
     *,
     workspace_mode: Literal["implementation", "current", "reviews"] = "implementation",
+    fallback_workspace_title: str | None = None,
 ) -> tuple[str | None, str | None]:
     if missing_required_cmux_context(runtime, launch_config):
         return None, None
@@ -74,6 +94,12 @@ def default_workspace_target(
         require_cmux_context=launch_config.require_cmux_context,
         workspace_entries=entries,
     )
+    if not current_title:
+        current_title = untrusted_context_fallback_title(
+            runtime,
+            launch_config,
+            fallback_workspace_title,
+        )
     if not current_title:
         return None, None
     if workspace_mode == "current":
@@ -115,14 +141,58 @@ def current_workspace_title(
         return None
     if not require_cmux_context:
         if entries:
-            return entries[0][1]
-        current_ref = current_workspace_ref(runtime, require_cmux_context=False)
-        if not current_ref:
-            return None
-        for workspace_ref, workspace_title in entries:
-            if workspace_ref == current_ref:
+            workspace_title = entries[0][1]
+            if not looks_like_envctl_plan_command_title(workspace_title):
                 return workspace_title
     return None
+
+
+def untrusted_context_fallback_title(
+    runtime: Any,
+    launch_config: PlanAgentLaunchConfig,
+    fallback_workspace_title: str | None,
+) -> str | None:
+    if launch_config.require_cmux_context:
+        return None
+    if str(getattr(runtime, "env", {}).get("CMUX_WORKSPACE_ID", "")).strip():
+        return None
+    normalized = str(fallback_workspace_title or "").strip()
+    return normalized or None
+
+
+def looks_like_envctl_plan_command_title(title: str) -> bool:
+    tokens = shell_title_tokens(title)
+    for index, token in enumerate(tokens):
+        if looks_like_envctl_command_token(token) and any(is_plan_flag(item) for item in tokens[index + 1 :]):
+            return True
+    return False
+
+
+def shell_title_tokens(title: str) -> list[str]:
+    try:
+        return shlex.split(str(title).strip())
+    except ValueError:
+        return str(title).strip().split()
+
+
+def looks_like_envctl_command_token(token: str) -> bool:
+    return str(token).strip().replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] == "envctl"
+
+
+def is_plan_flag(token: str) -> bool:
+    normalized = str(token).strip()
+    return normalized in {
+        "--plan",
+        "plan",
+        "parallel-plan",
+        "--parallel-plan",
+        "sequential-plan",
+        "--sequential-plan",
+        "--plan-parallel",
+        "--plan-sequential",
+    } or normalized.startswith(
+        ("--plan=", "--parallel-plan=", "--sequential-plan=", "--plan-parallel=", "--plan-sequential=")
+    )
 
 
 def current_workspace_ref(runtime: Any, *, require_cmux_context: bool) -> str | None:

@@ -58,7 +58,7 @@ class ActionsTestInterruptParityTests(_ActionsParityTestCase):
                     raise KeyboardInterrupt
 
             route = parse_route(
-                ["test", "--project", "feature-a-1", "--test-sequential"],
+                ["test", "--project", "feature-a-1", "--sequential"],
                 env={"ENVCTL_DEFAULT_MODE": "trees"},
             )
 
@@ -193,7 +193,7 @@ class ActionsTestInterruptParityTests(_ActionsParityTestCase):
                 as_completed=_as_completed,
             )
 
-            route = parse_route(["test", "--all"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route = parse_route(["test", "--all", "--parallel"], env={"ENVCTL_DEFAULT_MODE": "trees"})
 
             with (
                 patch("envctl_engine.actions.actions_test.detect_python_bin", return_value="/usr/bin/python3"),
@@ -288,7 +288,9 @@ class ActionsTestInterruptParityTests(_ActionsParityTestCase):
 
                     route_args = ["test", "--project", "feature-a-1"]
                     if sequential:
-                        route_args.append("--test-sequential")
+                        route_args.append("--sequential")
+                    else:
+                        route_args.append("--parallel")
                     route = parse_route(route_args, env={"ENVCTL_DEFAULT_MODE": "trees"})
 
                     with (
@@ -306,4 +308,3 @@ class ActionsTestInterruptParityTests(_ActionsParityTestCase):
                     self.assertFalse(any(event.get("event") == "test.summary.persisted" for event in engine.events))
                     cleanup_events = [event for event in engine.events if event.get("event") == "test.interrupt.cleanup"]
                     self.assertTrue(cleanup_events, msg=engine.events)
-

@@ -187,8 +187,11 @@ class PlanAgentLaunchSupersetTests(PlanAgentLaunchSupportTestCase):
         prompt = create_call[create_call.index("--prompt") + 1]
         payload = json.loads(prompt)
         self.assertEqual(payload["version"], 1)
-        self.assertTrue(payload["goal"].startswith("Implement the envctl plan-agent task for a.md"))
-        self.assertIn("Workflow mode: single_prompt.", payload["goal"])
+        self.assertTrue(payload["goal"].startswith("Implement a.md in this worktree."))
+        self.assertIn("Source: MAIN_TASK.md.", payload["goal"])
+        self.assertIn("Flow: preset implement_task; mode single_prompt.", payload["goal"])
+        self.assertIn('envctl ship -m "<message>"', payload["goal"])
+        self.assertLessEqual(len(payload["goal"]), 230)
         self.assertEqual(payload["prompt"], "$envctl-implement-task")
         self.assertEqual(create_call[-1], "--json")
         self.assertEqual(rt.process_runner.calls[2], ["superset", "workspaces", "open", "ws-123"])

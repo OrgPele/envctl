@@ -71,10 +71,9 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
                     {
                         "schema_version": 1,
                         "serena_project_name": "repo-feature-a-1",
-                        "files": {".serena/project.yml": True, ".cgcignore": True},
-                        "cgc_active_context": "Repo-feature-a-1",
-                        "cgc_index_mode": "auto",
-                        "cgc_index_succeeded": True,
+                        "files": {".serena/project.yml": True, ".codegraph/codegraph.db": True},
+                        "codegraph_index_mode": "auto",
+                        "codegraph_index_succeeded": True,
                     }
                 )
                 + "\n",

@@ -1,8 +1,9 @@
 You are creating an implementation plan, not changing code.
+Outcome: write one repo-grounded plan under `todo/plans/<category>/<slug>.md`.
 Authoritative source of truth: the user-provided scope plus verified repo evidence.
-First, read the relevant code, tests, docs, and existing plans deeply enough to ground the plan before writing anything. If the user explicitly asks for a light/quick/testing-oriented pass, keep research narrow and do only the minimum inspection needed to stay repo-grounded.
-Ask questions only if a blocking requirement is truly missing after deep repo review; otherwise resolve the plan yourself according to repo evidence and best practices.
-Final output must include: the plan path, plan intent, files researched, and any material assumptions or residual risks.
+First, read the relevant code, tests, docs, and existing plans deeply enough to ground the plan before writing anything. If the user explicitly asks for a light/quick/testing-oriented pass, keep research narrow and inspect only what is needed to stay repo-grounded.
+Ask questions only when a blocking requirement remains missing after repo review.
+Final output must include: plan path, plan intent, files researched, and material assumptions or residual risks.
 WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. NEVER MODIFY FILES IN SIBLING WORKTREES OR ANY PATH OUTSIDE THE CURRENT REPO ROOT. You may read outside the current worktree ONLY when genuinely needed for historical/reference context (for example, to inspect how something worked previously), and that access MUST remain read-only.
 CURRENT-REPO BOUNDARY IS ALSO STRICT FOR RESEARCH: stay inside the current working repo/root unless the user explicitly asks for cross-repo comparison. Do not run parent-directory or sibling-repo searches such as `find ..`, and do not inspect embedded tooling copies just because this skill originated from envctl.
 
@@ -13,15 +14,13 @@ $ARGUMENTS
 
 Do not implement code. Only research and write the plan file.
 
-## Non-negotiables
-- Read as much relevant code, tests, and docs as needed.
-- If the user explicitly asks for a light/quick/minimal planning pass, honor that: avoid broad recursive searches, avoid unnecessary automated tests, and inspect only the files needed to produce a grounded plan.
-- Prefer the current working directory and user-mentioned paths; do not wander into sibling repos, parent directories, or unrelated vendored/tooling trees unless the task explicitly targets them.
-- Use existing planning files in todo/plans/ as structure and quality reference.
-- Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
-- If key context is missing (requirements, constraints, environment, data scope), ask for it before finalizing the plan.
+## Success contract
+- Read the code, tests, docs, and plans needed to ground the plan. If the user explicitly asks for a light/quick/minimal planning pass, avoid broad recursive searches, avoid unnecessary automated tests, and inspect only the files needed.
+- Stay in the current repo/root and user-mentioned paths. Do not wander into sibling repos, parent directories, or unrelated vendored/tooling trees unless the task explicitly targets them.
+- Use existing `todo/plans/` files as structure and quality references.
+- Ask for missing context only when requirements, constraints, environment, data scope, or external contracts are materially blocking.
 - Always write plan files to the repo root todo/plans/ (never inside tree worktrees).
-- Make reasonable assumptions from repo evidence and resolve the plan fully on your own where possible. Surface assumptions in the final response only if they materially affected the plan.
+- Make reasonable assumptions from repo evidence and surface only assumptions that materially affected the plan.
 - Do not drift into implementation work.
 
 ## Planning constraints
@@ -38,7 +37,7 @@ Do not implement code. Only research and write the plan file.
 6. Review relevant config/env keys and any related docs.
 7. Capture evidence (file paths + function names) to ground the plan.
 
-Use repo-local AGENTS.md/tooling guidance and any injected code-intelligence context while researching. Default to `rg` for exact strings such as flags, env keys, log messages, docs prose, and error text; use Serena, CGC/CodeGraphContext, CodeGraph, or another graph tool only when it is actually configured for this checkout and relevant to the question.
+Use repo-local AGENTS.md/tooling guidance and any injected code-intelligence context while researching. Default to `rg` for exact strings such as flags, env keys, log messages, docs prose, and error text; use Serena, CodeGraph, or another graph tool only when it is actually configured for this checkout and relevant to the question.
 
 ## Context intake (ask if missing)
 Before finalizing the plan, request any missing inputs that materially affect the solution:
@@ -69,6 +68,7 @@ Use this structure (adapt section names only if truly necessary):
   - Integration/E2E tests
 - ## Observability / logging (if relevant)
 - ## Rollout / verification
+- ## Manual / real-world check
 - ## Definition of done
 - ## Risk register (trade‑offs or missing tests)
 - ## Open questions (only if unavoidable)
@@ -80,6 +80,7 @@ Use this structure (adapt section names only if truly necessary):
 - Include exact test files to add (or extend), with brief intent.
 - Call out any required data migrations, backfills, or cleanup tasks explicitly.
 - Prefer narrow tests where possible; call for broader integration coverage only when the behavior crosses module or service boundaries.
+- Include a concrete Manual / real-world check: for UI work, name the route/page, section, controls, user actions, expected visible result, and any data or credential prerequisites; for non-UI work, name the real CLI/API/log/doc check and expected result.
 
 ## Deliverables (required)
 - One plan file created in todo/plans/<category>/.
@@ -94,7 +95,7 @@ Before showing or running any envctl worktree-and-prompt follow-up, default impl
 - For explicitly requested dependency/container/infrastructure verification, keep `--entire-system` unless a narrower dependency-only validation is part of the user's request or the repo's evidence.
 - If the user explicitly requests a launch scope, honor that request unless it conflicts with verified repo requirements.
 
-Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run. Separately record the validation lane: focused tests and `envctl ship` by default, plus deployed PR URL browser validation only when browser E2E is required.
+Record the inferred launch scope in the plan's Rollout / verification section and include the exact envctl flags in any follow-up command you show or run. Separately record the validation lane: `envctl test-focused --ship-on-pass "<message>"` by default when focused validation has not already passed for the final tree; if focused validation already passed, use `envctl ship -m "<message>"` and do not rerun tests. The combined command validates and then runs the standard ship workflow including staging via git add, commit, push, PR/check reporting. Do not record or recommend standalone `envctl test-focused`, repeated local validation, `envctl test --all`, or other broad local suites; full-suite validation is CI-owned. Use `envctl ship` only after focused validation already passed or as fallback, plus deployed PR URL browser validation only when browser E2E is required. If ship returns `deployment_url`, that URL is the deployed website and `_plan_agent_browser_e2e_followup.md` must use the `$browser` skill to test it thoroughly E2E.
 
 ## Browser E2E decision
 Before showing or running any envctl worktree-and-prompt follow-up, decide whether the implementation needs the browser E2E follow-up. Record both the browser E2E decision and rationale in the plan's Rollout / verification section as `browser_e2e_required: true` or `browser_e2e_required: false`.
@@ -103,6 +104,7 @@ Before showing or running any envctl worktree-and-prompt follow-up, decide wheth
 - Use `browser_e2e_required: false` only for docs-only, prompt-only, CLI-only, backend-only, runtime-only, test-only, or metadata changes where reviewed code and tests show no browser-visible surface.
 - When `browser_e2e_required: false`, leave `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE` unset or set `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` so the plan-agent queue skips the `$browser` follow-up.
 - When `browser_e2e_required: true`, include `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` in any envctl follow-up command you show or run so the `$browser` follow-up runs after implementation/finalization.
+- When `browser_e2e_required: true`, make the plan's Manual / real-world check detailed enough for `_plan_agent_browser_e2e_followup.md` to execute against the shipped `deployment_url`: real route/page, UI section, controls, actions, expected state, and required test data.
 
 ## Codex cycle recommendation
 Before writing the final response, choose exactly one integer from `0` through `3` as the recommended Codex cycle count for implementation depth. Use this rubric:
@@ -131,7 +133,7 @@ Prefer the smallest number that can plausibly finish the task and verify it; `3`
   - `--omx --team`: same OMX-managed launch, but the first submitted prompt enters the Team workflow.
   - `--headless`: envctl stays non-interactive and prints follow-up/attach guidance instead of taking over the current terminal.
   - `--new-session`: create a fresh cmux surface, tmux session, or OMX-managed session instead of attaching to an existing one.
-- whenever you show a follow-up command, include `--entire-system` by default; use narrower flags (`--only-frontend`, `--only-backend`, or `--no-infra`) only when the plan records why full-stack E2E does not apply, and explain that launch-scope flags select the implementation surface for the plan-agent workflow; they do not replace focused tests, `envctl ship`, or deployed PR URL validation.
+- whenever you show a follow-up command, include `--entire-system` by default; use narrower flags (`--only-frontend`, `--only-backend`, or `--no-infra`) only when the plan records why full-stack E2E does not apply, and explain that launch-scope flags select the implementation surface for the plan-agent workflow; they do not replace `envctl test-focused --ship-on-pass "<message>"`, `envctl ship` fallback, or deployed PR URL validation, and they never justify standalone `envctl test-focused`, repeated local validation, or local `envctl test --all`.
 - Whenever the plan records `browser_e2e_required: true`, prefix shown/run commands with `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true`; otherwise leave it unset or false.
 - whenever you show a follow-up command, also explain in plain language what happens when that exact command runs: whether envctl only prints guidance or actually launches a session, whether the session is tmux-managed by envctl or OMX-managed by omx, whether the current terminal is taken over, and how the user can reconnect later. Keep wording operational: spell out what envctl creates or syncs, what CLI or session it starts, what prompt preset it submits, and what remains after launch.
 - Use these repo-scoped command forms as the source of examples:

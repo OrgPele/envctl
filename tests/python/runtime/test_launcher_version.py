@@ -4,6 +4,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -12,7 +13,12 @@ from importlib import metadata as importlib_metadata
 
 from envctl_engine.runtime import cli as runtime_cli
 from envctl_engine.runtime import launcher_cli
-from envctl_engine.runtime.launcher_support import LauncherError, resolve_envctl_version
+from envctl_engine.runtime.launcher_support import (
+    LauncherError,
+    launcher_doctor_payload,
+    launcher_doctor_text,
+    resolve_envctl_version,
+)
 
 
 class LauncherVersionTests(unittest.TestCase):
@@ -100,6 +106,27 @@ class LauncherVersionTests(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertIn("--version does not accept additional arguments", stderr.getvalue())
+
+    def test_launcher_doctor_reports_python_and_module_sources(self) -> None:
+        payload = launcher_doctor_payload(
+            binary_path="/bin/envctl",
+            repo_root=Path("/repo"),
+            runtime_entrypoint="envctl_engine.runtime.cli",
+            launcher_root=Path("/launcher"),
+        )
+
+        self.assertEqual(payload["python_executable"], sys.executable)
+        self.assertTrue(payload["envctl_engine_path"].endswith("envctl_engine/__init__.py"))
+
+        text = launcher_doctor_text(
+            binary_path="/bin/envctl",
+            repo_root=Path("/repo"),
+            runtime_entrypoint="envctl_engine.runtime.cli",
+            launcher_root=Path("/launcher"),
+        )
+
+        self.assertIn("Python Executable:", text)
+        self.assertIn("Envctl Engine Path:", text)
 
     def test_launcher_help_explains_wrapper_boundary_and_runtime_handoff(self) -> None:
         stdout = StringIO()

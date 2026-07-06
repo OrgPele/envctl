@@ -60,6 +60,29 @@ def process_tree_kill_order_from_ps(stdout: str, *, root_pid: int) -> list[int]:
     return [pid for pid, _depth in discovered]
 
 
+def process_ancestor_pids_from_ps(stdout: str, *, current_pid: int) -> set[int]:
+    if current_pid <= 0:
+        return set()
+
+    parent_by_pid: dict[int, int] = {}
+    for line in stdout.splitlines():
+        parts = line.strip().split()
+        if len(parts) != 2:
+            continue
+        if not (parts[0].isdigit() and parts[1].isdigit()):
+            continue
+        parent_by_pid[int(parts[0])] = int(parts[1])
+
+    ancestors: set[int] = set()
+    pid = current_pid
+    while True:
+        parent = parent_by_pid.get(pid)
+        if parent is None or parent <= 0 or parent in ancestors:
+            return ancestors
+        ancestors.add(parent)
+        pid = parent
+
+
 def is_orchestrator_process(command_text: str) -> bool:
     lowered = command_text.lower()
     orchestrator_tokens = (
@@ -94,6 +117,13 @@ class BlastProcessCleanupSupport:
 
         current_pid = os.getpid()
         parent_pid = os.getppid()
+        guard_pids = {current_pid, parent_pid}
+        tree_code, tree_stdout, _tree_stderr = owner.run_best_effort_command(
+            ["ps", "-axo", "pid=,ppid="],
+            timeout=5.0,
+        )
+        if tree_code == 0 and tree_stdout.strip():
+            guard_pids.update(process_ancestor_pids_from_ps(tree_stdout, current_pid=current_pid))
         for line in stdout.splitlines():
             text = line.strip()
             if not text:
@@ -103,7 +133,7 @@ class BlastProcessCleanupSupport:
                 continue
             pid = int(parts[0])
             command = parts[1]
-            if pid <= 0 or pid in {current_pid, parent_pid}:
+            if pid <= 0 or pid in guard_pids:
                 continue
             if not self.blast_all_is_orchestrator_process(command):
                 continue
@@ -112,7 +142,7 @@ class BlastProcessCleanupSupport:
                 continue
             preview = self.runtime._truncate_text(command, 100)  # type: ignore[attr-defined]
             print(f"  Killing orchestrator PID {pid}: {preview}")
-            self.blast_all_kill_pid_tree(pid, skip_pids={current_pid, parent_pid})
+            self.blast_all_kill_pid_tree(pid, skip_pids=guard_pids)
 
     def blast_all_kill_pid_tree(self, root_pid: int, *, skip_pids: set[int] | None = None) -> None:
         if root_pid <= 0:

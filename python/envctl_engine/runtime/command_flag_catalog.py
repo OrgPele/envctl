@@ -120,6 +120,7 @@ VALUE_FLAGS = {
     "-m",
     "--commit-message",
     "--commit-message-file",
+    "--ship-on-pass",
     "--analyze-mode",
     "--review-mode",
     "--logs-tail",
@@ -255,6 +256,8 @@ _PARSER_ONLY_FLAGS = {
     "--command",
     "--action",
     "--no-parallel-trees",
+    "--parallel",
+    "--sequential",
     "--no-seed-requirements-from-base",
     "--no-copy-db-storage",
 }

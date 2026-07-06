@@ -4,6 +4,8 @@ from pathlib import PurePath
 
 ENVCTL_LOCAL_ARTIFACT_PATTERNS: tuple[str, ...] = (
     ".envctl*",
+    ".codegraph/",
+    ".serena/project.local.yml",
     "MAIN_TASK.md",
     "OLD_TASK_*.md",
     "trees/",
@@ -29,6 +31,10 @@ def is_envctl_local_artifact_path(path_text: str) -> bool:
     if first == "trees" or first.startswith("trees-"):
         return True
     if any(part.startswith(".envctl") for part in parts):
+        return True
+    if normalized == ".codegraph" or normalized.startswith(".codegraph/"):
+        return True
+    if normalized == ".serena/project.local.yml":
         return True
     if last == "MAIN_TASK.md":
         return True

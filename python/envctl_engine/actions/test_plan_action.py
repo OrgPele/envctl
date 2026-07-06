@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
+import shutil
 import signal
 import subprocess
+import sys
+import threading
 import time
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import IO, Callable, Iterable, Mapping
 
+from envctl_engine.actions.action_pytest_parallel_support import (
+    PytestParallelPolicy,
+    parallelized_pytest_args,
+)
 from envctl_engine.config.local_artifacts import is_envctl_local_artifact_path
 
 _PREFIX_TESTS: tuple[tuple[str, str, str], ...] = (
@@ -17,16 +25,41 @@ _PREFIX_TESTS: tuple[tuple[str, str, str], ...] = (
     ("python/envctl_engine/startup/", "tests/python/startup", "startup change"),
     ("python/envctl_engine/runtime/", "tests/python/runtime", "runtime command change"),
     ("python/envctl_engine/requirements/", "tests/python/requirements", "requirements change"),
+    ("python/envctl_engine/shared/", "tests/python/shared", "shared runtime support change"),
     ("python/envctl_engine/ui/", "tests/python/ui", "UI command change"),
 )
 
 _PROMPT_PREFIX = "python/envctl_engine/runtime/prompt_templates/"
 _PROMPT_TEST = "tests/python/runtime/test_prompt_install_support_templates.py"
-_DOC_TOOLING_PREFIXES = ("docs/", "README.md", "AGENTS.md", ".serena/")
+_DOC_TOOLING_PREFIXES = ("docs/", "README.md", "AGENTS.md", ".serena/", "todo/plans/")
 _DOC_TOOLING_TESTS = (
-    "tests/python/shared/test_validation_workflow_contract.py "
-    "tests/python/shared/test_serena_config.py"
+    "tests/python/shared/test_validation_workflow_contract.py tests/python/shared/test_serena_config.py"
 )
+_TEST_COMMAND_ENV_REMOVE = {
+    "ENVCTL_EXECUTION_ROOT",
+    "ENVCTL_ACTION_COMMAND",
+    "ENVCTL_ACTION_HUMAN",
+    "ENVCTL_ACTION_INTERACTIVE",
+    "ENVCTL_ACTION_JSON",
+    "ENVCTL_ACTION_PROJECT",
+    "ENVCTL_ACTION_PROJECTS",
+    "ENVCTL_ACTION_PROJECT_ROOT",
+    "ENVCTL_ACTION_REPO_ROOT",
+    "ENVCTL_ACTION_RUN_ID",
+    "ENVCTL_ACTION_RUNTIME_ROOT",
+    "ENVCTL_ACTION_TREE_DIFFS_ROOT",
+    "ENVCTL_INVOCATION_CWD",
+    "ENVCTL_ROOT_DIR",
+    "ENVCTL_USE_REPO_WRAPPER",
+    "ENVCTL_WRAPPER_ORIGINAL_ARGV0",
+    "ENVCTL_WRAPPER_PYTHON_REEXEC",
+    "RUN_ENGINE_PATH",
+    "RUN_LAUNCHER_CONTEXT",
+    "RUN_LAUNCHER_NAME",
+    "RUN_REPO_ROOT",
+    "RUN_SH_RUNTIME_DIR",
+}
+_TEST_COMMAND_PROGRESS_SECONDS = 3.0
 
 
 def build_test_plan(
@@ -137,7 +170,14 @@ def run_test_plan_action(context: object, *, json_output: bool = False, dry_run:
     payload = build_test_plan(repo_root=repo_root, project_root=project_root, project_name=project_name)
     exit_code = 0
     if not dry_run:
-        run_payload, exit_code = _run_plan_commands(payload, cwd=project_root)
+        run_payload, exit_code = _run_plan_commands(
+            payload,
+            cwd=project_root,
+            env=_context_mapping(context, "env", os.environ),
+            config_raw=_context_mapping(context, "config_raw", {}),
+            route_flags=_context_mapping(context, "route_flags", {}),
+            progress_callback=lambda message: print(message, file=sys.stderr, flush=True),
+        )
         payload["run"] = run_payload
     if json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -150,29 +190,59 @@ def run_test_plan_action(context: object, *, json_output: bool = False, dry_run:
             for result in result_items:
                 if isinstance(result, Mapping):
                     print(f"{result.get('status', 'unknown')}: {result.get('command', '')}")
+                    for name in ("stdout", "stderr"):
+                        text = result.get(name)
+                        if isinstance(text, str) and text:
+                            print(f"{name}:")
+                            print(text, end="" if text.endswith("\n") else "\n")
         else:
             for command in _command_items(payload):
                 print(command.get("command", ""))
     return exit_code
 
 
-def _run_plan_commands(payload: Mapping[str, object], *, cwd: Path) -> tuple[dict[str, object], int]:
-    commands = [str(item.get("command") or "").strip() for item in _command_items(payload)]
+def _run_plan_commands(
+    payload: Mapping[str, object],
+    *,
+    cwd: Path,
+    env: Mapping[str, object] | None = None,
+    config_raw: Mapping[str, object] | None = None,
+    route_flags: Mapping[str, object] | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+) -> tuple[dict[str, object], int]:
+    command_items = _command_items(payload)
+    commands = [str(item.get("command") or "").strip() for item in command_items]
     results: list[dict[str, object]] = []
     exit_code = 0
-    for index, command in enumerate(commands):
+    pytest_parallel = PytestParallelPolicy(
+        env=env or {},
+        config_raw=config_raw or {},
+        route_flags=route_flags or {},
+        include_focused_env=True,
+    )
+    for index, item in enumerate(command_items):
+        command = commands[index]
         if not command:
             continue
         command_args = shlex.split(command)
         executed_args = _execution_args(command_args, cwd=cwd)
+        executed_args = parallelized_pytest_args(executed_args, cwd=cwd, policy=pytest_parallel)
+        if callable(progress_callback):
+            progress_callback(f"running: {command}")
         started = time.monotonic()
-        completed = subprocess.run(executed_args, cwd=str(cwd), check=False)
+        completed = _run_test_command(
+            executed_args,
+            cwd=cwd,
+            env=_test_command_env(),
+        )
         duration = round(time.monotonic() - started, 3)
         result = _command_result(
             command=command,
             executed_args=executed_args,
             returncode=completed.returncode,
             duration=duration,
+            stdout=completed.stdout,
+            stderr=completed.stderr,
         )
         results.append(result)
         if completed.returncode != 0:
@@ -193,6 +263,8 @@ def _run_plan_commands(payload: Mapping[str, object], *, cwd: Path) -> tuple[dic
 def _execution_args(command_args: list[str], *, cwd: Path) -> list[str]:
     if command_args[:4] != ["uv", "run", "--extra", "dev"] or len(command_args) < 5:
         return command_args
+    if shutil.which("uv") is not None:
+        return command_args
     tool = command_args[4]
     tool_args = command_args[5:]
     venv_bin = Path(cwd) / ".venv" / "bin"
@@ -206,7 +278,20 @@ def _execution_args(command_args: list[str], *, cwd: Path) -> list[str]:
     return command_args
 
 
-def _command_result(*, command: str, executed_args: list[str], returncode: int, duration: float) -> dict[str, object]:
+def _context_mapping(context: object, name: str, default: Mapping[str, object]) -> Mapping[str, object]:
+    value = getattr(context, name, default)
+    return value if isinstance(value, Mapping) else default
+
+
+def _command_result(
+    *,
+    command: str,
+    executed_args: list[str],
+    returncode: int,
+    duration: float,
+    stdout: str | None = None,
+    stderr: str | None = None,
+) -> dict[str, object]:
     status = "passed" if returncode == 0 else "failed"
     result: dict[str, object] = {
         "command": command,
@@ -217,12 +302,112 @@ def _command_result(*, command: str, executed_args: list[str], returncode: int, 
     executed_command = shlex.join(executed_args)
     if executed_command != command:
         result["executed_command"] = executed_command
+    if returncode != 0:
+        result["stdout"] = stdout or ""
+        result["stderr"] = stderr or ""
     if returncode < 0:
         signal_number = abs(returncode)
         result["status"] = "terminated_by_signal"
         result["signal"] = signal_number
         result["signal_name"] = _signal_name(signal_number)
     return result
+
+
+def _test_command_env() -> dict[str, str]:
+    env_map = dict(os.environ)
+    for key in _TEST_COMMAND_ENV_REMOVE:
+        env_map.pop(key, None)
+    return env_map
+
+
+def _run_test_command(args: list[str], *, cwd: Path, env: Mapping[str, str]) -> subprocess.CompletedProcess[str]:
+    process = subprocess.Popen(
+        args,
+        cwd=str(cwd),
+        env=dict(env),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+        text=True,
+    )
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    stdout_thread = _start_pipe_reader(process.stdout, stdout_chunks, sink=sys.stdout)
+    stderr_thread = _start_pipe_reader(process.stderr, stderr_chunks, sink=sys.stderr)
+    try:
+        _wait_for_test_process(process, args)
+    except KeyboardInterrupt:
+        _terminate_test_process_group(process)
+        raise
+    finally:
+        _join_pipe_reader(stdout_thread)
+        _join_pipe_reader(stderr_thread)
+    return subprocess.CompletedProcess(
+        args=args,
+        returncode=process.returncode,
+        stdout="".join(stdout_chunks),
+        stderr="".join(stderr_chunks),
+    )
+
+
+def _wait_for_test_process(process: subprocess.Popen[str], args: list[str]) -> None:
+    while True:
+        try:
+            process.wait(timeout=_TEST_COMMAND_PROGRESS_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            print(f"still running: {shlex.join(args)}", file=sys.stderr, flush=True)
+
+
+def _start_pipe_reader(
+    pipe: IO[str] | None,
+    chunks: list[str],
+    *,
+    sink: IO[str] | None = None,
+) -> threading.Thread | None:
+    if pipe is None:
+        return None
+
+    def read_pipe() -> None:
+        for chunk in iter(lambda: pipe.read(1), ""):
+            if not chunk:
+                break
+            chunks.append(chunk)
+            if sink is not None:
+                sink.write(chunk)
+                sink.flush()
+
+    thread = threading.Thread(target=read_pipe, daemon=True)
+    thread.start()
+    return thread
+
+
+def _join_pipe_reader(thread: threading.Thread | None) -> None:
+    if thread is not None:
+        thread.join()
+
+
+def _terminate_test_process_group(process: subprocess.Popen[str]) -> None:
+    pid = int(getattr(process, "pid", 0) or 0)
+    if pid <= 0:
+        return
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError:
+        return
+    try:
+        process.wait(timeout=2.0)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        return
+    try:
+        process.wait(timeout=2.0)
+    except subprocess.TimeoutExpired:
+        return
 
 
 def _signal_name(signal_number: int) -> str:

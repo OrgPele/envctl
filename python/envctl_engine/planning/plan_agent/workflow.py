@@ -198,15 +198,17 @@ def _codex_goal_text_for_worktree(
 ) -> str:
     plan_selector = str(worktree.plan_file or "").strip() or str(worktree.name).strip() or "selected plan"
     lines = [
-        f"Implement the envctl plan-agent task for {plan_selector} in this worktree.",
-        "Authoritative source: MAIN_TASK.md in the current worktree.",
-        f"Initial preset: {str(preset).strip() or _DEFAULT_PRESET}.",
-        f"Workflow mode: {str(workflow_mode).strip() or _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT}.",
+        f"Implement {plan_selector} in this worktree.",
+        "Source: MAIN_TASK.md.",
+        (
+            f"Flow: preset {str(preset).strip() or _DEFAULT_PRESET}; "
+            f"mode {str(workflow_mode).strip() or _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT}."
+        ),
     ]
     normalized_omx = str(omx_workflow or "").strip().lower()
     if normalized_omx:
-        lines.append(f"OMX workflow: ${normalized_omx}; keep its completion contract active after this goal frame.")
-    lines.append("Complete the implementation, run relevant tests, commit, and open/update the PR when green.")
+        lines.append(f"OMX: ${normalized_omx} completion contract remains active.")
+    lines.append('Done: implemented, relevant tests pass, and `envctl ship -m "<message>"` opens or updates the PR.')
     return " ".join(lines)
 
 

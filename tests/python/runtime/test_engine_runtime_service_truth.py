@@ -86,6 +86,28 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
 
         self.assertEqual(line, "Traceback: boom")
 
+    def test_tail_log_error_line_keeps_pydantic_validation_details(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "backend.log"
+            log_path.write_text(
+                "\n".join(
+                    [
+                        "INFO:     Started server process [3092530]",
+                        "pydantic_core._pydantic_core.ValidationError: 1 validation error for Settings",
+                        "PADDLE_DEFAULT_PAYMENT_LINK",
+                        "  Field required [type=missing, input_value={'ENVIRONMENT': 'production'}, input_type=dict]",
+                        "    For further information visit https://errors.pydantic.dev/2.5/v/missing",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            line = tail_log_error_line(str(log_path))
+
+        self.assertIn("ValidationError: 1 validation error for Settings", line)
+        self.assertIn("PADDLE_DEFAULT_PAYMENT_LINK", line)
+        self.assertIn("Field required", line)
+
     def test_service_listener_failure_detail_reports_startup_progress_without_calling_it_error_log(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "service.log"
@@ -180,13 +202,14 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
                 _emit=lambda event, **payload: events.append((event, payload)),
             )
 
-            detected = detect_service_actual_port(
-                runtime,
-                pid=4321,
-                requested_port=8000,
-                service_name="Main Backend",
-                log_path=str(log_path),
-            )
+            with patch("envctl_engine.runtime.service_listener_truth.service_http_ready", return_value=None):
+                detected = detect_service_actual_port(
+                    runtime,
+                    pid=4321,
+                    requested_port=8000,
+                    service_name="Main Backend",
+                    log_path=str(log_path),
+                )
 
         self.assertEqual(detected, 8000)
         self.assertGreaterEqual(runner.wait_calls, 2)
@@ -233,13 +256,14 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
                 _emit=lambda event, **payload: events.append((event, payload)),
             )
 
-            detected = detect_service_actual_port(
-                runtime,
-                pid=4321,
-                requested_port=8000,
-                service_name="Main Backend",
-                log_path=str(log_path),
-            )
+            with patch("envctl_engine.runtime.service_listener_truth.service_http_ready", return_value=None):
+                detected = detect_service_actual_port(
+                    runtime,
+                    pid=4321,
+                    requested_port=8000,
+                    service_name="Main Backend",
+                    log_path=str(log_path),
+                )
 
         self.assertEqual(detected, 8000)
         self.assertEqual(runner.wait_calls, 2)
@@ -275,13 +299,14 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
                 _emit=lambda event, **payload: events.append((event, payload)),
             )
 
-            detected = detect_service_actual_port(
-                runtime,
-                pid=4321,
-                requested_port=8000,
-                service_name="Main Backend",
-                log_path=str(log_path),
-            )
+            with patch("envctl_engine.runtime.service_listener_truth.service_http_ready", return_value=None):
+                detected = detect_service_actual_port(
+                    runtime,
+                    pid=4321,
+                    requested_port=8000,
+                    service_name="Main Backend",
+                    log_path=str(log_path),
+                )
 
         self.assertEqual(detected, 8000)
         self.assertTrue(

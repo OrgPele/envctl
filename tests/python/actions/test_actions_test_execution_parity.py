@@ -50,6 +50,32 @@ class ActionsTestExecutionParityTests(_ActionsParityTestCase):
             ]
             self.assertTrue(any("Executing configured test command" in message for message in status_messages))
             self.assertTrue(any("Test command finished" in message for message in status_messages))
+            self.assertTrue(any(message.startswith("Test action duration: ") for message in status_messages))
+
+    def test_test_action_prints_total_duration_after_success_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "trees" / "feature-a" / "1").mkdir(parents=True, exist_ok=True)
+
+            engine = PythonEngineRuntime(
+                self._config(repo, runtime),
+                env={"ENVCTL_ACTION_TEST_CMD": "sh -lc 'exit 0'"},
+            )
+            fake_runner = _FakeRunner(returncode=0)
+            engine.process_runner = fake_runner  # type: ignore[assignment]
+
+            route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            out = StringIO()
+            with redirect_stdout(out):
+                code = engine.dispatch(route)
+
+            self.assertEqual(code, 0)
+            rendered = out.getvalue()
+            self.assertIn("Executed test action for 1 target(s).", rendered)
+            self.assertIn("Test action duration: ", rendered)
+            self.assertLess(rendered.index("Executed test action"), rendered.index("Test action duration: "))
 
     def test_interactive_test_action_emits_live_progress_status_updates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

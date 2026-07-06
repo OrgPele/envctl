@@ -20,6 +20,8 @@ The Python runtime expects a repo-local `.envctl` for normal operational command
 That global-ignore contract covers the current envctl local artifact set:
 
 - `.envctl*`
+- `.codegraph/`
+- `.serena/project.local.yml`
 - `MAIN_TASK.md`
 - `OLD_TASK_*.md`
 - `trees/`
@@ -27,7 +29,7 @@ That global-ignore contract covers the current envctl local artifact set:
 
 On config save, `envctl` updates the envctl-managed block in your configured Git global excludes file. If `core.excludesFile` is not configured, `envctl config` configures it to `~/.gitignore_global` and writes the envctl-managed artifact patterns there.
 
-On the same save path, `envctl` also creates or updates a repo-local `AGENTS.md` envctl-managed block. The block always includes the envctl implementation and handoff workflow, and it conditionally adds Serena or CodeGraphContext guidance when the repo has `.serena/project.yml`, `.cgcignore`, or `.codegraphcontext` configuration.
+On the same save path, `envctl` also creates or updates a repo-local `AGENTS.md` envctl-managed block from `python/envctl_engine/config/AGENTS.md.tpl`. The block always includes the concise envctl validation and `envctl ship` handoff workflow, and it conditionally adds Serena or CodeGraph guidance when the repo has `.serena/project.yml` or CodeGraph is enabled by `.codegraph/` or `ENVCTL_WORKTREE_CODEGRAPH_INDEX=true`. `ENVCTL_WORKTREE_CODEGRAPH_INDEX=false` suppresses CodeGraph guidance.
 
 Useful commands:
 
@@ -354,8 +356,9 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 ## Worktree Code Intelligence
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ENVCTL_WORKTREE_CODE_INTELLIGENCE` | `auto` | Bootstrap repo-local agent configuration into envctl-created worktrees. The default copies Serena project files when present; set to `false` to disable all code-intelligence bootstrap behavior. |
-| `ENVCTL_WORKTREE_CGC_INDEX` | unset | Opt-in graph tooling for generated worktrees. Unset/`false` skips `.cgcignore`, `.codegraphcontext`, and all `cgc` calls. `auto` reuses a verified source CGC context when repo graph markers exist and falls back to indexing a generated context. `true` always tries to create and index the generated worktree context. |
+| `ENVCTL_WORKTREE_CODE_INTELLIGENCE` | `auto` | Bootstrap repo-local agent configuration into envctl-created worktrees. The default copies versioned Serena project files when present, writes the generated identity to `.serena/project.local.yml`, and prepares a worktree-local CodeGraph index only when CodeGraph is opted in; set to `false` to disable all code-intelligence bootstrap behavior. |
+| `ENVCTL_WORKTREE_CODEGRAPH_INDEX` | `auto` | Prepare CodeGraph for generated worktrees. `auto` follows an existing source `.codegraph/` opt-in; `true` syncs or initializes the source `.codegraph/` index, copies it into the new worktree when possible, then runs `codegraph sync <worktree>` so the worktree index is hermetic and current. Set to `false` to skip all CodeGraph calls and suppress CodeGraph prompt guidance. |
+| `ENVCTL_WORKTREE_CGC_INDEX` | unset | Legacy opt-in CGC graph tooling for generated worktrees. Unset/`false` skips `.cgcignore`, `.codegraphcontext`, and all `cgc` calls. `auto` reuses a verified source CGC context when repo graph markers exist and falls back to indexing a generated context. `true` always tries to create and index the generated worktree context. |
 | `ENVCTL_WORKTREE_SERENA_PROJECT_TEMPLATE` | `{project}-{worktree}` | Template for generated Serena project names. Supports `{project}`, `{worktree}`, `{feature}`, and `{iteration}`. |
 | `ENVCTL_WORKTREE_CGC_CONTEXT_TEMPLATE` | `{project}-{worktree}` | Template for generated CGC contexts when `ENVCTL_WORKTREE_CGC_INDEX` is `auto` or `true`. Supports `{project}`, `{worktree}`, `{feature}`, and `{iteration}`. |
 | `ENVCTL_WORKTREE_CGC_SOURCE_CONTEXT` | source Serena project/title | Source CGC context to verify when `ENVCTL_WORKTREE_CGC_INDEX=auto`. |
@@ -368,8 +371,12 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_SERVICE_PREP_PARALLEL` | follows `ENVCTL_SERVICE_ATTACH_PARALLEL` | Override backend+frontend bootstrap prep parallelism independently from attach mode. |
 | `ENVCTL_REQUIREMENTS_PARALLEL` | platform default | Run managed dependency startup in parallel. Default is `true` except on macOS, where Docker Desktop port publishing is serialized by default. |
 | `ENVCTL_REQUIREMENTS_PARALLEL_MAX` | `4` | Max concurrently starting managed dependencies when requirement parallel mode is enabled. |
-| `ENVCTL_ACTION_TEST_PARALLEL` | `true` | Run backend/frontend test suites in parallel when both suites are detected. |
-| `ENVCTL_ACTION_TEST_PARALLEL_MAX` | `4` | Max concurrently running test suites when parallel test mode is enabled. |
+| `ENVCTL_ACTION_TEST_PARALLEL` | `true` | Run backend/frontend test suites in parallel when multiple suites are detected; set `false` to default to sequential execution. |
+| `ENVCTL_ACTION_TEST_PARALLEL_MAX` | CPU-aware, max `4` | Max concurrently running test suites when parallel test mode is enabled; default is one worker on tiny hosts and roughly half the CPU cores on larger hosts. |
+| `ENVCTL_ACTION_TEST_PYTEST_PARALLEL` | `false` | Enable pytest-xdist auto-injection when the command runs `python -m pytest`, pytest-xdist is installed, and the command does not already set xdist flags. |
+| `ENVCTL_ACTION_TEST_PYTEST_WORKERS` | free CPU cores | Cap pytest-xdist workers for both `envctl test` and `envctl test-focused`. Without an explicit cap, envctl uses current CPU load to estimate free cores. |
+| `ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL` | `false` | Focused-only pytest-xdist auto-injection override for `envctl test-focused`. Set `true` or use `--parallel` to opt in. |
+| `ENVCTL_TEST_FOCUSED_PYTEST_WORKERS` | follows `ENVCTL_ACTION_TEST_PYTEST_WORKERS` | Focused-only pytest-xdist worker cap for `envctl test-focused`. |
 
 ## Plan Agent Launch
 | Variable | Default | Purpose |
@@ -387,7 +394,7 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_PLAN_AGENT_FULLSTACK_PR_URL_E2E_ENABLE` | `false` | Enable the full-stack PR-URL E2E policy for Codex plan-agent launches. When true and the selected mode/project clearly has both canonical backend and frontend app services enabled, envctl treats `browser_e2e_followup_enable` as effective true and queues the same `$browser` follow-up after finalization. `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` remains the explicit override for any Codex flow. Backend-only, frontend-only, dependencies-only, `--no-infra`, missing-service, and OpenCode launches leave this policy inactive and report the inactive reason in launch inspection/event payloads. The deployed PR URL remains the browser-validation source; do not use localhost or envctl runtime URLs as a substitute. |
 | `ENVCTL_PLAN_AGENT_PR_REVIEW_COMMENTS_ENABLE` | `false` | Opt in to the final Codex/OMX PR review-comments follow-up. When true, envctl queues a `$gh-address-comments` prompt after the current implementation/E2E prompts to inspect unresolved PR comments, address all actionable feedback, commit/push fixes, and ship the follow-up work. Leave this false for the default flow where core implementation prompts rely on `envctl ship` status and the dedicated follow-up is launched only when explicitly enabled. |
 | `ENVCTL_PLAN_AGENT_SHELL` | `zsh` | Shell command used when respawning the new cmux surface. |
-| `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT` | `true` | Require caller `CMUX_WORKSPACE_ID` so envctl can derive the default `"<current workspace> implementation"` target. If false, envctl falls back to the selected cmux workspace title when available. |
+| `ENVCTL_PLAN_AGENT_REQUIRE_CMUX_CONTEXT` | `true` | Require caller `CMUX_WORKSPACE_ID` so envctl can derive the default `"<current workspace> implementation"` target. If false, envctl can fall back to the selected cmux workspace title when available, but command-shaped `envctl --plan` titles fall back to the created worktree title instead. |
 | `ENVCTL_PLAN_AGENT_CODEX_YOLO` | `true` | When envctl owns a Codex cmux/tmux launch and `ENVCTL_PLAN_AGENT_CLI_CMD` is unset, append `--dangerously-bypass-approvals-and-sandbox`. Set to `false` in `.envctl` when your Codex wrapper or config already supplies that flag. |
 | `ENVCTL_PLAN_AGENT_CLI_CMD` | unset | Optional raw AI CLI command override typed into the launched shell. When set, this raw command wins over the default Codex YOLO command builder. |
 | `ENVCTL_PLAN_AGENT_CMUX_WORKSPACE` | unset | Explicit cmux workspace target for new surfaces. Accepts a workspace ref/UUID/index or a workspace title such as `envctl`. When set, it also enables plan-agent terminal launch even if `ENVCTL_PLAN_AGENT_TERMINALS_ENABLE` is unset. If a named workspace does not already exist, envctl creates it first and reuses that workspace's initial cmux starter surface for the first launch when the starter probe is unambiguous; otherwise it falls back to opening a new surface. |
@@ -451,6 +458,7 @@ Superset transport notes:
 | --- | --- | --- |
 | `ENVCTL_SHIP_PR_LABEL_ENABLE` | `false` | Opt in to programmatic PR labeling during `envctl ship`. When true, envctl ensures the configured label exists in the GitHub repository and applies it to the shipped PR after the PR URL is known. |
 | `ENVCTL_SHIP_PR_LABEL` | `deploy-app` | Label name applied when `ENVCTL_SHIP_PR_LABEL_ENABLE=true`. Blank disables label application even when the feature flag is enabled. |
+| `ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS` | `15` | Seconds `envctl ship` waits after the pushed head appears before reporting `no_checks_reported` when GitHub has not attached any target PR check contexts yet. |
 
 ## Debug and Diagnostics
 | Variable | Default | Purpose |

@@ -7,6 +7,8 @@ from pathlib import Path
 import time
 from typing import Any
 
+from envctl_engine.actions.action_pytest_parallel_support import PytestParallelPolicy, parallelized_pytest_args
+from envctl_engine.actions.action_test_parallel_retry_support import run_tests_with_parallel_137_retry
 from envctl_engine.actions.action_test_execution_support import TestActionExecutionPlan
 from envctl_engine.actions.action_test_interrupt_support import TestSuiteInterruptRegistry
 from envctl_engine.actions.action_test_runner_failures import summarize_failure_output as _summarize_failure_output
@@ -15,6 +17,7 @@ from envctl_engine.actions.action_test_runner_progress import (
     ParallelTestProgressTracker,
 )
 from envctl_engine.actions.action_test_suite_event_support import TestSuiteEventEmitter
+from envctl_engine.actions.action_test_suite_fallback_support import run_test_suites_with_parallel_fallback
 from envctl_engine.actions.action_test_suite_outcome_support import TestSuiteOutcomeRecorder
 from envctl_engine.actions.action_test_suite_presentation import TestSuitePresenter, render_command as render_command
 from envctl_engine.actions.action_test_suite_run_loop import TestSuiteRunLoop
@@ -127,23 +130,34 @@ class _TestSuiteExecutor:
             )
             self.progress_tracker.emit_status(phase="queued")
 
-        failures: list[str] = []
         suite_spinner_context = (
             self.suite_spinner_group if self.use_suite_spinner_group else nullcontext(self.suite_spinner_group)
         )
         with suite_spinner_context:
-            failures = TestSuiteRunLoop(
-                execution_specs=self.execution_specs,
-                parallel=self.plan.parallel,
-                parallel_workers=self.plan.parallel_workers,
-                futures_module=self.futures_module,
-                run_spec=self.run_spec,
-                failure_label=self.presenter.failure_label,
-                cancel_interrupted=self._cleanup_interrupted_parallel_suites,
-                shutdown_executor=self._shutdown_executor,
-            ).run()
+            failures = run_test_suites_with_parallel_fallback(
+                parallel=self.plan.parallel, parallel_workers=self.plan.parallel_workers,
+                suite_count=len(self.execution_specs), outcomes=self.outcomes,
+                emit_status=self.orchestrator._emit_status,
+                emit_event=self.runtime._emit,  # type: ignore[attr-defined]
+                run_loop=self._run_suite_loop,
+            )
 
         return TestSuiteExecutionResult(failures=failures, outcomes=self.outcomes.outcomes)
+
+    def _run_suite_loop(
+        self, *, parallel: bool, parallel_workers: int, stop_on_sequential_failure: bool = True
+    ) -> list[str]:
+        return TestSuiteRunLoop(
+            execution_specs=self.execution_specs,
+            parallel=parallel,
+            parallel_workers=parallel_workers,
+            futures_module=self.futures_module,
+            run_spec=self.run_spec,
+            failure_label=self.presenter.failure_label,
+            cancel_interrupted=self._cleanup_interrupted_parallel_suites,
+            shutdown_executor=self._shutdown_executor,
+            stop_on_sequential_failure=stop_on_sequential_failure,
+        ).run()
 
     def run_spec(self, execution: Any) -> tuple[int, str]:
         index = execution.index
@@ -159,7 +173,9 @@ class _TestSuiteExecutor:
         else:
             self.progress_tracker.mark_running(execution)
 
-        command = [*spec.command, *args]
+        base_command = [*spec.command, *args]
+        command = self._execution_command(base_command, cwd=spec.cwd)
+        fallback_command = base_command if command != base_command else command
         started_at = time.monotonic()
         self.events.emit_start(execution, command=command)
 
@@ -190,16 +206,16 @@ class _TestSuiteExecutor:
                 else None
             ),
         )
-        completed = runner.run_tests(
-            command,
-            **self._run_test_kwargs(
-                execution,
-                cwd=spec.cwd,
-                env=env,
-                live_progress_reporter=live_progress_reporter,
-                runner=runner,
+        attempt = run_tests_with_parallel_137_retry(
+            runner=runner,
+            command=command,
+            fallback_command=fallback_command,
+            run_kwargs=self._run_test_kwargs(
+                execution, cwd=spec.cwd, env=env, live_progress_reporter=live_progress_reporter, runner=runner
             ),
+            emit_status=self.orchestrator._emit_status,
         )
+        command, completed = attempt.command, attempt.completed
         parsed = runner.last_result
         self.presenter.emit_suite_summary(execution, parsed)
         duration_ms = round((time.monotonic() - started_at) * 1000.0, 1)
@@ -223,6 +239,14 @@ class _TestSuiteExecutor:
             )
             return 1, error
         return 0, ""
+
+    def _execution_command(self, command: list[str], *, cwd: Path) -> list[str]:
+        policy = PytestParallelPolicy(
+            env=getattr(self.runtime, "env", {}),
+            config_raw=getattr(getattr(self.runtime, "config", None), "raw", {}),
+            route_flags=self.route.flags,
+        )
+        return parallelized_pytest_args(command, cwd=cwd, policy=policy)
 
     def _build_runner(self, execution: Any, *, render_output: bool) -> Any:
         def emit_test_event(event_name: str, data: dict[str, Any]) -> None:

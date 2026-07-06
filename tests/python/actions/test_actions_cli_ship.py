@@ -86,8 +86,14 @@ class ActionsCliShipTests(unittest.TestCase):
                     "envctl_engine.actions.project_action_domain._github_pr_checks",
                     return_value={
                         "state": "checks_passed",
+                        "passed_checks": [{"name": "pytest", "workflow": "Tests", "state": "SUCCESS"}],
                         "failing_checks": [],
                         "pending_checks": [],
+                        "pr_checks": [
+                            {"name": "pytest", "workflow": "Tests", "state": "SUCCESS"},
+                            {"name": "preview", "workflow": "Deploy", "state": "NEUTRAL"},
+                        ],
+                        "deployment_url": "https://preview.test/pr-7",
                         "duration_seconds": 0.1,
                     },
                 ),
@@ -103,6 +109,15 @@ class ActionsCliShipTests(unittest.TestCase):
         self.assertTrue(payload["committed"])
         self.assertEqual(payload["commit_sha"], "def456")
         self.assertTrue(payload["pr_created"])
+        self.assertEqual(payload["passed_checks"], [{"name": "pytest", "workflow": "Tests", "state": "SUCCESS"}])
+        self.assertEqual(
+            payload["pr_checks"],
+            [
+                {"name": "pytest", "workflow": "Tests", "state": "SUCCESS"},
+                {"name": "preview", "workflow": "Deploy", "state": "NEUTRAL"},
+            ],
+        )
+        self.assertEqual(payload["deployment_url"], "https://preview.test/pr-7")
         self.assertEqual(payload["step_statuses"], ["committed_pushed", "pr_created", "checks_passed"])
         self.assertEqual(
             payload["protected_local_artifacts_skipped"],

@@ -148,6 +148,36 @@ class PlanAgentCmuxBootstrapFlowSupportTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(calls, [("prompt", "$envctl-implement-task")])
 
+    def test_run_surface_bootstrap_returns_cli_ready_error_before_submission(self) -> None:
+        calls: list[str] = []
+
+        error = run_surface_bootstrap(
+            _Runtime(),
+            workspace_id="workspace-1",
+            surface_id="surface-1",
+            launch_config=_launch_config(),
+            worktree=_worktree(),
+            build_plan_agent_workflow_fn=lambda **_kwargs: _PlanAgentWorkflow(
+                mode="single",
+                codex_cycles=1,
+                steps=(_PlanAgentWorkflowStep(kind="submit_prompt", text="initial"),),
+            ),
+            prepare_surface_fn=lambda *_args, **_kwargs: None,
+            tab_title_for_worktree_fn=lambda name: f"tab:{name}",
+            surface_respawn_command_fn=lambda *_args, **_kwargs: "exec zsh",
+            launch_cli_bootstrap_commands_fn=lambda *_args, **_kwargs: (),
+            wait_for_cli_ready_fn=lambda *_args, **_kwargs: "codex_ready_timeout: still loading",
+            maybe_submit_surface_codex_goal_fn=lambda *_args, **_kwargs: calls.append("goal") or None,
+            workflow_step_prompt_text_fn=lambda *_args, **_kwargs: ("prompt", None),
+            submit_direct_prompt_workflow_step_fn=lambda *_args, **_kwargs: calls.append("direct") or None,
+            submit_prompt_workflow_step_fn=lambda *_args, **_kwargs: calls.append("prompt") or None,
+            queue_codex_workflow_steps_fn=lambda *_args, **_kwargs: None,
+            queue_failure_event_context_fn=lambda _reason: {},
+        )
+
+        self.assertEqual(error, "codex_ready_timeout: still loading")
+        self.assertEqual(calls, [])
+
     def test_run_surface_bootstrap_emits_queue_fallback_without_failing_launch(self) -> None:
         runtime = _Runtime()
 
@@ -240,6 +270,33 @@ class PlanAgentCmuxBootstrapFlowSupportTests(unittest.TestCase):
         )
 
         self.assertEqual(error, "preset failed")
+
+    def test_run_review_surface_bootstrap_returns_cli_ready_error_before_prompt_resolution(self) -> None:
+        calls: list[str] = []
+
+        error = run_review_surface_bootstrap(
+            _Runtime(),
+            workspace_id="workspace-1",
+            surface_id="surface-1",
+            launch_config=_launch_config(cli="opencode"),
+            repo_root=Path("/repo"),
+            project_name="feature-a-1",
+            project_root=Path("/repo/trees/feature-a/1"),
+            review_bundle_path=None,
+            prepare_surface_fn=lambda *_args, **_kwargs: None,
+            tab_title_for_worktree_fn=lambda name: name,
+            launch_cli_bootstrap_commands_fn=lambda *_args, **_kwargs: (),
+            wait_for_cli_ready_fn=lambda *_args, **_kwargs: "opencode_ready_timeout: still loading",
+            review_prompt_arguments_fn=lambda **_kwargs: calls.append("arguments") or {},
+            review_original_plan_path_fn=lambda *_args, **_kwargs: None,
+            resolve_preset_submission_text_fn=lambda *_args, **_kwargs: calls.append("resolve") or ("", None),
+            uses_direct_submission_fn=lambda **_kwargs: False,
+            submit_direct_prompt_workflow_step_fn=lambda *_args, **_kwargs: calls.append("direct") or None,
+            submit_prompt_workflow_step_fn=lambda *_args, **_kwargs: calls.append("prompt") or None,
+        )
+
+        self.assertEqual(error, "opencode_ready_timeout: still loading")
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

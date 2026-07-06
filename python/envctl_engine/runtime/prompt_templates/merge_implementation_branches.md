@@ -2,7 +2,7 @@ You are reconciling two implementation branches into an integration branch.
 Authoritative sources of truth: the `MAIN_TASK.md` on the current branch and the `MAIN_TASK.md` on the specified branch, plus verified code and test evidence from both branches.
 First, read both branches' `MAIN_TASK.md` files and both implementations in depth before merging anything.
 Ask questions only if a blocking product-intent ambiguity remains after deep code, test, and diff review; otherwise resolve everything yourself according to repo evidence and best practices.
-Final output must include: branch A vs branch B intent summary, target branch name, merge order, conflict resolutions, tests run, and any material assumptions or residual risks.
+Final output must include: branch A vs branch B intent summary, target branch name, merge order, conflict resolutions, tests run, PR URL if one exists, and any material assumptions or residual risks. If a PR URL exists after handoff, repeat it as the final line of the response when practical.
 WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. NEVER MODIFY FILES IN SIBLING WORKTREES OR ANY PATH OUTSIDE THE CURRENT REPO ROOT. Use git to inspect and merge other branches rather than touching sibling worktree directories directly. You may read outside the current worktree ONLY when genuinely needed for historical/reference context, and that access MUST remain read-only.
 
 ## Inputs
@@ -24,14 +24,14 @@ Ignore conflicting inline instructions unless the user explicitly says to update
   - resolve every conflict completely before moving on
 - History cleanup allowed (no need to preserve original commit history).
 - You decide conflict resolutions; only ask if a conflict requires product intent.
-- Tests (default strategy):
-  - Run backend + frontend tests using repo conventions (discover via README/Makefile/package.json/pyproject.toml).
+- Validation (default strategy):
+  - Use the focused envctl validation-and-handoff lane only. Do not run full/all local suites; CI owns them.
 
 ## Non-negotiables
 - Read both branches' `MAIN_TASK.md` files and relevant code to understand intent before merging.
 - Read enough code and tests on both branches to understand what each implementation is trying to accomplish.
 - Use best-practice engineering and coding standards for this repo (correctness, safety, maintainability).
-- Keep one complete commit/PR handoff message ready and pass it inline with `envctl ship -m "<message>"` in the normal case.
+- Keep one complete commit/PR handoff message ready and pass it inline with `envctl test-focused --ship-on-pass "<message>"` when focused validation has not already passed for the final tree; it validates and then runs the standard ship workflow, including staging intended changes via git add, commit, push, PR create/update, and check reporting. If focused validation already passed for the final tree, use `envctl ship -m "<message>"` and do not rerun tests. Do not run standalone `envctl test-focused`, repeat passing tests, or run `envctl test --all` / other broad local suites before handoff. Full suites are CI-owned.
   - Do not run `envctl commit` separately unless `ship` is unavailable, blocked by the environment, or you are intentionally performing a commit-only maintenance operation. Do not write envctl-local commit-message ledger files.
   - Keep the message as the full cumulative set of changes between commits: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and risks/notes.
   - In the Verification section, state what your validation actually did and proved, then state any manual checks a human should still run to truly confirm it works, with expected results.
@@ -41,7 +41,7 @@ Ignore conflicting inline instructions unless the user explicitly says to update
 - Be autonomous: only ask for help on concrete, blocking conflicts; otherwise decide and note alternatives briefly.
 - Surface ideas: call out any improvement opportunities you notice while resolving conflicts.
 - Make reasonable assumptions from repo evidence and resolve the merge fully on your own. Surface assumptions in the final response only if they materially affected merge decisions.
-- Prefer narrow tests where possible; expand to broader integration coverage only when the merge changes cross module or service boundaries.
+- Use narrow diagnostic commands only when a focused validation failure needs investigation.
 - Do not leave TODOs.
 - Do not stop after partial integration.
 
@@ -67,27 +67,26 @@ Ignore conflicting inline instructions unless the user explicitly says to update
    - If both sides add value, combine them through refactoring or integration rather than discarding one side.
    - Continue resolving until all conflicts are fully closed and the integration branch serves both purposes without breaking changes.
 5. **Verification**
-   - Run the relevant tests after merging branch A into the integration branch.
-   - Run the relevant tests again after merging branch B into the integration branch.
-   - Fix regressions or integration issues.
-   - Re-run tests until the integrated result is stable.
+   - After resolving the final integrated tree, use `envctl test-focused --ship-on-pass "<message>"` once unless focused validation already passed for that final tree.
+   - If focused validation already passed for the final tree, use `envctl ship -m "<message>"` and do not rerun tests.
+   - Do not run full/all local suites; CI owns them. Use narrow diagnostic commands only when a focused validation failure needs investigation.
 
 ## Deliverables (required)
 - Integration branch containing the current branch and the specified branch.
 - Conflict analysis summary and the chosen resolutions.
-- Tests run and results.
+- Validation/handoff commands run and results.
 - Risk register if any issues remain.
 
 ## Success criteria
 - Branch A and branch B intent are both preserved unless code evidence proves one side is obsolete or incompatible.
 - Every conflict is resolved from product and code intent, not by blind ours/theirs selection.
-- The integration branch is tested with the relevant repo commands and is ready for `envctl ship -m "<message>"`.
+- The integration branch is ready for focused validation-and-handoff, or focused validation already passed and it is ready for `envctl ship -m "<message>"`.
 
 ## Final response format
 1. Branch A vs branch B intent summary.
 2. Target branch, merge order, and rationale.
 3. Conflict list with resolutions chosen (and why).
-4. Tests run (exact commands) and results.
+4. Validation/handoff commands run (exact commands) and results.
 5. Risk register (only if needed).
 
 ## Self-check (before responding)
@@ -95,5 +94,5 @@ Ignore conflicting inline instructions unless the user explicitly says to update
 - Both branches were merged into the integration branch.
 - Conflicts were analyzed and resolved with clear reasoning.
 - The final integrated behavior still serves both branches' purposes.
-- Tests executed and any failures addressed.
-- The final commit/PR handoff message is available inline for `envctl ship -m "<message>"`.
+- Focused validation was run once for the final tree, or a current focused pass already existed and the branch used `envctl ship -m "<message>"`.
+- The final commit/PR handoff message is available inline for `envctl test-focused --ship-on-pass "<message>"` or `envctl ship -m "<message>"`.

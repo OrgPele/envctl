@@ -223,12 +223,14 @@ class ConfigLoaderTests(unittest.TestCase):
         default_config = load_config({"RUN_REPO_ROOT": tempfile.mkdtemp()})
         self.assertEqual(default_config.raw["ENVCTL_SHIP_PR_LABEL_ENABLE"], "false")
         self.assertEqual(default_config.raw["ENVCTL_SHIP_PR_LABEL"], "deploy-app")
+        self.assertEqual(default_config.raw["ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS"], "15")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
             (repo / ".envctl").write_text(
                 "ENVCTL_SHIP_PR_LABEL_ENABLE=true\n"
-                "ENVCTL_SHIP_PR_LABEL=codex-generated\n",
+                "ENVCTL_SHIP_PR_LABEL=codex-generated\n"
+                "ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS=180\n",
                 encoding="utf-8",
             )
 
@@ -236,6 +238,7 @@ class ConfigLoaderTests(unittest.TestCase):
 
             self.assertEqual(config.raw["ENVCTL_SHIP_PR_LABEL_ENABLE"], "true")
             self.assertEqual(config.raw["ENVCTL_SHIP_PR_LABEL"], "codex-generated")
+            self.assertEqual(config.raw["ENVCTL_SHIP_NO_CHECKS_GRACE_SECONDS"], "180")
 
     def test_load_config_exposes_plan_agent_codex_goal_default_and_false_toggle(self) -> None:
         default_config = load_config({"RUN_REPO_ROOT": tempfile.mkdtemp()})

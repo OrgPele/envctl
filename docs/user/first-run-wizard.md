@@ -30,7 +30,7 @@ It is designed to:
 
 On save, `envctl` writes the repo-local `.envctl` and then configures or updates your Git global excludes file for envctl-managed local artifacts. If `core.excludesFile` is missing, `envctl` sets it to `~/.gitignore_global`.
 
-That global-ignore contract keeps files such as `.envctl`, `MAIN_TASK.md`, archived `OLD_TASK_*.md`, and envctl worktree roots like `trees/` or `trees-*` out of normal `git status` without mutating the repository's tracked `.gitignore`.
+That global-ignore contract keeps files such as `.envctl`, `.codegraph/`, `.serena/project.local.yml`, `MAIN_TASK.md`, archived `OLD_TASK_*.md`, and envctl worktree roots like `trees/` or `trees-*` out of normal `git status` without mutating the repository's tracked `.gitignore`.
 
 ## The Actual Steps
 
@@ -202,7 +202,7 @@ the dependency ports before generating those URLs. Backend/frontend app ports re
 `ENVCTL_DYNAMIC_MAIN_DEPENDENCY_PORTS=false` only when Main-mode dependencies must bind the exact configured
 `DB_PORT`, `REDIS_PORT`, and `N8N_PORT_BASE` values.
 
-`envctl config` seeds these sections when missing, then preserves them as-is. The same save step also creates or updates an envctl-managed block in repo-local `AGENTS.md` so coding agents see the envctl workflow, plus Serena or CodeGraphContext guidance when those repo configs are present.
+`envctl config` seeds these sections when missing, then preserves them as-is. The same save step also creates or updates an envctl-managed block in repo-local `AGENTS.md` from `python/envctl_engine/config/AGENTS.md.tpl`, so coding agents see the concise envctl validation and `ship` workflow plus Serena or CodeGraph guidance only when those tools are configured and not explicitly disabled.
 
 ## Validation Rules
 

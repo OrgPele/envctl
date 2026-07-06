@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
 import io
 import subprocess
 import sys
@@ -216,6 +216,27 @@ class ProcessRunnerSpinnerIntegrationTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 124)
         self.assertLess(elapsed, 1.0)
         self.assertIn("Command timed out after 0.2s", completed.stderr)
+
+    def test_run_streaming_emits_keepalive_for_silent_process(self) -> None:
+        runner = ProcessRunner()
+
+        with (
+            patch("envctl_engine.shared.process_streaming_support._STREAMING_PROGRESS_SECONDS", 0.05),
+            redirect_stderr(io.StringIO()) as stderr,
+        ):
+            completed = runner.run_streaming(
+                [
+                    sys.executable,
+                    "-c",
+                    "import time; time.sleep(0.12); print('done')",
+                ],
+                show_spinner=False,
+                echo_output=True,
+            )
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("done", completed.stdout)
+        self.assertIn("still running:", stderr.getvalue())
 
     def test_run_streaming_passes_stdin_configuration_to_subprocess(self) -> None:
         runner = ProcessRunner()

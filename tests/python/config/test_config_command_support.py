@@ -210,7 +210,15 @@ class ConfigCommandSupportTests(unittest.TestCase):
             self.assertEqual(response["ignore_status"]["target_path"], str(excludes_path))
             self.assertEqual(
                 response["ignore_status"]["managed_patterns"],
-                [".envctl*", "MAIN_TASK.md", "OLD_TASK_*.md", "trees/", "trees-*"],
+                [
+                    ".envctl*",
+                    ".codegraph/",
+                    ".serena/project.local.yml",
+                    "MAIN_TASK.md",
+                    "OLD_TASK_*.md",
+                    "trees/",
+                    "trees-*",
+                ],
             )
             self.assertEqual(Path(response["agent_instructions"]["path"]), (repo / "AGENTS.md").resolve())
             self.assertTrue(response["agent_instructions"]["updated"])
@@ -239,7 +247,15 @@ class ConfigCommandSupportTests(unittest.TestCase):
             self.assertEqual(excludes_path, Path(tmpdir) / "home" / ".gitignore_global")
             self.assertEqual(
                 response["ignore_status"]["managed_patterns"],
-                [".envctl*", "MAIN_TASK.md", "OLD_TASK_*.md", "trees/", "trees-*"],
+                [
+                    ".envctl*",
+                    ".codegraph/",
+                    ".serena/project.local.yml",
+                    "MAIN_TASK.md",
+                    "OLD_TASK_*.md",
+                    "trees/",
+                    "trees-*",
+                ],
             )
             self.assertIn("MAIN_TASK.md", excludes_path.read_text(encoding="utf-8"))
 

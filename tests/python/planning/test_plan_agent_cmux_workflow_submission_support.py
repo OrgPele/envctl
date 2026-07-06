@@ -86,9 +86,11 @@ class PlanAgentCmuxWorkflowSubmissionSupportTests(unittest.TestCase):
 
         def wait_picker_fn(_runtime, **_kwargs):  # noqa: ANN001, ANN003
             calls.append(("wait", "picker"))
+            return None
 
         def wait_submit_fn(_runtime, **_kwargs):  # noqa: ANN001, ANN003
             calls.append(("wait", "submit"))
+            return None
 
         self.assertIsNone(
             submit_prompt_workflow_step(
@@ -115,8 +117,136 @@ class PlanAgentCmuxWorkflowSubmissionSupportTests(unittest.TestCase):
             ],
         )
 
+    def test_prompt_submission_stops_when_picker_is_not_ready(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def send_prompt_text_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003
+            calls.append(("text", kwargs["text"]))
+            return None
+
+        def send_surface_key_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003
+            calls.append(("key", kwargs["key"]))
+            return None
+
+        def wait_picker_fn(_runtime, **_kwargs):  # noqa: ANN001, ANN003
+            calls.append(("wait", "picker"))
+            return "codex_prompt_picker_ready_timeout: still loading"
+
+        error = submit_prompt_workflow_step(
+            SimpleNamespace(),
+            workspace_id="workspace:1",
+            surface_id="surface:2",
+            cli="codex",
+            prompt_text="/ulw-loop implement",
+            send_prompt_text_fn=send_prompt_text_fn,
+            send_surface_key_fn=send_surface_key_fn,
+            wait_for_prompt_picker_ready_fn=wait_picker_fn,
+            wait_for_prompt_submit_ready_fn=lambda *_args, **_kwargs: None,
+        )
+
+        self.assertEqual(error, "codex_prompt_picker_ready_timeout: still loading")
+        self.assertEqual(
+            calls,
+            [
+                ("text", "/ulw-loop implement"),
+                ("key", "ctrl+e"),
+                ("wait", "picker"),
+            ],
+        )
+
+    def test_prompt_submission_stops_when_submit_screen_is_not_ready(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def send_prompt_text_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003
+            calls.append(("text", kwargs["text"]))
+            return None
+
+        def send_surface_key_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003
+            calls.append(("key", kwargs["key"]))
+            return None
+
+        def wait_submit_fn(_runtime, **_kwargs):  # noqa: ANN001, ANN003
+            calls.append(("wait", "submit"))
+            return "codex_prompt_submit_ready_timeout: picker still visible"
+
+        error = submit_prompt_workflow_step(
+            SimpleNamespace(),
+            workspace_id="workspace:1",
+            surface_id="surface:2",
+            cli="codex",
+            prompt_text="/ulw-loop implement",
+            send_prompt_text_fn=send_prompt_text_fn,
+            send_surface_key_fn=send_surface_key_fn,
+            wait_for_prompt_picker_ready_fn=lambda *_args, **_kwargs: None,
+            wait_for_prompt_submit_ready_fn=wait_submit_fn,
+        )
+
+        self.assertEqual(error, "codex_prompt_submit_ready_timeout: picker still visible")
+        self.assertEqual(
+            calls,
+            [
+                ("text", "/ulw-loop implement"),
+                ("key", "ctrl+e"),
+                ("key", "enter"),
+                ("wait", "submit"),
+            ],
+        )
+
     def test_direct_prompt_submission_pastes_then_enters(self) -> None:
         calls: list[tuple[str, str]] = []
+
+        def paste_surface_text_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003
+            calls.append(("paste", kwargs["text"]))
+            return None
+
+        def send_surface_key_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003
+            calls.append(("key", kwargs["key"]))
+            return None
+
+        def wait_for_direct_prompt_ready_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003
+            calls.append(("wait", kwargs["prompt_text"]))
+            return None
+
+        self.assertIsNone(
+            submit_direct_prompt_workflow_step(
+                SimpleNamespace(),
+                workspace_id="workspace:1",
+                surface_id="surface:2",
+                prompt_text="run this directly",
+                paste_surface_text_fn=paste_surface_text_fn,
+                send_surface_key_fn=send_surface_key_fn,
+                wait_for_direct_prompt_ready_fn=wait_for_direct_prompt_ready_fn,
+            )
+        )
+        self.assertEqual(calls, [("paste", "run this directly"), ("wait", "run this directly"), ("key", "enter")])
+
+    def test_direct_prompt_submission_stops_when_pasted_text_is_not_ready(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def paste_surface_text_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003
+            calls.append(("paste", kwargs["text"]))
+            return None
+
+        def send_surface_key_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003
+            calls.append(("key", kwargs["key"]))
+            return None
+
+        error = submit_direct_prompt_workflow_step(
+            SimpleNamespace(),
+            workspace_id="workspace:1",
+            surface_id="surface:2",
+            prompt_text="/goal run this directly",
+            paste_surface_text_fn=paste_surface_text_fn,
+            send_surface_key_fn=send_surface_key_fn,
+            wait_for_direct_prompt_ready_fn=lambda *_args, **_kwargs: "direct_prompt_ready_timeout: empty",
+        )
+
+        self.assertEqual(error, "direct_prompt_ready_timeout: empty")
+        self.assertEqual(calls, [("paste", "/goal run this directly")])
+
+    def test_goal_direct_prompt_uses_picker_prefix_then_submits(self) -> None:
+        calls: list[tuple[str, str]] = []
+        sleeps: list[float] = []
 
         def paste_surface_text_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003
             calls.append(("paste", kwargs["text"]))
@@ -131,12 +261,22 @@ class PlanAgentCmuxWorkflowSubmissionSupportTests(unittest.TestCase):
                 SimpleNamespace(),
                 workspace_id="workspace:1",
                 surface_id="surface:2",
-                prompt_text="run this directly",
+                prompt_text="/goal run this directly",
                 paste_surface_text_fn=paste_surface_text_fn,
                 send_surface_key_fn=send_surface_key_fn,
+                wait_for_direct_prompt_ready_fn=lambda *_args, **_kwargs: None,
+                sleep_fn=sleeps.append,
             )
         )
-        self.assertEqual(calls, [("paste", "run this directly"), ("key", "enter")])
+        self.assertEqual(
+            calls,
+            [
+                ("paste", "/goal run this directly"),
+                ("key", "enter"),
+                ("key", "enter"),
+            ],
+        )
+        self.assertEqual(sleeps, [1.0, 0.3])
 
     def test_queue_codex_workflow_steps_preserves_goal_step_before_prompt(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []

@@ -48,7 +48,11 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                     subprocess.CompletedProcess(
                         args=["cmux"],
                         returncode=0,
-                        stdout="  $envctl-implement-task\n  Sisyphus (Ultraworker)\n",
+                        stdout=(
+                            "  $envctl-implement-task\n"
+                            "  Envctl Implement Task  [Skill] Implement the envctl task\n"
+                            "  Press enter to insert or esc to close\n"
+                        ),
                         stderr="",
                     ),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
@@ -111,6 +115,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_direct_prompt_ready", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._queue_codex_message", return_value=True),
             ):
                 _ImmediateThread.created = []
@@ -121,34 +126,11 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                 )
 
             self.assertEqual(result.status, "launched")
-            buffer_texts = [
-                str(call[-1])
-                for call in rt.process_runner.calls
-                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-            ]
             self.assertTrue(
                 any(call[:2] == ["cmux", "send"] and str(call[-1]) == "$envctl-implement-task" for call in rt.process_runner.calls)
             )
-            self.assertGreaterEqual(buffer_texts.count("$envctl-implement-task"), 1)
-            self.assertIn("$envctl-continue-task", buffer_texts)
-            self.assertIn("$envctl-finalize-task", buffer_texts)
-            self.assertEqual(
-                self._events(rt, "planning.agent_launch.workflow_queued"),
-                [
-                    {
-                        "event": "planning.agent_launch.workflow_queued",
-                        "workspace_id": "workspace:7",
-                        "surface_id": "surface:9",
-                        "worktree": "feature-a-1",
-                        "cli": "codex",
-                        "workflow_mode": "codex_cycles",
-                        "codex_cycles": 2,
-                        "queued_steps": 3,
-                        "queued_steps_confirmed": 3,
-                        "transport": "cmux",
-                    }
-                ],
-            )
+            self.assertEqual(self._events(rt, "planning.agent_launch.failed"), [])
+            self.assertEqual(len(self._events(rt, "planning.agent_launch.command_sent")), 1)
             self.assertEqual(rt._persist_events_snapshot_calls, 1)
 
     def test_wait_for_codex_queue_ready_tolerates_delayed_prompt_return(self) -> None:
@@ -338,7 +320,11 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                     subprocess.CompletedProcess(
                         args=["cmux"],
                         returncode=0,
-                        stdout="  $envctl-implement-task\n  Sisyphus (Ultraworker)\n",
+                        stdout=(
+                            "  $envctl-implement-task\n"
+                            "  Envctl Implement Task  [Skill] Implement the envctl task\n"
+                            "  Press enter to insert or esc to close\n"
+                        ),
                         stderr="",
                     ),
                 ]
@@ -348,6 +334,8 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_direct_prompt_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._submit_prompt_workflow_step", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_codex_queue_ready", return_value=True),
                 patch(
                     "envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text",

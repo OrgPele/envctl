@@ -46,6 +46,33 @@ def test_run_ship_workflow_prints_check_progress_to_stderr() -> None:
     assert result.payload["status"] == "checks_passed"
 
 
+def test_run_ship_workflow_includes_full_pr_checks_and_deployment_url() -> None:
+    result = _run_existing_pr_with_check_result(
+        {
+            "state": "checks_passed",
+            "passed_checks": [{"name": "pytest", "workflow": "Tests", "state": "SUCCESS"}],
+            "failing_checks": [],
+            "pending_checks": [],
+            "pr_checks": [
+                {"name": "pytest", "workflow": "Tests", "state": "SUCCESS"},
+                {"name": "preview", "workflow": "Deploy", "state": "NEUTRAL"},
+            ],
+            "deployment_url": "https://preview.test/pr-7",
+            "duration_seconds": 0.1,
+        }
+    )
+
+    assert result.code == 0
+    assert result.payload["checks_state"] == "checks_passed"
+    assert result.payload["passed_checks"] == [{"name": "pytest", "workflow": "Tests", "state": "SUCCESS"}]
+    assert result.payload["pr_checks"] == [
+        {"name": "pytest", "workflow": "Tests", "state": "SUCCESS"},
+        {"name": "preview", "workflow": "Deploy", "state": "NEUTRAL"},
+    ]
+    assert result.payload["deployment_url"] == "https://preview.test/pr-7"
+    assert result.payload["operation_statuses"]["checks"] == "checks_passed"
+
+
 def test_run_ship_workflow_fails_closed_for_unknown_check_state() -> None:
     result = _run_existing_pr_with_check_result(
         {

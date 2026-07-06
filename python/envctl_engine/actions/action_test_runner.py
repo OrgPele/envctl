@@ -9,7 +9,13 @@ from envctl_engine.actions.action_test_execution_support import (
     print_test_execution_mode,
     resolve_suite_spinner_decision,
 )
+from envctl_engine.actions.action_test_duration_support import print_test_action_duration, started_test_timer
 from envctl_engine.actions.action_test_interrupt_support import TestSuiteInterruptRegistry
+from envctl_engine.actions.action_test_ship_on_pass_support import (
+    run_ship_on_pass_for_targets,
+    ship_on_pass_message,
+    successful_outcome_targets,
+)
 from envctl_engine.actions.action_test_runner_failures import (
     clean_failure_lines as _clean_failure_lines,
     failed_summary_artifact_available as _failed_summary_artifact_available,
@@ -61,6 +67,13 @@ def run_test_action(
     resolve_spinner_policy: Callable[[dict[str, str]], Any],
 ) -> int:
     rt = orchestrator.runtime
+    ship_message, ship_message_code = ship_on_pass_message(
+        route,
+        dry_run=bool(route.flags.get("dry_run")),
+        json_output=bool(route.flags.get("json")),
+    )
+    if ship_message_code != 0:
+        return ship_message_code
     try:
         plan = build_test_action_execution_plan(orchestrator, route, targets)
     except RuntimeError as exc:
@@ -72,6 +85,7 @@ def run_test_action(
         print("No test command configured. Set Backend test command or Frontend test command in envctl config.")
         return 1
 
+    started_at = started_test_timer()
     spinner_policy = resolve_spinner_policy(getattr(rt, "env", {}))
     suite_spinner_decision = resolve_suite_spinner_decision(
         interactive_command=interactive_command,
@@ -128,12 +142,21 @@ def run_test_action(
         else:
             print(f"test action failed: {message}")
         orchestrator._print_test_suite_overview(suite_outcomes, summary_metadata=summary_metadata)
+        print_test_action_duration(orchestrator, started_at=started_at, interactive_command=interactive_command)
         return 1
     orchestrator._print_test_suite_overview(suite_outcomes, summary_metadata=summary_metadata)
     if interactive_command:
         orchestrator._emit_status(f"Test command finished for {len(targets)} target(s)")
     else:
         print(f"Executed test action for {len(targets)} target(s).")
+    print_test_action_duration(orchestrator, started_at=started_at, interactive_command=interactive_command)
+    if ship_message:
+        return run_ship_on_pass_for_targets(
+            orchestrator,
+            route,
+            successful_outcome_targets(targets, suite_outcomes),
+            message=ship_message,
+        )
     return 0
 
 
