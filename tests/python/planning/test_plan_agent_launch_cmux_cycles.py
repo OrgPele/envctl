@@ -121,26 +121,29 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                 )
 
             self.assertEqual(result.status, "launched")
+            buffer_texts = [
+                str(call[-1])
+                for call in rt.process_runner.calls
+                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
+            ]
+            self.assertTrue(any("You are implementing real code, end-to-end." in text for text in buffer_texts))
             self.assertTrue(
-                any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and "You are implementing real code, end-to-end." in str(call[-1])
-                    for call in rt.process_runner.calls
-                )
+                any(".envctl-state/plan-agent-queue/000-queue-message.md" in text for text in buffer_texts)
             )
             self.assertTrue(
-                any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and "You are preparing the next implementation iteration" in str(call[-1])
-                    for call in rt.process_runner.calls
-                )
+                any(".envctl-state/plan-agent-queue/001-queue-direct-prompt.md" in text for text in buffer_texts)
             )
             self.assertTrue(
-                any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and "You are finalizing an implementation" in str(call[-1])
-                    for call in rt.process_runner.calls
-                )
+                any(".envctl-state/plan-agent-queue/003-queue-direct-prompt.md" in text for text in buffer_texts)
+            )
+            queue_prompt_dir = repo / ".envctl-state" / "plan-agent-queue"
+            self.assertIn(
+                "You are preparing the next implementation iteration",
+                (queue_prompt_dir / "001-queue-direct-prompt.md").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "You are finalizing an implementation",
+                (queue_prompt_dir / "003-queue-direct-prompt.md").read_text(encoding="utf-8"),
             )
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queued"),
@@ -224,42 +227,56 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
             state["typed"] = False
             return None
 
-        runtime = _RuntimeHarness(
-            config=load_config(
-                {
-                    "RUN_REPO_ROOT": "/tmp/repo",
-                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
-                }
-            ),
-            env={},
-            process_runner=_RecordingRunner(),
-        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_dir = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            runtime = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime_dir),
+                    }
+                ),
+                env={},
+                process_runner=_RecordingRunner(),
+            )
 
-        with (
-            patch("envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text", side_effect=fake_paste_text),
-            patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", side_effect=fake_send_key),
-            patch(
-                "envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen",
-                side_effect=lambda *_args, **_kwargs: typed_screen() if state["typed"] else busy_screen,
-            ),
-            patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
-            patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
-        ):
-            reason = cmux_transport._queue_codex_workflow_steps(
-                runtime,
-                workspace_id="workspace:7",
-                surface_id="surface:9",
-                worktree=CreatedPlanWorktree(name="feature-a-1", root=Path("/tmp/repo"), plan_file="a.md"),
-                workflow=workflow,
-                queued_steps=queued_steps,
-                launch_config=_launch_config_for_tests(cli="codex"),
-                cli="codex",
-        )
+            with (
+                patch(
+                    "envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text",
+                    side_effect=fake_paste_text,
+                ),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", side_effect=fake_send_key),
+                patch(
+                    "envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen",
+                    side_effect=lambda *_args, **_kwargs: typed_screen() if state["typed"] else busy_screen,
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent.cmux_transport.time.monotonic",
+                    new=_monotonic_counter(step=0.1),
+                ),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+            ):
+                reason = cmux_transport._queue_codex_workflow_steps(
+                    runtime,
+                    workspace_id="workspace:7",
+                    surface_id="surface:9",
+                    worktree=CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),
+                    workflow=workflow,
+                    queued_steps=queued_steps,
+                    launch_config=_launch_config_for_tests(cli="codex"),
+                    cli="codex",
+                )
 
-        self.assertIsNone(reason)
-        self.assertEqual(len(pasted_texts), 1)
-        self.assertIn("You are finalizing an implementation", pasted_texts[0])
-        self.assertEqual(sent_keys, ["tab"])
+            prompt_file = repo / ".envctl-state" / "plan-agent-queue" / "000-queue-direct-prompt.md"
+
+            self.assertIsNone(reason)
+            self.assertEqual(len(pasted_texts), 1)
+            self.assertNotIn("\n", pasted_texts[0])
+            self.assertIn(".envctl-state/plan-agent-queue/000-queue-direct-prompt.md", pasted_texts[0])
+            self.assertIn("You are finalizing an implementation", prompt_file.read_text(encoding="utf-8"))
+            self.assertEqual(sent_keys, ["tab"])
 
     def test_cmux_codex_queue_fails_when_message_remains_in_textbox_after_tab(self) -> None:
         sent_keys: list[str] = []
