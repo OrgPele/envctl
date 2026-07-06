@@ -6,7 +6,7 @@ This command must be run from Codex or another agent/runtime that can create the
 $ARGUMENTS
 
 ## Workflow
-1. Follow the full `create_plan` prompt contract: research the repo, write exactly one plan under `todo/plans/<category>/<slug>.md`, record launch scope, and choose `recommended_codex_cycles=<n>` from `0` through `3`.
+1. Follow the full `create_plan` prompt contract: research the repo, write exactly one plan under `todo/plans/<category>/<slug>.md`, record launch scope, add the Manual / real-world check, and choose `recommended_codex_cycles=<n>` from `0` through `3`.
 2. Validate the plan path exists and derive `<category>/<slug>` by removing `todo/plans/` and `.md`.
 3. Launch Codex implementation from the repo root with the shared `implement_task` preset:
 

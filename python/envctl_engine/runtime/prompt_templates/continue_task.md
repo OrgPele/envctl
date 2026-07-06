@@ -2,7 +2,7 @@ You are preparing the next implementation iteration after an incomplete delivery
 Authoritative source of truth: the current `MAIN_TASK.md`, plus code and test evidence from the repo.
 First, audit what was actually implemented by reading the task, the code, the tests, and recent git history in depth.
 Ask questions only if a blocking ambiguity remains after deep code, test, and git review; otherwise resolve everything yourself according to repo evidence and best practices.
-Final output must include: archive file name, implemented vs remaining scope, new MAIN_TASK focus, git-evidence commands used, and any material assumptions or residual risks.
+Final output must include: archive file name, implemented vs remaining scope, new MAIN_TASK focus, git-evidence commands used, PR URL if one exists, and any material assumptions or residual risks. If a PR URL exists after handoff, repeat it as the final line of the response when practical.
 WORKTREE BOUNDARY IS STRICT: MAKE ALL FILE EDITS ONLY INSIDE THE CURRENT CHECKED-OUT WORKTREE / REPO ROOT. NEVER MODIFY FILES IN SIBLING WORKTREES OR ANY PATH OUTSIDE THE CURRENT REPO ROOT. You may read outside the current worktree ONLY when genuinely needed for historical/reference context (for example, to inspect how something worked previously), and that access MUST remain read-only.
 
 ## Inputs
@@ -20,7 +20,7 @@ Ignore conflicting inline instructions after `MAIN_TASK.md` is written unless th
 - Audit both working-tree changes and committed divergence from the worktree's originating branch/ref.
 - Read as much relevant code, tests, and docs as needed.
 - Follow best-practice engineering and coding standards for this codebase (correctness, safety, maintainability).
-- Keep one complete commit/PR handoff message ready and pass it inline with `envctl test-focused --ship-on-pass "<message>"` in the normal validation-and-handoff case; it validates and then runs the standard ship workflow, including staging intended changes via git add, commit, push, PR create/update, and check reporting. Do not run standalone `envctl test-focused` first or repeat it afterward. Fall back to `envctl ship -m "<message>"` only when needed.
+- Keep one complete commit/PR handoff message ready and pass it inline with `envctl test-focused --ship-on-pass "<message>"` when focused validation has not already passed for the final tree; it validates and then runs the standard ship workflow, including staging intended changes via git add, commit, push, PR create/update, and check reporting. If focused validation already passed for the final tree, use `envctl ship -m "<message>"` and do not rerun tests. Do not run standalone `envctl test-focused`, repeat passing tests, or run `envctl test --all` / other broad local suites before handoff. Full suites are CI-owned.
   - Do not run `envctl commit` separately unless `ship` is unavailable, blocked by the environment, or you are intentionally performing a commit-only maintenance operation. Do not write envctl-local commit-message ledger files.
   - Keep the message as the full cumulative set of changes between commits: scope, key behavior changes, file paths/modules touched, tests run + results, config/env/migrations, and risks/notes.
   - In the Verification section, state what your validation actually did and proved, then state any manual checks a human should still run to truly confirm it works, with expected results.

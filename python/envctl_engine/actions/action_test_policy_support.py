@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import ClassVar, Mapping
 
@@ -38,13 +39,20 @@ class TestExecutionPolicy:
             self.env.get("ENVCTL_ACTION_TEST_PARALLEL_MAX"),
             self.config_raw.get("ENVCTL_ACTION_TEST_PARALLEL_MAX"),
         ]
-        limit = 4
+        limit = self._default_parallel_worker_limit()
         for raw in configured_values:
             parsed = parse_int(raw, 0)
             if parsed > 0:
                 limit = parsed
                 break
         return max(1, min(total, limit))
+
+    @staticmethod
+    def _default_parallel_worker_limit() -> int:
+        cpu_count = max(os.cpu_count() or 1, 1)
+        if cpu_count <= 2:
+            return 1
+        return min(4, max(2, cpu_count // 2))
 
     def suite_spinner_policy_enabled(self, policy: object) -> tuple[bool, str]:
         mode = str(self.env.get("ENVCTL_UI_SPINNER_MODE", "")).strip().lower()

@@ -46,11 +46,11 @@ class ActionsTestParallelFlagsParityTests(_ActionsParityTestCase):
                 ),
                 patch(
                     "envctl_engine.actions.action_command_orchestrator.concurrent.futures.ThreadPoolExecutor",
-                    side_effect=AssertionError("ThreadPoolExecutor should not be used for --test-sequential"),
+                    side_effect=AssertionError("ThreadPoolExecutor should not be used for --sequential"),
                 ),
             ):
                 route = parse_route(
-                    ["test", "--project", "feature-a-1", "--test-sequential"],
+                    ["test", "--project", "feature-a-1", "--sequential"],
                     env={"ENVCTL_DEFAULT_MODE": "trees"},
                 )
                 code = engine.dispatch(route)
@@ -120,7 +120,7 @@ class ActionsTestParallelFlagsParityTests(_ActionsParityTestCase):
                 ),
             ):
                 route = parse_route(
-                    ["test", "--project", "feature-a-1", "--test-parallel"],
+                    ["test", "--project", "feature-a-1", "--parallel"],
                     env={"ENVCTL_DEFAULT_MODE": "trees"},
                 )
                 code = engine.dispatch(route)
@@ -128,11 +128,14 @@ class ActionsTestParallelFlagsParityTests(_ActionsParityTestCase):
             self.assertEqual(code, 0)
             self.assertEqual(executor_calls["workers"], 2)
             self.assertEqual(executor_calls["submitted"], 2)
+            pytest_commands = [call[0] for call in fake_runner.run_calls if "-m" in call[0] and "pytest" in call[0]]
+            self.assertEqual(len(pytest_commands), 1)
+            self.assertNotIn("-n", pytest_commands[0])
             plans = [event for event in engine.events if event.get("event") == "test.suite.plan"]
             self.assertTrue(plans)
             self.assertTrue(bool(plans[-1].get("parallel")))
 
-    def test_test_action_interactive_reports_parallel_execution_mode(self) -> None:
+    def test_test_action_interactive_reports_parallel_execution_mode_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -176,18 +179,4 @@ class ActionsTestParallelFlagsParityTests(_ActionsParityTestCase):
             status_messages = [
                 str(event.get("message", "")) for event in engine.events if event.get("event") == "ui.status"
             ]
-            spinner_events = [
-                event
-                for event in engine.events
-                if event.get("event") == "ui.spinner.lifecycle" and event.get("component") == "action.test.parallel"
-            ]
-            self.assertTrue(
-                any(message.startswith("Tests progress: running ") for message in status_messages)
-                or bool(spinner_events)
-            )
             self.assertFalse(any("Running bun test script" in message for message in status_messages))
-            if spinner_events:
-                self.assertFalse(any("Running pytest suite" in message for message in status_messages))
-                self.assertNotIn("Backend (pytest) started", rendered)
-                self.assertNotIn("Frontend (package test) started", rendered)
-

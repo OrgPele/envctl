@@ -35,6 +35,7 @@ from envctl_engine.runtime.command_special_flags import (
     apply_default_dependency_scope_policy,
     apply_default_headless_policy,
     apply_default_runtime_scope_policy,
+    handle_command_scoped_flag,
     handle_env_assignment,
     passthrough_after_command,
     handle_special_flag,
@@ -288,6 +289,10 @@ def _phase_bind_flags(classified: list[dict[str, str | object]], state: _ParserS
         # Boolean flags
         if token_type == "boolean_flag":
             state.flags[_boolean_flag_name(token)] = True
+            i += 1
+            continue
+
+        if token_type == "unknown_option" and handle_command_scoped_flag(state.command, state.flags, token):
             i += 1
             continue
 

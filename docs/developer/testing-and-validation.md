@@ -157,10 +157,15 @@ uv run --extra dev pytest -q -n 4 --dist=loadscope --maxfail=25 --ff --junitxml=
 
 `--dist=loadscope` keeps tests from the same module or class on the same worker, which reduces fixture churn and keeps failure ordering easier to interpret while still running the suite in parallel.
 
-`envctl test` and `envctl test-focused` add pytest-xdist workers automatically for
-`python -m pytest` commands when xdist is available. The worker count is based on
-current free CPU cores unless capped by `--test-parallel-max <n>` or
-`ENVCTL_ACTION_TEST_PYTEST_WORKERS=<n>`. Use
+`envctl test` runs multiple detected suites in parallel by default, using one
+worker on tiny hosts and roughly half the CPU cores on larger hosts, capped at
+four suite workers; it retries sequentially if the parallel attempt fails.
+Pytest-xdist injection stays off by
+default. Use `ENVCTL_ACTION_TEST_PYTEST_PARALLEL=true` for `envctl test`, or
+pass `envctl test-focused --parallel` / set
+`ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL=true` for focused runs. The xdist worker
+count is based on current free CPU cores unless capped by
+`--test-parallel-max <n>` or `ENVCTL_ACTION_TEST_PYTEST_WORKERS=<n>`. Use
 `ENVCTL_TEST_FOCUSED_PYTEST_WORKERS=<n>` for a focused-only cap.
 
 For an inventory of suite size, helpers, markers, skipped or slow tests, and duplicate test-name clusters:

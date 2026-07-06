@@ -71,7 +71,7 @@ class ActionsTestParallelParityTests(_ActionsParityTestCase):
                     side_effect=lambda max_workers: _ExecutorStub(max_workers),
                 ),
             ):
-                route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                route = parse_route(["test", "--project", "feature-a-1", "--parallel"], env={"ENVCTL_DEFAULT_MODE": "trees"})
                 code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
@@ -139,8 +139,9 @@ class ActionsTestParallelParityTests(_ActionsParityTestCase):
                     "envctl_engine.actions.action_command_orchestrator.concurrent.futures.ThreadPoolExecutor",
                     side_effect=lambda max_workers: _ExecutorStub(max_workers),
                 ),
+                patch("envctl_engine.actions.action_test_policy_support.os.cpu_count", return_value=8),
             ):
-                route = parse_route(["test", "--all"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                route = parse_route(["test", "--all", "--parallel"], env={"ENVCTL_DEFAULT_MODE": "trees"})
                 code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
@@ -219,7 +220,7 @@ class ActionsTestParallelParityTests(_ActionsParityTestCase):
                 ),
             ):
                 route = parse_route(
-                    ["test", "--all", "--test-parallel-max", "4"],
+                    ["test", "--all", "--parallel", "--test-parallel-max", "4"],
                     env={"ENVCTL_DEFAULT_MODE": "trees"},
                 )
                 code = engine.dispatch(route)
@@ -261,7 +262,7 @@ class ActionsTestParallelParityTests(_ActionsParityTestCase):
                     return_value=(False, "forced_unavailable"),
                 ),
             ):
-                route = parse_route(["test", "--project", "feature-a-1"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                route = parse_route(["test", "--project", "feature-a-1", "--parallel"], env={"ENVCTL_DEFAULT_MODE": "trees"})
                 route.flags = {**route.flags, "interactive_command": True, "batch": True}
                 code = engine.dispatch(route)
 
@@ -280,4 +281,3 @@ class ActionsTestParallelParityTests(_ActionsParityTestCase):
                 any(" • running: " in message and " • done: " in message for message in status_messages),
                 msg=status_messages,
             )
-

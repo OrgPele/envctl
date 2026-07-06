@@ -760,7 +760,7 @@ class CliRouterParityTests(unittest.TestCase):
         route = parse_route(
             [
                 "test",
-                "--test-parallel",
+                "--parallel",
                 "--service-parallel",
                 "--service-prep-parallel",
             ],
@@ -773,7 +773,7 @@ class CliRouterParityTests(unittest.TestCase):
         route = parse_route(
             [
                 "test",
-                "--test-sequential",
+                "--sequential",
                 "--service-sequential",
                 "--service-prep-sequential",
             ],
@@ -782,6 +782,18 @@ class CliRouterParityTests(unittest.TestCase):
         self.assertEqual(route.flags.get("test_parallel"), False)
         self.assertEqual(route.flags.get("service_parallel"), False)
         self.assertEqual(route.flags.get("service_prep_parallel"), False)
+
+        route = parse_route(["test", "--test-parallel"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        self.assertEqual(route.flags.get("test_parallel"), True)
+
+        route = parse_route(["test", "--test-sequential"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+        self.assertEqual(route.flags.get("test_parallel"), False)
+
+        route = parse_route(["test-focused", "--parallel"], env={})
+        self.assertEqual(route.flags.get("test_parallel"), True)
+
+        route = parse_route(["test-focused", "--sequential"], env={})
+        self.assertEqual(route.flags.get("test_parallel"), False)
 
     def test_requirements_parallel_flags_are_parsed(self) -> None:
         route = parse_route(["--deps-parallel"], env={"ENVCTL_DEFAULT_MODE": "trees"})

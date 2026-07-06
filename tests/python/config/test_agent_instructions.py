@@ -32,12 +32,17 @@ def test_agent_instructions_include_serena_and_codegraph_only_when_configured(tm
     assert "## Envctl Workflow" in text
     assert "This project is configured for CodeGraph repo context" in text
     assert "Activate the current checkout/worktree before structural code navigation" in text
+    assert "Use Serena for Python symbol definitions, references, diagnostics" in text
+    assert "Use normal shell/file tools for exact strings, docs, prompts, tests, git" in text
     assert "Read the owning code path before changing it" in text
     assert "smallest test that proves the real contract" in text
     assert 'use `envctl test-focused --ship-on-pass "<message>"` from inside the current worktree' in text
     assert "single envctl local validation-and-handoff command" in text
-    assert "do not run standalone `envctl test-focused`" in text
+    assert "Do not run standalone `envctl test-focused`" in text
+    assert 'use `envctl ship -m "<message>"` and do not rerun tests' in text
+    assert "Full suites are CI-owned" in text
     assert "stages intended non-protected changes via git add" in text
+    assert "report the PR URL if one exists" in text
     assert "MAIN_TASK.md" not in text
     assert "pytest-xdist" not in text
     assert "ENVCTL_TEST_FOCUSED_PYTEST_WORKERS" not in text

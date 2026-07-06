@@ -26,8 +26,10 @@ class PytestParallelPolicy:
 
     def enabled(self) -> bool:
         forced = self.route_flags.get("test_parallel")
-        if isinstance(forced, bool):
-            return forced
+        if forced is False and self.include_focused_env:
+            return False
+        if forced is True and self.include_focused_env:
+            return True
         focused_values = (
             (
                 self.env.get("ENVCTL_TEST_FOCUSED_PYTEST_PARALLEL"),
@@ -41,7 +43,7 @@ class PytestParallelPolicy:
             self.env.get("ENVCTL_ACTION_TEST_PYTEST_PARALLEL"),
             self.config_raw.get("ENVCTL_ACTION_TEST_PYTEST_PARALLEL"),
         )
-        return parse_bool(configured, not self.include_focused_env)
+        return parse_bool(configured, False)
 
     def workers(self) -> int:
         focused_values = (
@@ -103,8 +105,8 @@ def pytest_parallel_already_configured(args: list[str]) -> bool:
     return False
 
 
-def pytest_plugin_autoload_disabled(args: list[str], *, env: dict[str, str]) -> bool:
-    if env.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "").strip().lower() not in {"", "0", "false", "no"}:
+def pytest_plugin_autoload_disabled(args: list[str], *, env: Mapping[str, object]) -> bool:
+    if str(env.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "")).strip().lower() not in {"", "0", "false", "no"}:
         return True
     return "--disable-plugin-autoload" in args
 

@@ -65,6 +65,39 @@ class LifecycleBlastParityTests(unittest.TestCase):
             self.assertIn(("kill", "-9", "4444"), tracking_runner.run_calls)
             self.assertNotIn(("kill", "-9", "3333"), tracking_runner.run_calls)
 
+    def test_blast_all_skips_current_process_ancestors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            (repo / ".git").mkdir(parents=True, exist_ok=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime),
+                }
+            )
+            engine = PythonEngineRuntime(config, env={})
+            tracking_runner = _TrackingRunner()
+            current_pid = os.getpid()
+            parent_pid = os.getppid()
+            ancestor_pid = 999_901
+            tracking_runner.ps_stdout = (
+                f"{ancestor_pid} /usr/bin/python -m envctl_engine.runtime.cli --repo /tmp/repo --plan\n"
+                "2222 /usr/bin/python -m envctl_engine.runtime.cli --repo /tmp/repo --plan\n"
+            )
+            tracking_runner.ps_tree_stdout = (
+                f"{current_pid} {parent_pid}\n"
+                f"{parent_pid} {ancestor_pid}\n"
+                f"{ancestor_pid} 1\n"
+                "2222 1\n"
+            )
+            engine.process_runner = tracking_runner  # type: ignore[assignment]
+
+            engine._blast_all_kill_orchestrator_processes()
+
+            self.assertNotIn(("kill", "-9", str(ancestor_pid)), tracking_runner.run_calls)
+            self.assertIn(("kill", "-9", "2222"), tracking_runner.run_calls)
+
     def test_terminate_service_record_never_terminates_current_process(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"

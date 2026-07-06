@@ -17,6 +17,7 @@ class TestSuiteRunLoop:
     failure_label: Callable[[Any], str]
     cancel_interrupted: Callable[[Any | None, dict[Any, Any]], None]
     shutdown_executor: Callable[[Any | None], None]
+    stop_on_sequential_failure: bool = True
 
     def run(self) -> list[str]:
         executor: Any | None = None
@@ -49,7 +50,8 @@ class TestSuiteRunLoop:
             code, error = self.run_spec(execution)
             if code != 0:
                 failures.append(self._failure_message(execution, error))
-                break
+                if self.stop_on_sequential_failure:
+                    break
         return failures
 
     def _failure_message(self, execution: Any, error: str) -> str:
