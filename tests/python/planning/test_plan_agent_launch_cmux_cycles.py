@@ -241,7 +241,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
             self.assertIsNone(reason)
             self.assertEqual(len(pasted_texts), 1)
             self.assertNotIn("\n", pasted_texts[0])
-            self.assertEqual(pasted_texts[0], "$envctl-finalize-task")
+            self.assertEqual(pasted_texts[0], "$envctl-continue-task")
             self.assertEqual(sent_keys, ["tab"])
 
     def test_cmux_codex_queue_fails_when_message_remains_in_textbox_after_tab(self) -> None:
@@ -400,7 +400,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
-                    "CYCLES": "3",
+                    "CYCLES": "6",
                 },
             )
 
@@ -432,7 +432,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                 )
 
         self.assertEqual(result.status, "launched")
-        self.assertIn("Plan agent launch queued Codex cycle workflow (cycles=3)", buffer.getvalue())
+        self.assertIn("Plan agent launch queued Codex cycle workflow (cycles=6)", buffer.getvalue())
         self.assertEqual(
             self._events(rt, "planning.agent_launch.workflow_selected"),
             [
@@ -444,7 +444,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                     "cli": "codex",
                     "created_worktree_count": 1,
                     "workflow_mode": "codex_cycles",
-                    "codex_cycles": 3,
+                    "codex_cycles": 6,
                     "codex_goal_enable": True,
                     "browser_e2e_followup_enable": False,
                     "fullstack_pr_url_e2e_enable": False,

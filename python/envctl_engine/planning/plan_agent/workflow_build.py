@@ -72,15 +72,10 @@ class PlanAgentWorkflowBuilder:
         steps = [
             _PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task", requires_goal=requires_goal)
         ]
-        for cycle in range(1, bounded_cycles + 1):
-            if cycle == bounded_cycles:
-                steps.append(
-                    _PlanAgentWorkflowStep(kind="queue_direct_prompt", text="finalize_task", requires_goal=False)
-                )
-                steps.extend(self._terminal_followup_steps(requires_goal=False))
-                continue
+        for _cycle in range(bounded_cycles):
             steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="continue_task", requires_goal=False))
             steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="implement_task", requires_goal=False))
+        steps.extend(self._terminal_followup_steps(requires_goal=False))
         return steps
 
     def _terminal_followup_steps(self, *, requires_goal: bool) -> list[_PlanAgentWorkflowStep]:

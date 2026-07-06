@@ -103,18 +103,19 @@ Before showing or running any envctl worktree-and-prompt follow-up, decide wheth
 - Use `browser_e2e_required: true` when the task is browser-visible, touches frontend behavior, changes API contracts consumed by a UI, changes auth/session/form/dashboard flows, changes browser/runtime launch behavior, or when repo evidence leaves browser observability uncertain.
 - Use `browser_e2e_required: false` only for docs-only, prompt-only, CLI-only, backend-only, runtime-only, test-only, or metadata changes where reviewed code and tests show no browser-visible surface.
 - When `browser_e2e_required: false`, leave `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE` unset or set `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=false` so the plan-agent queue skips the `$browser` follow-up.
-- When `browser_e2e_required: true`, include `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` in any envctl follow-up command you show or run so the `$browser` follow-up runs after implementation/finalization.
+- When `browser_e2e_required: true`, include `ENVCTL_PLAN_AGENT_BROWSER_E2E_ENABLE=true` in any envctl follow-up command you show or run so the `$browser` follow-up runs after the implementation cycle queue.
 - When `browser_e2e_required: true`, make the plan's Manual / real-world check detailed enough for `_plan_agent_browser_e2e_followup.md` to execute against the shipped `deployment_url`: real route/page, UI section, controls, actions, expected state, and required test data.
 
 ## Codex cycle recommendation
-Before writing the final response, choose exactly one integer from `0` through `3` as the recommended Codex cycle count for implementation depth. Use this rubric:
+Before writing the final response, choose exactly one integer from `0` through `6` as the recommended Codex cycle count for implementation depth. Each cycle queues one `$envctl-continue-task` followed by one `$envctl-implement-task`, so the sequence ends with implementation. Use this rubric:
 
 - `0`: trivial docs, prompt, static edit, or very small one-file change where one implementation prompt is enough.
 - `1`: small localized code or test change with low integration risk.
-- `2`: normal multi-file feature or fix, moderate verification, or a task that benefits from one continuation/finalization pass.
-- `3`: genuinely complex, high-risk, cross-module, runtime-sensitive, or architecture-sensitive work.
+- `2`: normal multi-file feature or fix, moderate verification, or a task that benefits from repeated continuation/implementation passes.
+- `3`: complex, high-risk, cross-module, runtime-sensitive, or architecture-sensitive work.
+- `4` through `6`: exceptional cases where repeated continue/implement passes are explicitly useful and the user asked for deeper cycling.
 
-Prefer the smallest number that can plausibly finish the task and verify it; `3` is exceptional. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record the recommended Codex cycle count, the intended launch-scope flags, and the browser E2E decision.
+Prefer the smallest number that can plausibly finish the task and verify it; `4` through `6` are exceptional. Include a one-sentence rationale. Require the plan file's `Rollout / verification` section to record the recommended Codex cycle count, the intended launch-scope flags, and the browser E2E decision.
 
 ## Optional envctl follow-up
 - After completing the required final response items, ask exactly one final approval question asking whether you should now use `envctl` to create or sync the implementation worktree(s) for this plan and launch the implementation prompt workflow.

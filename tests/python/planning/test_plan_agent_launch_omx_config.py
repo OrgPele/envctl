@@ -136,7 +136,8 @@ class PlanAgentLaunchOmxConfigTests(PlanAgentLaunchSupportTestCase):
                             "implement_task",
                             "continue_task",
                             "implement_task",
-                            "finalize_task",
+                            "continue_task",
+                            "implement_task",
                         ],
                     )
                     self.assertNotIn(_browser_e2e_instruction_text(), [step.text for step in workflow.steps])

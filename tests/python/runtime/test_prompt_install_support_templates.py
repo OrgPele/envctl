@@ -95,8 +95,9 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         body = _load_template("create_plan").body
 
         self.assertIn("Codex cycle recommendation", body)
-        self.assertIn("exactly one integer from `0` through `3`", body)
+        self.assertIn("exactly one integer from `0` through `6`", body)
         self.assertNotIn("exactly one integer from `0` through `8`", body)
+        self.assertIn("Each cycle queues one `$envctl-continue-task` followed by one `$envctl-implement-task`", body)
         self.assertIn("Prefer the smallest number", body)
         self.assertIn("Rollout / verification", body)
 
