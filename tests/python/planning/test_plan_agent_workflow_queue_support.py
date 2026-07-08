@@ -9,6 +9,7 @@ from envctl_engine.planning.plan_agent.models import (
     PlanAgentLaunchConfig,
     _PlanAgentWorkflow,
     _PlanAgentWorkflowStep,
+    _QueueFailure,
 )
 from envctl_engine.planning.plan_agent.workflow_queue_support import (
     run_codex_workflow_queue,
@@ -110,8 +111,45 @@ class PlanAgentWorkflowQueueSupportTests(unittest.TestCase):
         )
 
         self.assertEqual(error, "queue_prompt_resolution_failed")
+        assert isinstance(error, _QueueFailure)
         self.assertEqual(error.step_index, 0)
         self.assertEqual(error.step_kind, "queue_direct_prompt")
+
+    def test_queue_support_collapses_multiline_message_to_single_terminal_input(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        sent: list[str] = []
+        confirmed: list[tuple[str, bool]] = []
+        runtime = SimpleNamespace(_emit=lambda event, **payload: events.append((event, payload)))
+        queued_prompt = "First, read MAIN_TASK.md.\nThen inspect relevant code before editing.\n"
+        workflow = _PlanAgentWorkflow(
+            mode="codex_cycles",
+            codex_cycles=1,
+            steps=(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="cycle"),),
+        )
+
+        worktree = CreatedPlanWorktree(name="feature-a-1", root=Path("/repo/trees/feature-a/1"), plan_file="a.md")
+
+        error = run_codex_workflow_queue(
+            runtime,
+            worktree=worktree,
+            workflow=workflow,
+            queued_steps=workflow.steps,
+            launch_config=_launch_config(codex_goal_enable=False),
+            cli="codex",
+            transport="cmux",
+            event_context={"workspace_id": "workspace:1", "surface_id": "surface:2"},
+            codex_goal_text_for_worktree_fn=lambda **_kwargs: "goal text",
+            workflow_step_prompt_text_fn=lambda *_args, **_kwargs: (queued_prompt, None),
+            send_text_fn=lambda text: sent.append(text) or None,
+            queue_message_fn=lambda text, *, require_text_match: confirmed.append((text, require_text_match)) or True,
+        )
+
+        expected_queue_text = "First, read MAIN_TASK.md. Then inspect relevant code before editing."
+
+        self.assertIsNone(error)
+        self.assertEqual(sent, [expected_queue_text])
+        self.assertNotIn("\n", sent[0])
+        self.assertEqual(confirmed, [(expected_queue_text, False)])
 
 
 if __name__ == "__main__":

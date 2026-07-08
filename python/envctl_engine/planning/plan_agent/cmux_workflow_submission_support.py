@@ -166,7 +166,7 @@ def submit_direct_prompt_workflow_step(
     )
     if ready_error is not None:
         return ready_error
-    codex_goal_picker_prompt = str(prompt_text).lstrip().startswith("/go ")
+    codex_goal_picker_prompt = str(prompt_text).lstrip().startswith("/goal ")
     if codex_goal_picker_prompt:
         sleep_fn(_PROMPT_SUBMIT_READY_TIMEOUT_SECONDS)
     enter_error = send_surface_key_fn(

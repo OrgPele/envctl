@@ -273,7 +273,7 @@ def run_surface_bootstrap(
     )
     if resolution_error is not None:
         return resolution_error
-    if initial_step.kind == "submit_direct_prompt":
+    if initial_step.kind == "submit_direct_prompt" and not _codex_skill_command(prompt_text, cli=launch_config.cli):
         submit_error = submit_direct_prompt_workflow_step_fn(
             runtime,
             workspace_id=workspace_id,
@@ -330,6 +330,10 @@ def run_surface_bootstrap(
             )
             return None
     return None
+
+
+def _codex_skill_command(prompt_text: str, *, cli: str) -> bool:
+    return str(cli).strip().lower() == "codex" and str(prompt_text).strip().startswith("$")
 
 
 def run_review_surface_bootstrap(

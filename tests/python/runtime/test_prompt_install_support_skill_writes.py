@@ -5,6 +5,18 @@ from tests.python.runtime.prompt_install_support_test_support import *
 
 
 class PromptInstallSupportSkillWritesTests(PromptInstallSupportTestCase):
+    def test_codex_skill_invocation_for_preset_uses_installed_skill_command(self) -> None:
+        invocation = codex_skill_invocation_for_preset(
+            preset="/prompts:review_worktree_imp",
+            arguments="Review bundle: /tmp/review.md\nWorktree directory: /tmp/tree",
+        )
+
+        self.assertEqual(
+            invocation,
+            "$envctl-review-worktree Review bundle: /tmp/review.md Worktree directory: /tmp/tree",
+        )
+        self.assertNotIn("\n", invocation)
+
     def test_install_prompts_writes_create_plan_auto_codex_skills_with_markers(self) -> None:
         for preset in _CREATE_PLAN_AUTO_PRESETS:
             with self.subTest(preset=preset), tempfile.TemporaryDirectory() as tmpdir:

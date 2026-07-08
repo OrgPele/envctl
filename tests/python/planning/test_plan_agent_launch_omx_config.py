@@ -128,8 +128,18 @@ class PlanAgentLaunchOmxConfigTests(PlanAgentLaunchSupportTestCase):
                     self.assertIsNone(launch_config.codex_cycles_warning)
                     self.assertEqual(workflow.mode, "codex_cycles")
                     self.assertEqual(workflow.codex_cycles, 3)
-                    self.assertEqual(len(workflow.steps), 8)
-                    self.assertEqual(workflow.steps[1].text, _first_cycle_completion_instruction_text())
+                    self.assertEqual(
+                        [step.text for step in workflow.steps],
+                        [
+                            "implement_task",
+                            "continue_task",
+                            "implement_task",
+                            "continue_task",
+                            "implement_task",
+                            "continue_task",
+                            "implement_task",
+                        ],
+                    )
                     self.assertNotIn(_browser_e2e_instruction_text(), [step.text for step in workflow.steps])
                     self.assertNotIn(_pr_review_comments_instruction_text(), [step.text for step in workflow.steps])
 

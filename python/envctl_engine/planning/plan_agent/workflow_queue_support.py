@@ -62,9 +62,8 @@ def run_codex_workflow_queue(
         )
         if resolution_error is not None:
             return _QueueFailure("queue_prompt_resolution_failed", step_index=step_index, step_kind=step.kind)
-
         prompt_error = _send_and_confirm_queue_message(
-            text=queued_text,
+            text=_queue_terminal_text(queued_text),
             send_text_fn=send_text_fn,
             queue_message_fn=queue_message_fn,
             send_failure="queue_send_failed",
@@ -103,6 +102,10 @@ def _queued_goal_text(
         omx_workflow=launch_config.omx_workflow,
     )
     return f"/goal {goal_text}"
+
+
+def _queue_terminal_text(text: str) -> str:
+    return " ".join(str(text).split())
 
 
 def _send_and_confirm_queue_message(

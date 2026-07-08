@@ -13,6 +13,7 @@ from envctl_engine.runtime.prompt_install_codex_skills import (
     _install_codex_skill,
     _render_codex_skill_markdown,
     _render_codex_skill_openai_yaml,
+    codex_skill_invocation_for_preset,
 )
 from envctl_engine.runtime.prompt_install_direct_prompt import (
     codex_preset_uses_direct_submission,
@@ -124,6 +125,7 @@ __all__ = [
     "_user_home",
     "_user_home_from_env",
     "codex_preset_uses_direct_submission",
+    "codex_skill_invocation_for_preset",
     "dispatch_utility_command",
     "resolve_codex_direct_prompt_body",
     "resolve_opencode_direct_prompt_body",

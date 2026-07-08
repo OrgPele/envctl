@@ -133,7 +133,7 @@ class PlanAgentCmuxGoalSupportTests(unittest.TestCase):
         )
 
         self.assertEqual(error, "codex_goal_active_timeout")
-        self.assertEqual(calls, ["/go Implement this task"])
+        self.assertEqual(calls, ["/goal Implement this task"])
 
 
 if __name__ == "__main__":

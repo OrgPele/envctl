@@ -169,10 +169,8 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
             ],
         )
 
-    def test_build_plan_agent_workflow_for_single_cycle_adds_finalization_without_browser_by_default(self) -> None:
+    def test_build_plan_agent_workflow_for_single_cycle_queues_continue_then_implement(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)
-        self.assertIsNotNone(_finalization_instruction_text)
-        self.assertIsNotNone(_browser_e2e_instruction_text)
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=1)
 
         self.assertEqual(workflow.mode, "codex_cycles")
@@ -180,7 +178,8 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
             [(step.kind, step.text) for step in workflow.steps],
             [
                 ("submit_direct_prompt", "implement_task"),
-                ("queue_direct_prompt", "finalize_task"),
+                ("queue_direct_prompt", "continue_task"),
+                ("queue_direct_prompt", "implement_task"),
             ],
         )
 
@@ -198,7 +197,8 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
             [(step.kind, step.text) for step in workflow.steps],
             [
                 ("submit_direct_prompt", "implement_task"),
-                ("queue_direct_prompt", "finalize_task"),
+                ("queue_direct_prompt", "continue_task"),
+                ("queue_direct_prompt", "implement_task"),
                 ("queue_message", _browser_e2e_instruction_text()),
             ],
         )
@@ -251,10 +251,10 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
             [(step.kind, step.text) for step in workflow.steps],
             [
                 ("submit_direct_prompt", "implement_task"),
-                ("queue_message", _first_cycle_completion_instruction_text()),
                 ("queue_direct_prompt", "continue_task"),
                 ("queue_direct_prompt", "implement_task"),
-                ("queue_direct_prompt", "finalize_task"),
+                ("queue_direct_prompt", "continue_task"),
+                ("queue_direct_prompt", "implement_task"),
             ],
         )
 
@@ -270,13 +270,12 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
             [(step.kind, step.text) for step in workflow.steps],
             [
                 ("submit_direct_prompt", "implement_task"),
-                ("queue_message", _first_cycle_completion_instruction_text()),
                 ("queue_direct_prompt", "continue_task"),
                 ("queue_direct_prompt", "implement_task"),
-                ("queue_message", _intermediate_cycle_completion_instruction_text()),
                 ("queue_direct_prompt", "continue_task"),
                 ("queue_direct_prompt", "implement_task"),
-                ("queue_direct_prompt", "finalize_task"),
+                ("queue_direct_prompt", "continue_task"),
+                ("queue_direct_prompt", "implement_task"),
             ],
         )
 
@@ -310,8 +309,9 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
         workflow = _build_plan_agent_workflow(cli="codex", preset="implement_task", codex_cycles=999)
 
         self.assertEqual(workflow.mode, "codex_cycles")
-        self.assertEqual(workflow.codex_cycles, 3)
-        self.assertEqual(len(workflow.steps), 1 + (1 + 3 * (workflow.codex_cycles - 1)))
+        self.assertEqual(workflow.codex_cycles, 6)
+        self.assertEqual(len(workflow.steps), 1 + 2 * workflow.codex_cycles)
+        self.assertEqual(workflow.steps[-1].text, "implement_task")
 
     def test_codex_cycle_queued_steps_do_not_request_goal_frames(self) -> None:
         self.assertIsNotNone(_build_plan_agent_workflow)

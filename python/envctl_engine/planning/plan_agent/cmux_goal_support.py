@@ -93,7 +93,7 @@ def submit_surface_codex_goal(
         runtime,
         workspace_id=workspace_id,
         surface_id=surface_id,
-        prompt_text=f"/go {goal_text}",
+        prompt_text=f"/goal {goal_text}",
     )
     if submit_error is not None:
         return submit_error

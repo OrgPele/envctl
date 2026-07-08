@@ -48,19 +48,10 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                     subprocess.CompletedProcess(
                         args=["cmux"],
                         returncode=0,
-                        stdout="  /prompts:implement_task\n  Sisyphus (Ultraworker)\n",
-                        stderr="",
-                    ),
-                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
-                    subprocess.CompletedProcess(
-                        args=["cmux"],
-                        returncode=0,
                         stdout=(
-                            "╭───────────────────────────────────────────────────╮\n"
-                            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
-                            "│ model:     gpt-5.4 high   fast   /model to change │\n"
-                            "│ directory: ~/repo                                 │\n"
-                            "› /prompts:implement_task\n"
+                            "  $envctl-implement-task\n"
+                            "  Envctl Implement Task  [Skill] Implement the envctl task\n"
+                            "  Press enter to insert or esc to close\n"
                         ),
                         stderr="",
                     ),
@@ -73,7 +64,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                             "│ >_ OpenAI Codex (v0.115.0)                        │\n"
                             "│ model:     gpt-5.4 high   fast   /model to change │\n"
                             "│ directory: ~/repo                                 │\n"
-                            "› /prompts:implement_task\n"
+                            "› $envctl-implement-task\n"
                         ),
                         stderr="",
                     ),
@@ -86,7 +77,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                             "│ >_ OpenAI Codex (v0.115.0)                        │\n"
                             "│ model:     gpt-5.4 high   fast   /model to change │\n"
                             "│ directory: ~/repo                                 │\n"
-                            "› /prompts:continue_task\n"
+                            "› $envctl-implement-task\n"
                         ),
                         stderr="",
                     ),
@@ -99,7 +90,20 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                             "│ >_ OpenAI Codex (v0.115.0)                        │\n"
                             "│ model:     gpt-5.4 high   fast   /model to change │\n"
                             "│ directory: ~/repo                                 │\n"
-                            "› /prompts:implement_task\n"
+                            "› $envctl-continue-task\n"
+                        ),
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
+                    subprocess.CompletedProcess(
+                        args=["cmux"],
+                        returncode=0,
+                        stdout=(
+                            "╭───────────────────────────────────────────────────╮\n"
+                            "│ >_ OpenAI Codex (v0.115.0)                        │\n"
+                            "│ model:     gpt-5.4 high   fast   /model to change │\n"
+                            "│ directory: ~/repo                                 │\n"
+                            "› $envctl-implement-task\n"
                         ),
                         stderr="",
                     ),
@@ -123,43 +127,10 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
 
             self.assertEqual(result.status, "launched")
             self.assertTrue(
-                any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and "You are implementing real code, end-to-end." in str(call[-1])
-                    for call in rt.process_runner.calls
-                )
+                any(call[:2] == ["cmux", "send"] and str(call[-1]) == "$envctl-implement-task" for call in rt.process_runner.calls)
             )
-            self.assertTrue(
-                any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and "You are preparing the next implementation iteration" in str(call[-1])
-                    for call in rt.process_runner.calls
-                )
-            )
-            self.assertTrue(
-                any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and "You are finalizing an implementation" in str(call[-1])
-                    for call in rt.process_runner.calls
-                )
-            )
-            self.assertEqual(
-                self._events(rt, "planning.agent_launch.workflow_queued"),
-                [
-                    {
-                        "event": "planning.agent_launch.workflow_queued",
-                        "workspace_id": "workspace:7",
-                        "surface_id": "surface:9",
-                        "worktree": "feature-a-1",
-                        "cli": "codex",
-                        "workflow_mode": "codex_cycles",
-                        "codex_cycles": 2,
-                        "queued_steps": 4,
-                        "queued_steps_confirmed": 4,
-                        "transport": "cmux",
-                    }
-                ],
-            )
+            self.assertEqual(self._events(rt, "planning.agent_launch.failed"), [])
+            self.assertEqual(len(self._events(rt, "planning.agent_launch.command_sent")), 1)
             self.assertEqual(rt._persist_events_snapshot_calls, 1)
 
     def test_wait_for_codex_queue_ready_tolerates_delayed_prompt_return(self) -> None:
@@ -169,7 +140,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
             "│ >_ OpenAI Codex (v0.115.0)                        │\n"
             "│ model:     gpt-5.4 high   fast   /model to change │\n"
             "│ directory: ~/repo                                 │\n"
-            "› /prompts:implement_task\n"
+            "› $envctl-implement-task\n"
         )
         screens = iter(["Booting MCP server...\n"] * 12 + [ready_screen])
         runtime = object()
@@ -225,42 +196,53 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
             state["typed"] = False
             return None
 
-        runtime = _RuntimeHarness(
-            config=load_config(
-                {
-                    "RUN_REPO_ROOT": "/tmp/repo",
-                    "RUN_SH_RUNTIME_DIR": "/tmp/runtime",
-                }
-            ),
-            env={},
-            process_runner=_RecordingRunner(),
-        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime_dir = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            runtime = _RuntimeHarness(
+                config=load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime_dir),
+                    }
+                ),
+                env={},
+                process_runner=_RecordingRunner(),
+            )
 
-        with (
-            patch("envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text", side_effect=fake_paste_text),
-            patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", side_effect=fake_send_key),
-            patch(
-                "envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen",
-                side_effect=lambda *_args, **_kwargs: typed_screen() if state["typed"] else busy_screen,
-            ),
-            patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter(step=0.1)),
-            patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
-        ):
-            reason = cmux_transport._queue_codex_workflow_steps(
-                runtime,
-                workspace_id="workspace:7",
-                surface_id="surface:9",
-                worktree=CreatedPlanWorktree(name="feature-a-1", root=Path("/tmp/repo"), plan_file="a.md"),
-                workflow=workflow,
-                queued_steps=queued_steps,
-                launch_config=_launch_config_for_tests(cli="codex"),
-                cli="codex",
-        )
+            with (
+                patch(
+                    "envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text",
+                    side_effect=fake_paste_text,
+                ),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._send_surface_key", side_effect=fake_send_key),
+                patch(
+                    "envctl_engine.planning.plan_agent.cmux_transport._read_surface_screen",
+                    side_effect=lambda *_args, **_kwargs: typed_screen() if state["typed"] else busy_screen,
+                ),
+                patch(
+                    "envctl_engine.planning.plan_agent.cmux_transport.time.monotonic",
+                    new=_monotonic_counter(step=0.1),
+                ),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.time.sleep", return_value=None),
+            ):
+                reason = cmux_transport._queue_codex_workflow_steps(
+                    runtime,
+                    workspace_id="workspace:7",
+                    surface_id="surface:9",
+                    worktree=CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),
+                    workflow=workflow,
+                    queued_steps=queued_steps,
+                    launch_config=_launch_config_for_tests(cli="codex"),
+                    cli="codex",
+                )
 
-        self.assertIsNone(reason)
-        self.assertEqual(len(pasted_texts), 1)
-        self.assertIn("You are finalizing an implementation", pasted_texts[0])
-        self.assertEqual(sent_keys, ["tab"])
+            self.assertIsNone(reason)
+            self.assertEqual(len(pasted_texts), 1)
+            self.assertNotIn("\n", pasted_texts[0])
+            self.assertEqual(pasted_texts[0], "$envctl-continue-task")
+            self.assertEqual(sent_keys, ["tab"])
 
     def test_cmux_codex_queue_fails_when_message_remains_in_textbox_after_tab(self) -> None:
         sent_keys: list[str] = []
@@ -338,7 +320,11 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                     subprocess.CompletedProcess(
                         args=["cmux"],
                         returncode=0,
-                        stdout="  /prompts:implement_task\n  Sisyphus (Ultraworker)\n",
+                        stdout=(
+                            "  $envctl-implement-task\n"
+                            "  Envctl Implement Task  [Skill] Implement the envctl task\n"
+                            "  Press enter to insert or esc to close\n"
+                        ),
                         stderr="",
                     ),
                 ]
@@ -349,10 +335,11 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                 patch("envctl_engine.planning.plan_agent.cmux_transport.time.monotonic", new=_monotonic_counter()),
                 patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_direct_prompt_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._submit_prompt_workflow_step", return_value=None),
                 patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_codex_queue_ready", return_value=True),
                 patch(
                     "envctl_engine.planning.plan_agent.cmux_transport._paste_surface_text",
-                    side_effect=[None, "queue failed"],
+                    side_effect=["queue failed"],
                 ),
             ):
                 _ImmediateThread.created = []
@@ -413,7 +400,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
-                    "CYCLES": "3",
+                    "CYCLES": "6",
                 },
             )
 
@@ -445,7 +432,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                 )
 
         self.assertEqual(result.status, "launched")
-        self.assertIn("Plan agent launch queued Codex cycle workflow (cycles=3)", buffer.getvalue())
+        self.assertIn("Plan agent launch queued Codex cycle workflow (cycles=6)", buffer.getvalue())
         self.assertEqual(
             self._events(rt, "planning.agent_launch.workflow_selected"),
             [
@@ -457,7 +444,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                     "cli": "codex",
                     "created_worktree_count": 1,
                     "workflow_mode": "codex_cycles",
-                    "codex_cycles": 3,
+                    "codex_cycles": 6,
                     "codex_goal_enable": True,
                     "browser_e2e_followup_enable": False,
                     "fullstack_pr_url_e2e_enable": False,

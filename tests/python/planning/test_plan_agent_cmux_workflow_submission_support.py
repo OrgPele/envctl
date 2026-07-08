@@ -261,7 +261,7 @@ class PlanAgentCmuxWorkflowSubmissionSupportTests(unittest.TestCase):
                 SimpleNamespace(),
                 workspace_id="workspace:1",
                 surface_id="surface:2",
-                prompt_text="/go run this directly",
+                prompt_text="/goal run this directly",
                 paste_surface_text_fn=paste_surface_text_fn,
                 send_surface_key_fn=send_surface_key_fn,
                 wait_for_direct_prompt_ready_fn=lambda *_args, **_kwargs: None,
@@ -271,7 +271,7 @@ class PlanAgentCmuxWorkflowSubmissionSupportTests(unittest.TestCase):
         self.assertEqual(
             calls,
             [
-                ("paste", "/go run this directly"),
+                ("paste", "/goal run this directly"),
                 ("key", "enter"),
                 ("key", "enter"),
             ],
@@ -355,6 +355,47 @@ class PlanAgentCmuxWorkflowSubmissionSupportTests(unittest.TestCase):
         self.assertTrue(queued)
         self.assertEqual(sent_keys, ["tab"])
         self.assertEqual(sleeps, [0.1])
+
+    def test_queue_codex_message_inserts_skill_picker_before_queueing(self) -> None:
+        sent_keys: list[str] = []
+        sleeps: list[float] = []
+        state = {"stage": "picker"}
+        queued_text = "$envctl-continue-task"
+
+        def read_surface_screen_fn(_runtime, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+            if state["stage"] == "picker":
+                return (
+                    "OpenAI Codex\n"
+                    "› $envctl-continue-task\n"
+                    "  Envctl Continue Task [Skill]\n"
+                    "  Press enter to insert or esc to close\n"
+                )
+            if state["stage"] == "typed":
+                return "OpenAI Codex\n  $envctl-continue-task\n  tab to queue message\n"
+            return "OpenAI Codex\n• Queued follow-up messages\n"
+
+        def send_surface_key_fn(_runtime, **kwargs):  # noqa: ANN001, ANN003, ANN202
+            sent_keys.append(kwargs["key"])
+            if kwargs["key"] == "enter":
+                state["stage"] = "typed"
+            if kwargs["key"] == "tab":
+                state["stage"] = "queued"
+            return None
+
+        queued = queue_codex_message(
+            SimpleNamespace(),
+            workspace_id="workspace:1",
+            surface_id="surface:2",
+            text=queued_text,
+            read_surface_screen_fn=read_surface_screen_fn,
+            send_surface_key_fn=send_surface_key_fn,
+            monotonic=iter([0.0, 0.1, 0.2, 0.3, 0.4]).__next__,
+            sleep=sleeps.append,
+        )
+
+        self.assertTrue(queued)
+        self.assertEqual(sent_keys, ["enter", "tab"])
+        self.assertEqual(sleeps, [0.1, 0.1])
 
     def test_wait_for_codex_queue_ready_accepts_injected_clock_for_wrapper_compatibility(self) -> None:
         ready_screen = (

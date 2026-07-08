@@ -6,7 +6,7 @@ from tests.python.planning.plan_agent_launch_support_test_support import *
 
 
 class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
-    def test_codex_goal_text_is_compact_and_outcome_first(self) -> None:
+    def test_codex_goal_text_is_compact_and_main_task_first(self) -> None:
         goal = workflow._codex_goal_text_for_worktree(
             worktree=CreatedPlanWorktree(name="feature-a-1", root=Path("/repo"), plan_file="features/a.md"),
             preset="implement_task",
@@ -14,13 +14,14 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
             omx_workflow="",
         )
 
-        self.assertTrue(goal.startswith("Implement features/a.md in this worktree."))
-        self.assertIn("Source: MAIN_TASK.md.", goal)
-        self.assertIn("Flow: preset implement_task; mode codex_cycles.", goal)
-        self.assertIn('`envctl ship -m "<message>"` opens or updates the PR', goal)
+        self.assertTrue(goal.startswith("Implement MAIN_TASK.md end-to-end in this worktree."))
+        self.assertIn("Read it first, update code/tests, run focused validation", goal)
+        self.assertIn('`envctl ship -m "<message>"`', goal)
+        self.assertNotIn("features/a.md", goal)
+        self.assertNotIn("Flow:", goal)
         self.assertNotIn("Authoritative source", goal)
         self.assertNotIn("Complete the implementation, run relevant tests", goal)
-        self.assertLessEqual(len(goal), 230)
+        self.assertLessEqual(len(goal), 180)
 
     def test_codex_goal_text_preserves_omx_completion_contract(self) -> None:
         goal = workflow._codex_goal_text_for_worktree(
@@ -30,8 +31,8 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
             omx_workflow="Ultragoal",
         )
 
-        self.assertIn("OMX: $ultragoal completion contract remains active.", goal)
-        self.assertLessEqual(len(goal), 290)
+        self.assertIn("Keep $ultragoal completion contract active.", goal)
+        self.assertLessEqual(len(goal), 230)
 
     def test_launch_sequence_uses_cmux_commands_for_codex(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -88,9 +89,9 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                         args=["cmux"],
                         returncode=0,
                         stdout=(
-                            "  /prompts:implement_task\n"
-                            "  /prompts:implement_task.bak-20260313-192914\n"
-                            "  /prompts:implement_task\n"
+                            "  $envctl-implement-task\n"
+                            "  $envctl-implement-task.bak-20260313-192914\n"
+                            "  $envctl-implement-task\n"
                             "  Sisyphus (Ultraworker)\n"
                         ),
                         stderr="",
@@ -99,7 +100,7 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                     subprocess.CompletedProcess(
                         args=["cmux"],
                         returncode=0,
-                        stdout="  /prompts:implement_task\n  Sisyphus (Ultraworker)\n",
+                        stdout="  $envctl-implement-task\n  Sisyphus (Ultraworker)\n",
                         stderr="",
                     ),
                     subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="", stderr=""),
@@ -138,8 +139,8 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
             )
             self.assertTrue(
                 any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+                    call[:2] == ["cmux", "send"]
+                    and str(call[-1]) == "$envctl-implement-task"
                     for call in rt.process_runner.calls
                 )
             )
@@ -205,7 +206,7 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
             )
         )
 
-    def test_cmux_codex_launch_waits_for_active_goal_before_implementation_prompt(self) -> None:
+    def test_cmux_codex_launch_waits_for_active_goal_before_implementation_skill(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir) / "repo"
             runtime = Path(tmpdir) / "runtime"
@@ -232,7 +233,7 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                 "│ >_ OpenAI Codex (v0.115.0)                        │\n"
                 "│ model:     gpt-5.4 high   fast   /model to change │\n"
                 "│ directory: ~/repo                                 │\n"
-                "│ Goal active Objective: Implement a.md in this worktree. Source: MAIN_TASK.md. Flow: preset implement_task. │\n"
+                "│ Goal active Objective: Implement MAIN_TASK.md end-to-end in this worktree. │\n"
                 "› Explain this codebase\n"
             )
             rt.process_runner = _RecordingRunner(
@@ -274,13 +275,13 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                 index
                 for index, call in enumerate(rt.process_runner.calls)
                 if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                and str(call[-1]).startswith("/go ")
+                and str(call[-1]).startswith("/goal ")
             )
             implementation_buffer_index = next(
                 index
                 for index, call in enumerate(rt.process_runner.calls)
-                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+                if call[:2] == ["cmux", "send"]
+                and str(call[-1]) == "$envctl-implement-task"
             )
             intervening_reads = [
                 call
@@ -322,7 +323,7 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                     "╭────────────────────────╮\n│ >_ OpenAI Codex        │\n│ model: gpt-5.4         │\n› Explain this codebase\n",
                     "╭────────────────────────╮\n"
                     "│ >_ OpenAI Codex        │\n"
-                    "• Goal active Objective: Implement features/a.md in this worktree. Source: MAIN_TASK.md. Flow: preset implement_task.\n"
+                    "• Goal active Objective: Implement MAIN_TASK.md end-to-end in this worktree.\n"
                     "› Explain this codebase\n",
                     "╭────────────────────────╮\n│ >_ OpenAI Codex        │\n│ model: gpt-5.4         │\n│ directory: ~/repo      │\n› Explain this codebase\n",
                 ]
@@ -361,7 +362,7 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
 
         self.assertIsNone(error)
         self.assertEqual(len(pasted_texts), 2)
-        self.assertTrue(pasted_texts[0].startswith("/go "))
+        self.assertTrue(pasted_texts[0].startswith("/goal "))
         self.assertEqual(pasted_texts[1], "IMPLEMENT PROMPT")
 
     def test_cmux_codex_goal_inactive_screen_blocks_implementation_prompt(self) -> None:
@@ -427,4 +428,4 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
 
         self.assertEqual(error, "codex_goal_active_timeout")
         self.assertEqual(len(pasted_texts), 1)
-        self.assertTrue(pasted_texts[0].startswith("/go "))
+        self.assertTrue(pasted_texts[0].startswith("/goal "))

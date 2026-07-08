@@ -29,6 +29,24 @@ def _codex_skill_markdown_path(*, preset: str, home: Path) -> Path:
     return _codex_skill_root(home=home) / metadata.skill_name / "SKILL.md"
 
 
+def codex_skill_invocation_for_preset(*, preset: str, arguments: str = "") -> str:
+    normalized_preset = _normalize_codex_skill_preset(preset)
+    metadata = _codex_skill_metadata(normalized_preset)
+    command = f"${metadata.skill_name}"
+    extra = " ".join(str(arguments).split())
+    if not extra:
+        return command
+    return f"{command} {extra}"
+
+
+def _normalize_codex_skill_preset(preset: str) -> str:
+    normalized = str(preset).strip()
+    trimmed = normalized[1:] if normalized.startswith("/") else normalized
+    if trimmed.startswith("prompts:"):
+        return trimmed.removeprefix("prompts:")
+    return trimmed
+
+
 def _extract_codex_skill_prompt_body(raw: str, *, preset: str) -> str:
     start = raw.find(_CODEX_SKILL_BODY_START)
     end = raw.find(_CODEX_SKILL_BODY_END)

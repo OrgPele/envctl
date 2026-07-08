@@ -81,7 +81,7 @@ class PlanAgentLaunchCmuxReviewTests(PlanAgentLaunchSupportTestCase):
                 if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-12"]
             ]
             self.assertEqual(len(review_prompt_calls), 1)
-            self.assertIn("current local repo directory is the unedited baseline", str(review_prompt_calls[0][-1]))
+            self.assertTrue(str(review_prompt_calls[0][-1]).startswith("$envctl-review-worktree "))
             self.assertIn(f'Review bundle: "{review_bundle}"', str(review_prompt_calls[0][-1]))
             self.assertIn(f'Worktree directory: "{project_root}"', str(review_prompt_calls[0][-1]))
             self.assertIn(f'Original plan file: "{original_plan.resolve()}"', str(review_prompt_calls[0][-1]))
@@ -248,4 +248,3 @@ class PlanAgentLaunchCmuxReviewTests(PlanAgentLaunchSupportTestCase):
             )
 
             self.assertEqual(original_plan_path, active_plan.resolve())
-

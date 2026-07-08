@@ -95,8 +95,9 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         body = _load_template("create_plan").body
 
         self.assertIn("Codex cycle recommendation", body)
-        self.assertIn("exactly one integer from `0` through `3`", body)
+        self.assertIn("exactly one integer from `0` through `6`", body)
         self.assertNotIn("exactly one integer from `0` through `8`", body)
+        self.assertIn("Each cycle queues one `$envctl-continue-task` followed by one `$envctl-implement-task`", body)
         self.assertIn("Prefer the smallest number", body)
         self.assertIn("Rollout / verification", body)
 
@@ -470,6 +471,10 @@ class PromptInstallSupportTemplatesTests(PromptInstallSupportTestCase):
         self.assertIn(
             "one tmux Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>` "
             "and one OMX-managed Codex command with `ENVCTL_PLAN_AGENT_CODEX_CYCLES=<n>`",
+            plan_prompt.body,
+        )
+        self.assertIn(
+            "For Codex, envctl submits the installed `$envctl-implement-task` skill invocation",
             plan_prompt.body,
         )
         self.assertIn("do not tell the user to manually type `/prompts:implement_task`, `$envctl-implement-task`, or any other in-session command", plan_prompt.body)

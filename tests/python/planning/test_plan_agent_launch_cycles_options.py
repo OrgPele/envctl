@@ -73,13 +73,13 @@ class PlanAgentLaunchCyclesOptionsTests(PlanAgentLaunchSupportTestCase):
                         "RUN_REPO_ROOT": str(repo),
                         "RUN_SH_RUNTIME_DIR": str(runtime),
                         "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
-                        "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "4",
+                        "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "7",
                     }
                 )
 
                 launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
 
-            self.assertEqual(launch_config.codex_cycles, 3)
+            self.assertEqual(launch_config.codex_cycles, 6)
             self.assertEqual(launch_config.codex_cycles_warning, "bounded_codex_cycles")
 
     def test_resolve_plan_agent_launch_config_reports_invalid_cycles_alias(self) -> None:
@@ -117,7 +117,7 @@ class PlanAgentLaunchCyclesOptionsTests(PlanAgentLaunchSupportTestCase):
 
                 launch_config = launch_support.resolve_plan_agent_launch_config(config, {})
 
-            self.assertEqual(launch_config.codex_cycles, 3)
+            self.assertEqual(launch_config.codex_cycles, 6)
             self.assertEqual(launch_config.codex_cycles_warning, "bounded_codex_cycles")
 
     def test_resolve_plan_agent_launch_config_ignores_invalid_codex_cycles(self) -> None:

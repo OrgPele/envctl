@@ -242,8 +242,8 @@ class PlanAgentLaunchCmuxWorkspaceFlowTests(PlanAgentLaunchSupportTestCase):
             )
             self.assertTrue(
                 any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-77"]
-                    and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+                    call[:2] == ["cmux", "send"]
+                    and str(call[-1]) == "$envctl-implement-task"
                     for call in rt.process_runner.calls
                 )
             )
