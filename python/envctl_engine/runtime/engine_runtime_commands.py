@@ -162,12 +162,12 @@ def _command_exists_for_cwd(runtime: Any, executable: str, *, cwd: str | Path | 
 
 def command_env(runtime: Any, *, port: int, extra: Mapping[str, str] | None = None) -> dict[str, str]:
     env = dict(os.environ)
-    for key in SERVICE_LAUNCH_ENV_REMOVALS:
-        env.pop(key, None)
     env.update(runtime.env)
     env["PORT"] = str(port)
     if extra:
         env.update(extra)
+    for key in SERVICE_LAUNCH_ENV_REMOVALS:
+        env.pop(key, None)
     return env
 
 
