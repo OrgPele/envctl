@@ -71,6 +71,28 @@ class EngineRuntimeCommandsTests(unittest.TestCase):
         self.assertEqual(env["A"], "1")
         self.assertEqual(env["PORT"], "9000")
 
+    def test_command_env_strips_github_actions_cleanup_variables_from_runtime_env(self) -> None:
+        runtime = SimpleNamespace(
+            env={
+                "A": "1",
+                "RUNNER_TRACKING_ID": "runtime-cleanup-token",
+                "ACTIONS_RUNTIME_TOKEN": "runtime-secret",
+            }
+        )
+
+        env = command_env(
+            runtime,
+            port=9000,
+            extra={"B": "2", "GITHUB_TOKEN": "extra-secret"},
+        )
+
+        self.assertNotIn("RUNNER_TRACKING_ID", env)
+        self.assertNotIn("ACTIONS_RUNTIME_TOKEN", env)
+        self.assertNotIn("GITHUB_TOKEN", env)
+        self.assertEqual(env["A"], "1")
+        self.assertEqual(env["B"], "2")
+        self.assertEqual(env["PORT"], "9000")
+
     def test_default_python_executable_prefers_runtime_override(self) -> None:
         runtime = SimpleNamespace(
             env={"PYTHON_BIN": "/custom/python"},
