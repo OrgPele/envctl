@@ -39,12 +39,17 @@ class WorktreeImportOrchestrationTests(unittest.TestCase):
         base_dir: Path,
         *,
         events: list[tuple[str, dict[str, object]]] | None = None,
+        command_env=None,
+        runner=None,
     ) -> SimpleNamespace:
+        def default_command_env(*, port, extra=None):
+            return dict(os.environ, **dict(extra or {}))
+
         return SimpleNamespace(
             config=SimpleNamespace(base_dir=base_dir, trees_dir_name="trees", raw={}),
             env={},
-            process_runner=SimpleNamespace(run=subprocess.run),
-            _command_env=lambda *, port, extra=None: dict(os.environ, **dict(extra or {})),
+            process_runner=SimpleNamespace(run=runner or subprocess.run),
+            _command_env=command_env or default_command_env,
             _emit=lambda event, **payload: events.append((event, payload)) if events is not None else None,
         )
 
@@ -229,6 +234,47 @@ class WorktreeImportOrchestrationTests(unittest.TestCase):
                 str((repo / "trees" / "imported" / "feature-missing").resolve()),
             )
 
+    def test_import_remote_branch_preserves_github_tokens_for_git_fetch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _source, repo, _target = self._repo_with_remote_feature_branch(Path(tmpdir))
+            captured_fetch_envs: list[dict[str, str]] = []
+
+            def stripped_command_env(*, port, extra=None):
+                env = dict(os.environ, **dict(extra or {}))
+                env.pop("GH_TOKEN", None)
+                env.pop("GITHUB_TOKEN", None)
+                return env
+
+            def capturing_runner(command, **kwargs):
+                env = kwargs.get("env")
+                if command[:4] == ["git", "-C", str(repo), "fetch"]:
+                    captured_fetch_envs.append(dict(env or {}))
+                return subprocess.run(command, **kwargs)
+
+            runtime = self._runtime(
+                repo,
+                command_env=stripped_command_env,
+                runner=capturing_runner,
+            )
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "GH_TOKEN": "gh-secret",
+                        "GITHUB_TOKEN": "github-secret",
+                    },
+                ),
+                patch("envctl_engine.planning.worktree_import_orchestration.link_repo_local_shared_artifacts"),
+                patch("envctl_engine.planning.worktree_import_orchestration.prepare_worktree_code_intelligence"),
+            ):
+                result = import_remote_branch_worktree(runtime, branch_input="feature/foo")
+
+            self.assertIsNone(result.error)
+            self.assertTrue(captured_fetch_envs)
+            self.assertEqual(captured_fetch_envs[0]["GH_TOKEN"], "gh-secret")
+            self.assertEqual(captured_fetch_envs[0]["GITHUB_TOKEN"], "github-secret")
+
     def test_import_remote_branch_rejects_existing_target_on_wrong_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             source, repo, target = self._repo_with_remote_feature_branch(Path(tmpdir))
@@ -262,7 +308,9 @@ class WorktreeImportOrchestrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             _source, repo, target = self._repo_with_remote_feature_branch(Path(tmpdir))
             elsewhere = Path(tmpdir) / "elsewhere"
-            subprocess.run(["git", "-C", str(repo), "fetch", "origin", "feature/foo:refs/remotes/origin/feature/foo"], check=True)
+            subprocess.run(
+                ["git", "-C", str(repo), "fetch", "origin", "feature/foo:refs/remotes/origin/feature/foo"], check=True
+            )
             subprocess.run(
                 [
                     "git",

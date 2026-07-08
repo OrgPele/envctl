@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,8 @@ from envctl_engine.planning.worktree_import_commands import (
 from envctl_engine.planning.worktree_provenance import WORKTREE_PROVENANCE_PATH, WORKTREE_PROVENANCE_SCHEMA_VERSION
 from envctl_engine.planning.worktree_shared_artifacts import link_repo_local_shared_artifacts
 
+GIT_AUTH_ENV_KEYS = ("GH_TOKEN", "GITHUB_TOKEN")
+
 
 def import_remote_branch_worktree(self: Any, *, branch_input: str) -> PlanWorktreeSyncResult:
     try:
@@ -35,7 +38,7 @@ def import_remote_branch_worktree(self: Any, *, branch_input: str) -> PlanWorktr
         / "imported"
         / worktree_name
     ).resolve()
-    env = self._command_env(port=0)
+    env = _import_git_env(self)
     _emit(
         self,
         "planning.import.normalized",
@@ -253,6 +256,16 @@ def _local_branch_exists(self: Any, branch: str, *, cwd: Path, env: dict[str, st
         timeout=30.0,
     )
     return _returncode(result) == 0
+
+
+def _import_git_env(self: Any) -> dict[str, str]:
+    env = self._command_env(port=0)
+    runtime_env = getattr(self, "env", {})
+    for key in GIT_AUTH_ENV_KEYS:
+        value = runtime_env.get(key) or os.environ.get(key)
+        if value:
+            env[key] = value
+    return env
 
 
 def _git_output(self: Any, command: list[str], *, cwd: Path, env: dict[str, str]) -> str:
