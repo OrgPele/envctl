@@ -26,7 +26,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
             )
             rt = self._runtime(repo, runtime, env={"HOME": tmpdir})
 
-            prompt_text, error = workflow._resolve_preset_submission_text(
+            prompt_text, error = workflow_prompt_support._resolve_preset_submission_text(
                 rt,
                 launch_config=launch_config,
                 cli="opencode",
@@ -48,7 +48,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
             env={},
             process_runner=_RecordingRunner(),
         )
-        step = workflow._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")
+        step = _PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")
 
         prompt_text, error = _workflow_step_prompt_text(
             runtime,
@@ -89,7 +89,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
                 env={},
                 process_runner=_RecordingRunner(),
             )
-            step = workflow._PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")
+            step = _PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task")
             worktree = CreatedPlanWorktree(name="feature-a-1", root=worktree_root, plan_file="feature-a.md")
 
             prompt_text, error = _workflow_step_prompt_text(
@@ -116,7 +116,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
             env={},
             process_runner=_RecordingRunner(),
         )
-        prompt_text, error = workflow._resolve_preset_submission_text(
+        prompt_text, error = workflow_prompt_support._resolve_preset_submission_text(
             runtime,
             launch_config=_launch_config_for_tests(cli="codex"),
             cli="codex",
@@ -162,7 +162,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
                 ulw_suffix=False,
             )
 
-            prompt_text, error = workflow._resolve_preset_submission_text(
+            prompt_text, error = workflow_prompt_support._resolve_preset_submission_text(
                 runtime,
                 launch_config=launch_config,
                 cli="opencode",
@@ -199,7 +199,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
             ulw_suffix=False,
         )
 
-        prompt_text, error = workflow._resolve_preset_submission_text(
+        prompt_text, error = workflow_prompt_support._resolve_preset_submission_text(
             runtime,
             launch_config=launch_config,
             cli="opencode",
@@ -240,7 +240,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
                 ulw_suffix=False,
             )
 
-            prompt_text, error = workflow._resolve_preset_submission_text(
+            prompt_text, error = workflow_prompt_support._resolve_preset_submission_text(
                 runtime,
                 launch_config=launch_config,
                 cli="opencode",
@@ -278,7 +278,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
             ulw_suffix=True,
         )
 
-        prompt_text, error = workflow._resolve_preset_submission_text(
+        prompt_text, error = workflow_prompt_support._resolve_preset_submission_text(
             runtime,
             launch_config=launch_config,
             cli="opencode",
@@ -315,7 +315,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
             ulw_suffix=False,
         )
 
-        prompt_text, error = workflow._resolve_preset_submission_text(
+        prompt_text, error = workflow_prompt_support._resolve_preset_submission_text(
             runtime,
             launch_config=launch_config,
             cli="opencode",
@@ -326,7 +326,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
         self.assertEqual(error, "prompt_resolution_failed: ulw_loop_prefix_requires_direct_prompt")
 
     def test_shape_prompt_text_rejects_multiple_slash_commands_for_direct_prompts(self) -> None:
-        shaped, error = workflow._shape_prompt_text(
+        shaped, error = workflow_prompt_support._shape_prompt_text(
             "/implement_task",
             direct_prompt=True,
             ulw_loop_prefix=True,
@@ -337,7 +337,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
         self.assertEqual(error, "prompt_resolution_failed: multiple_slash_commands_not_allowed")
 
     def test_shape_prompt_text_rejects_embedded_second_slash_command_for_direct_prompts(self) -> None:
-        shaped, error = workflow._shape_prompt_text(
+        shaped, error = workflow_prompt_support._shape_prompt_text(
             "Implement this directly.\n/implement_task",
             direct_prompt=True,
             ulw_loop_prefix=True,
@@ -348,7 +348,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
         self.assertEqual(error, "prompt_resolution_failed: multiple_slash_commands_not_allowed")
 
     def test_shape_prompt_text_preserves_existing_ulw_loop_prefix_and_allows_suffix(self) -> None:
-        shaped, error = workflow._shape_prompt_text(
+        shaped, error = workflow_prompt_support._shape_prompt_text(
             "/ulw-loop Implement this directly.",
             direct_prompt=True,
             ulw_loop_prefix=True,
@@ -359,7 +359,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
         self.assertEqual(shaped, "/ulw-loop Implement this directly. ulw")
 
     def test_shape_prompt_text_allows_absolute_path_literals_in_direct_prompts(self) -> None:
-        shaped, error = workflow._shape_prompt_text(
+        shaped, error = workflow_prompt_support._shape_prompt_text(
             'Review bundle: "/tmp/review.md"\nWorktree directory: "/tmp/tree"',
             direct_prompt=True,
             ulw_loop_prefix=True,
@@ -371,7 +371,7 @@ class PlanAgentLaunchWorkflowPromptTests(PlanAgentLaunchSupportTestCase):
         self.assertIn('Review bundle: "/tmp/review.md"', shaped)
 
     def test_review_prompt_arguments_preserve_newlines_for_direct_codex_submission(self) -> None:
-        rendered = workflow._review_prompt_arguments(
+        rendered = workflow_review_support._review_prompt_arguments(
             project_name="feature-a-1",
             project_root=Path("/tmp/worktree path"),
             review_bundle_path=Path("/tmp/review bundle.md"),

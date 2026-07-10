@@ -31,11 +31,11 @@ from envctl_engine.planning.plan_agent.superset_goal_agent_support import (
     write_superset_codex_goal_launcher,
 )
 import envctl_engine.planning.plan_agent.superset_worktree_launch_support as superset_worktree_launch_support
-from envctl_engine.planning.plan_agent.workflow import (
+from envctl_engine.planning.plan_agent.workflow_runtime_support import (
     _codex_goal_text_for_worktree,
     _emit_codex_goal_event,
-    _workflow_step_prompt_text,
 )
+from envctl_engine.planning.plan_agent.workflow_prompt_support import _workflow_step_prompt_text
 
 
 _ensure_superset_codex_goal_agent = ensure_superset_codex_goal_agent

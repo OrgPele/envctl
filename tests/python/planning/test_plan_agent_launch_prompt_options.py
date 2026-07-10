@@ -48,7 +48,7 @@ class PlanAgentLaunchPromptOptionsTests(PlanAgentLaunchSupportTestCase):
                 )
                 rt = self._runtime(repo, runtime, env={"HOME": tmpdir})
 
-                prompt_text, error = workflow._resolve_preset_submission_text(
+                prompt_text, error = workflow_prompt_support._resolve_preset_submission_text(
                     rt,
                     launch_config=launch_config,
                     cli="opencode",

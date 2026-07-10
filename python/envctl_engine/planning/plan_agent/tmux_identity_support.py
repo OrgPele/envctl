@@ -9,7 +9,7 @@ from envctl_engine.runtime.codex_tmux_support import (
 )
 
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
-from envctl_engine.planning.plan_agent.workflow import _tab_title_for_worktree
+from envctl_engine.planning.plan_agent.workflow_build import _tab_title_for_worktree
 
 
 def tmux_session_name_for_worktree(repo_root: Path, worktree: CreatedPlanWorktree, *, cli: str) -> str:

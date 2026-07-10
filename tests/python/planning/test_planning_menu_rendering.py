@@ -118,6 +118,7 @@ class PlanningMenuRenderingTests(unittest.TestCase):
             patch("sys.stdin.fileno", return_value=7),
             patch("termios.tcgetattr", return_value=[0, 0, 0, 0, 0, 0]),
             patch("termios.tcsetattr"),
+            patch("termios.tcflush"),
             patch("tty.setraw"),
             patch("os.read", return_value=b"\n"),
             patch.object(PlanningSelectionMenu, "flush_pending_input") as flush_mock,

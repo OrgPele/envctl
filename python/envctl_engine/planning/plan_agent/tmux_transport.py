@@ -44,7 +44,7 @@ from envctl_engine.planning.plan_agent.tmux_session import (
     _prompt_existing_tmux_session_action,
     _should_prompt_existing_tmux_session,
 )
-from envctl_engine.planning.plan_agent.workflow import (
+from envctl_engine.planning.plan_agent.workflow_runtime_support import (
     _codex_goal_text_for_worktree,
     _emit_codex_goal_event,
     _wrap_omx_initial_prompt_for_workflow,
