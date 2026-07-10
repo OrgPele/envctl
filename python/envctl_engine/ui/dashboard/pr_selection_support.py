@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 from typing import Any, Callable, cast
 
-from envctl_engine.actions.project_action_domain import detect_default_branch
+from envctl_engine.actions.project_action_domain import detect_pr_base_branch
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.dashboard.pr_flow import run_pr_flow
@@ -83,7 +83,7 @@ def default_pr_base_branch(
     owner: Any,
     runtime: Any,
     *,
-    detect_default_branch_fn: Callable[[Path], str] = detect_default_branch,
+    detect_default_branch_fn: Callable[[Path], str] = detect_pr_base_branch,
     pr_git_root_fn: Callable[[Any, Any], Path] = pr_git_root,
 ) -> str:
     git_root = pr_git_root_fn(owner, runtime)

@@ -31,7 +31,7 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch(
                     "envctl_engine.actions.project_action_domain.existing_pr_url",
@@ -93,7 +93,7 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
                 patch("envctl_engine.actions.project_action_domain.probe_dirty_worktree") as dirty_probe,
@@ -144,7 +144,7 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
                 patch("envctl_engine.actions.project_action_domain.probe_dirty_worktree") as dirty_probe,
@@ -221,7 +221,7 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
@@ -300,7 +300,7 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
@@ -367,7 +367,7 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
@@ -429,7 +429,7 @@ class ActionsCliPrTests(unittest.TestCase):
 
             with (
                 patch.dict(os.environ, {"ENVCTL_PR_BODY": "Typed PR body\n\nWith details."}, clear=False),
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
@@ -493,7 +493,7 @@ class ActionsCliPrTests(unittest.TestCase):
                 patch.dict(os.environ, {"ENVCTL_ACTION_INTERACTIVE": "1"}, clear=False),
                 patch("sys.stdin.isatty", return_value=True),
                 patch("builtins.input", side_effect=AssertionError("input() should not be called for pr action")),
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
@@ -551,7 +551,7 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
@@ -600,7 +600,7 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
@@ -657,7 +657,7 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),

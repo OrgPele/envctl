@@ -42,6 +42,28 @@ class ActionGitStateSupportTests(unittest.TestCase):
 
         self.assertEqual(git_state.detect_default_branch(Path("/repo"), git_output=local_main), "main")
 
+    def test_detect_pr_base_branch_prefers_remote_or_local_dev_then_main_then_master(self) -> None:
+        def resolve(existing_refs: set[str], remote_heads: set[str] | None = None) -> str:
+            def fake_git_output(_git_root: Path, args: list[str]) -> str:
+                if args[:2] == ["ls-remote", "--heads"]:
+                    return "".join(
+                        f"abc123\trefs/heads/{branch}\n" for branch in sorted(remote_heads or set())
+                    )
+                self.assertEqual(args[:2], ["rev-parse", "--verify"])
+                return "abc123\n" if args[2] in existing_refs else ""
+
+            return git_state.detect_pr_base_branch(Path("/repo"), git_output=fake_git_output)
+
+        self.assertEqual(resolve({"origin/dev", "origin/main", "origin/master"}), "dev")
+        self.assertEqual(resolve({"dev", "origin/main"}), "dev")
+        self.assertEqual(resolve({"origin/main", "origin/master"}), "main")
+        self.assertEqual(resolve({"main", "origin/master"}), "main")
+        self.assertEqual(resolve({"origin/master"}), "master")
+        self.assertEqual(resolve({"master"}), "master")
+        self.assertEqual(resolve(set()), "master")
+        self.assertEqual(resolve({"origin/main"}, {"dev", "main"}), "dev")
+        self.assertEqual(resolve({"dev"}, {"main"}), "dev")
+
     def test_existing_pr_url_uses_gh_pr_list_for_open_branch(self) -> None:
         calls: list[tuple[list[str], str]] = []
 

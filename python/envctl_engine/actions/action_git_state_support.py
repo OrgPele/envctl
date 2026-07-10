@@ -80,6 +80,32 @@ def detect_default_branch(git_root: Path, *, git_output: Callable[[Path, list[st
     return "main"
 
 
+def detect_pr_base_branch(git_root: Path, *, git_output: Callable[[Path, list[str]], str]) -> str:
+    remote_heads = git_output(
+        git_root,
+        [
+            "ls-remote",
+            "--heads",
+            "origin",
+            "refs/heads/dev",
+            "refs/heads/main",
+            "refs/heads/master",
+        ],
+    )
+    remote_branches = {
+        line.rsplit("refs/heads/", 1)[1].strip()
+        for line in remote_heads.splitlines()
+        if "refs/heads/" in line
+    }
+    for candidate in ("dev", "main", "master"):
+        if candidate in remote_branches:
+            return candidate
+        for ref in (f"origin/{candidate}", candidate):
+            if git_output(git_root, ["rev-parse", "--verify", ref]).strip():
+                return candidate
+    return "master"
+
+
 def existing_pr_url(
     git_root: Path,
     branch: str,
