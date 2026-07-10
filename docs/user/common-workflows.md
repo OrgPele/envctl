@@ -212,6 +212,33 @@ This is especially useful:
 - before CI or agent automation
 - when debugging resume surprises
 
+## Run the Same System in Docker
+
+Use `--docker` to preserve envctl's main/trees, selective-service, dependency, dashboard, health,
+logs, restart, and stop workflows while replacing app host processes with managed containers:
+
+```bash
+envctl start --main --entire-system --docker --headless
+envctl start --trees --entire-system --isolated-deps --docker --headless
+```
+
+If a service directory contains a `Dockerfile`, envctl builds it with Docker's layer cache. Otherwise,
+configure an existing image with `ENVCTL_BACKEND_DOCKER_IMAGE`, `ENVCTL_FRONTEND_DOCKER_IMAGE`, or
+the corresponding prefix for an additional app service. Production-oriented images commonly need
+`ENVCTL_<SERVICE>_DOCKER_COMMAND` and `ENVCTL_<SERVICE>_DOCKER_PORT` so the service listens on
+`0.0.0.0` at the expected container port.
+
+```bash
+envctl endpoints --json
+envctl health --json
+envctl logs --project Main --service backend
+envctl restart --project Main --service backend --docker --headless
+envctl stop --project Main --entire-system
+```
+
+See [Configuration: Docker application runtime](../reference/configuration.md#docker-application-runtime)
+for image, Dockerfile, command, port, workdir, target, and cache-policy settings.
+
 ## Debug a Bad Interactive Session
 
 Use this when the issue is in the dashboard, selector, spinner, or input flow.

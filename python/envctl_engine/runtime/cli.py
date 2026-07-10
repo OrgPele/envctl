@@ -80,6 +80,8 @@ def _effective_prereq_mode(route: Route) -> str:
 
 
 def _requires_docker(mode: str, config: EngineConfig, *, route: Route | None = None) -> bool:
+    if route is not None and bool(route.flags.get("docker")):
+        return True
     if route is not None and route.flags.get("launch_dependencies") is False:
         return False
     if effective_dependency_scope(route, mode) == "shared" and mode == "trees":

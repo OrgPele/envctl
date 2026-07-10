@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.docker_service_runtime import state_uses_docker_services
 from envctl_engine.runtime.runtime_context import resolve_port_allocator, resolve_process_runtime
 from envctl_engine.shared.services import service_project_name, service_slug_from_record
 from envctl_engine.startup.startup_selection_support import (
@@ -77,6 +78,9 @@ def restart_prestop_state(*, route: Route, runtime: Any) -> RestartPrestopState:
             run_id=resumed.run_id,
         )
         resumed = None
+    if resumed is not None and state_uses_docker_services(resumed):
+        route.flags["docker"] = True
+        runtime.env["DOCKER_MODE"] = "true"
     fallback_route = None
     if resumed is None:
         fallback_route = restart_fallback_start_route(route, restart_lookup_mode=restart_lookup_mode)

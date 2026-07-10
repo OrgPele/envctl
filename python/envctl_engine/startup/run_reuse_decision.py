@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
 from envctl_engine.startup.run_reuse_identity import (
+    ProjectIdentity,
     _auto_resume_start_enabled,
     _identity_keys,
     _root_mismatches,
@@ -57,6 +58,21 @@ class RunReuseEvaluator:
                 startup_enabled=startup_enabled,
             )
         if not _auto_resume_start_enabled(self.route):
+            if bool(self.route.flags.get("no_resume")):
+                candidate = self.runtime._try_load_existing_state(
+                    mode=self.runtime_mode,
+                    strict_mode_match=True,
+                )
+                if candidate is not None:
+                    state_identities = project_identities_from_state(self.runtime, candidate)
+                    return RunReuseDecision(
+                        candidate_state=candidate,
+                        decision_kind="fresh_run",
+                        reason="explicit_no_resume",
+                        selected_projects=selected_payload,
+                        state_projects=identities_to_payload(state_identities),
+                        startup_enabled=startup_enabled,
+                    )
             return self._fresh_without_state(
                 reason="auto_resume_disabled",
                 selected_payload=selected_payload,
@@ -97,7 +113,7 @@ class RunReuseEvaluator:
         self,
         *,
         candidate: RunState,
-        selected_identities: list[object],
+        selected_identities: list[ProjectIdentity],
         selected_payload: list[dict[str, str | None]],
         startup_enabled: bool,
     ) -> RunReuseDecision:
@@ -200,7 +216,11 @@ class RunReuseEvaluator:
             )
         return None
 
-    def _startup_identity_mismatch(self, candidate: RunState, state_identities: list[object]) -> dict[str, object]:
+    def _startup_identity_mismatch(
+        self,
+        candidate: RunState,
+        state_identities: list[ProjectIdentity],
+    ) -> dict[str, object]:
         previous_identity = candidate.metadata.get("startup_identity")
         if not isinstance(previous_identity, dict):
             return {}
@@ -316,10 +336,7 @@ class RunReuseEvaluator:
 def mark_run_reused(metadata: Mapping[str, object] | None, *, reason: str) -> dict[str, object]:
     updated = dict(metadata or {})
     raw_count = updated.get("run_reuse_count", 0)
-    try:
-        count = int(raw_count)
-    except (TypeError, ValueError):
-        count = 0
+    count = int(raw_count) if isinstance(raw_count, (bool, float, int, str)) else 0
     updated["run_reuse_count"] = max(0, count) + 1
     updated["last_reopened_at"] = datetime.now(tz=UTC).isoformat()
     updated["last_reuse_reason"] = reason

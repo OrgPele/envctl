@@ -194,6 +194,31 @@ class RunReuseSupportTests(unittest.TestCase):
             {"Main Backend"},
         )
 
+    def test_unfiltered_explicit_no_resume_replaces_tracked_removed_additional_services(self) -> None:
+        route = Route(command="start", mode="main", raw_args=[], flags={"no_resume": True})
+        state = SimpleNamespace(
+            services={
+                "Main Backend": SimpleNamespace(name="Main Backend", project="Main", type="backend"),
+                "Main Old Worker": SimpleNamespace(
+                    name="Main Old Worker",
+                    project="Main",
+                    type="old-worker",
+                    service_slug="old-worker",
+                ),
+            }
+        )
+
+        selected = fresh_start_replacement_services(
+            route=route,
+            selected_contexts=[SimpleNamespace(name="Main")],
+            candidate_state=state,
+            configured_service_types={"backend"},
+            additional_services=(),
+            project_name_from_service=lambda _name: "Main",
+        )
+
+        self.assertEqual(selected, {"Main Backend", "Main Old Worker"})
+
     def test_replace_existing_project_services_for_fresh_start_terminates_selected_services_and_orphans(self) -> None:
         route = Route(command="start", mode="trees", raw_args=["start"], flags={})
         session = SimpleNamespace(effective_route=route, runtime_mode="trees")
@@ -241,6 +266,73 @@ class RunReuseSupportTests(unittest.TestCase):
         )
         self.assertEqual(terminated, [(candidate_state, {"Main Backend", "Main Frontend"}, False, True)])
         self.assertEqual(orphaned, [(candidate_state, {"Main Backend", "Main Frontend"}, True)])
+
+    def test_explicit_no_resume_terminates_tracked_services_before_fresh_start(self) -> None:
+        route = Route(command="start", mode="main", raw_args=["start", "--no-resume"], flags={"no_resume": True})
+        session = SimpleNamespace(effective_route=route, runtime_mode="main")
+        candidate_state = SimpleNamespace(run_id="run-existing")
+        progress: list[str] = []
+        terminated: list[set[str]] = []
+
+        replace_existing_project_services_for_fresh_start(
+            runtime=SimpleNamespace(
+                _emit=lambda *args, **kwargs: None,
+                _terminate_services_from_state=lambda _state, *, selected_services, **_kwargs: terminated.append(
+                    set(selected_services)
+                ),
+            ),
+            session=session,
+            candidate_state=candidate_state,
+            reason="explicit_no_resume",
+            fresh_start_replacement_services=lambda _session, *, candidate_state: {"Main Backend"},
+            announce_session_identifiers=lambda _session: None,
+            report_progress=lambda _route, message: progress.append(message),
+            terminate_restart_orphan_listeners=lambda **_kwargs: None,
+        )
+
+        self.assertEqual(terminated, [{"Main Backend"}])
+        self.assertEqual(progress, ["Fresh start requested; replacing 1 existing service(s)..."])
+
+    def test_explicit_no_resume_rebinds_reserved_plan_to_released_service_port(self) -> None:
+        route = Route(command="start", mode="main", raw_args=["start", "--no-resume"], flags={"no_resume": True})
+        backend_plan = SimpleNamespace(assigned=8001, final=8001, source="retry")
+        context = SimpleNamespace(name="Main", ports={"backend": backend_plan})
+        session = SimpleNamespace(effective_route=route, runtime_mode="main", selected_contexts=[context])
+        service = SimpleNamespace(
+            name="Main Backend",
+            project="Main",
+            type="backend",
+            service_slug="backend",
+            listener_expected=True,
+            actual_port=8000,
+            requested_port=8000,
+        )
+        candidate_state = SimpleNamespace(run_id="run-existing", services={"Main Backend": service})
+        calls: list[tuple[str, int, str]] = []
+        planner = SimpleNamespace(
+            release=lambda port, *, owner: calls.append(("release", port, owner)),
+        )
+        runtime = SimpleNamespace(
+            port_planner=planner,
+            _emit=lambda *args, **kwargs: None,
+            _project_name_from_service=lambda _name: "Main",
+            _terminate_services_from_state=lambda *args, **kwargs: None,
+        )
+
+        replace_existing_project_services_for_fresh_start(
+            runtime=runtime,
+            session=session,
+            candidate_state=candidate_state,
+            reason="explicit_no_resume",
+            fresh_start_replacement_services=lambda _session, *, candidate_state: {"Main Backend"},
+            announce_session_identifiers=lambda _session: None,
+            report_progress=lambda _route, _message: None,
+            terminate_restart_orphan_listeners=lambda **_kwargs: None,
+        )
+
+        self.assertEqual(calls, [("release", 8001, "Main:backend")])
+        self.assertEqual((backend_plan.assigned, backend_plan.final), (8000, 8000))
+        self.assertEqual(backend_plan.source, "fresh_start_replacement")
 
     def test_replace_existing_project_services_for_fresh_start_skips_non_mismatch_or_dependencies_scope(self) -> None:
         runtime = SimpleNamespace(_emit=lambda *args, **kwargs: self.fail("replace should not emit"))

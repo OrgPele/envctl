@@ -5,7 +5,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 import unittest
+from unittest.mock import patch
 
+from envctl_engine.runtime.docker_service_runtime import DockerServiceLaunch
+from envctl_engine.runtime.service_manager import ServiceManager
 from envctl_engine.runtime.service_manager import ServiceStartDescriptor
 from envctl_engine.startup.service_attach_execution import ServiceAttachRunner
 from envctl_engine.startup.service_execution_records import PreparedServiceLaunch
@@ -17,6 +20,76 @@ def port_plan(port: int) -> PortPlan:
 
 
 class ServiceAttachExecutionTests(unittest.TestCase):
+    def test_explicit_docker_mode_launches_and_annotates_container_service(self) -> None:
+        project_root = Path("/tmp/envctl-project")
+        runtime = SimpleNamespace(
+            env={},
+            config=SimpleNamespace(raw={}),
+            services=ServiceManager(),
+            _conflict_remaining={},
+            _emit=lambda event, **payload: None,
+            _service_start_command_resolved=lambda service_name, project_root, port: (
+                ["python", "app.py", "--port", str(port)],
+                "configured",
+            ),
+        )
+        runner = ServiceAttachRunner(
+            runtime=runtime,
+            process_runtime=SimpleNamespace(),
+            port_allocator=SimpleNamespace(reserve_next=lambda port, owner: port),
+            project_name="Main",
+            project_root=project_root,
+            backend_plan=port_plan(8000),
+            frontend_plan=port_plan(5173),
+            backend_cwd=project_root / "backend",
+            frontend_cwd=project_root / "frontend",
+            backend_log_path="/logs/backend.txt",
+            frontend_log_path="/logs/frontend.txt",
+            backend_env_extra={"PORT": "8000"},
+            frontend_env_extra={},
+            command_env_builder=lambda port, extra: {**extra, "PORT": str(port)},
+            prepared_launches={
+                "backend": PreparedServiceLaunch(
+                    service_name="backend",
+                    cwd=project_root / "backend",
+                    log_path="/logs/backend.txt",
+                    requested_port=8000,
+                    env={"PORT": "8000"},
+                    command_source="configured",
+                )
+            },
+            selected_service_types={"backend"},
+            additional_services=(),
+            backend_listener_expected=True,
+            rebound_delta=0,
+            docker_mode=True,
+        )
+        launch = DockerServiceLaunch(
+            container_id="container-id",
+            container_name="envctl-app-main-backend",
+            image="example/backend:dev",
+            log_path="/logs/backend.txt",
+        )
+
+        with (
+            patch(
+                "envctl_engine.startup.service_attach_execution.DockerServiceRuntime.launch",
+                return_value=launch,
+            ) as docker_launch,
+            patch(
+                "envctl_engine.startup.service_attach_execution.DockerServiceRuntime.wait_until_ready",
+                return_value=True,
+            ),
+        ):
+            records = runner.start(attach_parallel=False, on_service_retry=lambda *args: None)
+
+        record = records["Main Backend"]
+        self.assertEqual(record.runtime_kind, "docker")
+        self.assertEqual(record.container_id, "container-id")
+        self.assertEqual(record.container_name, "envctl-app-main-backend")
+        self.assertEqual(record.container_image, "example/backend:dev")
+        docker_launch.assert_called_once()
+
     def test_runner_builds_layered_descriptors_and_preserves_additional_urls(self) -> None:
         project_root = Path("/tmp/envctl-project")
         events: list[tuple[str, dict[str, object]]] = []

@@ -45,6 +45,30 @@ def terminate_services_from_state(
 
 
 def terminate_service_record(runtime: Any, service: object, *, aggressive: bool, verify_ownership: bool) -> bool:
+    if str(getattr(service, "runtime_kind", "process") or "process").lower() == "docker":
+        from envctl_engine.runtime.docker_service_runtime import DockerServiceRuntime
+
+        container = str(
+            getattr(service, "container_id", "") or getattr(service, "container_name", "") or ""
+        ).strip()
+        stopped = DockerServiceRuntime(runtime, runtime.process_runner).stop(container)
+        pid = getattr(service, "pid", None)
+        if isinstance(pid, int) and pid > 0:
+            try:
+                runtime.process_runner.terminate_process_group(
+                    pid,
+                    term_timeout=0.5 if aggressive else 2.0,
+                    kill_timeout=1.0,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        runtime._emit(
+            "service.container.stop",
+            service=getattr(service, "name", "unknown"),
+            container_name=getattr(service, "container_name", None),
+            stopped=stopped,
+        )
+        return stopped
     pid = getattr(service, "pid", None)
     if not isinstance(pid, int) or pid <= 0:
         return True

@@ -26,6 +26,7 @@ LIFECYCLE_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--deps-sequential|--sequential-deps  force managed dependencies to start one at a time",
             "--project <name>        limit startup to selected project/worktree when supported",
             "--no-resume             skip automatic resume of a compatible saved run",
+            "--docker                build/use images and run app services in managed containers",
         ),
         examples=(
             "envctl",
@@ -33,6 +34,7 @@ LIFECYCLE_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "envctl start --trees --entire-system --headless",
             "envctl start --project feature-a-1 --backend --headless",
             "envctl --trees --only-backend --headless",
+            "envctl start --trees --entire-system --docker --headless",
         ),
         related=("restart", "resume", "dashboard", "stop", "health"),
     ),

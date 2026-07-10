@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.docker_service_runtime import state_uses_docker_services
 from envctl_engine.runtime.engine_runtime_startup_support import mark_run_reused
 from envctl_engine.runtime.runtime_context import resolve_state_repository
 from envctl_engine.state.runtime_map import build_runtime_map
@@ -122,6 +123,9 @@ class StartupRunReuseResumeHandler:
         }
         if self._attach_plan_agent_after_resume():
             resume_flags["batch"] = True
+        if state_uses_docker_services(self.candidate_state):
+            resume_flags["docker"] = True
+            self.runtime.env["DOCKER_MODE"] = "true"
         return Route(
             command="resume",
             mode=self.runtime_mode,

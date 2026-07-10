@@ -21,7 +21,7 @@ from envctl_engine.runtime.engine_runtime_artifacts import (  # noqa: E402
 )
 from envctl_engine.runtime.engine_runtime_event_support import persist_events_snapshot  # noqa: E402
 from envctl_engine.runtime.runtime_readiness import RuntimeReadinessResult  # noqa: E402
-from envctl_engine.state.models import PortPlan, RunState  # noqa: E402
+from envctl_engine.state.models import PortPlan, RunState, ServiceRecord  # noqa: E402
 
 
 class EngineRuntimeArtifactsTests(unittest.TestCase):
@@ -58,6 +58,39 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
         rendered = buffer.getvalue()
         self.assertIn("envctl Python engine run summary", rendered)
         self.assertIn("- Main: backend=8000 frontend=9000 db=5432 redis=6379 n8n=5678", rendered)
+
+    def test_print_summary_prefers_preserved_service_truth_over_unused_planned_port(self) -> None:
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                name: PortPlan(project="Main", requested=port, assigned=port, final=port, source="fixed")
+                for name, port in {
+                    "backend": 8001,
+                    "frontend": 9001,
+                    "db": 5432,
+                    "redis": 6379,
+                    "n8n": 5678,
+                }.items()
+            },
+        )
+        state = RunState(
+            run_id="run-restart",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend", type="backend", cwd="/repo/backend", actual_port=8001
+                ),
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend", type="frontend", cwd="/repo/frontend", actual_port=9000
+                ),
+            },
+        )
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            print_summary(SimpleNamespace(), state, [context])
+
+        self.assertIn("- Main: backend=8001 frontend=9000", buffer.getvalue())
 
     def test_write_artifacts_forwards_expected_state_repository_payload(self) -> None:
         captured: dict[str, object] = {}

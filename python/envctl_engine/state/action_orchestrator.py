@@ -216,24 +216,31 @@ class StateActionOrchestrator(StateActionLogSupport, StateActionHealthSupport):
         services_flag = route.flags.get("services")
         project_filters = {name.lower() for name in route.projects}
         project_filters.update(self.runtime.selectors_from_passthrough(route.passthrough_args))
-        selected: set[str] = set()
+        service_selected: set[str] | None = None
+        project_selected: set[str] | None = None
 
         if isinstance(services_flag, list):
+            service_selected = set()
             for raw in services_flag:
                 target = str(raw).strip()
                 if not target:
                     continue
                 for name, service in state.services.items():
                     if service_matches_selector(service, target):
-                        selected.add(name)
+                        service_selected.add(name)
         if project_filters:
+            project_selected = set()
             for name in state.services:
                 project = self.runtime.project_name_from_service(name).lower()
                 if project and project in project_filters:
-                    selected.add(name)
+                    project_selected.add(name)
 
-        if selected:
-            return selected
+        if service_selected is not None and project_selected is not None:
+            return service_selected.intersection(project_selected)
+        if service_selected is not None:
+            return service_selected
+        if project_selected is not None:
+            return project_selected
         if project_filters or (isinstance(services_flag, list) and services_flag):
             return set()
         return None

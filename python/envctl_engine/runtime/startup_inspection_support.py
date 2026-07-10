@@ -84,6 +84,9 @@ class StartupInspectionBuilder:
         payload = {
             "command": getattr(self.startup_route, "command", "start"),
             "mode": self.runtime_mode,
+            "application_runtime": (
+                "docker" if bool(getattr(self.startup_route, "flags", {}).get("docker")) else "process"
+            ),
             "headless": self.batch or not self.can_tty,
             "interactive_tty": self.can_tty,
             "selection": selection_info,

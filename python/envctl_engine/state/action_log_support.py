@@ -219,6 +219,8 @@ class StateActionLogSupport:
             try:
                 with log_path.open("w", encoding="utf-8"):
                     pass
+                if str(getattr(service, "runtime_kind", "process") or "process").lower() == "docker":
+                    Path(f"{log_path}.docker-since").touch()
                 line = f"{service.name}: log cleared at {log_path}"
                 return 1, 0, 0, 0, (
                     None

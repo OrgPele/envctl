@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Callable, Mapping, cast
 
+from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.lifecycle_blast_support import LifecycleBlastCleanupSupport
 from envctl_engine.runtime.engine_runtime_lifecycle_support import release_requirement_ports
 from envctl_engine.runtime.lifecycle_dependency_stop import (
@@ -10,6 +11,7 @@ from envctl_engine.runtime.lifecycle_dependency_stop import (
     release_selected_dependency_components,
     requirements_have_enabled_components,
     select_dependency_components_for_stop,
+    stop_requirement_component_containers,
 )
 from envctl_engine.runtime.lifecycle_service_stop_selection import (
     select_services_for_stop,
@@ -223,6 +225,11 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
                 return 0
 
             for project in list(state.requirements):
+                requirements = state.requirements[project]
+                for definition in dependency_definitions():
+                    component = requirements.component(definition.id)
+                    if bool(component.get("enabled", False)):
+                        self._stop_requirement_component_containers(component)
                 self._release_requirement_ports(state.requirements[project])
                 state.requirements.pop(project, None)
 
@@ -253,7 +260,11 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
             state,
             selected_dependencies,
             release_component_ports_fn=self._release_requirement_component_ports,
+            stop_component_fn=self._stop_requirement_component_containers,
         )
+
+    def _stop_requirement_component_containers(self, component: Mapping[str, object]) -> None:
+        stop_requirement_component_containers(self.runtime, component)
 
     def _release_requirement_component_ports(self, component: Mapping[str, object]) -> None:
         port_allocator = self._port_allocator(self.runtime)
@@ -312,6 +323,11 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
                 aggressive=aggressive,
                 verify_ownership=not aggressive,
             )
+            for requirements in state.requirements.values():
+                for definition in dependency_definitions():
+                    component = requirements.component(definition.id)
+                    if bool(component.get("enabled", False)):
+                        self._stop_requirement_component_containers(component)
 
         if aggressive and self.blast_all_ecosystem_enabled():
             self.blast_all_ecosystem_cleanup(route=route)

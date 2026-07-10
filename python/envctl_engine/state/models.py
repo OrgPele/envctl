@@ -37,6 +37,10 @@ class ServiceRecord:
     failure_detail: str | None = None
     critical: bool = True
     degraded: bool = False
+    runtime_kind: str = "process"
+    container_id: str | None = None
+    container_name: str | None = None
+    container_image: str | None = None
 
 
 @dataclass(slots=True)

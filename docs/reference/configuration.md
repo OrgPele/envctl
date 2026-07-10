@@ -365,6 +365,65 @@ The wizard saves accepted backend/frontend test suggestions to `ENVCTL_BACKEND_T
 | `ENVCTL_WORKTREE_CGC_DATABASE` | `kuzudb` | Backend passed as `--database <value>` to `cgc context create` for generated worktree contexts. |
 
 ## Execution Policy
+
+### Docker application runtime
+
+`envctl ... --docker` preserves normal project selection, port allocation, dependency startup,
+service ordering, state, dashboard, logs, health, restart, and stop behavior, but launches every
+selected app service in a managed container instead of as a host process. Managed dependencies such
+as Postgres, Redis, Supabase, and n8n continue to use their existing Docker adapters.
+
+Settings resolve service-specific keys before global fallbacks. Additional service names are
+uppercased and non-alphanumeric characters become underscores, so `voice-runtime` accepts the
+standard `ENVCTL_SERVICE_VOICE_RUNTIME_*` prefix (and the shorter `ENVCTL_VOICE_RUNTIME_*` alias).
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ENVCTL_<SERVICE>_DOCKER_IMAGE` / `ENVCTL_DOCKER_IMAGE` | unset | Existing image to run. Without a Dockerfile setting, no build runs. |
+| `ENVCTL_<SERVICE>_DOCKERFILE` / `ENVCTL_DOCKERFILE` | discovered | Dockerfile to build; discovery checks the service directory and then project root. |
+| `ENVCTL_<SERVICE>_DOCKER_CONTEXT` / `ENVCTL_DOCKER_CONTEXT` | Dockerfile directory | Build context relative to the project root. |
+| `ENVCTL_<SERVICE>_DOCKER_TARGET` / `ENVCTL_DOCKER_TARGET` | unset | Optional multi-stage build target. |
+| `ENVCTL_<SERVICE>_DOCKER_BUILD_ARGS` / `ENVCTL_DOCKER_BUILD_ARGS` | public frontend env keys | Comma-separated build-arg names or `NAME=value` entries. Named values come from the service env and are not placed on the Docker command line. |
+| `ENVCTL_<SERVICE>_DOCKER_COMMAND` / `ENVCTL_DOCKER_COMMAND` | image command | Explicit command executed inside the container. |
+| `ENVCTL_<SERVICE>_DOCKER_COMMAND_MODE` / `ENVCTL_DOCKER_COMMAND_MODE` | `image` | `image` keeps the image CMD/ENTRYPOINT; `service` translates and runs envctl's normal service command. |
+| `ENVCTL_<SERVICE>_DOCKER_WORKDIR` / `ENVCTL_DOCKER_WORKDIR` | image default | Container working directory. |
+| `ENVCTL_<SERVICE>_DOCKER_PORT` / `ENVCTL_DOCKER_PORT` | single exposed image port or allocated host port | Container-side listener port. |
+| `ENVCTL_<SERVICE>_DOCKER_BUILD_POLICY` / `ENVCTL_DOCKER_BUILD_POLICY` | `cached` | `cached`, `missing`, or `never`. |
+| `ENVCTL_DOCKER_BUILD_TIMEOUT_SECONDS` | `900` | Image build timeout. |
+| `ENVCTL_DOCKER_RUN_TIMEOUT_SECONDS` | `120` | Container creation timeout. |
+
+The default `cached` policy invokes `docker build` with BuildKit enabled on every start. Docker
+evaluates the context and reuses unchanged layers, while changed source cannot accidentally reuse a
+stale whole image. Generated tags are stable for one checkout/worktree, preventing parallel trees
+from racing on one tag. Use `missing` for immutable/prebuilt local tags and `never` when image
+lifecycle is owned outside envctl.
+
+Containers publish only to `127.0.0.1`, carry `io.envctl.*` ownership labels, and persist their ID,
+name, and image in runtime state. Internal URLs and host settings pointing at `localhost` map to
+`host.docker.internal`; browser-facing `VITE_*`, `NEXT_PUBLIC_*`, `PUBLIC_*`, CORS, and frontend URL
+values remain host-facing. Service env passes through a short-lived mode-`0600` file and is not
+rendered into Docker command diagnostics. Normal logs are snapshotted from Docker on demand;
+`logs --follow` creates followers only for that command and tears them down on exit, so application
+runtime state does not depend on long-lived host helper processes.
+
+```dotenv
+ENVCTL_BACKEND_DOCKER_IMAGE=acme/api-dev:latest
+ENVCTL_BACKEND_DOCKER_COMMAND=uvicorn app.main:app --host 0.0.0.0 --port 8000
+ENVCTL_BACKEND_DOCKER_PORT=8000
+
+ENVCTL_FRONTEND_DOCKERFILE=frontend/Dockerfile
+ENVCTL_FRONTEND_DOCKER_CONTEXT=frontend
+ENVCTL_FRONTEND_DOCKER_PORT=5173
+```
+
+```bash
+envctl start --trees --entire-system --docker --headless
+envctl health --json
+envctl logs --project feature-a-1 --service backend
+envctl restart --project feature-a-1 --service backend --docker --headless
+envctl stop --project feature-a-1 --entire-system
+```
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `ENVCTL_SERVICE_ATTACH_PARALLEL` | `true` | Run backend+frontend service attach in parallel when both are selected. |

@@ -28,6 +28,10 @@ class StateRoundtripTests(unittest.TestCase):
                         listener_pids=[12345, 12346],
                         status="running",
                         started_at=1234.5,
+                        runtime_kind="docker",
+                        container_id="sha256:abc",
+                        container_name="envctl-app-tree-alpha-backend",
+                        container_image="envctl/example-backend:dev",
                     )
                 },
                 metadata={"source": "python"},
@@ -40,6 +44,16 @@ class StateRoundtripTests(unittest.TestCase):
             self.assertEqual(loaded.services["Tree Alpha Backend"].actual_port, 8001)
             self.assertEqual(loaded.services["Tree Alpha Backend"].listener_pids, [12345, 12346])
             self.assertEqual(loaded.services["Tree Alpha Backend"].started_at, 1234.5)
+            self.assertEqual(loaded.services["Tree Alpha Backend"].runtime_kind, "docker")
+            self.assertEqual(loaded.services["Tree Alpha Backend"].container_id, "sha256:abc")
+            self.assertEqual(
+                loaded.services["Tree Alpha Backend"].container_name,
+                "envctl-app-tree-alpha-backend",
+            )
+            self.assertEqual(
+                loaded.services["Tree Alpha Backend"].container_image,
+                "envctl/example-backend:dev",
+            )
             self.assertEqual(loaded.metadata["source"], "python")
 
     def test_legacy_shell_state_is_loaded_without_source_execution(self) -> None:

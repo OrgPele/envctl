@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.lifecycle_dependency_stop import (
@@ -8,11 +9,52 @@ from envctl_engine.runtime.lifecycle_dependency_stop import (
     release_selected_dependency_components,
     requirements_have_enabled_components,
     select_dependency_components_for_stop,
+    stop_requirement_component_containers,
 )
 from envctl_engine.state.models import RequirementsResult, RunState
 
 
 class LifecycleDependencyStopTests(unittest.TestCase):
+    def test_entire_system_selects_all_enabled_dependencies_for_requested_project(self) -> None:
+        state = RunState(
+            run_id="run-entire",
+            mode="trees",
+            requirements={
+                "Alpha": RequirementsResult(project="Alpha", redis={"enabled": True}, n8n={"enabled": True}),
+                "Beta": RequirementsResult(project="Beta", redis={"enabled": True}),
+            },
+        )
+        route = Route(command="stop", mode="trees", projects=["Alpha"], flags={"runtime_scope": "entire-system"})
+
+        self.assertEqual(select_dependency_components_for_stop(state, route), {"Alpha": {"redis", "n8n"}})
+
+    def test_stop_requirement_component_removes_direct_and_compose_containers(self) -> None:
+        calls: list[list[str]] = []
+
+        def run(command, **_kwargs):  # noqa: ANN001
+            argv = [str(part) for part in command]
+            calls.append(argv)
+            if argv[:3] == ["docker", "ps", "--all"]:
+                return SimpleNamespace(returncode=0, stdout="one\ntwo\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        runtime = SimpleNamespace(process_runner=SimpleNamespace(run=run))
+        stop_requirement_component_containers(
+            runtime,
+            {"id": "redis", "enabled": True, "container_name": "envctl-redis-alpha"},
+        )
+        stop_requirement_component_containers(
+            runtime,
+            {"id": "supabase", "enabled": True, "container_name": "envctl-supabase-alpha"},
+        )
+
+        self.assertIn(["docker", "rm", "--force", "envctl-redis-alpha"], calls)
+        self.assertIn(
+            ["docker", "ps", "--all", "--quiet", "--filter", "label=com.docker.compose.project=envctl-supabase-alpha"],
+            calls,
+        )
+        self.assertIn(["docker", "rm", "--force", "one", "two"], calls)
+
     def test_select_dependency_components_filters_unknown_projects_dependencies_and_disabled_components(self) -> None:
         state = RunState(
             run_id="run-1",

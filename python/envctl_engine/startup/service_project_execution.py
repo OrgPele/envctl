@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import cast
 
 from envctl_engine.runtime.command_resolution import CommandExists, suggest_service_start_command
+from envctl_engine.runtime.docker_service_runtime import docker_service_mode_enabled
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_process_runtime
 from envctl_engine.startup.startup_selection_support import _restart_service_types_for_project
@@ -302,6 +303,7 @@ def start_project_services_impl(
         return {}
 
     service_started = time.monotonic()
+    use_docker_services = bool(route is not None and route.flags.get("docker")) or docker_service_mode_enabled(rt)
     prepare_backend_duration_ms = 0.0
     prepare_frontend_duration_ms = 0.0
     prepare_backend = "backend" in selected_service_types
@@ -320,28 +322,34 @@ def start_project_services_impl(
 
     def prepare_backend_runtime() -> float:
         started = time.monotonic()
-        rt._prepare_backend_runtime(
-            context=context,
-            backend_cwd=backend_cwd,
-            backend_log_path=backend_log_path,
-            project_env_base=project_env_internal,
-            route=route,
-            backend_env_file=backend_env_file,
-            backend_env_is_default=backend_env_is_default,
-        )
+        if use_docker_services:
+            rt._emit("service.prepare.skipped", project=context.name, service="backend", reason="docker_image")
+        else:
+            rt._prepare_backend_runtime(
+                context=context,
+                backend_cwd=backend_cwd,
+                backend_log_path=backend_log_path,
+                project_env_base=project_env_internal,
+                route=route,
+                backend_env_file=backend_env_file,
+                backend_env_is_default=backend_env_is_default,
+            )
         return round((time.monotonic() - started) * 1000.0, 2)
 
     def prepare_frontend_runtime() -> float:
         started = time.monotonic()
-        rt._prepare_frontend_runtime(
-            context=context,
-            frontend_cwd=frontend_cwd,
-            frontend_log_path=frontend_log_path,
-            project_env_base=frontend_project_env_base,
-            frontend_env_file=frontend_env_file,
-            backend_port=backend_plan.final,
-            route=route,
-        )
+        if use_docker_services:
+            rt._emit("service.prepare.skipped", project=context.name, service="frontend", reason="docker_image")
+        else:
+            rt._prepare_frontend_runtime(
+                context=context,
+                frontend_cwd=frontend_cwd,
+                frontend_log_path=frontend_log_path,
+                project_env_base=frontend_project_env_base,
+                frontend_env_file=frontend_env_file,
+                backend_port=backend_plan.final,
+                route=route,
+            )
         return round((time.monotonic() - started) * 1000.0, 2)
 
     if prepare_backend and prepare_frontend and prep_parallel:
@@ -501,6 +509,8 @@ def start_project_services_impl(
         additional_services=tuple(additional_services),
         backend_listener_expected=backend_listener_expected,
         rebound_delta=rebound_delta,
+        docker_mode=use_docker_services,
+        refresh_cache=bool(route is not None and route.flags.get("refresh_cache")),
     ).start(attach_parallel=attach_parallel, on_service_retry=on_service_retry)
 
     attach_duration_ms = round((time.monotonic() - attach_started) * 1000.0, 2)

@@ -218,6 +218,27 @@ class RestartPrestopSupportTests(unittest.TestCase):
             ],
         )
 
+    def test_restart_prestop_state_inherits_docker_runtime_from_saved_state(self) -> None:
+        route = Route(command="restart", mode="main", raw_args=["restart"], flags={})
+        state = SimpleNamespace(
+            mode="main",
+            run_id="run-docker",
+            metadata={"application_runtime": "docker"},
+            services={},
+        )
+        runtime = SimpleNamespace(
+            env={},
+            _effective_start_mode=lambda route: "main",
+            _try_load_existing_state=lambda *, mode: state,
+            _emit=lambda event, **payload: None,
+        )
+
+        result = restart_prestop_state(route=route, runtime=runtime)
+
+        self.assertIs(result.state, state)
+        self.assertTrue(route.flags["docker"])
+        self.assertEqual(runtime.env["DOCKER_MODE"], "true")
+
     def test_restart_prestop_preservation_splits_services_and_requirements(self) -> None:
         state = SimpleNamespace(
             services={

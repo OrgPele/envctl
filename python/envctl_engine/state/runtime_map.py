@@ -86,6 +86,10 @@ def build_runtime_map_without_projection(state: RunState, *, host: str = "localh
                 "failure_detail": getattr(service, "failure_detail", None),
                 "critical": getattr(service, "critical", True),
                 "degraded": getattr(service, "degraded", False),
+                "runtime_kind": getattr(service, "runtime_kind", "process"),
+                "container_id": getattr(service, "container_id", None),
+                "container_name": getattr(service, "container_name", None),
+                "container_image": getattr(service, "container_image", None),
             }
         if service.type == "backend":
             project_entry["backend_port"] = port
