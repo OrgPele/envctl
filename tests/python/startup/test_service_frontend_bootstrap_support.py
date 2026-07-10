@@ -45,18 +45,29 @@ class ServiceFrontendBootstrapSupportTests(unittest.TestCase):
                 ),
             )
 
-    def test_prepare_frontend_runtime_missing_dependency_error_is_actionable(self) -> None:
+    def test_prepare_frontend_runtime_repairs_missing_direct_dependency(self) -> None:
         class _RuntimeStub:
             def __init__(self) -> None:
                 self.config = SimpleNamespace(raw={})
                 self.env: dict[str, str] = {}
                 self.events: list[dict[str, object]] = []
+                self.process_runner = SimpleNamespace()
 
             def _command_exists(self, executable: str) -> bool:
                 return executable == "npm"
 
             def _emit(self, event: str, **payload: object) -> None:
                 self.events.append({"event": event, **payload})
+
+            def _command_env(self, *, port: int, extra=None):  # noqa: ANN001
+                _ = port
+                return dict(extra or {})
+
+            def _read_env_file_safe(self, path: Path) -> dict[str, str]:
+                return _read_env_file_safe(path)
+
+            def _run_frontend_bootstrap_command(self, **kwargs) -> None:  # noqa: ANN003
+                self.events.append({"event": "bootstrap_command", "command": kwargs["command"]})
 
         with tempfile.TemporaryDirectory() as tmpdir:
             frontend = Path(tmpdir)
@@ -72,18 +83,31 @@ class ServiceFrontendBootstrapSupportTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
             runtime = _RuntimeStub()
 
-            with self.assertRaisesRegex(RuntimeError, "@paddle/paddle-js.*npm install --include=dev"):
-                _prepare_frontend_runtime(
-                    runtime,
-                    context=SimpleNamespace(name="Main", root=frontend.parent),
-                    frontend_cwd=frontend,
-                    frontend_log_path="",
-                    project_env_base={},
-                    frontend_env_file=None,
-                    backend_port=8000,
-                )
+            _prepare_frontend_runtime(
+                runtime,
+                context=SimpleNamespace(name="Main", root=frontend.parent),
+                frontend_cwd=frontend,
+                frontend_log_path="",
+                project_env_base={},
+                frontend_env_file=None,
+                backend_port=8000,
+            )
+
+            self.assertIn(
+                {
+                    "event": "bootstrap_command",
+                    "command": ["npm", "ci", "--include=dev", "--prefer-offline", "--no-audit"],
+                },
+                runtime.events,
+            )
+            dependency_events = [
+                event for event in runtime.events if event.get("event") == "service.bootstrap.dependency_check"
+            ]
+            self.assertEqual(dependency_events[0]["status"], "repairing")
+            self.assertEqual(dependency_events[0]["package"], "@paddle/paddle-js")
 
     def test_prepare_frontend_runtime_bypasses_dependency_check_when_requested(self) -> None:
         class _RuntimeStub:
