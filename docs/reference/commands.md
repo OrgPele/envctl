@@ -265,6 +265,22 @@ Behavior:
 - records GitHub deployments and marks them inactive when previews stop
 - is intended for trusted CI runners with `gh`, `git`, Docker, and envctl available
 
+Integration ownership:
+
+- envctl is the canonical owner of preview event parsing, branch-to-PR
+  matching, worktree lifecycle, runtime cleanup, comments, and deployments;
+  consuming repositories should invoke the installed command instead of
+  vendoring a controller copy
+- the caller workflow should forward `pull_request_target`, feature-branch
+  `push`, `schedule`, and `workflow_dispatch` events through
+  `GITHUB_EVENT_NAME` and `GITHUB_EVENT_PATH`
+- feature-branch `push` events are restricted to open same-repository PRs with
+  the configured preview label; deleted branches, tags, forks, and unmatched
+  branches are ignored
+- install or select the desired envctl revision before invoking the command;
+  this keeps controller rollout/version policy in CI while behavior and tests
+  remain centralized in envctl
+
 
 ## Runtime Resolution Events
 
