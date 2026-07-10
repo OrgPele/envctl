@@ -18,6 +18,8 @@ _ACTION_HANDLER_NAMES = {
     "migrate": "run_migrate_action",
 }
 
+_BULK_MUTATING_COMMANDS = frozenset({"commit", "migrate", "pr", "ship"})
+
 
 class ActionSpinner(Protocol):
     def start(self) -> None: ...
@@ -59,6 +61,12 @@ class ActionCommandExecutor:
             self._emit_finish(1, error=error)
             return 1
 
+        bulk_confirmation_error = self._bulk_confirmation_error(targets)
+        if bulk_confirmation_error is not None:
+            print(bulk_confirmation_error)
+            self._emit_finish(1, error=bulk_confirmation_error)
+            return 1
+
         handler = self._handler()
         if handler is None:
             return self.runtime.unsupported_command(self.route.command)
@@ -69,6 +77,15 @@ class ActionCommandExecutor:
         if not bool(self.route.flags.get("json")):
             self._emit_finish(code)
         return code
+
+    def _bulk_confirmation_error(self, targets: list[object]) -> str | None:
+        if self.route.command not in _BULK_MUTATING_COMMANDS:
+            return None
+        if not bool(self.route.flags.get("all")) or len(targets) <= 1:
+            return None
+        if bool(self.route.flags.get("yes")) or bool(self.route.flags.get("force")):
+            return None
+        return f"{self.route.command} --all targets {len(targets)} projects and requires --yes or --force"
 
     def _execute_special_worktree_command(self) -> int | None:
         if self.route.command == "self-destruct-worktree":

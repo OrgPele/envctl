@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from functools import partial
+from pathlib import Path
 from typing import Any
 
+from envctl_engine.debug.debug_utils import file_lock
 from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
 from envctl_engine.planning.plan_agent.omx_transport import validate_plan_agent_attach_target
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
@@ -50,12 +52,30 @@ from envctl_engine.startup.startup_selection_support import (
     select_start_tree_projects,
     trees_start_selection_required,
 )
+from envctl_engine.shared.parsing import parse_float
 from envctl_engine.ui.debug_snapshot import emit_startup_plan_handoff_snapshot
 from envctl_engine.ui.spinner import spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
 
 def execute_startup_lifecycle(orchestrator: Any, route: Any) -> int:
+    runtime = orchestrator.runtime
+    timeout_raw = runtime.env.get("ENVCTL_STARTUP_LOCK_TIMEOUT_SECONDS") or runtime.config.raw.get(
+        "ENVCTL_STARTUP_LOCK_TIMEOUT_SECONDS"
+    )
+    timeout = max(parse_float(timeout_raw, 3600.0), 1.0)
+    lock_path = Path(runtime.runtime_root) / "locks" / "startup.lock"
+    try:
+        with file_lock(lock_path, timeout=timeout):
+            return _execute_startup_lifecycle_locked(orchestrator, route)
+    except TimeoutError as exc:
+        message = f"Startup could not acquire the repository lifecycle lock: {exc}"
+        runtime._emit("startup.lock.timeout", lock_path=str(lock_path), timeout_seconds=timeout)
+        print(message)
+        return 1
+
+
+def _execute_startup_lifecycle_locked(orchestrator: Any, route: Any) -> int:
     runtime = orchestrator.runtime
     session = create_startup_session(runtime, route)
     finalize_failure = partial(

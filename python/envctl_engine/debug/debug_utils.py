@@ -84,11 +84,6 @@ def file_lock(path: Path, *, timeout: float) -> Iterator[None]:
         except OSError:
             pass
         handle.close()
-        try:
-            if path.exists() and path.stat().st_size == 0:
-                path.unlink()
-        except OSError:
-            pass
 
 
 def debug_env_value(env: dict[str, str], key: str) -> str | None:

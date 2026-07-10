@@ -4,12 +4,26 @@ from pathlib import Path
 import subprocess
 from typing import Any, Callable, cast
 
-from envctl_engine.actions.project_action_domain import detect_pr_base_branch
+from envctl_engine.actions.action_git_state_support import detect_pr_base_branch
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.dashboard.pr_flow import run_pr_flow
 from envctl_engine.ui.dashboard.pr_scope_support import pr_git_root
 from envctl_engine.ui.selector_model import SelectorItem
+
+
+def _dashboard_git_output(git_root: Path, args: list[str]) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(git_root), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _detect_pr_base_branch(git_root: Path) -> str:
+    return detect_pr_base_branch(git_root, git_output=_dashboard_git_output)
 
 
 def apply_pr_selection(owner: Any, route: Route, state: RunState, rt: object) -> Route | None:
@@ -83,7 +97,7 @@ def default_pr_base_branch(
     owner: Any,
     runtime: Any,
     *,
-    detect_default_branch_fn: Callable[[Path], str] = detect_pr_base_branch,
+    detect_default_branch_fn: Callable[[Path], str] = _detect_pr_base_branch,
     pr_git_root_fn: Callable[[Any, Any], Path] = pr_git_root,
 ) -> str:
     git_root = pr_git_root_fn(owner, runtime)

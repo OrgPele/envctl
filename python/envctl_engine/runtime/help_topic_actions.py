@@ -65,7 +65,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
     "pr": CommandHelpTopic(
         command="pr",
         summary="create a pull request for the selected branch/worktree",
-        usage=("envctl pr [--project <name>] [--pr-base <branch>]",),
+        usage=("envctl pr [--project <name>|--all --yes] [--pr-base <branch>]",),
         what_it_does=(
             "resolves the current branch, checks for an existing PR, and creates one with gh or repo helper scripts",
             "commits and pushes dirty worktree changes first using envctl commit behavior when needed",
@@ -73,6 +73,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         ),
         flags=(
             "--project <name>        create PR for selected worktree/project",
+            "--all --yes             explicitly approve creating/updating PRs for every discovered target",
             "--pr-base <branch>      set the target base branch",
             "--interactive           opt into prompts/selection instead of default headless action mode",
         ),
@@ -83,7 +84,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
     "commit": CommandHelpTopic(
         command="commit",
         summary="commit-only fallback that preserves envctl-local control artifacts",
-        usage=("envctl commit [--project <name>|--main] [-m <text>|--commit-message-file <path>]",),
+        usage=("envctl commit [--project <name>|--main|--all --yes] [-m <text>|--commit-message-file <path>]",),
         what_it_does=(
             "use envctl ship for normal AI handoff; reserve commit for commit-only maintenance or fallback flows",
             "stages normal changed paths and intentionally skips protected envctl-local artifacts",
@@ -96,6 +97,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--commit-message-file <path>  read commit message from a file",
             "--project <name>              commit inside selected worktree/project",
             "--main                        target the main checkout",
+            "--all --yes                   explicitly approve committing every discovered target",
         ),
         examples=(
             "envctl commit --main -m 'Ship focused fix'",
@@ -107,7 +109,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
     "ship": CommandHelpTopic(
         command="ship",
         summary="commit, push, create/update PR, and report GitHub checks for the current or selected target",
-        usage=("envctl ship [--project <name>] [-m <text>] [--human]",),
+        usage=("envctl ship [--project <name>|--all --yes] [-m <text>] [--human]",),
         what_it_does=(
             "when run inside a generated worktree, infers that worktree without requiring --project",
             "owns the normal AI handoff flow instead of requiring separate commit, push, or PR commands",
@@ -123,6 +125,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         ),
         flags=(
             "--project <name>        ship one worktree/project",
+            "--all --yes             explicitly approve shipping every discovered target",
             "-m <text>              use explicit commit message text for the commit phase",
             "--json                  compatibility no-op; JSON is the default",
             "--human                 print compact terminal output instead of JSON",
@@ -155,7 +158,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
     "migrate": CommandHelpTopic(
         command="migrate",
         summary="run backend database migrations for selected targets",
-        usage=("envctl migrate [--project <name>|--main|--all]",),
+        usage=("envctl migrate [--project <name>|--main|--all --yes]",),
         what_it_does=(
             "runs the configured/default backend migration command, usually Alembic upgrade head",
             "loads backend env files and reuses saved dependency URLs when a current run exists",
@@ -164,7 +167,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         flags=(
             "--project <name>        migrate one worktree/project",
             "--main                  migrate the main checkout",
-            "--all                   migrate all selected/discovered targets where supported",
+            "--all --yes             explicitly approve migrating all discovered targets",
         ),
         examples=("envctl migrate --project feature-a-1", "envctl migrate --main"),
         aliases=("migration", "migrations", "m", "--migrate"),

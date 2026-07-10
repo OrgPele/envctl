@@ -70,7 +70,6 @@ __all__ = [
     "_unmerged_stage_entries",
     "_write_pr_body_file",
     "detect_default_branch",
-    "detect_pr_base_branch",
     "existing_pr_url",
     "probe_dirty_worktree",
     "resolve_git_root",
@@ -297,10 +296,6 @@ def detect_default_branch(git_root: Path) -> str:
     return git_state_support.detect_default_branch(git_root, git_output=_git_output)
 
 
-def detect_pr_base_branch(git_root: Path) -> str:
-    return git_state_support.detect_pr_base_branch(git_root, git_output=_git_output)
-
-
 def existing_pr_url(git_root: Path, branch: str) -> str:
     return git_state_support.existing_pr_url(
         git_root,
@@ -340,7 +335,7 @@ def _resolve_pr_base_branch(context: ActionProjectContext, git_root: Path) -> st
     explicit = str(context.env.get("ENVCTL_PR_BASE", "")).strip()
     if explicit:
         return explicit
-    return detect_pr_base_branch(git_root)
+    return git_state_support.detect_pr_base_branch(git_root, git_output=_git_output)
 
 
 _resolve_analyze_mode = review_iteration_support.resolve_analyze_mode

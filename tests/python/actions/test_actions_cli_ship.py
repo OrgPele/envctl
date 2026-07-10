@@ -236,7 +236,7 @@ class ActionsCliShipTests(unittest.TestCase):
 
             with (
                 patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
-                patch("envctl_engine.actions.project_action_domain.detect_pr_base_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.git_state_support.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run),
                 patch("envctl_engine.actions.project_action_domain.run_commit_action", return_value=0) as commit_action,

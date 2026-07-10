@@ -110,9 +110,11 @@ def no_target_selected_message(
         return f"No {label} target selected."
     mode = str(route.mode).strip().lower()
     discovery = "envctl --list-trees --json" if mode == "trees" else "envctl --list-targets --main --json"
+    all_selector = "--all --yes" if command in {"commit", "migrate", "pr", "ship"} else "--all"
     return (
         f"No {label} target selected. "
-        f"In headless mode, run '{discovery}' and retry with '--project <name>', '--service <name>', or '--all'."
+        f"In headless mode, run '{discovery}' and retry with '--project <name>', '--service <name>', "
+        f"or '{all_selector}'."
     )
 
 
