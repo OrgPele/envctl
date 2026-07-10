@@ -14,6 +14,7 @@ from envctl_engine.actions.action_target_support import (  # noqa: E402
     action_target_identities,
     action_target_names,
     action_target_names_with_roots,
+    build_action_target_contexts,
     execute_targeted_action,
     emit_action_output,
     projects_for_services,
@@ -50,6 +51,17 @@ class ActionTargetSupportTests(unittest.TestCase):
         self.assertEqual(action_target_names(targets), ["feature-a-1", "missing-root"])
         self.assertEqual(action_target_names_with_roots(targets), ["feature-a-1"])
 
+    def test_build_action_target_contexts_reports_progress_over_valid_targets_only(self) -> None:
+        contexts = build_action_target_contexts(
+            [
+                _Target(name="feature-a-1", root="/repo/trees/feature-a/1"),
+                _Target(name="", root="/repo/trees/invalid/1"),
+                _Target(name="feature-b-1", root="/repo/trees/feature-b/1"),
+            ]
+        )
+
+        self.assertEqual([(context.index, context.total) for context in contexts], [(1, 2), (2, 2)])
+
     def test_projects_for_services_resolves_from_state_and_deduplicates(self) -> None:
         state = SimpleNamespace(
             services={
@@ -66,6 +78,29 @@ class ActionTargetSupportTests(unittest.TestCase):
         resolved = projects_for_services(runtime, ["service:backend", "feature-a-1 frontend", "worker"])
 
         self.assertEqual(resolved, ["feature-a-1", "feature-b-1"])
+
+    def test_projects_for_services_resolves_all_projects_for_shared_service_type_once(self) -> None:
+        state = SimpleNamespace(
+            services={
+                "feature-a-1 Worker": SimpleNamespace(type="worker"),
+                "feature-b-1 Worker": SimpleNamespace(type="worker"),
+            }
+        )
+        mapped: list[str] = []
+
+        def project_name_from_service(name: str) -> str:
+            mapped.append(name)
+            return name.split()[0] if name.startswith("feature-") else ""
+
+        runtime = SimpleNamespace(
+            load_existing_state=lambda mode: state if mode == "trees" else None,
+            project_name_from_service=project_name_from_service,
+        )
+
+        resolved = projects_for_services(runtime, ["worker", "service:worker"])
+
+        self.assertEqual(resolved, ["feature-a-1", "feature-b-1"])
+        self.assertEqual(mapped, ["feature-a-1 Worker", "feature-b-1 Worker"])
 
     def test_resolve_action_targets_uses_single_candidate_without_prompt(self) -> None:
         target = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
@@ -110,6 +145,103 @@ class ActionTargetSupportTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(calls, [{"require_configured_main_root": False, "require_configured_root_match": True}])
 
+    def test_resolve_action_targets_explicit_project_overrides_current_worktree(self) -> None:
+        current = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
+        requested = _Target(name="feature-b-1", root="/tmp/repo/trees/feature-b/1")
+        runtime = SimpleNamespace(
+            discover_projects=lambda mode: [current, requested] if mode == "trees" else [],
+            selectors_from_passthrough=lambda _args: [],
+        )
+        route = parse_route(
+            ["test", "--project", "feature-b-1"],
+            env={"ENVCTL_DEFAULT_MODE": "trees"},
+        )
+
+        selected, error = resolve_action_targets(
+            runtime=runtime,
+            route=route,
+            trees_only=False,
+            resolve_current_worktree_target=lambda **_kwargs: current,
+            interactive_selection_allowed=lambda _route: False,
+            no_target_selected_message=lambda _route: "no target",
+        )
+
+        self.assertEqual(selected, [requested])
+        self.assertIsNone(error)
+
+    def test_resolve_action_targets_unknown_service_does_not_fall_through_to_single_project(self) -> None:
+        target = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
+        runtime = SimpleNamespace(
+            discover_projects=lambda mode: [target] if mode == "trees" else [],
+            selectors_from_passthrough=lambda _args: [],
+            load_existing_state=lambda mode: None,
+            project_name_from_service=lambda _name: "",
+        )
+        route = parse_route(
+            ["test", "--service", "missing-worker"],
+            env={"ENVCTL_DEFAULT_MODE": "trees"},
+        )
+
+        selected, error = resolve_action_targets(
+            runtime=runtime,
+            route=route,
+            trees_only=False,
+            resolve_current_worktree_target=lambda **_kwargs: target,
+            interactive_selection_allowed=lambda _route: False,
+            no_target_selected_message=lambda _route: "no target",
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(error, "No matching targets found for: missing-worker")
+
+    def test_resolve_action_targets_rejects_partial_service_match(self) -> None:
+        target = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
+        state = SimpleNamespace(
+            services={"feature-a-1 Worker": SimpleNamespace(type="worker")}
+        )
+        runtime = SimpleNamespace(
+            discover_projects=lambda mode: [target] if mode == "trees" else [],
+            selectors_from_passthrough=lambda _args: [],
+            load_existing_state=lambda mode: state if mode == "trees" else None,
+            project_name_from_service=lambda name: name.split()[0] if name.startswith("feature-") else "",
+        )
+        route = parse_route(
+            ["test", "--service", "worker", "--service", "misspelled"],
+            env={"ENVCTL_DEFAULT_MODE": "trees"},
+        )
+
+        selected, error = resolve_action_targets(
+            runtime=runtime,
+            route=route,
+            trees_only=False,
+            resolve_current_worktree_target=lambda **_kwargs: target,
+            interactive_selection_allowed=lambda _route: False,
+            no_target_selected_message=lambda _route: "no target",
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(error, "No matching targets found for: misspelled")
+
+    def test_resolve_action_targets_untested_does_not_auto_select_single_project(self) -> None:
+        target = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
+        runtime = SimpleNamespace(
+            discover_projects=lambda mode: [target] if mode == "trees" else [],
+            selectors_from_passthrough=lambda _args: [],
+        )
+        route = parse_route(["test", "--untested"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+
+        selected, error = resolve_action_targets(
+            runtime=runtime,
+            route=route,
+            trees_only=False,
+            resolve_current_worktree_target=lambda **_kwargs: target,
+            interactive_selection_allowed=lambda _route: False,
+            no_target_selected_message=lambda _route: "no target",
+        )
+
+        self.assertEqual(selected, [])
+        self.assertIsNone(error)
+
     def test_resolve_action_targets_applies_interactive_selection(self) -> None:
         target_a = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
         target_b = _Target(name="feature-b-1", root="/tmp/repo/trees/feature-b/1")
@@ -141,6 +273,29 @@ class ActionTargetSupportTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(calls[0]["prompt"], "Select test target")
         self.assertTrue(calls[0]["allow_untested"])
+
+    def test_resolve_action_targets_rejects_partial_explicit_match(self) -> None:
+        target = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
+        runtime = SimpleNamespace(
+            discover_projects=lambda mode: [target] if mode == "trees" else [],
+            selectors_from_passthrough=lambda _args: [],
+        )
+        route = parse_route(
+            ["test", "--project", "feature-a-1", "--project", "misspelled"],
+            env={"ENVCTL_DEFAULT_MODE": "trees"},
+        )
+
+        selected, error = resolve_action_targets(
+            runtime=runtime,
+            route=route,
+            trees_only=False,
+            resolve_current_worktree_target=lambda **_kwargs: None,
+            interactive_selection_allowed=lambda _route: False,
+            no_target_selected_message=lambda _route: "no target",
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(error, "No matching targets found for: misspelled")
 
     def test_emit_action_output_trims_and_emits_status(self) -> None:
         printed: list[str] = []
@@ -362,6 +517,77 @@ class ActionTargetSupportTests(unittest.TestCase):
             self.assertIn("ship handoff status for Main: checks_pending_timeout", emitted)
             self.assertNotIn("ship action succeeded for Main.", printed)
             self.assertNotIn("ship succeeded for Main", emitted)
+
+    def test_execute_targeted_action_counts_invalid_targets_and_keeps_valid_progress_accurate(self) -> None:
+        printed: list[str] = []
+        emitted: list[str] = []
+
+        code = execute_targeted_action(
+            targets=[
+                _Target(name="", root="/tmp/invalid"),
+                _Target(name="feature-a-1", root="/tmp/feature-a-1"),
+            ],
+            command_name="test",
+            interactive_command=False,
+            resolve_command=lambda context: ActionCommandResolution(command=["true"], cwd=context.root),
+            build_env=lambda _context: {},
+            process_run=lambda _command, _cwd, _env: _Completed(returncode=0),
+            emit_status=emitted.append,
+            printer=printed.append,
+        )
+
+        self.assertEqual(code, 1)
+        self.assertIn("test action skipped 1 invalid target(s) without both a name and root.", printed)
+        self.assertIn("Running test for feature-a-1 (1/1)...", emitted)
+        self.assertIn("test action succeeded for feature-a-1.", printed)
+
+    def test_execute_targeted_action_contains_callback_exception_and_continues_other_targets(self) -> None:
+        targets = [
+            _Target(name="feature-a-1", root="/tmp/feature-a-1"),
+            _Target(name="feature-b-1", root="/tmp/feature-b-1"),
+        ]
+        processed: list[str] = []
+        failures: list[tuple[str, str]] = []
+
+        def build_env(context):  # noqa: ANN001,ANN202
+            if context.name == "feature-a-1":
+                raise RuntimeError("broken environment")
+            return {}
+
+        code = execute_targeted_action(
+            targets=targets,
+            command_name="test",
+            interactive_command=False,
+            resolve_command=lambda context: ActionCommandResolution(command=["true"], cwd=context.root),
+            build_env=build_env,
+            process_run=lambda _command, cwd, _env: processed.append(cwd.name) or _Completed(returncode=0),
+            emit_status=lambda _message: None,
+            printer=lambda _message: None,
+            on_failure=lambda context, error: failures.append((context.name, error)),
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(failures, [("feature-a-1", "RuntimeError: broken environment")])
+        self.assertEqual(processed, ["feature-b-1"])
+
+    def test_execute_targeted_action_rejects_empty_target_list(self) -> None:
+        printed: list[str] = []
+        emitted: list[str] = []
+
+        code = execute_targeted_action(
+            targets=[],
+            command_name="review",
+            interactive_command=False,
+            resolve_command=lambda _context: ActionCommandResolution(command=["true"], cwd=Path("/tmp")),
+            build_env=lambda _context: {},
+            process_run=lambda _command, _cwd, _env: _Completed(returncode=0),
+            emit_status=emitted.append,
+            printer=printed.append,
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(printed, ["review action failed: no targets were provided."])
+        self.assertEqual(emitted, printed)
 
 
 if __name__ == "__main__":
