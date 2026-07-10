@@ -27,6 +27,7 @@ from envctl_engine.planning.plan_agent import (
     tmux_session,
     tmux_transport,
     workflow,
+    workflow_build,
 )
 from envctl_engine.planning.plan_agent.models import _WorkspaceLaunchTarget
 from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree, launch_plan_agent_terminals
@@ -37,9 +38,9 @@ _screen_looks_ready = terminal_screen._screen_looks_ready
 _prompt_submit_screen_looks_ready = terminal_screen._prompt_submit_screen_looks_ready
 _tab_title_for_worktree = workflow._tab_title_for_worktree
 _build_plan_agent_workflow = cast(Any, workflow._build_plan_agent_workflow)
-_finalization_instruction_text = cast(Any, workflow._finalization_instruction_text)
-_first_cycle_completion_instruction_text = cast(Any, workflow._first_cycle_completion_instruction_text)
-_intermediate_cycle_completion_instruction_text = cast(Any, workflow._intermediate_cycle_completion_instruction_text)
+_finalization_instruction_text = cast(Any, workflow_build._finalization_instruction_text)
+_first_cycle_completion_instruction_text = cast(Any, workflow_build._first_cycle_completion_instruction_text)
+_intermediate_cycle_completion_instruction_text = cast(Any, workflow_build._intermediate_cycle_completion_instruction_text)
 _browser_e2e_instruction_text = cast(Any, workflow._browser_e2e_instruction_text)
 _pr_review_comments_instruction_text = cast(Any, workflow._pr_review_comments_instruction_text)
 _wait_for_codex_queue_ready = cast(Any, cmux_transport._wait_for_codex_queue_ready)

@@ -45,17 +45,12 @@ class WorktreeSelectionRuntimeBridge:
         self,
         planning_files: list[str],
         raw_projects: list[tuple[str, Path]],
-        *,
-        persist_memory: bool = True,
     ) -> dict[str, int] | None:
         runtime = self.runtime
         return prompt_planning_selection(
             planning_files=planning_files,
             raw_projects=raw_projects,
-            initial_plan_selected_counts=runtime._initial_plan_selected_counts,
             run_planning_selection_menu=runtime._run_planning_selection_menu,
-            save_plan_selection_memory=runtime._save_plan_selection_memory,
-            persist_memory=persist_memory,
         )
 
     def run_planning_selection_menu(

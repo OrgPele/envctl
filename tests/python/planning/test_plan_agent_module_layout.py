@@ -198,9 +198,11 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
     def test_core_helpers_live_in_owner_modules(self) -> None:
         expected = {
             "config.py": {
-                "_parse_codex_cycles",
                 "resolve_plan_agent_launch_config",
                 "plan_agent_launch_prereq_commands",
+            },
+            "launch_policy.py": {
+                "parse_codex_cycles",
             },
             "launch_evaluation.py": {
                 "PlanAgentLaunchEvaluation",
