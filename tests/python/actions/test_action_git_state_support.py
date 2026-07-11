@@ -71,10 +71,34 @@ class ActionGitStateSupportTests(unittest.TestCase):
         self.assertEqual(resolve({"origin/master"}), "master")
         self.assertEqual(resolve({"master"}), "master")
         self.assertEqual(resolve(set()), "master")
-        self.assertEqual(resolve({"origin/main"}, {"dev", "main"}), "dev")
-        self.assertEqual(resolve({"dev"}, {"main"}), "dev")
+        self.assertEqual(resolve(set(), {"dev", "main"}), "dev")
+        self.assertEqual(resolve(set(), {"main", "master"}), "main")
         self.assertEqual(resolve(set(), origin_default="develop"), "develop")
         self.assertEqual(resolve(set(), origin_default="trunk", symbolic_default=False), "trunk")
+
+    def test_detect_pr_base_branch_does_not_probe_origin_when_local_candidate_exists(self) -> None:
+        calls: list[list[str]] = []
+
+        def local_main(_git_root: Path, args: list[str]) -> str:
+            calls.append(args)
+            if args == ["rev-parse", "--verify", "origin/main"]:
+                return "abc123\n"
+            if args[0] == "ls-remote":
+                raise AssertionError("remote must not be probed when a local base ref is available")
+            return ""
+
+        self.assertEqual(
+            git_state.detect_pr_base_branch(Path("/repo"), git_output=local_main),
+            "main",
+        )
+        self.assertEqual(
+            calls,
+            [
+                ["rev-parse", "--verify", "origin/dev"],
+                ["rev-parse", "--verify", "dev"],
+                ["rev-parse", "--verify", "origin/main"],
+            ],
+        )
 
     def test_existing_pr_url_uses_gh_pr_list_for_open_branch(self) -> None:
         calls: list[tuple[list[str], str]] = []

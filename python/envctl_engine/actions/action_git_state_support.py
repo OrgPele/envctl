@@ -93,6 +93,11 @@ def _origin_default_branch(git_root: Path, *, git_output: Callable[[Path, list[s
 
 
 def detect_pr_base_branch(git_root: Path, *, git_output: Callable[[Path, list[str]], str]) -> str:
+    for candidate in ("dev", "main", "master"):
+        for ref in (f"origin/{candidate}", candidate):
+            if git_output(git_root, ["rev-parse", "--verify", ref]).strip():
+                return candidate
+
     remote_heads = git_output(
         git_root,
         [
@@ -112,9 +117,6 @@ def detect_pr_base_branch(git_root: Path, *, git_output: Callable[[Path, list[st
     for candidate in ("dev", "main", "master"):
         if candidate in remote_branches:
             return candidate
-        for ref in (f"origin/{candidate}", candidate):
-            if git_output(git_root, ["rev-parse", "--verify", ref]).strip():
-                return candidate
     return _origin_default_branch(git_root, git_output=git_output) or "master"
 
 

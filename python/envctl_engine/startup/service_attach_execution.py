@@ -278,6 +278,9 @@ class ServiceAttachRunner:
         if ready:
             return requested if listener_expected else None
         detail = f"container {launch.container_name} exited or did not become ready"
+        cleanup_detail = self._remove_failed_container_launch(service_name, launch)
+        if cleanup_detail:
+            detail = f"{detail}; {cleanup_detail}"
         self.runtime._emit(
             "service.failure",
             project=self.project_name,
@@ -287,6 +290,21 @@ class ServiceAttachRunner:
             detail=detail,
         )
         raise RuntimeError(detail)
+
+    def _remove_failed_container_launch(
+        self,
+        service_name: str,
+        launch: DockerServiceLaunch,
+    ) -> str | None:
+        try:
+            removed = DockerServiceRuntime(self.runtime, self.process_runtime).stop(launch.container_id)
+        except Exception as exc:  # noqa: BLE001 - preserve the launch in state for a later stop retry
+            return f"failed to remove container: {exc}"
+        if not removed:
+            return "failed to remove container"
+        if self._container_launches.get(service_name) == launch:
+            self._container_launches.pop(service_name, None)
+        return None
 
     def _annotate_container_records(self, records: dict[str, ServiceRecord]) -> None:
         for record in records.values():

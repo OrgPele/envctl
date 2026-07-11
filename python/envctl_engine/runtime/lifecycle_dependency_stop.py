@@ -99,6 +99,7 @@ def stop_requirement_component_containers(runtime: Any, component: Mapping[str, 
     if process_runner is None:
         return
     if str(component.get("id") or "").strip().lower() == "supabase":
+        compose_project = _supabase_compose_project(container_name)
         listed = process_runner.run(
             [
                 "docker",
@@ -106,7 +107,7 @@ def stop_requirement_component_containers(runtime: Any, component: Mapping[str, 
                 "--all",
                 "--quiet",
                 "--filter",
-                f"label=com.docker.compose.project={container_name}",
+                f"label=com.docker.compose.project={compose_project}",
             ],
             timeout=30.0,
         )
@@ -125,3 +126,10 @@ def stop_requirement_component_containers(runtime: Any, component: Mapping[str, 
     removed = process_runner.run(["docker", "rm", "--force", container_name], timeout=30.0)
     if removed.returncode != 0 and "No such container" not in str(removed.stderr or ""):
         raise RuntimeError(str(removed.stderr or removed.stdout or f"failed stopping {container_name}").strip())
+
+
+def _supabase_compose_project(container_name: str) -> str:
+    db_container_suffix = "-supabase-db-1"
+    if container_name.endswith(db_container_suffix):
+        return container_name[: -len(db_container_suffix)]
+    return container_name

@@ -32,6 +32,9 @@ _PUBLIC_ENV_PREFIXES = ("VITE_", "NEXT_PUBLIC_", "PUBLIC_")
 _PUBLIC_ENV_KEYS = {
     "BACKEND_CORS_ORIGINS",
     "CORS_ORIGINS",
+    "CORS_ORIGINS_RAW",
+    "ENVCTL_SOURCE_FRONTEND_URL",
+    "FRONTEND_BASE_URL",
     "FRONTEND_URL",
     "PUBLIC_URL",
 }
@@ -538,6 +541,7 @@ class DockerServiceRuntime:
 
     def _container_env(self, values: Mapping[str, str]) -> dict[str, str]:
         result: dict[str, str] = {}
+        browser_facing_keys = self._browser_facing_env_keys()
         for raw_key, raw_value in values.items():
             key = str(raw_key)
             if key in _HOST_ENV_KEYS or key.startswith("TERM_") or key.startswith("LC_"):
@@ -549,7 +553,7 @@ class DockerServiceRuntime:
             }:
                 result[key] = "0.0.0.0"
                 continue
-            if key not in _PUBLIC_ENV_KEYS and not key.startswith(_PUBLIC_ENV_PREFIXES):
+            if key not in browser_facing_keys and not key.startswith(_PUBLIC_ENV_PREFIXES):
                 value = re.sub(
                     r"(://(?:[^/@\s]+@)?)(localhost|127\.0\.0\.1)(?=[:/]|$)",
                     r"\1host.docker.internal",
@@ -561,6 +565,21 @@ class DockerServiceRuntime:
         result["ENVCTL_CONTAINER_RUNTIME"] = "docker"
         result["ENVCTL_HOST_GATEWAY"] = "host.docker.internal"
         return result
+
+    def _browser_facing_env_keys(self) -> set[str]:
+        keys = set(_PUBLIC_ENV_KEYS)
+        runtime_env = getattr(self.runtime, "env", {})
+        config_raw = getattr(getattr(self.runtime, "config", None), "raw", {})
+        cors_key = str(
+            runtime_env.get(
+                "ENVCTL_BACKEND_CORS_ENV_KEY",
+                config_raw.get("ENVCTL_BACKEND_CORS_ENV_KEY", ""),
+            )
+            or ""
+        ).strip()
+        if cors_key:
+            keys.add(cors_key)
+        return keys
 
     def _write_env_file(self, *, project_name: str, service_name: str, values: Mapping[str, str]) -> Path:
         run_dir = Path(self.runtime._run_dir_path(getattr(self.runtime, "_active_run_id", None) or "docker"))

@@ -45,7 +45,11 @@ class LifecycleDependencyStopTests(unittest.TestCase):
         )
         stop_requirement_component_containers(
             runtime,
-            {"id": "supabase", "enabled": True, "container_name": "envctl-supabase-alpha"},
+            {
+                "id": "supabase",
+                "enabled": True,
+                "container_name": "envctl-supabase-alpha-supabase-db-1",
+            },
         )
 
         self.assertIn(["docker", "rm", "--force", "envctl-redis-alpha"], calls)
@@ -83,7 +87,7 @@ class LifecycleDependencyStopTests(unittest.TestCase):
                     "--all",
                     "--quiet",
                     "--filter",
-                    "label=com.docker.compose.project=envctl-feature-supabase-db-1",
+                    "label=com.docker.compose.project=envctl-feature",
                 ],
                 ["docker", "rm", "--force", "envctl-feature-supabase-db-1"],
             ],

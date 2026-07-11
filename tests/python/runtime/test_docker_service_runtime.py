@@ -272,6 +272,33 @@ def test_configured_image_runs_without_build_and_preserves_browser_public_url(tm
     assert launch.image == "example/frontend:dev"
 
 
+def test_container_env_preserves_browser_contract_urls_and_rewrites_internal_urls(tmp_path: Path) -> None:
+    runner = _Runner()
+    runtime, _events = _runtime(
+        tmp_path,
+        runner,
+        env={"ENVCTL_BACKEND_CORS_ENV_KEY": "ALLOWED_BROWSER_ORIGINS"},
+    )
+
+    projected = DockerServiceRuntime(runtime, runner)._container_env(
+        {
+            "FRONTEND_BASE_URL": "http://localhost:5173",
+            "ENVCTL_SOURCE_FRONTEND_URL": "http://127.0.0.1:5173",
+            "CORS_ORIGINS_RAW": "http://localhost:5173,http://127.0.0.1:5173",
+            "ALLOWED_BROWSER_ORIGINS": "http://localhost:5173",
+            "DATABASE_URL": "postgres://user:pass@localhost:5432/app",
+            "REDIS_URL": "redis://127.0.0.1:6379/0",
+        }
+    )
+
+    assert projected["FRONTEND_BASE_URL"] == "http://localhost:5173"
+    assert projected["ENVCTL_SOURCE_FRONTEND_URL"] == "http://127.0.0.1:5173"
+    assert projected["CORS_ORIGINS_RAW"] == "http://localhost:5173,http://127.0.0.1:5173"
+    assert projected["ALLOWED_BROWSER_ORIGINS"] == "http://localhost:5173"
+    assert projected["DATABASE_URL"] == "postgres://user:pass@host.docker.internal:5432/app"
+    assert projected["REDIS_URL"] == "redis://host.docker.internal:6379/0"
+
+
 def test_remote_image_is_pulled_before_exposed_port_detection(tmp_path: Path) -> None:
     runner = _Runner()
     image = "example/frontend:remote"

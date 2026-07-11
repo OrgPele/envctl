@@ -106,6 +106,100 @@ class ServiceAttachExecutionTests(unittest.TestCase):
         )
         self.assertEqual(resolved_calls, [{"service_name": "backend", "project_root": project_root, "port": 8001}])
 
+    def test_failed_optional_docker_readiness_removes_container_before_degrading(self) -> None:
+        project_root = Path("/tmp/envctl-project")
+        optional_service = SimpleNamespace(
+            name="voice-runtime",
+            start_cmd="python voice.py --port {port}",
+            depends_on=(),
+            start_order=25,
+            expect_listener=True,
+            critical=False,
+            env_suffix="VOICE_RUNTIME",
+        )
+        runtime = SimpleNamespace(
+            env={"ENVCTL_VOICE_RUNTIME_DOCKER_IMAGE": "example/voice:dev"},
+            config=SimpleNamespace(
+                raw={},
+                app_service_by_name=lambda name: optional_service if name == "voice-runtime" else None,
+            ),
+            services=ServiceManager(),
+            _conflict_remaining={},
+            _emit=lambda event, **payload: None,
+            _split_command=lambda *args, **kwargs: self.fail("host command resolution must be skipped"),
+        )
+        runner = ServiceAttachRunner(
+            runtime=runtime,
+            process_runtime=SimpleNamespace(),
+            port_allocator=SimpleNamespace(reserve_next=lambda port, owner: port),
+            project_name="Main",
+            project_root=project_root,
+            backend_plan=port_plan(8000),
+            frontend_plan=port_plan(5173),
+            backend_cwd=project_root / "backend",
+            frontend_cwd=project_root / "frontend",
+            backend_log_path="/logs/backend.txt",
+            frontend_log_path="/logs/frontend.txt",
+            backend_env_extra={},
+            frontend_env_extra={},
+            command_env_builder=lambda port, extra: {**extra, "PORT": str(port)},
+            prepared_launches={
+                "voice-runtime": PreparedServiceLaunch(
+                    service_name="voice-runtime",
+                    cwd=project_root / "voice-runtime",
+                    log_path="/logs/voice.txt",
+                    requested_port=8010,
+                    env={"PORT": "8010"},
+                    command_source="configured",
+                )
+            },
+            selected_service_types={"voice-runtime"},
+            additional_services=(optional_service,),
+            backend_listener_expected=True,
+            rebound_delta=0,
+            docker_mode=True,
+        )
+        launch = DockerServiceLaunch(
+            container_id="failed-container-id",
+            container_name="envctl-app-main-voice-runtime",
+            image="example/voice:dev",
+            log_path="/logs/voice.txt",
+        )
+
+        with (
+            patch(
+                "envctl_engine.startup.service_attach_execution.DockerServiceRuntime.launch",
+                return_value=launch,
+            ),
+            patch(
+                "envctl_engine.startup.service_attach_execution.DockerServiceRuntime.wait_until_ready",
+                return_value=False,
+            ),
+            patch(
+                "envctl_engine.startup.service_attach_execution.DockerServiceRuntime.stop",
+                return_value=True,
+            ) as stop_container,
+        ):
+            records = runner.start(attach_parallel=False, on_service_retry=lambda *args: None)
+
+        record = records["Main Voice Runtime"]
+        self.assertEqual(record.status, "degraded")
+        self.assertTrue(record.degraded)
+        self.assertIsNone(record.container_id)
+        self.assertEqual(runner._container_launches, {})
+        stop_container.assert_called_once_with("failed-container-id")
+
+        runner._container_launches["voice-runtime"] = launch
+        with patch(
+            "envctl_engine.startup.service_attach_execution.DockerServiceRuntime.stop",
+            return_value=False,
+        ):
+            self.assertEqual(
+                runner._remove_failed_container_launch("voice-runtime", launch),
+                "failed to remove container",
+            )
+        self.assertEqual(runner._container_launches, {"voice-runtime": launch})
+
     def test_runner_builds_layered_descriptors_and_preserves_additional_urls(self) -> None:
         project_root = Path("/tmp/envctl-project")
         events: list[tuple[str, dict[str, object]]] = []
