@@ -74,9 +74,9 @@ class ActionWorktreeRunnerTests(unittest.TestCase):
         target_resolution_source = (
             REPO_ROOT / "python/envctl_engine/actions/action_worktree_target_resolution.py"
         ).read_text(encoding="utf-8")
-        self_destruct_source = (
-            REPO_ROOT / "python/envctl_engine/actions/action_worktree_self_destruct.py"
-        ).read_text(encoding="utf-8")
+        self_destruct_source = (REPO_ROOT / "python/envctl_engine/actions/action_worktree_self_destruct.py").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn("class ActionWorktreeDeleteRunner", source)
         self.assertIn("return ActionWorktreeDeleteRunner(", source)
@@ -106,9 +106,9 @@ class ActionWorktreeRunnerTests(unittest.TestCase):
             runtime=runtime,
             require_configured_main_root=True,
             current_cwd=lambda: Path("/should/not/be/used"),
-            discover_tree_projects_fn=lambda repo_root, trees_dir_name: [("feature-a-1", tree_root)]
-            if repo_root == repo and trees_dir_name == "trees"
-            else [],
+            discover_tree_projects_fn=lambda repo_root, trees_dir_name: (
+                [("feature-a-1", tree_root)] if repo_root == repo and trees_dir_name == "trees" else []
+            ),
             main_repo_root_for_linked_worktree_fn=lambda _worktree_root: None,
             git_main_repo_root_for_worktree_fn=lambda _worktree_root, trees_dir_name=None: repo,
         )
@@ -305,15 +305,14 @@ class ActionWorktreeRunnerTests(unittest.TestCase):
             calls: list[tuple[str, object]] = []
 
             runtime = SimpleNamespace(
-                _blast_worktree_before_delete=lambda **kwargs: (
-                    calls.append(("cleanup", kwargs)) or ["cleanup warning"]
-                ),
+                _blast_worktree_before_delete=lambda **kwargs: calls.append(("cleanup", kwargs)) or ["cleanup warning"],
                 _trees_root_for_worktree=lambda value: calls.append(("trees_root", value)) or tree_root.parent,
             )
             orchestrator = SimpleNamespace(
                 runtime=runtime,
-                resolve_targets=lambda route, *, trees_only: calls.append(("resolve", (route.command, trees_only)))
-                or ([target], None),
+                resolve_targets=lambda route, *, trees_only: (
+                    calls.append(("resolve", (route.command, trees_only))) or ([target], None)
+                ),
                 _main_repo_root_for_worktree=lambda value: calls.append(("main_repo", value)) or tree_root.parent,
                 _spawn_self_destruct_helper=lambda **kwargs: calls.append(("spawn", kwargs)) or True,
             )

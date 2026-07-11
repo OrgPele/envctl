@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Mapping, cast
 
@@ -208,10 +209,21 @@ class RuntimeStartupFacadeMixin:
     ) -> None:
         runtime_write_runtime_readiness_report(self, run_dir=run_dir, readiness_result=readiness_result)
 
-    def _try_load_existing_state(self, *, mode: str | None = None, strict_mode_match: bool = False) -> RunState | None:
+    def _try_load_existing_state(
+        self,
+        *,
+        mode: str | None = None,
+        strict_mode_match: bool = False,
+        project_names: Sequence[str] | None = None,
+    ) -> RunState | None:
         return cast(
             RunState | None,
-            runtime_try_load_existing_state(self, mode=mode, strict_mode_match=strict_mode_match),
+            runtime_try_load_existing_state(
+                self,
+                mode=mode,
+                strict_mode_match=strict_mode_match,
+                project_names=project_names,
+            ),
         )
 
     def _state_matches_scope(self, state: RunState) -> bool:

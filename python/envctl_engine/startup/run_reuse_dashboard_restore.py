@@ -6,6 +6,7 @@ from typing import Any
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.run_reuse_decision import mark_run_reused
+from envctl_engine.startup.session import metadata_with_state_sources
 
 
 def dashboard_stopped_service_entries(state: object) -> list[dict[str, str]]:
@@ -104,9 +105,12 @@ class DashboardStoppedServiceRestorer:
         stopped_service_names = sorted({entry["name"] for entry in restore_entries})
         stopped_service_types = sorted({entry["type"] for entry in restore_entries})
         target_project_names = sorted({entry["project"] for entry in restore_entries}, key=str.casefold)
-        self.session.base_metadata = metadata_without_dashboard_stopped_services(
-            mark_run_reused(self.candidate_state.metadata, reason="restore_stopped_services"),
-            restored_service_names=set(stopped_service_names),
+        self.session.base_metadata = metadata_with_state_sources(
+            metadata_without_dashboard_stopped_services(
+                mark_run_reused(self.candidate_state.metadata, reason="restore_stopped_services"),
+                restored_service_names=set(stopped_service_names),
+            ),
+            self.candidate_state,
         )
         self.session.preserved_services = dict(self.candidate_state.services)
         self.session.preserved_requirements = dict(self.candidate_state.requirements)

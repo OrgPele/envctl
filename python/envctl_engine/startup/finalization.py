@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.lifecycle_operation_lease import release_lifecycle_operation
 from envctl_engine.startup.finalization_plan_output import (
     format_degraded_handoff_text_for_terminal,
     headless_plan_output_only,
@@ -106,6 +107,7 @@ def finalize_successful_startup(
     artifacts_started = time.monotonic()
     runtime._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
     emit_phase(session, "artifacts_write", artifacts_started, status="ok")
+    release_lifecycle_operation(runtime)
     if requirements_timing_enabled(session.effective_route) and not suppress_timing_output(session.effective_route):
         runtime._emit(
             "startup.debug_tty_group",
@@ -213,13 +215,11 @@ def finalize_successful_startup_with_runtime(
             session=session,
             validate_plan_agent_handoff=validate_plan_agent_handoff,
             attach_plan_agent_terminal=attach_plan_agent_terminal,
-            print_headless_plan_session_summary=lambda session, *, attach_target: (
-                print_headless_plan_session_summary(
-                    session,
-                    validate_plan_agent_handoff=validate_plan_agent_handoff,
-                    print_fn=print_fn,
-                    attach_target=attach_target,
-                )
+            print_headless_plan_session_summary=lambda session, *, attach_target: print_headless_plan_session_summary(
+                session,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
+                print_fn=print_fn,
+                attach_target=attach_target,
             ),
         ),
         finalize_plan_agent_degraded_handoff=lambda session: finalize_plan_agent_degraded_handoff_with_runtime(
@@ -257,13 +257,11 @@ def finalize_plan_agent_degraded_handoff_with_runtime(
             session=session,
             validate_plan_agent_handoff=validate_plan_agent_handoff,
             attach_plan_agent_terminal=attach_plan_agent_terminal,
-            print_headless_plan_session_summary=lambda session, *, attach_target: (
-                print_headless_plan_session_summary(
-                    session,
-                    validate_plan_agent_handoff=validate_plan_agent_handoff,
-                    print_fn=print_fn,
-                    attach_target=attach_target,
-                )
+            print_headless_plan_session_summary=lambda session, *, attach_target: print_headless_plan_session_summary(
+                session,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
+                print_fn=print_fn,
+                attach_target=attach_target,
             ),
         ),
     )
@@ -289,6 +287,7 @@ def finalize_plan_agent_degraded_handoff(
         build_success_run_state=build_success_run_state,
         emit_phase=emit_phase,
     )
+    release_lifecycle_operation(runtime)
     render_plan_agent_degraded_handoff(session)
     if headless_plan_output_only(session):
         return 0

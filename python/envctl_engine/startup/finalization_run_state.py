@@ -101,6 +101,8 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
         metadata["dashboard_shared_dependency_project"] = shared_dependency_project
     if session.warnings:
         metadata["warnings"] = list(session.warnings)
+    if session.unterminated_services:
+        metadata["termination_failed_services"] = sorted(session.unterminated_services)
     if session.plan_agent_launch_result is not None:
         launch_result = session.plan_agent_launch_result
         metadata["plan_agent_launch_status"] = str(getattr(launch_result, "status", "")).strip()
@@ -197,9 +199,7 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
     return run_state
 
 
-def _project_configured_services_metadata(
-    runtime: StartupRuntime, session: StartupSession
-) -> dict[str, list[str]]:
+def _project_configured_services_metadata(runtime: StartupRuntime, session: StartupSession) -> dict[str, list[str]]:
     configured: dict[str, list[str]] = {}
     for context in session.selected_contexts:
         service_types = [

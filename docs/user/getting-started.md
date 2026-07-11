@@ -188,7 +188,7 @@ Why this works well:
 - `explain-startup` shows what the runtime is about to do
 - `--resume` is the fastest normal start path after previous runs
 - `dashboard`, `logs`, and `test` cover the common daily loop
-- `stop-all` gives you a clean shutdown
+- `stop-all` cleanly shuts down tracked app services and releases dependency records/locks; managed Docker dependency stacks and storage remain reusable (use `stop-all --remove-volumes` or `blast-all` to remove them)
 
 If you want a fresh start instead of resume:
 

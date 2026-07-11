@@ -1,19 +1,27 @@
 from __future__ import annotations
 
 import concurrent.futures
-import os
-import signal
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Callable
 
 from envctl_engine.requirements.common_contracts import is_bind_conflict
+from envctl_engine.shared.process_termination import terminate_pid
 from envctl_engine.shared.services import service_display_name
 from envctl_engine.state.models import ServiceRecord
 
 
 class ServiceStartError(RuntimeError):
     """Raised when a service fails to start after retry policy."""
+
+
+class ServiceCleanupError(ServiceStartError):
+    """Raised when a failed startup leaves processes whose exit is unconfirmed."""
+
+    def __init__(self, message: str, unterminated_services: dict[str, ServiceRecord]) -> None:
+        super().__init__(message)
+        self.unterminated_services = dict(unterminated_services)
 
 
 @dataclass(slots=True)
@@ -38,6 +46,9 @@ class ServiceStartDescriptor:
 
 
 class ServiceManager:
+    def __init__(self, *, process_runner: object | None = None) -> None:
+        self.process_runner = process_runner
+
     def start_service_with_retry(
         self,
         *,
@@ -58,6 +69,20 @@ class ServiceManager:
         while True:
             success, error, pid = start(current_port)
             if success:
+                if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+                    record = _failed_start_record(
+                        project=project,
+                        service_type=service_type,
+                        cwd=cwd,
+                        pid=None,
+                        requested_port=current_port if listener_expected else None,
+                        listener_expected=listener_expected,
+                        failure_detail="service launcher reported success without a valid PID",
+                    )
+                    raise ServiceCleanupError(
+                        f"Service launcher for {record.name} reported success without a valid PID",
+                        {record.name: record},
+                    )
                 try:
                     actual_port: int | None = current_port if listener_expected else None
                     if detect_actual is not None:
@@ -73,9 +98,37 @@ class ServiceManager:
                         started_at=time.time(),
                         listener_expected=listener_expected,
                     )
-                except RuntimeError as exc:
+                except Exception as exc:  # noqa: BLE001
                     error = str(exc)
-                    _terminate_pid(pid, process_runner=self)
+                    if not _terminate_pid(pid, process_runner=self.process_runner):
+                        record = _failed_start_record(
+                            project=project,
+                            service_type=service_type,
+                            cwd=cwd,
+                            pid=pid,
+                            requested_port=current_port if listener_expected else None,
+                            listener_expected=listener_expected,
+                            failure_detail=error,
+                        )
+                        raise ServiceCleanupError(
+                            f"{error}; cleanup could not confirm exit of PID {pid}",
+                            {record.name: record},
+                        ) from exc
+            elif isinstance(pid, int) and pid > 0:
+                if not _terminate_pid(pid, process_runner=self.process_runner):
+                    record = _failed_start_record(
+                        project=project,
+                        service_type=service_type,
+                        cwd=cwd,
+                        pid=pid,
+                        requested_port=current_port if listener_expected else None,
+                        listener_expected=listener_expected,
+                        failure_detail=error or "service launcher reported failure",
+                    )
+                    raise ServiceCleanupError(
+                        f"{error or 'service launcher reported failure'}; cleanup could not confirm exit of PID {pid}",
+                        {record.name: record},
+                    )
 
             if retries >= max_retries or not _is_retryable_error(error):
                 raise ServiceStartError(
@@ -160,6 +213,8 @@ class ServiceManager:
                     on_retry=on_retry,
                 )
             except Exception as exc:
+                if isinstance(exc, ServiceCleanupError):
+                    raise
                 if descriptor.critical:
                     raise
                 record = ServiceRecord(
@@ -189,8 +244,7 @@ class ServiceManager:
                 worker_count = max_workers or len(descriptors)
                 with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(descriptors), worker_count)) as executor:
                     future_map = {
-                        executor.submit(start_record, descriptor): index
-                        for index, descriptor in enumerate(descriptors)
+                        executor.submit(start_record, descriptor): index for index, descriptor in enumerate(descriptors)
                     }
                     records_by_index: dict[int, ServiceRecord] = {}
                     failures_by_index: dict[int, Exception] = {}
@@ -201,17 +255,27 @@ class ServiceManager:
                         except Exception as exc:  # noqa: BLE001
                             failures_by_index[index] = exc
 
-                    partial_records.extend(
-                        records_by_index[index] for index in sorted(records_by_index)
-                    )
+                    partial_records.extend(records_by_index[index] for index in sorted(records_by_index))
                     if failures_by_index:
-                        raise failures_by_index[min(failures_by_index)]
+                        primary_failure = failures_by_index[min(failures_by_index)]
+                        unterminated = _unterminated_services_from_failures(failures_by_index.values())
+                        if unterminated:
+                            raise ServiceCleanupError(str(primary_failure), unterminated) from primary_failure
+                        raise primary_failure
             else:
                 for descriptor in descriptors:
                     partial_records.append(start_record(descriptor))
-        except Exception:
+        except Exception as exc:
+            unterminated = _unterminated_services_from_failures((exc,))
             for record in partial_records:
-                _terminate_pid(record.pid, process_runner=self)
+                if not _terminate_pid(record.pid, process_runner=self.process_runner):
+                    unterminated[record.name] = record
+            if unterminated:
+                names = ", ".join(sorted(unterminated))
+                raise ServiceCleanupError(
+                    f"{exc}; cleanup could not confirm exit for: {names}",
+                    unterminated,
+                ) from exc
             raise
         return {record.name: record for record in partial_records}
 
@@ -225,17 +289,52 @@ def _is_retryable_error(error: str | None) -> bool:
     return False
 
 
-def _terminate_pid(pid: int | None, *, process_runner: object | None = None) -> None:
-    if not isinstance(pid, int) or pid <= 0:
-        return
-    terminator = getattr(process_runner, "terminate_process_group", None) if process_runner is not None else None
-    if callable(terminator):
-        try:
-            terminator(pid, term_timeout=2.0, kill_timeout=1.0)
-            return
-        except Exception:  # noqa: BLE001
-            pass
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError:
-        return
+def _terminate_pid(pid: int | None, *, process_runner: object | None = None) -> bool:
+    return terminate_pid(
+        pid,
+        process_runner=process_runner,
+        term_timeout=2.0,
+        kill_timeout=1.0,
+    )
+
+
+def _failed_start_record(
+    *,
+    project: str,
+    service_type: str,
+    cwd: str,
+    pid: int | None,
+    requested_port: int | None,
+    listener_expected: bool,
+    failure_detail: str,
+) -> ServiceRecord:
+    record = ServiceRecord(
+        name=f"{project} {service_display_name(service_type)}",
+        type=service_type,
+        cwd=cwd,
+        pid=pid,
+        requested_port=requested_port,
+        actual_port=None,
+        status="termination_failed",
+        started_at=time.time(),
+        listener_expected=listener_expected,
+        failure_detail=failure_detail,
+        degraded=True,
+    )
+    record.project = project
+    record.service_slug = service_type
+    return record
+
+
+def _unterminated_services_from_failures(
+    failures: Iterable[object],
+) -> dict[str, ServiceRecord]:
+    unterminated: dict[str, ServiceRecord] = {}
+    for failure in failures:
+        services = getattr(failure, "unterminated_services", None)
+        if not isinstance(services, dict):
+            continue
+        for name, service in services.items():
+            if isinstance(name, str) and isinstance(service, ServiceRecord):
+                unterminated[name] = service
+    return unterminated

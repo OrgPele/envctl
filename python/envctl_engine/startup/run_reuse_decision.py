@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any, Mapping
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.state.lookup import call_state_loader
 from envctl_engine.state.models import RunState
 from envctl_engine.startup.run_reuse_identity import (
     _auto_resume_start_enabled,
@@ -56,18 +57,35 @@ class RunReuseEvaluator:
                 selected_payload=selected_payload,
                 startup_enabled=startup_enabled,
             )
-        if not _auto_resume_start_enabled(self.route):
+        auto_resume_enabled = _auto_resume_start_enabled(self.route)
+        explicit_fresh_start = bool(self.route.flags.get("no_resume"))
+        if not auto_resume_enabled and not explicit_fresh_start:
             return self._fresh_without_state(
                 reason="auto_resume_disabled",
                 selected_payload=selected_payload,
                 startup_enabled=startup_enabled,
             )
 
-        candidate = self.runtime._try_load_existing_state(mode=self.runtime_mode, strict_mode_match=True)
+        candidate = call_state_loader(
+            self.runtime._try_load_existing_state,
+            mode=self.runtime_mode,
+            strict_mode_match=True,
+            project_names=[identity.name for identity in selected_identities],
+        )
         if candidate is None:
             return self._fresh_without_state(
                 reason="no_matching_state",
                 selected_payload=selected_payload,
+                startup_enabled=startup_enabled,
+            )
+        if explicit_fresh_start:
+            state_identities = project_identities_from_state(self.runtime, candidate)
+            return RunReuseDecision(
+                candidate_state=candidate,
+                decision_kind="fresh_run",
+                reason="explicit_no_resume",
+                selected_projects=selected_payload,
+                state_projects=identities_to_payload(state_identities),
                 startup_enabled=startup_enabled,
             )
         return self._evaluate_candidate(

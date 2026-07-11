@@ -68,6 +68,12 @@ envctl stop --entire-system --headless
 envctl kill-all --headless
 ```
 
+`stop --dependencies` and plain `stop-all` preserve managed Docker dependency
+stacks and storage for reuse while releasing their saved records and port locks.
+Use `stop-all --remove-volumes` or `blast-all` when those managed containers must
+also be removed. Pass `--main` or `--trees` to clean only that saved runtime mode;
+the other mode remains active.
+
 When you invoke a specific action command directly, envctl stays non-interactive by default.
 For example, `envctl kill-all`, `envctl pr`, `envctl test`, `envctl logs`, and `envctl migrate`
 behave like their `--headless` forms. Add `--interactive` only when you want envctl to prompt

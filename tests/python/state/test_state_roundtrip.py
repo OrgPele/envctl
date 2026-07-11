@@ -6,7 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.state.models import RunState, ServiceRecord
+from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.state import dump_state, load_legacy_shell_state, load_state, merge_states
 
 
@@ -25,9 +25,20 @@ class StateRoundtripTests(unittest.TestCase):
                         pid=12345,
                         requested_port=8000,
                         actual_port=8001,
+                        port_lock_session="planner-session-1",
                         listener_pids=[12345, 12346],
                         status="running",
                         started_at=1234.5,
+                    )
+                },
+                requirements={
+                    "Tree Alpha": RequirementsResult(
+                        project="Tree Alpha",
+                        db={
+                            "enabled": True,
+                            "final": 5432,
+                            "port_lock_session": "planner-session-1",
+                        },
                     )
                 },
                 metadata={"source": "python"},
@@ -38,8 +49,16 @@ class StateRoundtripTests(unittest.TestCase):
 
             self.assertEqual(loaded.run_id, "run-123")
             self.assertEqual(loaded.services["Tree Alpha Backend"].actual_port, 8001)
+            self.assertEqual(
+                loaded.services["Tree Alpha Backend"].port_lock_session,
+                "planner-session-1",
+            )
             self.assertEqual(loaded.services["Tree Alpha Backend"].listener_pids, [12345, 12346])
             self.assertEqual(loaded.services["Tree Alpha Backend"].started_at, 1234.5)
+            self.assertEqual(
+                loaded.requirements["Tree Alpha"].db["port_lock_session"],
+                "planner-session-1",
+            )
             self.assertEqual(loaded.metadata["source"], "python")
 
     def test_legacy_shell_state_is_loaded_without_source_execution(self) -> None:

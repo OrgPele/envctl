@@ -1,10 +1,62 @@
 # ruff: noqa: F403,F405
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+from envctl_engine.planning.worktree_provenance import detect_default_branch
 from tests.python.planning.planning_worktree_setup_test_support import *
 
 
 class PlanningWorktreeSetupProvenanceTests(PlanningWorktreeSetupTestCase):
+    def test_detached_default_branch_uses_live_remote_over_stale_tracking_ref(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+            args = [str(token) for token in cmd]
+            calls.append({"args": args, "cwd": cwd, "env": env, "timeout": timeout})
+            git_args = args[3:]
+            if git_args == ["rev-parse", "--verify", "refs/remotes/origin/dev"]:
+                return subprocess.CompletedProcess(args, 0, stdout="stale-dev\n", stderr="")
+            if git_args == ["rev-parse", "--verify", "refs/remotes/origin/main"]:
+                return subprocess.CompletedProcess(args, 0, stdout="main\n", stderr="")
+            if git_args[:3] == ["ls-remote", "--symref", "origin"]:
+                return subprocess.CompletedProcess(
+                    args,
+                    0,
+                    stdout=("ref: refs/heads/main\tHEAD\nmain-sha\tHEAD\nmain-sha\trefs/heads/main\n"),
+                    stderr="",
+                )
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="missing")
+
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(base_dir=Path("/repo")),
+            process_runner=SimpleNamespace(run=fake_run),
+            _command_env=lambda *, port: {"BASE": "1", "PORT": str(port)},
+        )
+
+        self.assertEqual(detect_default_branch(runtime), "main")
+        live_probe = next(call for call in calls if call["args"][3] == "ls-remote")
+        self.assertEqual(live_probe["timeout"], 10.0)
+        self.assertEqual(live_probe["env"]["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(live_probe["env"]["BASE"], "1")
+
+    def test_detached_default_branch_falls_back_to_local_tracking_ref_offline(self) -> None:
+        def fake_run(cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
+            _ = cwd, env, timeout
+            args = [str(token) for token in cmd]
+            git_args = args[3:]
+            if git_args == ["rev-parse", "--verify", "refs/remotes/origin/dev"]:
+                return subprocess.CompletedProcess(args, 0, stdout="local-dev\n", stderr="")
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="offline")
+
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(base_dir=Path("/repo")),
+            process_runner=SimpleNamespace(run=fake_run),
+            _command_env=lambda *, port: {"PORT": str(port)},
+        )
+
+        self.assertEqual(detect_default_branch(runtime), "dev")
+
     def test_setup_worktree_creation_writes_provenance_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -57,9 +109,7 @@ class PlanningWorktreeSetupProvenanceTests(PlanningWorktreeSetupTestCase):
                 'project_name: "repo"\n',
             )
             self.assertEqual(
-                (repo / "trees" / "feature-a" / "1" / ".serena" / "project.local.yml").read_text(
-                    encoding="utf-8"
-                ),
+                (repo / "trees" / "feature-a" / "1" / ".serena" / "project.local.yml").read_text(encoding="utf-8"),
                 'project_name: "repo-feature-a-1"\n',
             )
             self.assertEqual(
@@ -233,7 +283,9 @@ class PlanningWorktreeSetupProvenanceTests(PlanningWorktreeSetupTestCase):
                 if git_cwd == str(unrelated.resolve()) and command[3:] == ["rev-parse", "--show-toplevel"]:
                     return subprocess.CompletedProcess(args=command, returncode=0, stdout=f"{unrelated}\n", stderr="")
                 if git_cwd == str(repo.resolve()) and command[3:] == ["rev-parse", "--git-common-dir"]:
-                    return subprocess.CompletedProcess(args=command, returncode=0, stdout=f"{repo / '.git'}\n", stderr="")
+                    return subprocess.CompletedProcess(
+                        args=command, returncode=0, stdout=f"{repo / '.git'}\n", stderr=""
+                    )
                 if git_cwd == str(unrelated.resolve()) and command[3:] == ["rev-parse", "--git-common-dir"]:
                     return subprocess.CompletedProcess(
                         args=command, returncode=0, stdout=f"{unrelated / '.git'}\n", stderr=""

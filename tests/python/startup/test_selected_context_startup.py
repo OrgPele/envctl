@@ -6,13 +6,15 @@ from types import SimpleNamespace
 import unittest
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.service_manager import ServiceCleanupError
+from envctl_engine.startup.startup_execution_support import ProjectStartupFailure
 from envctl_engine.startup.selected_context_startup import (
     record_project_startup,
     start_selected_contexts,
     start_selected_contexts_with_runtime,
 )
-from envctl_engine.startup.session import ProjectStartupResult, StartupSession
-from envctl_engine.state.models import RequirementsResult
+from envctl_engine.startup.session import ProjectStartupResult, StartupSession, track_unterminated_services
+from envctl_engine.state.models import RequirementsResult, ServiceRecord
 
 
 class _SpinnerStub:
@@ -77,6 +79,109 @@ class _RuntimeStub:
 
 
 class SelectedContextStartupTests(unittest.TestCase):
+    def test_parallel_renderer_error_occurs_only_after_successful_resources_are_recorded(self) -> None:
+        runtime = _RuntimeStub()
+        runtime._tree_parallel_startup_config = (  # type: ignore[method-assign]
+            lambda **_kwargs: (True, 2)
+        )
+        route = Route(command="start", mode="trees", flags={})
+        contexts = [self._context("Alpha"), self._context("Beta")]
+        session = self._session(route=route, contexts=contexts)
+
+        with self.assertRaisesRegex(OSError, "renderer failed"):
+            start_selected_contexts(
+                runtime=runtime,
+                session=session,
+                suppress_progress_output=lambda _route: False,
+                resolved_run_id=lambda _session: "run-1",
+                record_project_startup=record_project_startup,
+                render_project_startup_warnings=lambda **_kwargs: (_ for _ in ()).throw(OSError("renderer failed")),
+                should_degrade_to_plan_agent_handoff=lambda _session, _error: False,
+                record_plan_agent_handoff_local_startup_failure=lambda **_kwargs: None,
+                spinner_factory=_SpinnerFactory(),
+                use_spinner_policy_fn=lambda _policy: nullcontext(),
+                resolve_spinner_policy_fn=lambda _env: SimpleNamespace(enabled=False, backend="rich"),
+                emit_spinner_policy_fn=lambda *_args, **_kwargs: None,
+                project_spinner_group_factory=lambda **_kwargs: SimpleNamespace(),
+            )
+
+        self.assertEqual(set(session.services_by_project), {"Alpha", "Beta"})
+        self.assertEqual(set(session.requirements_by_project), {"Alpha", "Beta"})
+        self.assertEqual(set(session.started_context_names), {"Alpha", "Beta"})
+
+    def test_parallel_failure_callback_error_does_not_hide_later_success(self) -> None:
+        runtime = _RuntimeStub()
+        runtime._tree_parallel_startup_config = lambda **_kwargs: (True, 2)  # type: ignore[method-assign]
+
+        def start_context(*, context, **_kwargs):  # noqa: ANN001, ANN202
+            if context.name == "Alpha":
+                raise RuntimeError("alpha failed")
+            return ProjectStartupResult(
+                requirements=RequirementsResult(project=context.name),
+                services={"Beta Backend": object()},
+            )
+
+        runtime._start_project_context = start_context  # type: ignore[method-assign]
+        original_emit = runtime._emit
+
+        def emit(event: str, **payload: object) -> None:
+            if event == "startup.project.failed":
+                raise OSError("event sink failed")
+            original_emit(event, **payload)
+
+        runtime._emit = emit  # type: ignore[method-assign]
+        route = Route(command="start", mode="trees", flags={})
+        session = self._session(route=route, contexts=[self._context("Alpha"), self._context("Beta")])
+
+        with self.assertRaisesRegex(RuntimeError, "alpha failed"):
+            start_selected_contexts(
+                runtime=runtime,
+                session=session,
+                suppress_progress_output=lambda _route: False,
+                resolved_run_id=lambda _session: "run-1",
+                record_project_startup=record_project_startup,
+                render_project_startup_warnings=lambda **_kwargs: None,
+                should_degrade_to_plan_agent_handoff=lambda _session, _error: False,
+                record_plan_agent_handoff_local_startup_failure=lambda **_kwargs: None,
+                spinner_factory=_SpinnerFactory(),
+                use_spinner_policy_fn=lambda _policy: nullcontext(),
+                resolve_spinner_policy_fn=lambda _env: SimpleNamespace(enabled=False, backend="rich"),
+                emit_spinner_policy_fn=lambda *_args, **_kwargs: None,
+                project_spinner_group_factory=lambda **_kwargs: SimpleNamespace(),
+            )
+
+        self.assertIn("Beta", session.services_by_project)
+        self.assertIn("Beta", session.requirements_by_project)
+
+    def test_unterminated_service_error_is_carried_into_session_state(self) -> None:
+        route = Route(command="start", mode="main", flags={})
+        session = self._session(route=route, contexts=[])
+        service = ServiceRecord(name="Main Backend", type="backend", cwd="/repo", pid=63001)
+        failure = ServiceCleanupError("cleanup failed", {service.name: service})
+
+        track_unterminated_services(session, failure)
+
+        self.assertIs(session.unterminated_services[service.name], service)
+        self.assertIs(session.merged_services[service.name], service)
+
+    def test_project_startup_failure_carries_requirements_into_failure_state(self) -> None:
+        route = Route(command="start", mode="main", flags={})
+        session = self._session(route=route, contexts=[])
+        requirements = RequirementsResult(
+            project="Main",
+            redis={"enabled": True, "success": True, "final": 6379},
+        )
+        failure = ProjectStartupFailure(
+            "backend failed",
+            project="Main",
+            requirements=requirements,
+        )
+
+        track_unterminated_services(session, failure)
+
+        self.assertIs(session.requirements_by_project["Main"], requirements)
+        self.assertIs(session.merged_requirements["Main"], requirements)
+
     @staticmethod
     def _context(name: str) -> SimpleNamespace:
         return SimpleNamespace(name=name, root=Path("/tmp") / name, ports={})
@@ -110,7 +215,9 @@ class SelectedContextStartupTests(unittest.TestCase):
                 session.services_by_project.__setitem__(context.name, result.services),
                 session.started_context_names.append(context.name),
             ),
-            render_project_startup_warnings=lambda *, context, warnings, route, project_spinner_group: warnings and None,
+            render_project_startup_warnings=lambda *, context, warnings, route, project_spinner_group: (
+                warnings and None
+            ),
             should_degrade_to_plan_agent_handoff=lambda session, error: False,
             record_plan_agent_handoff_local_startup_failure=lambda session, project_name, error: None,
             spinner_factory=_SpinnerFactory(),
@@ -133,7 +240,9 @@ class SelectedContextStartupTests(unittest.TestCase):
         self.assertIsNone(execution_route.flags["_spinner_update_project"])
         self.assertTrue(execution_route.flags["debug_suppress_progress_output"])
         self.assertEqual(runtime.events[0][0], "spinner.policy")
-        self.assertIn(("startup.execution", {"mode": "sequential", "workers": 1, "projects": ["Alpha"]}), runtime.events)
+        self.assertIn(
+            ("startup.execution", {"mode": "sequential", "workers": 1, "projects": ["Alpha"]}), runtime.events
+        )
 
     def test_record_project_startup_updates_session_result_maps_and_started_names(self) -> None:
         route = Route(command="start", mode="trees", raw_args=["start"], passthrough_args=[], projects=[], flags={})
@@ -194,13 +303,12 @@ class SelectedContextStartupTests(unittest.TestCase):
             runtime,
             session,
             resolved_run_id=lambda session: "run-1",
-            render_project_startup_warnings=lambda *, context, warnings, route, project_spinner_group: rendered_warnings.append(
-                (context.name, list(warnings))
+            render_project_startup_warnings=lambda *, context, warnings, route, project_spinner_group: (
+                rendered_warnings.append((context.name, list(warnings)))
             ),
-            should_degrade_to_plan_agent_handoff=lambda session, error: degradation_checks.append(
-                (session.requested_command, error)
-            )
-            or False,
+            should_degrade_to_plan_agent_handoff=lambda session, error: (
+                degradation_checks.append((session.requested_command, error)) or False
+            ),
             record_plan_agent_handoff_local_startup_failure=lambda session, project_name, error: local_failures.append(
                 (project_name, error)
             ),

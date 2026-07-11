@@ -102,7 +102,13 @@ class CurrentWorktreeTargetResolver:
         configured_root_path: Path | None,
         raw_runtime: Any,
     ) -> object | None:
-        """Resolve a Git-linked checkout that lives outside the configured trees directory."""
+        """Represent a linked checkout even when it is outside the configured trees directory.
+
+        Source-checkout workflows commonly create sibling worktrees. Git proves
+        that such a checkout belongs to the configured repository, while the
+        top-level and configured-root comparisons prevent a tree-mode action
+        from silently targeting the main checkout.
+        """
 
         top_level_raw = _git_output(raw_runtime, cwd, ["rev-parse", "--show-toplevel"])
         if not top_level_raw:
@@ -113,7 +119,6 @@ class CurrentWorktreeTargetResolver:
             return None
         if not _path_is_at_or_under(cwd, top_level):
             return None
-
         normalized_repo_root = repo_root.resolve()
         if top_level == normalized_repo_root:
             return None
@@ -179,9 +184,7 @@ def main_repo_root_for_worktree(*, worktree_root: Path, runtime: Any, trees_dir_
         return top_level
     common_dir_path = Path(common_dir_raw)
     common_dir = (
-        (worktree_root / common_dir_path).resolve()
-        if not common_dir_path.is_absolute()
-        else common_dir_path.resolve()
+        (worktree_root / common_dir_path).resolve() if not common_dir_path.is_absolute() else common_dir_path.resolve()
     )
     if common_dir.name == ".git":
         return common_dir.parent

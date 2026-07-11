@@ -29,8 +29,8 @@ from envctl_engine.startup.requirements_execution import (
     startup_breakdown_enabled,
 )
 from envctl_engine.startup.service_execution import start_project_services as start_project_services_impl
-from envctl_engine.startup.session import ProjectStartupResult
-from envctl_engine.state.models import PortPlan, RequirementsResult
+from envctl_engine.startup.session import ProjectStartupResult, unconfirmed_service_names
+from envctl_engine.state.models import PortPlan, RequirementsResult, ServiceRecord
 
 
 @dataclass(slots=True)
@@ -38,6 +38,23 @@ class _SharedProjectContext:
     name: str
     root: Path
     ports: Mapping[str, PortPlan]
+
+
+class ProjectStartupFailure(RuntimeError):
+    """A project failure that preserves already-started runtime resources."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        project: str,
+        requirements: RequirementsResult,
+        unterminated_services: dict[str, ServiceRecord] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.project = project
+        self.requirements = requirements
+        self.unterminated_services = dict(unterminated_services or {})
 
 
 def start_project_context(
@@ -55,50 +72,74 @@ def start_project_context(
     report_progress_fn(route, f"Starting project {context.name}...", project=context.name)
     _reserve_project_ports(rt, context, route=route)
     requirements = _requirements_for_project_context(orchestrator, context=context, mode=mode, route=route)
-    if not rt._requirements_ready(requirements):
-        raise RuntimeError(_requirements_failure_message(context.name, requirements))
-    _sync_supabase_auth_users_before_services(
-        orchestrator,
-        context=context,
-        mode=mode,
-        route=route,
-        requirements=requirements,
-    )
-    requirements_progress_message = _requirements_ready_progress_message(
-        orchestrator,
-        context=context,
-        mode=mode,
-        route=route,
-        requirements=requirements,
-    )
-    if requirements_progress_message is not None:
-        report_progress_fn(route, requirements_progress_message, project=context.name)
-    project_services = orchestrator.start_project_services(
-        context,
-        requirements=requirements,
-        run_id=run_id,
-        route=route,
-    )
+    project_services: dict[str, ServiceRecord] = {}
     try:
+        if not rt._requirements_ready(requirements):
+            raise RuntimeError(_requirements_failure_message(context.name, requirements))
+        _sync_supabase_auth_users_before_services(
+            orchestrator,
+            context=context,
+            mode=mode,
+            route=route,
+            requirements=requirements,
+        )
+        requirements_progress_message = _requirements_ready_progress_message(
+            orchestrator,
+            context=context,
+            mode=mode,
+            route=route,
+            requirements=requirements,
+        )
+        if requirements_progress_message is not None:
+            report_progress_fn(route, requirements_progress_message, project=context.name)
+        project_services = orchestrator.start_project_services(
+            context,
+            requirements=requirements,
+            run_id=run_id,
+            route=route,
+        )
         rt._assert_project_services_post_start_truth(context=context, services=project_services)
-    except RuntimeError:
-        rt._terminate_started_services(project_services)
-        raise
-    report_progress_fn(
-        route,
-        f"Services ready for {context.name}: "
-        + " ".join(
-            f"{service_type}={_service_ready_label(project_services.get(f'{context.name} {service_type.title()}'))}"
-            for service_type in ("backend", "frontend")
-            if f"{context.name} {service_type.title()}" in project_services
-        ),
-        project=context.name,
-    )
-    return ProjectStartupResult(
-        requirements=requirements,
-        services=project_services,
-        warnings=list(rt._consume_project_startup_warnings(context.name)),
-    )
+        report_progress_fn(
+            route,
+            f"Services ready for {context.name}: "
+            + " ".join(
+                f"{service_type}={_service_ready_label(project_services.get(f'{context.name} {service_type.title()}'))}"
+                for service_type in ("backend", "frontend")
+                if f"{context.name} {service_type.title()}" in project_services
+            ),
+            project=context.name,
+        )
+        return ProjectStartupResult(
+            requirements=requirements,
+            services=project_services,
+            warnings=list(rt._consume_project_startup_warnings(context.name)),
+        )
+    except Exception as exc:
+        unterminated = dict(getattr(exc, "unterminated_services", {}) or {})
+        cleanup_error: Exception | None = None
+        if project_services:
+            try:
+                failed_services = unconfirmed_service_names(
+                    rt._terminate_started_services(project_services),
+                    project_services,
+                )
+            except Exception as cleanup_exc:  # noqa: BLE001
+                cleanup_error = cleanup_exc
+                failed_services = set(project_services)
+            unterminated.update(
+                (name, service) for name, service in project_services.items() if name in failed_services
+            )
+        message = str(exc)
+        if unterminated and "cleanup could not confirm exit for:" not in message:
+            message = f"{message}; cleanup could not confirm exit for: {', '.join(sorted(unterminated))}"
+        if cleanup_error is not None:
+            message = f"{message}; cleanup error: {cleanup_error}"
+        raise ProjectStartupFailure(
+            message,
+            project=context.name,
+            requirements=requirements,
+            unterminated_services=unterminated,
+        ) from exc
 
 
 def _reserve_project_ports(rt: Any, context: ProjectContextLike, *, route: Route | None) -> None:
@@ -335,10 +376,13 @@ def _annotate_shared_main_requirements(
             )
     supabase = cloned.component("supabase")
     if bool(supabase.get("enabled", False)):
-        supabase["container_name"] = build_supabase_project_name(
-            project_root=project_root,
-            project_name="Main",
-        ) + "-supabase-db-1"
+        supabase["container_name"] = (
+            build_supabase_project_name(
+                project_root=project_root,
+                project_name="Main",
+            )
+            + "-supabase-db-1"
+        )
     return _reconcile_shared_main_requirements(orchestrator, cloned)
 
 

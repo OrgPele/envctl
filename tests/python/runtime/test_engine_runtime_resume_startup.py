@@ -214,7 +214,9 @@ class EngineRuntimeResumeStartupTests(_EngineRuntimeRealStartupTestCase):
 
             first_engine = PythonEngineRuntime(self._config(repo, runtime), env={})
             first_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
-            with patch.object(first_engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])):
+            with patch.object(
+                first_engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])
+            ):
                 first_code = first_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
             self.assertEqual(first_code, 0)
             first_state = first_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
@@ -223,10 +225,20 @@ class EngineRuntimeResumeStartupTests(_EngineRuntimeRealStartupTestCase):
 
             second_engine = PythonEngineRuntime(self._config(repo, runtime, extra={"BACKEND_DIR": "api"}), env={})
             second_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
-            with patch.object(second_engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])):
+            with (
+                patch.object(
+                    second_engine,
+                    "_terminate_services_from_state",
+                    return_value=set(),
+                ) as terminate_mock,
+                patch.object(
+                    second_engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])
+                ),
+            ):
                 second_code = second_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
 
             self.assertEqual(second_code, 0)
+            self.assertEqual(terminate_mock.call_count, 1)
             second_state = second_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
             self.assertIsNotNone(second_state)
             assert second_state is not None
@@ -242,7 +254,9 @@ class EngineRuntimeResumeStartupTests(_EngineRuntimeRealStartupTestCase):
             (tree / "frontend").mkdir(parents=True, exist_ok=True)
             engine = PythonEngineRuntime(self._config(repo, runtime), env={})
             context = engine._discover_projects(mode="trees")[0]
-            wrong_root_context = ProjectContext(name=context.name, root=repo / "trees" / "feature-a" / "99", ports=context.ports)
+            wrong_root_context = ProjectContext(
+                name=context.name, root=repo / "trees" / "feature-a" / "99", ports=context.ports
+            )
             metadata = startup_support.build_startup_identity_metadata(
                 engine,
                 runtime_mode="trees",
@@ -287,7 +301,9 @@ class EngineRuntimeResumeStartupTests(_EngineRuntimeRealStartupTestCase):
                 )
 
             engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
-            with patch.object(engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])):
+            with patch.object(
+                engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])
+            ):
                 code = engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
 
             self.assertEqual(code, 0)
@@ -324,6 +340,9 @@ class EngineRuntimeResumeStartupTests(_EngineRuntimeRealStartupTestCase):
             with (
                 patch.object(engine, "_try_load_existing_state", return_value=state),
                 patch.object(engine, "_run_interactive_dashboard_loop", return_value=0) as loop_mock,
+                patch(
+                    "envctl_engine.startup.resume_orchestrator.release_lifecycle_operation"
+                ) as release_lifecycle_operation_mock,
                 patch("sys.stdin.isatty", return_value=True),
                 patch("sys.stdout.isatty", return_value=True),
                 patch.dict(os.environ, {"TERM": "xterm-256color"}, clear=False),
@@ -333,6 +352,7 @@ class EngineRuntimeResumeStartupTests(_EngineRuntimeRealStartupTestCase):
 
             self.assertEqual(code, 1)
             self.assertEqual(loop_mock.call_count, 0)
+            release_lifecycle_operation_mock.assert_not_called()
             self.assertIn("No active services to resume.", output.getvalue())
 
     def test_dashboard_interactive_flag_enters_loop(self) -> None:
@@ -441,4 +461,3 @@ class EngineRuntimeResumeStartupTests(_EngineRuntimeRealStartupTestCase):
 
             self.assertEqual(code, 0)
             self.assertEqual(loop_mock.call_count, 0)
-

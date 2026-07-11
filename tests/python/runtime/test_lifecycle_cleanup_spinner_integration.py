@@ -1,17 +1,26 @@
 from __future__ import annotations
 
+import json
+import tempfile
+import unittest
 from contextlib import contextmanager, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-import unittest
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.lifecycle_cleanup_orchestrator import LifecycleCleanupOrchestrator
+from envctl_engine.runtime.lifecycle_service_termination import (
+    terminate_service_record,
+    terminate_services_from_state,
+)
+from envctl_engine.shared.ports import PortPlanner
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
+from envctl_engine.state.repository import RuntimeStateRepository
+from envctl_engine.state.run_index import StateSelector
 from envctl_engine.ui.spinner_service import SpinnerPolicy
 from envctl_engine.ui.target_selector import TargetSelection
 
@@ -19,15 +28,42 @@ from envctl_engine.ui.target_selector import TargetSelection
 class _StateRepoStub:
     def __init__(self) -> None:
         self.saved_states: list[RunState] = []
+        self.saved_authoritative_project_names: list[list[str] | None] = []
         self.purge_calls: list[bool] = []
+        self.active_states: list[RunState] = []
+        self.deactivated_run_ids: list[str] = []
 
-    def save_selected_stop_state(self, *, state, emit, runtime_map_builder):  # noqa: ANN001
+    def save_selected_stop_state(  # noqa: ANN001
+        self,
+        *,
+        state,
+        emit,
+        runtime_map_builder,
+        authoritative_project_names=None,
+    ):
         _ = emit, runtime_map_builder
         self.saved_states.append(state)
+        self.saved_authoritative_project_names.append(authoritative_project_names)
+        self.active_states = [
+            state if active_state.run_id == state.run_id else active_state for active_state in self.active_states
+        ]
         return {}
 
     def purge(self, *, aggressive: bool = False) -> None:
         self.purge_calls.append(aggressive)
+
+    def load_all(self, *, mode: str | None = None) -> list[RunState]:
+        return [state for state in self.active_states if mode is None or state.mode == mode]
+
+    def deactivate_runs(self, run_ids: list[str]) -> bool:
+        selected = set(run_ids)
+        removed = [state for state in self.active_states if state.run_id in selected]
+        self.active_states = [state for state in self.active_states if state.run_id not in selected]
+        self.deactivated_run_ids.extend(state.run_id for state in removed)
+        return bool(removed)
+
+    def has_active_runs(self) -> bool:
+        return bool(self.active_states)
 
 
 class _RuntimeStub:
@@ -164,6 +200,571 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(runtime.state_repository.purge_calls, [False])
         self.assertTrue(any(item.get("event") == "cleanup.stop_all" for item in runtime.events))
+
+    def test_stop_all_releases_every_scoped_port_lock_after_last_run_is_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = _RuntimeStub()
+            scoped_planner = PortPlanner(
+                lock_dir=str(Path(tmpdir) / "scope-a"),
+                availability_checker=lambda _port: True,
+            )
+            foreign_planner = PortPlanner(
+                lock_dir=str(Path(tmpdir) / "scope-b"),
+                availability_checker=lambda _port: True,
+            )
+            scoped_planner.reserve_next(8100, owner="old-startup")
+            foreign_planner.reserve_next(8200, owner="other-repository")
+            runtime.port_planner = scoped_planner
+
+            code = LifecycleCleanupOrchestrator(runtime).execute(Route(command="stop-all", mode="main"))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(list(scoped_planner.lock_dir.glob("*.lock")), [])
+            self.assertEqual(
+                [path.name for path in foreign_planner.lock_dir.glob("*.lock")],
+                ["8200.lock"],
+            )
+            self.assertEqual(runtime.state_repository.purge_calls, [False])
+
+    def test_stop_all_purge_failure_preserves_scoped_port_locks(self) -> None:
+        runtime = _RuntimeStub()
+        releases: list[str] = []
+        runtime.port_planner = SimpleNamespace(release_all=lambda: releases.append("all"))
+
+        with (
+            patch.object(runtime.state_repository, "purge", side_effect=OSError("registry unavailable")),
+            self.assertRaisesRegex(OSError, "registry unavailable"),
+        ):
+            LifecycleCleanupOrchestrator(runtime).execute(Route(command="stop-all", mode="main"))
+
+        self.assertEqual(releases, [])
+
+    def test_stop_all_terminates_every_independent_active_run_once(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.state_repository.active_states = [
+            RunState(run_id="run-a", mode="trees"),
+            RunState(run_id="run-b", mode="trees"),
+            RunState(run_id="run-a", mode="trees"),
+        ]
+        terminated: list[str] = []
+        runtime._terminate_services_from_state = (  # type: ignore[method-assign]
+            lambda state, **_kwargs: terminated.append(state.run_id)
+        )
+
+        code = LifecycleCleanupOrchestrator(runtime).execute(Route(command="stop-all", mode="trees"))
+
+        self.assertEqual(code, 0)
+        self.assertEqual(terminated, ["run-a", "run-b"])
+        self.assertEqual(runtime.state_repository.purge_calls, [False])
+
+    def test_plain_stop_all_terminates_active_runs_across_modes(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.state_repository.active_states = [
+            RunState(run_id="run-main", mode="main"),
+            RunState(run_id="run-tree", mode="trees"),
+        ]
+        terminated: list[str] = []
+        runtime._terminate_services_from_state = (  # type: ignore[method-assign]
+            lambda state, **_kwargs: terminated.append(state.run_id) or set()
+        )
+
+        code = LifecycleCleanupOrchestrator(runtime).execute(
+            Route(command="stop-all", mode="main")
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(terminated, ["run-main", "run-tree"])
+        self.assertEqual(runtime.state_repository.active_states, [])
+
+    def test_stop_all_trees_preserves_main_registry_alias_and_port_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime_dir = root / "runtime"
+            repository = RuntimeStateRepository(
+                runtime_root=runtime_dir / "scope",
+                runtime_legacy_root=runtime_dir / "python-engine",
+                runtime_dir=runtime_dir,
+                runtime_scope_id="repo-123",
+                compat_mode=RuntimeStateRepository.SCOPED_ONLY,
+            )
+            for run_id, mode, project in (
+                ("run-main", "main", "Main"),
+                ("run-alpha", "trees", "FeatureA"),
+                ("run-beta", "trees", "FeatureB"),
+            ):
+                repository.save_resume_state(
+                    state=RunState(
+                        run_id=run_id,
+                        mode=mode,
+                        services={
+                            f"{project} Backend": ServiceRecord(
+                                name=f"{project} Backend",
+                                type="backend",
+                                cwd=str(root / project / "backend"),
+                                project=project,
+                                pid=100 + len(project),
+                            )
+                        },
+                        metadata={
+                            "project_names": [project],
+                            "project_roots": {project: str(root / project)},
+                        },
+                    ),
+                    emit=lambda *_args, **_kwargs: None,
+                    runtime_map_builder=lambda state: {"run_id": state.run_id},
+                )
+
+            planner = PortPlanner(
+                lock_dir=str(repository.runtime_root / "locks"),
+                session_id="main-owner",
+                availability_checker=lambda _port: True,
+            )
+            main_port = planner.reserve_next(8111, owner="Main:backend")
+            runtime = _RuntimeStub()
+            runtime.state_repository = repository  # type: ignore[assignment]
+            runtime._state_lookup_strict_mode_match = lambda _route: True  # type: ignore[method-assign]
+            runtime.port_planner = planner
+            terminated: list[str] = []
+            runtime._terminate_services_from_state = (  # type: ignore[method-assign]
+                lambda state, **_kwargs: terminated.append(state.run_id) or set()
+            )
+
+            with patch.object(repository, "purge", wraps=repository.purge) as purge:
+                code = LifecycleCleanupOrchestrator(runtime).execute(Route(command="stop-all", mode="trees"))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(terminated, ["run-beta", "run-alpha"])
+            purge.assert_not_called()
+            remaining = repository.load_all()
+            self.assertEqual([state.run_id for state in remaining], ["run-main"])
+            self.assertEqual(repository.load_latest(mode="main", strict_mode_match=True).run_id, "run-main")
+            current = json.loads(repository.run_state_path().read_text(encoding="utf-8"))
+            self.assertEqual((current["run_id"], current["mode"]), ("run-main", "main"))
+            self.assertTrue((planner.lock_dir / f"{main_port}.lock").exists())
+
+    def test_mode_scoped_stop_all_ignores_tampered_other_mode_and_preserves_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir) / "runtime"
+            repository = RuntimeStateRepository(
+                runtime_root=runtime_dir / "scope",
+                runtime_legacy_root=runtime_dir / "python-engine",
+                runtime_dir=runtime_dir,
+                runtime_scope_id="repo-123",
+                compat_mode=RuntimeStateRepository.SCOPED_ONLY,
+            )
+
+            for run_id, mode, project, pid in (
+                ("run-valid", "main", "Main", 101),
+                ("run-tampered", "trees", "FeatureA", 202),
+            ):
+                service_name = f"{project} Backend"
+                repository.save_resume_state(
+                    state=RunState(
+                        run_id=run_id,
+                        mode=mode,
+                        services={
+                            service_name: ServiceRecord(
+                                name=service_name,
+                                type="backend",
+                                cwd=f"/tmp/{project}/backend",
+                                project=project,
+                                pid=pid,
+                            )
+                        },
+                        metadata={"project_names": [project]},
+                    ),
+                    emit=lambda *_args, **_kwargs: None,
+                    runtime_map_builder=lambda state: {"run_id": state.run_id},
+                )
+
+            candidates = repository.run_index.candidates(StateSelector(mode=None, project_names=()))
+            tampered = next(candidate for candidate in candidates if candidate.run_id == "run-tampered")
+            tampered.state_path.write_text('{"broken":', encoding="utf-8")
+
+            runtime = _RuntimeStub()
+            runtime.state_repository = repository  # type: ignore[assignment]
+            runtime._state_lookup_strict_mode_match = lambda _route: True  # type: ignore[method-assign]
+            termination_calls: list[str] = []
+            runtime._terminate_services_from_state = (  # type: ignore[method-assign]
+                lambda state, **_kwargs: termination_calls.append(state.run_id) or set()
+            )
+
+            with patch.object(repository, "purge", wraps=repository.purge) as purge:
+                code = LifecycleCleanupOrchestrator(runtime).execute(Route(command="stop-all", mode="main"))
+
+            self.assertEqual(code, 0)
+            self.assertEqual(termination_calls, ["run-valid"])
+            purge.assert_not_called()
+            remaining = repository.run_index.candidates(StateSelector(mode=None, project_names=()))
+            self.assertEqual({candidate.run_id for candidate in remaining}, {"run-tampered"})
+            self.assertTrue(all(candidate.state_path.exists() for candidate in remaining))
+
+    def test_targeted_stop_deactivates_no_infra_state_with_only_disabled_requirements(self) -> None:
+        runtime = _RuntimeStub()
+        state = RunState(
+            run_id="run-no-infra",
+            mode="trees",
+            services={},
+            requirements={"FeatureA": RequirementsResult(project="FeatureA")},
+            metadata={
+                "project_names": ["FeatureA"],
+                "project_roots": {"FeatureA": "/tmp/FeatureA"},
+            },
+        )
+        runtime.state_repository.active_states = [state]
+
+        code = LifecycleCleanupOrchestrator(runtime).execute(
+            Route(
+                command="stop",
+                mode="trees",
+                projects=["FeatureA"],
+                flags={"batch": True, "runtime_scope": "entire-system"},
+            )
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(runtime.state_repository.deactivated_run_ids, ["run-no-infra"])
+        self.assertEqual(runtime.state_repository.active_states, [])
+
+    def test_targeted_stop_removes_only_selected_project_from_shared_no_infra_state(self) -> None:
+        runtime = _RuntimeStub()
+        state = RunState(
+            run_id="run-no-infra-ab",
+            mode="trees",
+            services={},
+            requirements={project: RequirementsResult(project=project) for project in ("FeatureA", "FeatureB")},
+            metadata={
+                "project_names": ["FeatureA", "FeatureB"],
+                "project_roots": {
+                    "FeatureA": "/tmp/FeatureA",
+                    "FeatureB": "/tmp/FeatureB",
+                },
+            },
+        )
+        runtime.state_repository.active_states = [state]
+
+        code = LifecycleCleanupOrchestrator(runtime).execute(
+            Route(
+                command="stop",
+                mode="trees",
+                projects=["FeatureA"],
+                flags={"batch": True, "runtime_scope": "entire-system"},
+            )
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(runtime.state_repository.deactivated_run_ids, [])
+        self.assertEqual(len(runtime.state_repository.saved_states), 1)
+        saved = runtime.state_repository.saved_states[0]
+        self.assertEqual(set(saved.requirements), {"FeatureB"})
+        self.assertEqual(saved.metadata["project_names"], ["FeatureB"])
+        self.assertEqual(saved.metadata["project_roots"], {"FeatureB": "/tmp/FeatureB"})
+        self.assertEqual(runtime.state_repository.saved_authoritative_project_names, [["FeatureB"]])
+        self.assertEqual(runtime.state_repository.active_states, [saved])
+
+    def test_targeted_service_stop_preserves_unselected_owner_and_shared_main_requirements(self) -> None:
+        runtime = _RuntimeStub()
+        state = RunState(
+            run_id="run-services-ab",
+            mode="trees",
+            services={
+                f"{project} Backend": ServiceRecord(
+                    name=f"{project} Backend",
+                    type="backend",
+                    cwd=f"/tmp/{project}",
+                    project=project,
+                    pid=pid,
+                )
+                for project, pid in (("FeatureA", 101), ("FeatureB", 202))
+            },
+            requirements={
+                "Main": RequirementsResult(
+                    project="Main",
+                    components={
+                        "postgres": {
+                            "enabled": True,
+                            "success": True,
+                            "final": 5432,
+                        }
+                    },
+                )
+            },
+            metadata={
+                "project_names": ["FeatureA", "FeatureB"],
+                "project_roots": {
+                    "FeatureA": "/tmp/FeatureA",
+                    "FeatureB": "/tmp/FeatureB",
+                },
+                "shared_dependencies": True,
+            },
+        )
+        runtime.state_repository.active_states = [state]
+
+        code = LifecycleCleanupOrchestrator(runtime).execute(
+            Route(
+                command="stop",
+                mode="trees",
+                projects=["FeatureA"],
+                flags={"batch": True, "runtime_scope": "backend"},
+            )
+        )
+
+        self.assertEqual(code, 0)
+        saved = runtime.state_repository.saved_states[0]
+        self.assertEqual(set(saved.services), {"FeatureB Backend"})
+        self.assertEqual(set(saved.requirements), {"Main"})
+        self.assertTrue(saved.metadata["shared_dependencies"])
+        self.assertEqual(saved.metadata["project_names"], ["FeatureB"])
+        self.assertEqual(saved.metadata["project_roots"], {"FeatureB": "/tmp/FeatureB"})
+        self.assertEqual(runtime.state_repository.saved_authoritative_project_names, [["FeatureB"]])
+
+    def test_targeted_stop_terminates_and_deactivates_every_shadowed_run_for_project(self) -> None:
+        runtime = _RuntimeStub()
+        release_snapshots: list[list[str]] = []
+        runtime.port_planner = SimpleNamespace(
+            release_all=lambda: release_snapshots.append(
+                [state.run_id for state in runtime.state_repository.active_states]
+            )
+        )
+        runtime.state_repository.active_states = [
+            RunState(
+                run_id=run_id,
+                mode="trees",
+                services={
+                    f"FeatureA Backend {run_id}": ServiceRecord(
+                        name=f"FeatureA Backend {run_id}",
+                        type="backend",
+                        cwd=f"/tmp/{run_id}/backend",
+                        project="FeatureA",
+                        pid=pid,
+                    )
+                },
+                metadata={"project_names": ["FeatureA"]},
+            )
+            for run_id, pid in (("run-new", 202), ("run-old", 101))
+        ]
+        terminated: list[str] = []
+        runtime._terminate_services_from_state = (  # type: ignore[method-assign]
+            lambda state, **_kwargs: terminated.append(state.run_id)
+        )
+
+        code = LifecycleCleanupOrchestrator(runtime).execute(
+            Route(
+                command="stop",
+                mode="trees",
+                projects=["FeatureA"],
+                flags={"batch": True},
+            )
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(terminated, ["run-new", "run-old"])
+        self.assertEqual(runtime.state_repository.deactivated_run_ids, ["run-new", "run-old"])
+        self.assertEqual(runtime.state_repository.active_states, [])
+        self.assertEqual(runtime.state_repository.purge_calls, [])
+        self.assertEqual(release_snapshots, [[]])
+
+    def test_targeted_stop_failure_preserves_service_and_run_tracking(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.port_planner = SimpleNamespace(
+            release_all=lambda: self.fail("incomplete termination must retain scoped locks")
+        )
+        state = RunState(
+            run_id="run-a",
+            mode="trees",
+            services={
+                "FeatureA Backend": ServiceRecord(
+                    name="FeatureA Backend",
+                    type="backend",
+                    cwd="/tmp/FeatureA/backend",
+                    project="FeatureA",
+                    pid=101,
+                )
+            },
+            metadata={"project_names": ["FeatureA"]},
+        )
+        runtime.state_repository.active_states = [state]
+        runtime._terminate_services_from_state = (  # type: ignore[method-assign]
+            lambda _state, *, selected_services, **_kwargs: set(selected_services or ())
+        )
+
+        code = LifecycleCleanupOrchestrator(runtime).execute(
+            Route(
+                command="stop",
+                mode="trees",
+                projects=["FeatureA"],
+                flags={"batch": True},
+            )
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(set(state.services), {"FeatureA Backend"})
+        self.assertEqual(runtime.state_repository.saved_states, [state])
+        self.assertEqual(runtime.state_repository.deactivated_run_ids, [])
+        self.assertEqual(runtime.state_repository.purge_calls, [])
+
+    def test_implicit_mode_targeted_stop_cleans_every_tree_shadow_with_duplicate_pid(self) -> None:
+        runtime = _RuntimeStub()
+        main_state = RunState(
+            run_id="run-main",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd="/tmp/main/backend",
+                    project="Main",
+                    pid=303,
+                )
+            },
+            metadata={"project_names": ["Main"]},
+        )
+        shadow_states = [
+            RunState(
+                run_id=run_id,
+                mode="trees",
+                services={
+                    f"FeatureA Backend {run_id}": ServiceRecord(
+                        name=f"FeatureA Backend {run_id}",
+                        type="backend",
+                        cwd=f"/tmp/{run_id}/backend",
+                        project="FeatureA",
+                        pid=404,
+                        actual_port=8404,
+                    )
+                },
+                metadata={"project_names": ["FeatureA"]},
+            )
+            for run_id in ("run-tree-new", "run-tree-old")
+        ]
+        runtime.state_repository.active_states = [main_state, *shadow_states]
+        runtime._try_load_existing_state = (  # type: ignore[method-assign]
+            lambda *, mode=None, strict_mode_match=False, project_names=None: (
+                shadow_states[0] if mode == "main" and not strict_mode_match and project_names == ["FeatureA"] else None
+            )
+        )
+        live_pids = {404}
+        termination_calls: list[int] = []
+        released_ports: list[int] = []
+        runtime.port_planner = SimpleNamespace(release=lambda port: released_ports.append(port))
+        runtime.process_runner = SimpleNamespace(
+            is_pid_running=lambda pid: pid in live_pids,
+            pid_owns_port=lambda pid, port: pid in live_pids and pid == 404 and port == 8404,
+            terminate_process_group=lambda pid, **_kwargs: termination_calls.append(pid) or not live_pids.discard(pid),
+        )
+        runtime._terminate_service_record = (  # type: ignore[attr-defined]
+            lambda service, *, aggressive, verify_ownership: terminate_service_record(
+                runtime,
+                service,
+                aggressive=aggressive,
+                verify_ownership=verify_ownership,
+            )
+        )
+        runtime._terminate_services_from_state = (  # type: ignore[method-assign]
+            lambda state, *, selected_services, aggressive, verify_ownership: terminate_services_from_state(
+                runtime,
+                state,
+                selected_services=selected_services,
+                aggressive=aggressive,
+                verify_ownership=verify_ownership,
+            )
+        )
+
+        code = LifecycleCleanupOrchestrator(runtime).execute(
+            Route(
+                command="stop",
+                mode="main",
+                projects=["FeatureA"],
+                flags={"batch": True},
+            )
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(termination_calls, [404])
+        self.assertEqual(released_ports, [8404, 8404])
+        self.assertEqual(runtime.state_repository.deactivated_run_ids, ["run-tree-new", "run-tree-old"])
+        self.assertEqual(runtime.state_repository.active_states, [main_state])
+
+    def test_stop_all_failure_preserves_failed_run_and_never_purges_registry(self) -> None:
+        runtime = _RuntimeStub()
+        failed_state = RunState(
+            run_id="run-failed",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd="/tmp/backend",
+                    project="Main",
+                    pid=101,
+                ),
+                "FeatureC Backend": ServiceRecord(
+                    name="FeatureC Backend",
+                    type="backend",
+                    cwd="/tmp/FeatureC/backend",
+                    project="FeatureC",
+                    pid=102,
+                ),
+            },
+            requirements={
+                "shared-main": RequirementsResult(project="Main", db={"enabled": True, "final": 5432}),
+                "FeatureC": RequirementsResult(project="FeatureC", redis={"enabled": True, "final": 6379}),
+            },
+        )
+        successful_state = RunState(
+            run_id="run-success",
+            mode="trees",
+            services={
+                "FeatureB Backend": ServiceRecord(
+                    name="FeatureB Backend",
+                    type="backend",
+                    cwd="/tmp/FeatureB/backend",
+                    project="FeatureB",
+                    pid=202,
+                )
+            },
+            requirements={
+                "FeatureB": RequirementsResult(project="FeatureB", db={"enabled": True, "final": 5433}),
+            },
+        )
+        runtime.state_repository.active_states = [failed_state, successful_state]
+        released_requirements: list[str] = []
+        runtime._release_requirement_ports = (  # type: ignore[attr-defined]
+            lambda requirements: released_requirements.append(requirements.project)
+        )
+        runtime._terminate_services_from_state = (  # type: ignore[method-assign]
+            lambda state, **_kwargs: {"Main Backend"} if state.run_id == "run-failed" else set()
+        )
+
+        runtime._state_lookup_strict_mode_match = lambda _route: True  # type: ignore[method-assign]
+        code = LifecycleCleanupOrchestrator(runtime).execute(Route(command="stop-all", mode="main"))
+
+        self.assertEqual(code, 1)
+        self.assertEqual(runtime.state_repository.saved_states, [failed_state])
+        self.assertEqual(set(failed_state.services), {"Main Backend"})
+        self.assertEqual(set(failed_state.requirements), {"shared-main"})
+        self.assertEqual(set(released_requirements), {"FeatureC"})
+        self.assertEqual(runtime.state_repository.deactivated_run_ids, [])
+        self.assertEqual(runtime.state_repository.active_states, [failed_state, successful_state])
+        self.assertEqual(runtime.state_repository.purge_calls, [])
+        self.assertTrue(any(event.get("event") == "cleanup.incomplete" for event in runtime.events))
+
+        runtime._terminate_services_from_state = lambda _state, **_kwargs: set()  # type: ignore[method-assign]
+        retry_code = LifecycleCleanupOrchestrator(runtime).execute(Route(command="stop-all", mode="main"))
+
+        self.assertEqual(retry_code, 0)
+        self.assertEqual(released_requirements.count("Main"), 1)
+        self.assertEqual(runtime.state_repository.deactivated_run_ids, ["run-failed"])
+        self.assertEqual(runtime.state_repository.active_states, [successful_state])
+        self.assertEqual(runtime.state_repository.purge_calls, [])
+
+        trees_code = LifecycleCleanupOrchestrator(runtime).execute(Route(command="stop-all", mode="trees"))
+
+        self.assertEqual(trees_code, 0)
+        self.assertEqual(released_requirements.count("FeatureB"), 1)
+        self.assertEqual(runtime.state_repository.deactivated_run_ids, ["run-failed", "run-success"])
+        self.assertEqual(runtime.state_repository.active_states, [])
+        self.assertEqual(runtime.state_repository.purge_calls, [False])
 
     def test_stop_selector_miss_does_not_start_spinner(self) -> None:
         runtime = _RuntimeStub()

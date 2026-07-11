@@ -24,6 +24,7 @@ class ServiceRecord:
     pid: int | None = None
     requested_port: int | None = None
     actual_port: int | None = None
+    port_lock_session: str | None = None
     log_path: str | None = None
     status: str = "unknown"
     synthetic: bool = False

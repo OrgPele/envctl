@@ -253,10 +253,11 @@ class EngineRuntimeRealStartupTests(_EngineRuntimeRealStartupTestCase):
             rendered = out.getvalue()
             self.assertIn("\x1b]8;;file://", rendered)
             visible = strip_ansi(rendered)
-            self.assertIn("backend listener not detected", visible)
+            self.assertIn("backend is missing a required executable or module", visible)
             self.assertIn("log_path:", visible)
             failure_events = [payload for event, payload in captured_events if event == "service.failure"]
             self.assertTrue(failure_events)
+            self.assertEqual(failure_events[0]["failure_class"], "dependency_missing")
             detail = str(failure_events[0]["detail"])
             self.assertIn("log_path:", detail)
             self.assertNotIn("\x1b]8;;", detail)

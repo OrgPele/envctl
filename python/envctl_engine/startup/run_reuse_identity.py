@@ -27,19 +27,31 @@ def build_startup_identity_metadata(
     route: Route | None = None,
 ) -> dict[str, object]:
     metadata = dict(base_metadata or {})
-    project_roots = {
-        str(getattr(context, "name", "")).strip(): root
-        for context, root in (
-            (context, normalize_project_root(getattr(context, "root", None))) for context in project_contexts
-        )
-        if str(getattr(context, "name", "")).strip() and root
-    }
+    roots_by_key: dict[str, tuple[str, str]] = {}
+    existing_roots = metadata.get("project_roots")
+    if isinstance(existing_roots, Mapping):
+        for raw_name, raw_root in existing_roots.items():
+            name = str(raw_name).strip()
+            root = normalize_project_root(raw_root)
+            if name and root:
+                roots_by_key[name.casefold()] = (name, root)
+    for context in project_contexts:
+        name = str(getattr(context, "name", "")).strip()
+        root = normalize_project_root(getattr(context, "root", None))
+        if name and root:
+            roots_by_key[name.casefold()] = (name, root)
+    project_roots = {name: root for name, root in (roots_by_key[key] for key in sorted(roots_by_key))}
     identity_payload = _startup_identity_payload(
         runtime,
         runtime_mode=runtime_mode,
         project_contexts=project_contexts,
         route=route,
     )
+    identity_payload["projects"] = [{"name": name, "root": root} for name, root in project_roots.items()]
+    identity_payload.pop("fingerprint", None)
+    identity_payload["fingerprint"] = hashlib.sha256(
+        json.dumps(identity_payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
     metadata["project_roots"] = project_roots
     metadata["startup_identity"] = identity_payload
     return metadata

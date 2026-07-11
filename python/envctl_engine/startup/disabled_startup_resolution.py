@@ -6,6 +6,7 @@ from typing import Any
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_env import route_is_implicit_start
+from envctl_engine.runtime.lifecycle_operation_lease import release_lifecycle_operation
 from envctl_engine.startup.finalization import (
     build_planning_dashboard_state,
     headless_plan_output_only,
@@ -68,6 +69,7 @@ def resolve_disabled_startup_mode(
     artifacts_started = time.monotonic()
     runtime._write_artifacts(run_state, session.selected_contexts, errors=[])
     emit_phase(session, "artifacts_write", artifacts_started, status="ok")
+    release_lifecycle_operation(runtime)
     if route.command == "plan":
         validate_plan_agent_handoff(session, phase="disabled_startup_finalization")
         print_plan_dry_run_preview(session)
@@ -139,13 +141,11 @@ def resolve_disabled_startup_mode_with_runtime(
             session=session,
             validate_plan_agent_handoff=validate_plan_agent_handoff,
             attach_plan_agent_terminal=attach_plan_agent_terminal,
-            print_headless_plan_session_summary=lambda session, *, attach_target: (
-                print_headless_plan_session_summary(
-                    session,
-                    validate_plan_agent_handoff=validate_plan_agent_handoff,
-                    print_fn=print_fn,
-                    attach_target=attach_target,
-                )
+            print_headless_plan_session_summary=lambda session, *, attach_target: print_headless_plan_session_summary(
+                session,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
+                print_fn=print_fn,
+                attach_target=attach_target,
             ),
         ),
         print_fn=print_fn,

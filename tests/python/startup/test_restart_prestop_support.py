@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.shared.ports import PortPlanner
 from envctl_engine.startup.restart_prestop_support import (
     RestartOrphanListenerScan,
     apply_restart_port_assignments,
@@ -105,11 +108,14 @@ class RestartPrestopSupportTests(unittest.TestCase):
             restart_state=None,
             preserved_requirements={},
             preserved_services={},
+            base_metadata={"new": True},
         )
         state = SimpleNamespace(
+            run_id="run-old",
             mode="main",
             services={"Main Backend": object(), "Other Backend": object()},
             requirements={"Main": object(), "Other": object()},
+            metadata={"state_source_run_ids": ["run-ancestor"], "old": True},
         )
         events: list[tuple[str, dict[str, object]]] = []
         released: list[object] = []
@@ -122,8 +128,8 @@ class RestartPrestopSupportTests(unittest.TestCase):
             _effective_start_mode=lambda route: "main",
             _try_load_existing_state=lambda *, mode: state,
             _project_name_from_service=lambda name: str(name).removesuffix(" Backend"),
-            _terminate_services_from_state=lambda state, *, selected_services, aggressive, verify_ownership: terminated.append(
-                (state, set(selected_services))
+            _terminate_services_from_state=lambda state, *, selected_services, aggressive, verify_ownership: (
+                terminated.append((state, set(selected_services)))
             ),
             _release_requirement_ports=released.append,
             _emit=lambda event, **payload: events.append((event, payload)),
@@ -148,10 +154,112 @@ class RestartPrestopSupportTests(unittest.TestCase):
         self.assertEqual(released, [state.requirements["Main"]])
         self.assertEqual(session.preserved_services, {"Other Backend": state.services["Other Backend"]})
         self.assertEqual(session.preserved_requirements, {"Other": state.requirements["Other"]})
+        self.assertEqual(session.base_metadata["state_source_run_ids"], ["run-ancestor", "run-old"])
+        self.assertTrue(session.base_metadata["old"])
+        self.assertTrue(session.base_metadata["new"])
         self.assertEqual(session.effective_route.command, "start")
         self.assertEqual(session.effective_route.flags["_restart_selected_services"], ["Main Backend"])
         self.assertEqual(spinner.events, ["enter", "succeed:Restart pre-stop complete", "exit"])
-        self.assertIn(("restart.selection", {"include_requirements": True, "target_projects": ["Main"], "selected_services": ["Main Backend"]}), events)
+        self.assertIn(
+            (
+                "restart.selection",
+                {"include_requirements": True, "target_projects": ["Main"], "selected_services": ["Main Backend"]},
+            ),
+            events,
+        )
+
+    def test_handle_restart_prestop_aborts_without_mutating_session_when_termination_fails(self) -> None:
+        route = Route(
+            command="restart",
+            mode="main",
+            flags={"services": ["Main Backend"]},
+        )
+        session = SimpleNamespace(
+            effective_route=route,
+            runtime_mode="main",
+            restart_state=None,
+            preserved_requirements={},
+            preserved_services={},
+            base_metadata={},
+        )
+        state = SimpleNamespace(
+            run_id="run-old",
+            mode="main",
+            services={"Main Backend": object()},
+            requirements={"Main": object()},
+            metadata={},
+        )
+        runtime = SimpleNamespace(
+            env={},
+            _effective_start_mode=lambda _route: "main",
+            _try_load_existing_state=lambda *, mode: state,
+            _project_name_from_service=lambda _name: "Main",
+            _terminate_services_from_state=lambda *_args, **_kwargs: {"Main Backend"},
+            _release_requirement_ports=lambda _requirements: self.fail("ports must remain reserved"),
+            _emit=lambda *_args, **_kwargs: None,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Main Backend"):
+            handle_restart_prestop(
+                runtime=runtime,
+                session=session,
+                suppress_progress_output=lambda _route: True,
+                terminate_restart_orphan_listeners=lambda **_kwargs: self.fail("orphans must not be reaped"),
+                spinner_factory=lambda *_args, **_kwargs: _RecordingSpinner(),
+                use_spinner_policy_fn=lambda _policy: _NullContext(),
+                resolve_spinner_policy_fn=lambda _env: SimpleNamespace(enabled=False),
+                emit_spinner_policy_fn=lambda *_args, **_kwargs: None,
+            )
+
+        self.assertEqual(session.preserved_services, {})
+        self.assertEqual(session.preserved_requirements, {})
+        self.assertEqual(session.base_metadata, {})
+        self.assertTrue(session.preserve_existing_state_on_failure)
+        self.assertIs(session.restart_state, state)
+        self.assertIs(session.effective_route, route)
+
+    def test_handle_restart_prestop_aborts_when_orphan_exit_is_unconfirmed(self) -> None:
+        route = Route(command="restart", mode="main", flags={"services": ["Main Backend"]})
+        session = SimpleNamespace(
+            effective_route=route,
+            runtime_mode="main",
+            restart_state=None,
+            preserved_requirements={},
+            preserved_services={},
+            base_metadata={},
+        )
+        state = SimpleNamespace(
+            run_id="run-old",
+            mode="main",
+            services={"Main Backend": object()},
+            requirements={"Main": object()},
+            metadata={},
+        )
+        runtime = SimpleNamespace(
+            env={},
+            _effective_start_mode=lambda _route: "main",
+            _try_load_existing_state=lambda *, mode: state,
+            _project_name_from_service=lambda _name: "Main",
+            _terminate_services_from_state=lambda *_args, **_kwargs: set(),
+            _release_requirement_ports=lambda _requirements: self.fail("ports must remain reserved"),
+            _emit=lambda *_args, **_kwargs: None,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "orphan listeners.*4242"):
+            handle_restart_prestop(
+                runtime=runtime,
+                session=session,
+                suppress_progress_output=lambda _route: True,
+                terminate_restart_orphan_listeners=lambda **_kwargs: {4242},
+                spinner_factory=lambda *_args, **_kwargs: _RecordingSpinner(),
+                use_spinner_policy_fn=lambda _policy: _NullContext(),
+                resolve_spinner_policy_fn=lambda _env: SimpleNamespace(enabled=False),
+                emit_spinner_policy_fn=lambda *_args, **_kwargs: None,
+            )
+
+        self.assertTrue(session.preserve_existing_state_on_failure)
+        self.assertEqual(session.preserved_services, {})
+        self.assertIs(session.effective_route, route)
 
     def test_restart_fallback_start_route_preserves_request_context_and_marks_restart(self) -> None:
         route = Route(
@@ -502,7 +610,7 @@ class RestartPrestopSupportTests(unittest.TestCase):
         released: list[int] = []
         terminated: list[tuple[int, float, float]] = []
 
-        terminate_restart_orphan_listeners(
+        failed = terminate_restart_orphan_listeners(
             state=state,
             selected_services={"Main Backend"},
             aggressive=True,
@@ -511,15 +619,121 @@ class RestartPrestopSupportTests(unittest.TestCase):
             port_spacing=0,
             listener_pids_for_port=lambda port: [42] if port == 8000 else [],
             process_cwd=lambda pid: "/repo/backend" if pid == 42 else None,
-            terminate_pid=lambda pid, *, term_timeout, kill_timeout: terminated.append(
-                (pid, term_timeout, kill_timeout)
-            )
-            or True,
-            release_port=released.append,
+            terminate_pid=lambda pid, *, term_timeout, kill_timeout: (
+                terminated.append((pid, term_timeout, kill_timeout)) or True
+            ),
+            port_planner=SimpleNamespace(release=released.append),
         )
 
         self.assertEqual(terminated, [(42, 0.5, 1.0)])
         self.assertEqual(released, [8000])
+        self.assertEqual(failed, set())
+
+    def test_restart_orphan_cleanup_releases_verified_prior_session_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prior = PortPlanner(
+                lock_dir=tmpdir,
+                session_id="prior-session",
+                availability_checker=lambda _port: True,
+            )
+            current = PortPlanner(
+                lock_dir=tmpdir,
+                session_id="current-session",
+                availability_checker=lambda _port: True,
+            )
+            prior.reserve_next(8000, owner="Main:backend")
+            state = SimpleNamespace(
+                services={
+                    "Main Backend": SimpleNamespace(
+                        project="Main",
+                        type="backend",
+                        cwd="/repo/backend",
+                        actual_port=8000,
+                        port_lock_session="prior-session",
+                    )
+                }
+            )
+
+            failed = terminate_restart_orphan_listeners(
+                state=state,
+                selected_services={"Main Backend"},
+                aggressive=True,
+                backend_port_base=8000,
+                frontend_port_base=3000,
+                port_spacing=0,
+                listener_pids_for_port=lambda port: [42] if port == 8000 else [],
+                process_cwd=lambda pid: "/repo/backend" if pid == 42 else None,
+                terminate_pid=lambda *_args, **_kwargs: True,
+                port_planner=current,
+            )
+
+            self.assertEqual(failed, set())
+            self.assertEqual(list(Path(tmpdir).glob("*.lock")), [])
+
+    def test_stale_restart_state_cannot_release_newer_same_owner_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            newer = PortPlanner(
+                lock_dir=tmpdir,
+                session_id="newer-session",
+                availability_checker=lambda _port: True,
+            )
+            cleanup = PortPlanner(
+                lock_dir=tmpdir,
+                session_id="cleanup-session",
+                availability_checker=lambda _port: True,
+            )
+            newer.reserve_next(8000, owner="Main:backend")
+            state = SimpleNamespace(
+                services={
+                    "Main Backend": SimpleNamespace(
+                        project="Main",
+                        type="backend",
+                        cwd="/repo/backend",
+                        actual_port=8000,
+                        port_lock_session="stale-session",
+                    )
+                }
+            )
+
+            failed = terminate_restart_orphan_listeners(
+                state=state,
+                selected_services={"Main Backend"},
+                aggressive=True,
+                backend_port_base=8000,
+                frontend_port_base=3000,
+                port_spacing=0,
+                listener_pids_for_port=lambda port: [42] if port == 8000 else [],
+                process_cwd=lambda pid: "/repo/backend" if pid == 42 else None,
+                terminate_pid=lambda *_args, **_kwargs: True,
+                port_planner=cleanup,
+            )
+
+            self.assertEqual(failed, set())
+            self.assertTrue((Path(tmpdir) / "8000.lock").exists())
+
+    def test_terminate_restart_orphan_listeners_reports_unconfirmed_exits_without_releasing_ports(self) -> None:
+        state = SimpleNamespace(
+            services={
+                "Main Backend": SimpleNamespace(type="backend", cwd="/repo/backend", actual_port=8000),
+            }
+        )
+        released: list[int] = []
+
+        failed = terminate_restart_orphan_listeners(
+            state=state,
+            selected_services={"Main Backend"},
+            aggressive=True,
+            backend_port_base=8000,
+            frontend_port_base=3000,
+            port_spacing=0,
+            listener_pids_for_port=lambda port: [42] if port == 8000 else [],
+            process_cwd=lambda pid: "/repo/backend" if pid == 42 else None,
+            terminate_pid=lambda *_args, **_kwargs: False,
+            port_planner=SimpleNamespace(release=released.append),
+        )
+
+        self.assertEqual(failed, {42})
+        self.assertEqual(released, [])
 
 
 if __name__ == "__main__":

@@ -36,12 +36,17 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
             project="Main",
             db={"enabled": True, "final": 5432},
             redis={"enabled": False, "final": 6379},
+            supabase={
+                "enabled": True,
+                "final": 15432,
+                "resources": {"db": 15432, "api": 15433},
+            },
             n8n={"enabled": True, "final": 5678},
         )
 
         release_requirement_ports(runtime, requirements)
 
-        self.assertEqual(released, [5432, 5678])
+        self.assertEqual(released, [5432, 5678, 15432, 15433])
 
     def test_release_requirement_ports_skips_external_dependency_ports(self) -> None:
         released: list[int] = []
@@ -108,10 +113,16 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
 
     def test_terminate_service_record_prefers_process_group_termination(self) -> None:
         calls: list[tuple[str, int]] = []
+        live_pids = {3210}
         runtime = SimpleNamespace(
             _emit=lambda *args, **kwargs: None,
             process_runner=SimpleNamespace(
-                terminate_process_group=lambda pid, **kwargs: calls.append(("group", pid)) or True,
+                is_pid_running=lambda pid: pid in live_pids,
+                terminate_process_group=lambda pid, **kwargs: (
+                    calls.append(("group", pid)),
+                    live_pids.discard(pid),
+                    True,
+                )[-1],
                 terminate=lambda pid, **kwargs: calls.append(("single", pid)) or True,
             ),
         )
@@ -129,6 +140,7 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
     def test_terminate_service_record_accepts_verified_listener_child_ownership(self) -> None:
         calls: list[tuple[str, int]] = []
         skips: list[dict[str, object]] = []
+        live_pids = {111, 222}
 
         def pid_owns_port(pid: int, port: int) -> bool:
             return pid == 222 and port == 9000
@@ -136,8 +148,13 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
         runtime = SimpleNamespace(
             _emit=lambda event, **payload: skips.append(payload) if event == "cleanup.skip" else None,
             process_runner=SimpleNamespace(
+                is_pid_running=lambda pid: pid in live_pids,
                 pid_owns_port=pid_owns_port,
-                terminate_process_group=lambda pid, **kwargs: calls.append(("group", pid)) or True,
+                terminate_process_group=lambda pid, **kwargs: (
+                    calls.append(("group", pid)),
+                    live_pids.discard(pid),
+                    True,
+                )[-1],
                 terminate=lambda pid, **kwargs: calls.append(("single", pid)) or True,
             ),
         )
@@ -150,7 +167,7 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
         )
 
         self.assertTrue(terminated)
-        self.assertEqual(calls, [("group", 111)])
+        self.assertEqual(calls, [("group", 111), ("group", 222)])
         self.assertEqual(skips, [])
 
     def test_blast_worktree_before_delete_updates_state_and_emits_finish(self) -> None:
@@ -366,7 +383,10 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
                 return path_obj
 
             with (
-                patch("envctl_engine.runtime.engine_runtime_lifecycle_support.Path.iterdir", return_value=[proc_root / "111", proc_root / "222"]),
+                patch(
+                    "envctl_engine.runtime.engine_runtime_lifecycle_support.Path.iterdir",
+                    return_value=[proc_root / "111", proc_root / "222"],
+                ),
                 patch("pathlib.Path.resolve", autospec=True, side_effect=_resolve_proc_path),
                 patch(
                     "envctl_engine.runtime.engine_runtime_lifecycle_support._remove_tree_containers",

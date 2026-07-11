@@ -16,7 +16,7 @@ def test_commit_action_skips_envctl_local_artifacts_and_commits_normal_changes(t
 
     assert result.code == 0
     assert "Skipping envctl-local artifacts: .envctl-commit-message.md, MAIN_TASK.md" in result.output
-    assert ["add", "--", "app.py"] in harness.seen_git_args
+    assert ["add", "--all", "--", "app.py"] in harness.seen_git_args
     assert ["push", "-u", "origin", "feature/demo"] in harness.seen_git_args
 
 
@@ -57,7 +57,7 @@ def test_commit_action_recovers_when_envctl_local_artifacts_are_already_staged(t
     assert "Skipping envctl-local artifacts: MAIN_TASK.md, .envctl-commit-message.md" in result.output
     assert "Refusing to commit" not in result.output
     assert ["reset", "-q", "--", "MAIN_TASK.md"] in harness.seen_git_args
-    assert ["add", "--", "app.py"] in harness.seen_git_args
+    assert ["add", "--all", "--", "app.py"] in harness.seen_git_args
     assert ["push", "-u", "origin", "feature/demo"] in harness.seen_git_args
 
 

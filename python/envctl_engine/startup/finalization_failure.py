@@ -8,8 +8,10 @@ import time
 from typing import Any
 
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
-from envctl_engine.startup.session import StartupSession
+from envctl_engine.startup.session import StartupSession, unconfirmed_service_names
 from envctl_engine.startup.finalization_run_state import _build_run_state
+from envctl_engine.requirements.core import dependency_definitions
+from envctl_engine.runtime.lifecycle_requirement_ports import component_port_values
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.color_policy import colors_enabled
 from envctl_engine.ui.path_links import local_paths_in_text, render_paths_in_terminal_text
@@ -62,43 +64,105 @@ class StartupFailureFinalizer:
         }
         if self.session.strict_truth_failed:
             failure_payload["services"] = sorted(self.session.merged_services)
-        self.runtime._emit("startup.failed", **failure_payload)
+        try:
+            self.runtime._emit("startup.failed", **failure_payload)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _terminate_started_services(self) -> None:
-        started_services = {
-            service_name: service
-            for project_name in self.session.started_context_names
-            for service_name, service in self.session.services_by_project.get(project_name, {}).items()
-        }
+        started_services = dict(self.session.unterminated_services)
+        started_services.update(
+            {
+                service_name: service
+                for project_name in self.session.started_context_names
+                for service_name, service in self.session.services_by_project.get(project_name, {}).items()
+            }
+        )
         if started_services:
-            self.runtime._terminate_started_services(started_services)
+            try:
+                failed_names = unconfirmed_service_names(
+                    self.runtime._terminate_started_services(started_services),
+                    started_services,
+                )
+            except Exception:  # noqa: BLE001
+                failed_names = set(started_services)
+            for project_name in list(self.session.services_by_project):
+                retained = {
+                    name: service
+                    for name, service in self.session.services_by_project[project_name].items()
+                    if name in failed_names
+                }
+                if retained:
+                    self.session.services_by_project[project_name] = retained
+                else:
+                    self.session.services_by_project.pop(project_name, None)
+            self.session.unterminated_services = {
+                name: service for name, service in started_services.items() if name in failed_names
+            }
+            for service in self.session.unterminated_services.values():
+                service.status = "termination_failed"
+                service.degraded = True
 
     def _release_ports(self) -> None:
-        self.port_allocator(self.runtime).release_session()
+        if self.session.unterminated_services or _has_retained_managed_requirements(self.session):
+            try:
+                self.runtime._emit(
+                    "port.session_release.skipped",
+                    reason=(
+                        "unterminated_services"
+                        if self.session.unterminated_services
+                        else "started_requirements_remain_tracked"
+                    ),
+                    services=sorted(self.session.unterminated_services),
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        try:
+            self.port_allocator(self.runtime).release_session()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _write_failure_artifacts(self, final_error: str) -> None:
-        run_state = build_failure_run_state(self.runtime, self.session, final_error)
         artifacts_started = time.monotonic()
+        if self.session.preserve_existing_state_on_failure:
+            try:
+                self.runtime._emit(
+                    "state.failure_write.skipped",
+                    reason="existing_runtime_state_remains_authoritative",
+                    run_id=self.session.run_id,
+                )
+                self.emit_phase(self.session, "artifacts_write", artifacts_started, status="skipped")
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        run_state = build_failure_run_state(self.runtime, self.session, final_error)
         self.runtime._write_artifacts(run_state, self.session.selected_contexts, errors=self.session.errors)
-        self.emit_phase(self.session, "artifacts_write", artifacts_started, status="error")
+        try:
+            self.emit_phase(self.session, "artifacts_write", artifacts_started, status="error")
+        except Exception:  # noqa: BLE001
+            pass
 
     def _print_final_status(self, final_error: str) -> None:
-        interactive_tty = failure_hyperlink_interactive_tty(self.runtime)
-        rendered_error = self.render_final_failure_status(
-            self.runtime,
-            self.session,
-            final_error,
-            interactive_tty=interactive_tty,
-        )
-        self.print_fn(
-            render_paths_in_terminal_text(
-                rendered_error,
-                paths=local_paths_in_text(rendered_error),
-                env=self.runtime.env,
-                stream=self.output_stream,
+        try:
+            interactive_tty = failure_hyperlink_interactive_tty(self.runtime)
+            rendered_error = self.render_final_failure_status(
+                self.runtime,
+                self.session,
+                final_error,
                 interactive_tty=interactive_tty,
             )
-        )
+            self.print_fn(
+                render_paths_in_terminal_text(
+                    rendered_error,
+                    paths=local_paths_in_text(rendered_error),
+                    env=self.runtime.env,
+                    stream=self.output_stream,
+                    interactive_tty=interactive_tty,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def finalize_failed_startup(
@@ -120,6 +184,21 @@ def finalize_failed_startup(
         emit_phase=emit_phase,
         render_final_failure_status=render_final_failure_status,
     ).finalize()
+
+
+def _has_retained_managed_requirements(session: StartupSession) -> bool:
+    for requirements in session.requirements_by_project.values():
+        for definition in dependency_definitions():
+            component = requirements.component(definition.id)
+            if not bool(component.get("enabled", False)):
+                continue
+            if bool(component.get("external", False)) or bool(component.get("simulated", False)):
+                continue
+            if not bool(component.get("success", False)) and not str(component.get("container_name") or "").strip():
+                continue
+            if component_port_values(component) or str(component.get("container_name") or "").strip():
+                return True
+    return False
 
 
 def failure_hyperlink_interactive_tty(runtime: StartupRuntime) -> bool | None:
