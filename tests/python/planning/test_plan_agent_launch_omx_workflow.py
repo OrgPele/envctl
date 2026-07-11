@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from tests.python.planning.plan_agent_launch_support_test_support import *
+from tests.python.planning.plan_agent_launch_support_test_support import _build_plan_agent_workflow
 
 
 class PlanAgentLaunchOmxWorkflowTests(PlanAgentLaunchSupportTestCase):
@@ -62,7 +63,7 @@ class PlanAgentLaunchOmxWorkflowTests(PlanAgentLaunchSupportTestCase):
                     self.assertIsNone(error)
                     self.assertEqual(len(submitted), 1)
                     self.assertTrue(submitted[0].startswith(f"${workflow_name}"))
-                    self.assertEqual(queued, ["queue_direct_prompt"])
+                    self.assertEqual(queued, ["queue_message"])
 
     def test_omx_goal_fallback_still_submits_ralph_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

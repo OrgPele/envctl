@@ -2,6 +2,16 @@
 from __future__ import annotations
 
 from tests.python.planning.plan_agent_launch_support_test_support import *
+from tests.python.planning.plan_agent_launch_support_test_support import (
+    _build_plan_agent_workflow,
+    _ImmediateThread,
+    _launch_config_for_tests,
+    _monotonic_counter,
+    _RecordingRunner,
+    _RuntimeHarness,
+    _wait_for_codex_queue_ready,
+    _WorkspaceLaunchTarget,
+)
 
 
 
@@ -124,21 +134,21 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
             self.assertTrue(
                 any(
                     call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and "You are implementing real code, end-to-end." in str(call[-1])
+                    and str(call[-1]).strip() == "/prompts:implement_task"
                     for call in rt.process_runner.calls
                 )
             )
             self.assertTrue(
                 any(
                     call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and "You are preparing the next implementation iteration" in str(call[-1])
+                    and str(call[-1]).strip() == "/prompts:continue_task"
                     for call in rt.process_runner.calls
                 )
             )
             self.assertTrue(
                 any(
                     call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and "You are finalizing an implementation" in str(call[-1])
+                    and str(call[-1]).strip() == "/prompts:finalize_task"
                     for call in rt.process_runner.calls
                 )
             )
@@ -258,7 +268,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
 
         self.assertIsNone(reason)
         self.assertEqual(len(pasted_texts), 1)
-        self.assertIn("You are finalizing an implementation", pasted_texts[0])
+        self.assertEqual(pasted_texts[0], "/prompts:finalize_task")
         self.assertEqual(sent_keys, ["tab"])
 
     def test_cmux_codex_queue_fails_when_message_remains_in_textbox_after_tab(self) -> None:
@@ -373,9 +383,9 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                         "cli": "codex",
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 1,
-                        "reason": "queue_send_failed",
+                        "reason": "queue_not_ready",
                         "queue_failed_step_index": 0,
-                        "queue_failed_step_kind": "queue_direct_prompt",
+                        "queue_failed_step_kind": "queue_message",
                         "transport": "cmux",
                     }
                 ],
@@ -391,9 +401,9 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                         "cli": "codex",
                         "workflow_mode": "codex_cycles",
                         "codex_cycles": 1,
-                        "reason": "queue_send_failed",
+                        "reason": "queue_not_ready",
                         "queue_failed_step_index": 0,
-                        "queue_failed_step_kind": "queue_direct_prompt",
+                        "queue_failed_step_kind": "queue_message",
                         "transport": "cmux",
                     }
                 ],
@@ -411,7 +421,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                 env={
                     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
                     "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
-                    "CYCLES": "3",
+                    "CYCLES": "6",
                 },
             )
 
@@ -450,7 +460,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                 {
                     "event": "planning.agent_launch.workflow_selected",
                     "workspace_id": "workspace:7",
-                    "warning": None,
+                    "warning": "bounded_codex_cycles",
                     "enabled": True,
                     "cli": "codex",
                     "created_worktree_count": 1,

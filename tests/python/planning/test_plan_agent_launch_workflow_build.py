@@ -2,6 +2,15 @@
 from __future__ import annotations
 
 from tests.python.planning.plan_agent_launch_support_test_support import *
+from tests.python.planning.plan_agent_launch_support_test_support import (
+    _browser_e2e_instruction_text,
+    _build_plan_agent_workflow,
+    _finalization_instruction_text,
+    _first_cycle_completion_instruction_text,
+    _intermediate_cycle_completion_instruction_text,
+    _pr_review_comments_instruction_text,
+    _run_tmux_worktree_bootstrap,
+)
 
 
 class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
@@ -179,8 +188,8 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
         self.assertEqual(
             [(step.kind, step.text) for step in workflow.steps],
             [
-                ("submit_direct_prompt", "implement_task"),
-                ("queue_direct_prompt", "finalize_task"),
+                ("submit_prompt", "/prompts:implement_task"),
+                ("queue_message", "/prompts:finalize_task"),
             ],
         )
 
@@ -197,8 +206,8 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
         self.assertEqual(
             [(step.kind, step.text) for step in workflow.steps],
             [
-                ("submit_direct_prompt", "implement_task"),
-                ("queue_direct_prompt", "finalize_task"),
+                ("submit_prompt", "/prompts:implement_task"),
+                ("queue_message", "/prompts:finalize_task"),
                 ("queue_message", _browser_e2e_instruction_text()),
             ],
         )
@@ -250,11 +259,11 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
         self.assertEqual(
             [(step.kind, step.text) for step in workflow.steps],
             [
-                ("submit_direct_prompt", "implement_task"),
+                ("submit_prompt", "/prompts:implement_task"),
                 ("queue_message", _first_cycle_completion_instruction_text()),
-                ("queue_direct_prompt", "continue_task"),
-                ("queue_direct_prompt", "implement_task"),
-                ("queue_direct_prompt", "finalize_task"),
+                ("queue_message", "/prompts:continue_task"),
+                ("queue_message", "/prompts:implement_task"),
+                ("queue_message", "/prompts:finalize_task"),
             ],
         )
 
@@ -269,14 +278,14 @@ class PlanAgentLaunchWorkflowBuildTests(PlanAgentLaunchSupportTestCase):
         self.assertEqual(
             [(step.kind, step.text) for step in workflow.steps],
             [
-                ("submit_direct_prompt", "implement_task"),
+                ("submit_prompt", "/prompts:implement_task"),
                 ("queue_message", _first_cycle_completion_instruction_text()),
-                ("queue_direct_prompt", "continue_task"),
-                ("queue_direct_prompt", "implement_task"),
+                ("queue_message", "/prompts:continue_task"),
+                ("queue_message", "/prompts:implement_task"),
                 ("queue_message", _intermediate_cycle_completion_instruction_text()),
-                ("queue_direct_prompt", "continue_task"),
-                ("queue_direct_prompt", "implement_task"),
-                ("queue_direct_prompt", "finalize_task"),
+                ("queue_message", "/prompts:continue_task"),
+                ("queue_message", "/prompts:implement_task"),
+                ("queue_message", "/prompts:finalize_task"),
             ],
         )
 

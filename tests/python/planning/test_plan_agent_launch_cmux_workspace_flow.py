@@ -2,6 +2,11 @@
 from __future__ import annotations
 
 from tests.python.planning.plan_agent_launch_support_test_support import *
+from tests.python.planning.plan_agent_launch_support_test_support import (
+    _ImmediateThread,
+    _monotonic_counter,
+    _RecordingRunner,
+)
 
 
 
@@ -211,8 +216,16 @@ class PlanAgentLaunchCmuxWorkspaceFlowTests(PlanAgentLaunchSupportTestCase):
             )
             self.assertTrue(
                 any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-77"]
-                    and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+                    call
+                    == [
+                        "cmux",
+                        "send",
+                        "--workspace",
+                        "workspace:9",
+                        "--surface",
+                        "surface:77",
+                        "/prompts:implement_task",
+                    ]
                     for call in rt.process_runner.calls
                 )
             )

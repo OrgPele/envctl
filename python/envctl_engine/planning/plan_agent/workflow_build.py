@@ -69,12 +69,20 @@ class PlanAgentWorkflowBuilder:
 
     def _codex_cycle_steps(self, bounded_cycles: int, *, requires_goal: bool) -> list[_PlanAgentWorkflowStep]:
         steps = [
-            _PlanAgentWorkflowStep(kind="submit_direct_prompt", text="implement_task", requires_goal=requires_goal)
+            _PlanAgentWorkflowStep(
+                kind="submit_prompt",
+                text=_slash_command("codex", self.preset),
+                requires_goal=requires_goal,
+            )
         ]
         for cycle in range(1, bounded_cycles + 1):
             if cycle == bounded_cycles:
                 steps.append(
-                    _PlanAgentWorkflowStep(kind="queue_direct_prompt", text="finalize_task", requires_goal=False)
+                    _PlanAgentWorkflowStep(
+                        kind="queue_message",
+                        text=_slash_command("codex", "finalize_task"),
+                        requires_goal=False,
+                    )
                 )
                 steps.extend(self._terminal_followup_steps(requires_goal=False))
                 continue
@@ -86,8 +94,20 @@ class PlanAgentWorkflowBuilder:
             steps.append(
                 _PlanAgentWorkflowStep(kind="queue_message", text=completion_text, requires_goal=False)
             )
-            steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="continue_task", requires_goal=False))
-            steps.append(_PlanAgentWorkflowStep(kind="queue_direct_prompt", text="implement_task", requires_goal=False))
+            steps.append(
+                _PlanAgentWorkflowStep(
+                    kind="queue_message",
+                    text=_slash_command("codex", "continue_task"),
+                    requires_goal=False,
+                )
+            )
+            steps.append(
+                _PlanAgentWorkflowStep(
+                    kind="queue_message",
+                    text=_slash_command("codex", "implement_task"),
+                    requires_goal=False,
+                )
+            )
         return steps
 
     def _terminal_followup_steps(self, *, requires_goal: bool) -> list[_PlanAgentWorkflowStep]:
@@ -202,4 +222,15 @@ def _slash_command(cli: str, preset: str, *, arguments: str = "") -> str:
     return f"{command} {extra}"
 
 
-__all__ = tuple(name for name in globals() if not name.startswith("__"))
+__all__ = (
+    "PlanAgentWorkflowBuilder",
+    "_browser_e2e_instruction_text",
+    "_build_plan_agent_workflow",
+    "_finalization_instruction_text",
+    "_first_cycle_completion_instruction_text",
+    "_intermediate_cycle_completion_instruction_text",
+    "_load_plan_agent_followup_prompt",
+    "_pr_review_comments_instruction_text",
+    "_slash_command",
+    "_tab_title_for_worktree",
+)

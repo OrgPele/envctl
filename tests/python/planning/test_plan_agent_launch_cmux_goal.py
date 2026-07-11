@@ -2,6 +2,12 @@
 from __future__ import annotations
 
 from tests.python.planning.plan_agent_launch_support_test_support import *
+from tests.python.planning.plan_agent_launch_support_test_support import (
+    _codex_goal_screen_looks_active,
+    _ImmediateThread,
+    _monotonic_counter,
+    _RecordingRunner,
+)
 
 
 
@@ -111,8 +117,16 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
             )
             self.assertTrue(
                 any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+                    call
+                    == [
+                        "cmux",
+                        "send",
+                        "--workspace",
+                        "workspace:7",
+                        "--surface",
+                        "surface:9",
+                        "/prompts:implement_task",
+                    ]
                     for call in rt.process_runner.calls
                 )
             )
@@ -249,15 +263,23 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
                 if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
                 and str(call[-1]).startswith("/goal ")
             )
-            implementation_buffer_index = next(
+            implementation_command_index = next(
                 index
                 for index, call in enumerate(rt.process_runner.calls)
-                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                and str(call[-1]).startswith("You are implementing real code, end-to-end.")
+                if call
+                == [
+                    "cmux",
+                    "send",
+                    "--workspace",
+                    "workspace:7",
+                    "--surface",
+                    "surface:9",
+                    "/prompts:implement_task",
+                ]
             )
             intervening_reads = [
                 call
-                for call in rt.process_runner.calls[goal_buffer_index + 1 : implementation_buffer_index]
+                for call in rt.process_runner.calls[goal_buffer_index + 1 : implementation_command_index]
                 if call
                 == ["cmux", "read-screen", "--workspace", "workspace:7", "--surface", "surface:9", "--lines", "80"]
             ]
@@ -397,4 +419,3 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
         self.assertEqual(error, "codex_goal_active_timeout")
         self.assertEqual(len(pasted_texts), 1)
         self.assertTrue(pasted_texts[0].startswith("/goal "))
-

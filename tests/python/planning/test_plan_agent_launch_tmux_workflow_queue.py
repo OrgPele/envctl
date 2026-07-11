@@ -2,6 +2,13 @@
 from __future__ import annotations
 
 from tests.python.planning.plan_agent_launch_support_test_support import *
+from tests.python.planning.plan_agent_launch_support_test_support import (
+    _build_plan_agent_workflow,
+    _monotonic_counter,
+    _RecordingRunner,
+    _RuntimeHarness,
+    _run_tmux_worktree_bootstrap,
+)
 
 
 class PlanAgentLaunchTmuxWorkflowQueueTests(PlanAgentLaunchSupportTestCase):
@@ -61,7 +68,7 @@ class PlanAgentLaunchTmuxWorkflowQueueTests(PlanAgentLaunchSupportTestCase):
                 "reason": "queue_not_ready",
                 "transport": "tmux",
                 "queue_failed_step_index": 0,
-                "queue_failed_step_kind": "queue_direct_prompt",
+                "queue_failed_step_kind": "queue_message",
             }
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queue_failed"),
