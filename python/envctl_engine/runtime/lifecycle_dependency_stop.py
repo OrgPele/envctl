@@ -10,6 +10,17 @@ from envctl_engine.state.models import RequirementsResult, RunState
 
 
 def select_dependency_components_for_stop(state: RunState, route: Route) -> dict[str, set[str]]:
+    if route.flags.get("runtime_scope") == "entire-system":
+        requested_projects = {str(project).strip().casefold() for project in route.projects if str(project).strip()}
+        return {
+            project_name: {
+                definition.id
+                for definition in dependency_definitions()
+                if bool(requirements.component(definition.id).get("enabled", False))
+            }
+            for project_name, requirements in state.requirements.items()
+            if not requested_projects or str(project_name).strip().casefold() in requested_projects
+        }
     raw_components = route.flags.get("stop_dependency_components")
     if not isinstance(raw_components, list):
         return {}
@@ -39,6 +50,7 @@ def release_selected_dependency_components(
     selected_dependencies: dict[str, set[str]],
     *,
     release_component_ports_fn: Callable[[RequirementsResult, str, Mapping[str, object]], None],
+    stop_component_fn: Callable[[Mapping[str, object]], None] | None = None,
 ) -> None:
     for project_name, dependency_ids in selected_dependencies.items():
         requirements = state.requirements.get(project_name)
@@ -49,6 +61,8 @@ def release_selected_dependency_components(
             if not bool(component.get("enabled", False)):
                 continue
             if not bool(component.get("external")):
+                if stop_component_fn is not None:
+                    stop_component_fn(component)
                 release_component_ports_fn(requirements, dependency_id, component)
             requirements.components[dependency_id] = {}
         if not requirements_have_enabled_components(requirements):
@@ -75,3 +89,49 @@ def requirements_have_enabled_components(requirements: object) -> bool:
     return any(
         bool(component.get("enabled", False)) for component in components.values() if isinstance(component, Mapping)
     )
+
+
+def stop_requirement_component_containers(runtime: Any, component: Mapping[str, object]) -> None:
+    if bool(component.get("external")) or bool(component.get("simulated")):
+        return
+    container_name = str(component.get("container_name") or "").strip()
+    if not container_name:
+        return
+    process_runner = getattr(runtime, "process_runner", None)
+    if process_runner is None:
+        return
+    if str(component.get("id") or "").strip().lower() == "supabase":
+        compose_project = _supabase_compose_project(container_name)
+        listed = process_runner.run(
+            [
+                "docker",
+                "ps",
+                "--all",
+                "--quiet",
+                "--filter",
+                f"label=com.docker.compose.project={compose_project}",
+            ],
+            timeout=30.0,
+        )
+        if listed.returncode != 0:
+            raise RuntimeError(str(listed.stderr or listed.stdout or "failed listing Supabase containers").strip())
+        container_ids = [line.strip() for line in str(listed.stdout or "").splitlines() if line.strip()]
+        if container_ids:
+            removed = process_runner.run(["docker", "rm", "--force", *container_ids], timeout=60.0)
+            if removed.returncode != 0:
+                detail = removed.stderr or removed.stdout or "failed stopping Supabase containers"
+                raise RuntimeError(str(detail).strip())
+            return
+        # Native Supabase DB startup records the concrete container name and
+        # does not attach a Compose project label. Fall through to direct
+        # removal when the saved component is not a Compose stack.
+    removed = process_runner.run(["docker", "rm", "--force", container_name], timeout=30.0)
+    if removed.returncode != 0 and "No such container" not in str(removed.stderr or ""):
+        raise RuntimeError(str(removed.stderr or removed.stdout or f"failed stopping {container_name}").strip())
+
+
+def _supabase_compose_project(container_name: str) -> str:
+    db_container_suffix = "-supabase-db-1"
+    if container_name.endswith(db_container_suffix):
+        return container_name[: -len(db_container_suffix)]
+    return container_name

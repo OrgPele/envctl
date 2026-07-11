@@ -77,7 +77,9 @@ def _startup_identity_mismatch(previous: Mapping[str, object], current: Mapping[
 
 
 def _startup_identity_comparison_payload(identity: Mapping[str, object]) -> dict[str, object]:
-    return {str(key): value for key, value in identity.items() if str(key) != "fingerprint"}
+    payload = {str(key): value for key, value in identity.items() if str(key) != "fingerprint"}
+    payload.setdefault("application_runtime", "process")
+    return payload
 
 
 def project_identities_from_contexts(contexts: list[object]) -> list[ProjectIdentity]:
@@ -178,6 +180,12 @@ def _startup_identity_payload(
     }
     payload = {
         "mode": runtime_mode,
+        "application_runtime": (
+            "docker"
+            if bool(route is not None and route.flags.get("docker"))
+            or str(getattr(runtime, "env", {}).get("DOCKER_MODE", "")).strip().lower() == "true"
+            else "process"
+        ),
         "projects": identities_to_payload(project_identities_from_contexts(project_contexts)),
         "startup_enabled": startup_enabled,
         "services": services,

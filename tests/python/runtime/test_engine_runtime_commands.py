@@ -15,11 +15,77 @@ from envctl_engine.runtime.engine_runtime_commands import (  # noqa: E402
     command_env,
     command_override_value,
     default_python_executable,
+    service_start_command_resolved,
     split_command,
 )
 
 
 class EngineRuntimeCommandsTests(unittest.TestCase):
+    def test_docker_image_command_skips_host_command_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime = SimpleNamespace(
+                env={
+                    "DOCKER_MODE": "true",
+                    "ENVCTL_FRONTEND_DOCKER_IMAGE": "example/frontend:dev",
+                },
+                config=SimpleNamespace(
+                    base_dir=root,
+                    raw={"FRONTEND_DIR": "frontend"},
+                ),
+                _command_exists=lambda _executable: self.fail("host command lookup must be skipped"),
+            )
+
+            command, source = service_start_command_resolved(
+                runtime,
+                service_name="frontend",
+                project_root=root,
+                port=8010,
+            )
+
+        self.assertEqual(command, [])
+        self.assertEqual(source, "docker_image")
+
+    def test_explicit_docker_command_skips_host_command_resolution(self) -> None:
+        runtime = SimpleNamespace(
+            env={
+                "DOCKER_MODE": "true",
+                "ENVCTL_BACKEND_DOCKER_COMMAND": "uvicorn app:api --port 8000",
+            },
+            config=SimpleNamespace(base_dir=Path("/repo"), raw={}),
+            _command_exists=lambda _executable: self.fail("host command lookup must be skipped"),
+        )
+
+        command, source = service_start_command_resolved(runtime, service_name="backend", port=8000)
+
+        self.assertEqual(command, [])
+        self.assertEqual(source, "docker_command")
+
+    def test_docker_service_command_still_requires_executable_on_host(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "frontend").mkdir()
+            runtime = SimpleNamespace(
+                env={
+                    "DOCKER_MODE": "true",
+                    "ENVCTL_FRONTEND_DOCKER_COMMAND_MODE": "service",
+                    "ENVCTL_FRONTEND_START_CMD": "missing-command --port {port}",
+                },
+                config=SimpleNamespace(
+                    base_dir=root,
+                    raw={"FRONTEND_DIR": "frontend"},
+                ),
+                _command_exists=lambda _executable: False,
+            )
+
+            with self.assertRaises(RuntimeError):
+                service_start_command_resolved(
+                    runtime,
+                    service_name="frontend",
+                    project_root=root,
+                    port=8010,
+                )
+
     def test_command_override_value_prefers_runtime_env(self) -> None:
         runtime = SimpleNamespace(
             env={"DB_HOST": "env-db"},

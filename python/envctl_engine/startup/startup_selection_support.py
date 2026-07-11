@@ -478,6 +478,13 @@ def _apply_startup_service_launch_flags(service_types: set[str], *, route: Route
     if route.flags.get("launch_backend") is False and route.flags.get("launch_frontend") is False:
         return set()
     selected = set(service_types)
+    if "launch_backend" in route.flags or "launch_frontend" in route.flags:
+        explicitly_selected: set[str] = set()
+        if route.flags.get("launch_backend") is True:
+            explicitly_selected.add("backend")
+        if route.flags.get("launch_frontend") is True:
+            explicitly_selected.add("frontend")
+        return selected.intersection(explicitly_selected)
     if route.flags.get("launch_backend") is False:
         selected.discard("backend")
     if route.flags.get("launch_frontend") is False:

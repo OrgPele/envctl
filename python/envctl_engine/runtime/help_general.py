@@ -87,6 +87,7 @@ def render_general_help() -> str:
             "  --only-backend          launch only backend; skip frontend and dependencies/prep",
             "  --no-deps               skip managed dependencies and plan-agent dependency prep",
             "  --no-infra              skip backend, frontend, managed dependencies, and plan-agent prep",
+            "  --docker                run configured app services as managed Docker containers",
             "",
             "Important global flags:",
             "  --headless / --batch    do not prompt; use deterministic automation-friendly output",

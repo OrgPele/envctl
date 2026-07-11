@@ -372,6 +372,41 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
         self.assertEqual(decision.decision_kind, "fresh_run")
         self.assertEqual(decision.reason, "startup_fingerprint_mismatch")
 
+    def test_explicit_no_resume_retains_candidate_for_safe_replacement(self) -> None:
+        context = ProjectContext(name="Main", root=Path("/repo"), ports={})
+        route = Route(
+            command="start",
+            mode="main",
+            raw_args=["start", "--no-resume"],
+            passthrough_args=[],
+            projects=[],
+            flags={"no_resume": True},
+        )
+        state = RunState(
+            run_id="run-existing",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd="/repo/backend",
+                )
+            },
+            metadata={"project_roots": {"Main": "/repo"}},
+        )
+        runtime = self._reuse_runtime(state=state)
+
+        decision = startup_support.evaluate_run_reuse(
+            runtime,
+            runtime_mode="main",
+            route=route,
+            contexts=[context],
+        )
+
+        self.assertEqual(decision.decision_kind, "fresh_run")
+        self.assertEqual(decision.reason, "explicit_no_resume")
+        self.assertIs(decision.candidate_state, state)
+
     def test_run_reuse_rejects_dependency_external_mode_mismatch(self) -> None:
         context = ProjectContext(name="Main", root=Path("/repo"), ports={})
         route = Route(command="start", mode="main", raw_args=[], passthrough_args=[], projects=[], flags={})

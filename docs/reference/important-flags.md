@@ -89,12 +89,22 @@ Plan-agent handoff note: if `--plan --tmux/--omx --headless` starts the implemen
 | `--parallel-trees` | Enable parallel tree startup workers. |
 | `--parallel-trees-max <n>` | Max parallel tree startup workers. |
 | `--service-parallel` / `--service-sequential` | Run backend+frontend startup attach in parallel or sequential mode (default: parallel). |
+| `--docker` | Build or reuse images and run backend, frontend, and additional app services as managed Docker containers. |
 | `--parallel` / `--sequential` | For `envctl test`, run backend/frontend test suites in parallel or sequential mode (default: parallel for multiple suites, with sequential fallback). Legacy aliases: `--test-parallel` / `--test-sequential`. |
 | `--test-parallel-max <n>` | Cap concurrent test suites in parallel mode and pytest-xdist workers when pytest-xdist is explicitly enabled (default suite cap: CPU-aware, max `4`; default pytest workers: current free CPU cores). |
 | `--clear-port-state` | Clear saved port reservations/state. |
 | `--force` | Free configured ports if needed. |
 | `ENVCTL_DOCKER_PREWARM=0\|1` | Enable/disable one-shot Docker daemon prewarm before requirements startup (default: `1`). |
 | `ENVCTL_DOCKER_PREWARM_TIMEOUT_SECONDS=<n>` | Timeout for Docker prewarm command (default: `10`). |
+| `ENVCTL_<SERVICE>_DOCKER_IMAGE=<image>` | Use an existing image for one app service. `ENVCTL_DOCKER_IMAGE` is the global fallback. |
+| `ENVCTL_<SERVICE>_DOCKERFILE=<path>` | Build an app service image from a Dockerfile. `ENVCTL_DOCKERFILE` is the global fallback. |
+| `ENVCTL_<SERVICE>_DOCKER_CONTEXT=<path>` | Override the Docker build context; defaults to the Dockerfile directory. |
+| `ENVCTL_<SERVICE>_DOCKER_BUILD_ARGS=<names>` | Add comma-separated Docker build-arg names (or `NAME=value` entries); public frontend env keys are passed automatically. |
+| `ENVCTL_<SERVICE>_DOCKER_COMMAND=<command>` | Override the image command inside the container. |
+| `ENVCTL_<SERVICE>_DOCKER_COMMAND_MODE=image\|service` | Keep image CMD/ENTRYPOINT (default) or run envctl's normal service command. |
+| `ENVCTL_<SERVICE>_DOCKER_PORT=<port>` | Override the container-side port while preserving envctl's allocated host port. |
+| `ENVCTL_<SERVICE>_DOCKER_WORKDIR=<path>` | Override the image working directory for the service command. |
+| `ENVCTL_<SERVICE>_DOCKER_BUILD_POLICY=cached\|missing\|never` | `cached` (default) reuses Docker layers; `missing` builds only when absent; `never` requires an existing image. |
 | `ENVCTL_REQUIREMENTS_PORT_MISMATCH_POLICY=adopt_existing\|recreate` | On existing container port mismatch, adopt existing mapping (default) or force recreate. |
 
 ## Logs and Debugging

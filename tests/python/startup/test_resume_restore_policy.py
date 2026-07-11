@@ -6,6 +6,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from envctl_engine.runtime.command_router import Route, parse_route
+from envctl_engine.startup.resume_restore_execution import (
+    _apply_restore_runtime_mode,
+    _route_for_resume_restore,
+)
 from envctl_engine.startup.resume_restore_policy import (
     _configured_restore_service_types,
     _requirements_reuse_decision,
@@ -16,10 +20,39 @@ from envctl_engine.startup.resume_restore_policy import (
     apply_ports_to_context,
     project_root,
 )
-from envctl_engine.state.models import RequirementsResult, ServiceRecord
+from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 
 
 class ResumeRestorePolicyTests(unittest.TestCase):
+    def test_docker_state_forces_docker_mode_for_direct_resume_restore(self) -> None:
+        state = RunState(
+            run_id="run-docker",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd="/repo/backend",
+                    runtime_kind="docker",
+                    container_id="stale-container",
+                )
+            },
+        )
+        route = Route(command="resume", mode="main", flags={"batch": True})
+
+        restored_route = _route_for_resume_restore(
+            route,
+            state=state,
+            suppress_timing_output=False,
+        )
+
+        self.assertTrue(restored_route.flags["docker"])
+        self.assertTrue(restored_route.flags["_resume_restore"])
+        self.assertTrue(restored_route.flags["batch"])
+        runtime = SimpleNamespace(env={})
+        _apply_restore_runtime_mode(runtime, restored_route)
+        self.assertEqual(runtime.env["DOCKER_MODE"], "true")
+
     def test_plan_resume_defaults_to_parallel_tree_restore(self) -> None:
         captured_routes: list[Route] = []
 

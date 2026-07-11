@@ -312,6 +312,10 @@ High-value command families:
 - `plan`
 - `import`
 - `test`
+
+When `envctl pr` or `envctl ship` opens a pull request without an explicit
+`ENVCTL_PR_BASE`, it selects the first branch that exists in this order:
+`dev`, `main`, then `master`. Both remote branches and local refs are checked.
 - `logs`
 - `health`
 - `errors`

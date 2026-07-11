@@ -365,7 +365,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
             _restart_service_types_for_project(
                 route=route,
                 project_name="feature-a-1",
-                default_service_types={"backend", "frontend"},
+                default_service_types={"backend", "frontend", "voice-runtime"},
             ),
             {"frontend"},
         )
@@ -376,7 +376,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
             _restart_service_types_for_project(
                 route=route,
                 project_name="feature-a-1",
-                default_service_types={"backend", "frontend"},
+                default_service_types={"backend", "frontend", "voice-runtime"},
             ),
             {"backend"},
         )
@@ -387,7 +387,7 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
             _restart_service_types_for_project(
                 route=route,
                 project_name="feature-a-1",
-                default_service_types={"backend", "frontend"},
+                default_service_types={"backend", "frontend", "voice-runtime"},
             ),
             set(),
         )

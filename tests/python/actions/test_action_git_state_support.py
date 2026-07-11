@@ -104,6 +104,41 @@ class ActionGitStateSupportTests(unittest.TestCase):
             "feature/alpha",
         )
 
+    def test_detect_pr_base_branch_uses_preferred_default_branch_contract(self) -> None:
+        def remote_trunk(_git_root: Path, args: list[str]) -> str:
+            if args[:3] == ["ls-remote", "--symref", "origin"]:
+                return "ref: refs/heads/trunk\tHEAD\ntrunk-sha\tHEAD\n"
+            return ""
+
+        self.assertEqual(
+            git_state.detect_pr_base_branch(Path("/repo"), git_output=remote_trunk),
+            "trunk",
+        )
+
+    def test_detect_pr_base_branch_does_not_probe_origin_when_local_candidate_exists(self) -> None:
+        calls: list[list[str]] = []
+
+        def local_main(_git_root: Path, args: list[str]) -> str:
+            calls.append(args)
+            if args == ["rev-parse", "--verify", "refs/remotes/origin/main"]:
+                return "abc123\n"
+            if args[0] == "ls-remote":
+                raise AssertionError("remote must not be probed when a local base ref is available")
+            return ""
+
+        self.assertEqual(
+            git_state.detect_pr_base_branch(Path("/repo"), git_output=local_main),
+            "main",
+        )
+        self.assertEqual(
+            calls,
+            [
+                ["rev-parse", "--verify", "refs/remotes/origin/dev"],
+                ["rev-parse", "--verify", "refs/heads/dev"],
+                ["rev-parse", "--verify", "refs/remotes/origin/main"],
+            ],
+        )
+
     def test_existing_pr_url_uses_gh_pr_list_for_open_branch(self) -> None:
         calls: list[tuple[list[str], str]] = []
 

@@ -17,6 +17,25 @@ from envctl_engine.runtime.service_manager import (
 
 
 class ServiceManagerTests(unittest.TestCase):
+    def test_pidless_runtime_descriptor_records_success_without_inventing_a_process(self) -> None:
+        records = ServiceManager().start_services_with_attach(
+            project="Main",
+            descriptors=(
+                ServiceStartDescriptor(
+                    service_type="backend",
+                    cwd="/tmp/main/backend",
+                    requested_port=8000,
+                    start=lambda _port: (True, None, None),
+                    detect_actual=lambda pid, requested: requested if pid is None else self.fail("unexpected PID"),
+                    pid_required=False,
+                ),
+            ),
+            reserve_next=lambda port: port,
+        )
+
+        self.assertIsNone(records["Main Backend"].pid)
+        self.assertEqual(records["Main Backend"].actual_port, 8000)
+
     def test_backend_retries_bind_conflict_and_updates_final_port(self) -> None:
         manager = ServiceManager()
         attempts: list[int] = []

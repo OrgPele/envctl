@@ -54,6 +54,9 @@ def build_planning_dashboard_state(
             ),
         }
     )
+    metadata["application_runtime"] = (
+        "docker" if bool(route.flags.get("docker")) else "process"
+    )
     run_state = RunState(
         run_id=run_id,
         mode=runtime_mode,
@@ -80,6 +83,9 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
         {
             "command": session.effective_route.command,
             "repo_scope_id": runtime.config.runtime_scope_id,
+            "application_runtime": (
+                "docker" if bool(session.effective_route.flags.get("docker")) else "process"
+            ),
         }
     )
     dependency_mode = effective_dependency_scope(session.effective_route, session.runtime_mode)

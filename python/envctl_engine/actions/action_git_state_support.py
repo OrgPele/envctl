@@ -7,7 +7,10 @@ from pathlib import Path
 import subprocess
 from typing import Callable
 
-from envctl_engine.shared.git_branch_support import detect_preferred_default_branch
+from envctl_engine.shared.git_branch_support import (
+    PREFERRED_PR_BASE_BRANCHES,
+    detect_preferred_default_branch,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +88,14 @@ def detect_default_branch(git_root: Path, *, git_output: Callable[[Path, list[st
         lambda args: git_output(git_root, list(args)),
         probe_remote_heads=True,
     )
+
+
+def detect_pr_base_branch(git_root: Path, *, git_output: Callable[[Path, list[str]], str]) -> str:
+    for branch in PREFERRED_PR_BASE_BRANCHES:
+        for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
+            if git_output(git_root, ["rev-parse", "--verify", ref]).strip():
+                return branch
+    return detect_default_branch(git_root, git_output=git_output)
 
 
 def existing_pull_request(

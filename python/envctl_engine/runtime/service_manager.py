@@ -43,6 +43,7 @@ class ServiceStartDescriptor:
     log_path: str | None = None
     public_url: str | None = None
     health_url: str | None = None
+    pid_required: bool = True
 
 
 class ServiceManager:
@@ -60,6 +61,7 @@ class ServiceManager:
         reserve_next: Callable[[int], int],
         detect_actual: Callable[[int | None, int], int | None] | None = None,
         listener_expected: bool = True,
+        pid_required: bool = True,
         max_retries: int = 3,
         on_retry: Callable[[str, int, int, int, str | None], None] | None = None,
     ) -> ServiceRecord:
@@ -69,7 +71,8 @@ class ServiceManager:
         while True:
             success, error, pid = start(current_port)
             if success:
-                if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+                valid_pid = isinstance(pid, int) and not isinstance(pid, bool) and pid > 0
+                if pid_required and not valid_pid:
                     record = _failed_start_record(
                         project=project,
                         service_type=service_type,
@@ -91,7 +94,7 @@ class ServiceManager:
                         name=f"{project} {service_display_name(service_type)}",
                         type=service_type,
                         cwd=cwd,
-                        pid=pid,
+                        pid=pid if valid_pid else None,
                         requested_port=requested_port if listener_expected else None,
                         actual_port=actual_port,
                         status="running",
@@ -209,6 +212,7 @@ class ServiceManager:
                     reserve_next=reserve_next,
                     detect_actual=descriptor.detect_actual,
                     listener_expected=descriptor.listener_expected,
+                    pid_required=descriptor.pid_required,
                     max_retries=descriptor.max_retries,
                     on_retry=on_retry,
                 )

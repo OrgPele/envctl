@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Callable, Mapping, cast
 
+from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.lifecycle_blast_support import LifecycleBlastCleanupSupport
 from envctl_engine.runtime.engine_runtime_lifecycle_support import release_requirement_ports
 from envctl_engine.runtime.lifecycle_dependency_stop import (
@@ -10,6 +11,7 @@ from envctl_engine.runtime.lifecycle_dependency_stop import (
     release_selected_dependency_components,
     requirements_have_enabled_components,
     select_dependency_components_for_stop,
+    stop_requirement_component_containers,
 )
 from envctl_engine.runtime.lifecycle_requirement_ports import requirement_component_port_owners
 from envctl_engine.runtime.lifecycle_service_stop_selection import (
@@ -349,6 +351,11 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
                 return 0
 
             for project in list(state.requirements):
+                requirements = state.requirements[project]
+                for definition in dependency_definitions():
+                    component = requirements.component(definition.id)
+                    if bool(component.get("enabled", False)):
+                        self._stop_requirement_component_containers(component)
                 self._release_requirement_ports(state.requirements[project])
                 state.requirements.pop(project, None)
 
@@ -379,7 +386,38 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
             state,
             selected_dependencies,
             release_component_ports_fn=self._release_requirement_component_ports,
+            stop_component_fn=self._stop_requirement_component_containers,
         )
+
+    def _stop_requirement_component_containers(self, component: Mapping[str, object]) -> None:
+        stop_requirement_component_containers(self.runtime, component)
+
+    def _stop_requirement_component_containers_best_effort(self, component: Mapping[str, object]) -> None:
+        try:
+            self._stop_requirement_component_containers(component)
+        except Exception as exc:  # noqa: BLE001
+            component_id = str(component.get("id") or "dependency").strip() or "dependency"
+            detail = str(exc).strip() or exc.__class__.__name__
+            self.runtime._emit(  # type: ignore[attr-defined]
+                "cleanup.dependency_container.warning",
+                component=component_id,
+                detail=detail,
+            )
+            print(f"Warning: could not stop {component_id} container during cleanup: {detail}")
+
+    def _stop_requirement_containers(
+        self,
+        requirements: RequirementsResult,
+        *,
+        best_effort: bool = False,
+    ) -> None:
+        for definition in dependency_definitions():
+            component = requirements.component(definition.id)
+            if bool(component.get("enabled", False)):
+                if best_effort:
+                    self._stop_requirement_component_containers_best_effort(component)
+                else:
+                    self._stop_requirement_component_containers(component)
 
     def _release_requirement_component_ports(
         self,
@@ -476,6 +514,11 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
             )
             if not failed_services:
                 requirements_to_release = list(state.requirements.values())
+                for requirements in requirements_to_release:
+                    self._stop_requirement_containers(
+                        requirements,
+                        best_effort=command in {"stop-all", "blast-all"},
+                    )
                 self._deactivate_runtime_state(state, release_session_when_empty=False)
                 for requirements in requirements_to_release:
                     self._release_requirement_ports(requirements)
@@ -495,6 +538,11 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
                     retained_requirements[project] = requirements
                 else:
                     requirements_to_release.append(requirements)
+            for requirements in requirements_to_release:
+                self._stop_requirement_containers(
+                    requirements,
+                    best_effort=command in {"stop-all", "blast-all"},
+                )
             state.requirements = {project: requirements for project, requirements in retained_requirements.items()}
             state_repository.save_selected_stop_state(
                 state=state,

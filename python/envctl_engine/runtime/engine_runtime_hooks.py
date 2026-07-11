@@ -148,6 +148,10 @@ def services_from_hook_payload(
             actual_port=(actual_port if actual_port > 0 else None),
             log_path=(str(log_path) if log_path else None),
             status=status,
+            runtime_kind=str(raw.get("runtime_kind") or "process"),
+            container_id=str(raw.get("container_id") or "") or None,
+            container_name=str(raw.get("container_name") or "") or None,
+            container_image=str(raw.get("container_image") or "") or None,
         )
         records[name] = record
         if service_type == "backend" and actual_port > 0:

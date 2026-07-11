@@ -163,6 +163,43 @@ class FreshStartServiceReplacer:
             },
             self.candidate_state,
         )
+        self._rebind_replacement_ports(selected_services)
+
+    def _rebind_replacement_ports(self, selected_services: set[str]) -> None:
+        port_planner = getattr(self.runtime, "port_planner", None)
+        release = getattr(port_planner, "release", None)
+        if not callable(release):
+            return
+        contexts = {
+            str(getattr(context, "name", "")).casefold(): context
+            for context in getattr(self.session, "selected_contexts", [])
+        }
+        for name in sorted(selected_services):
+            service = getattr(self.candidate_state, "services", {}).get(name)
+            if service is None or not bool(getattr(service, "listener_expected", True)):
+                continue
+            project = service_project_name(service) or self.runtime._project_name_from_service(name)
+            service_type = service_slug_from_record(service)
+            context = contexts.get(str(project).casefold())
+            plans = getattr(context, "ports", {}) if context is not None else {}
+            plan = plans.get(service_type) if service_type else None
+            old_port = getattr(service, "actual_port", None) or getattr(service, "requested_port", None)
+            current_port = getattr(plan, "final", None)
+            if plan is None or not isinstance(old_port, int) or old_port <= 0:
+                continue
+            owner = f"{getattr(context, 'name', project)}:{service_type}"
+            if isinstance(current_port, int) and current_port > 0:
+                release(current_port, owner=owner)
+            plan.assigned = old_port
+            plan.final = old_port
+            plan.source = "fresh_start_replacement"
+            self.runtime._emit(
+                "port.rebound.after_fresh_start_cleanup",
+                project=project,
+                service=service_type,
+                previous_port=old_port,
+                port=old_port,
+            )
 
 
 def replace_existing_project_services_for_fresh_start(

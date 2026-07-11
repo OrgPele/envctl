@@ -337,7 +337,7 @@ def _resolve_pr_base_branch(context: ActionProjectContext, git_root: Path) -> st
     explicit = str(context.env.get("ENVCTL_PR_BASE", "")).strip()
     if explicit:
         return explicit
-    return detect_default_branch(git_root)
+    return git_state_support.detect_pr_base_branch(git_root, git_output=_git_output)
 
 
 _resolve_analyze_mode = review_iteration_support.resolve_analyze_mode

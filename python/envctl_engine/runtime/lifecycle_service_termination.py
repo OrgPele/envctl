@@ -121,6 +121,46 @@ def service_ports(service: object) -> tuple[int, ...]:
 
 
 def terminate_service_record(runtime: Any, service: object, *, aggressive: bool, verify_ownership: bool) -> bool:
+    if str(getattr(service, "runtime_kind", "process") or "process").lower() == "docker":
+        from envctl_engine.runtime.docker_service_runtime import DockerServiceRuntime
+
+        container = str(
+            getattr(service, "container_id", "") or getattr(service, "container_name", "") or ""
+        ).strip()
+        stopped = DockerServiceRuntime(runtime, runtime.process_runner).stop(
+            container,
+            verify_ownership=verify_ownership,
+        )
+        follower_stopped = True
+        pid = getattr(service, "pid", None)
+        if isinstance(pid, int) and pid > 0:
+            if pid in {os.getpid(), os.getppid()}:
+                runtime._emit(
+                    "cleanup.skip",
+                    service=getattr(service, "name", "unknown"),
+                    pid=pid,
+                    reason="self_or_parent",
+                )
+                follower_stopped = False
+            else:
+                try:
+                    runtime.process_runner.terminate_process_group(
+                        pid,
+                        term_timeout=0.5 if aggressive else 2.0,
+                        kill_timeout=1.0,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                follower_stopped = not _pid_is_running(runtime, pid)
+        runtime._emit(
+            "service.container.stop",
+            service=getattr(service, "name", "unknown"),
+            container_name=getattr(service, "container_name", None),
+            stopped=stopped,
+            follower_stopped=follower_stopped,
+        )
+        return stopped and follower_stopped
+
     recorded_pids = _recorded_service_pids(service)
     if not recorded_pids and str(getattr(service, "status", "") or "") == "termination_failed":
         return False

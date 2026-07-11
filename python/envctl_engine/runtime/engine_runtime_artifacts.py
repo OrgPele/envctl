@@ -243,12 +243,28 @@ def _runtime_readiness_async_enabled(runtime: Any) -> bool:
 
 
 def print_summary(_runtime: Any, state: object, contexts: Sequence[_SummaryContext]) -> None:
-    _ = state
     print("envctl Python engine run summary")
     for context in contexts:
-        backend = context.ports["backend"].final
-        frontend = context.ports["frontend"].final
+        backend = _summary_service_port(state, context.name, "backend") or context.ports["backend"].final
+        frontend = _summary_service_port(state, context.name, "frontend") or context.ports["frontend"].final
         db = context.ports["db"].final
         redis = context.ports["redis"].final
         n8n = context.ports["n8n"].final
         print(f"- {context.name}: backend={backend} frontend={frontend} db={db} redis={redis} n8n={n8n}")
+
+
+def _summary_service_port(state: object, project_name: str, service_type: str) -> int | None:
+    for service_name, service in getattr(state, "services", {}).items():
+        project = str(getattr(service, "project", "") or "").strip()
+        if not project:
+            suffix = f" {service_type}".lower()
+            rendered_name = str(service_name)
+            project = rendered_name[: -len(suffix)] if rendered_name.lower().endswith(suffix) else ""
+        if project.casefold() != project_name.casefold():
+            continue
+        if str(getattr(service, "type", "") or "").casefold() != service_type.casefold():
+            continue
+        port = getattr(service, "actual_port", None) or getattr(service, "requested_port", None)
+        if isinstance(port, int) and port > 0:
+            return port
+    return None

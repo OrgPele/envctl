@@ -8,6 +8,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.lookup import call_state_loader
 from envctl_engine.state.models import RunState
 from envctl_engine.startup.run_reuse_identity import (
+    ProjectIdentity,
     _auto_resume_start_enabled,
     _identity_keys,
     _root_mismatches,
@@ -115,7 +116,7 @@ class RunReuseEvaluator:
         self,
         *,
         candidate: RunState,
-        selected_identities: list[object],
+        selected_identities: list[ProjectIdentity],
         selected_payload: list[dict[str, str | None]],
         startup_enabled: bool,
     ) -> RunReuseDecision:
@@ -218,7 +219,11 @@ class RunReuseEvaluator:
             )
         return None
 
-    def _startup_identity_mismatch(self, candidate: RunState, state_identities: list[object]) -> dict[str, object]:
+    def _startup_identity_mismatch(
+        self,
+        candidate: RunState,
+        state_identities: list[ProjectIdentity],
+    ) -> dict[str, object]:
         previous_identity = candidate.metadata.get("startup_identity")
         if not isinstance(previous_identity, dict):
             return {}
@@ -335,8 +340,8 @@ def mark_run_reused(metadata: Mapping[str, object] | None, *, reason: str) -> di
     updated = dict(metadata or {})
     raw_count = updated.get("run_reuse_count", 0)
     try:
-        count = int(raw_count)
-    except (TypeError, ValueError):
+        count = int(raw_count) if isinstance(raw_count, (bool, float, int, str)) else 0
+    except (OverflowError, TypeError, ValueError):
         count = 0
     updated["run_reuse_count"] = max(0, count) + 1
     updated["last_reopened_at"] = datetime.now(tz=UTC).isoformat()

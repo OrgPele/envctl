@@ -142,6 +142,85 @@ class _RuntimeWithoutPortSessionHook:
 
 
 class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
+    def test_clear_runtime_state_purges_after_dependency_container_cleanup_failure(self) -> None:
+        for command, aggressive in (("stop-all", False), ("blast-all", True)):
+            with self.subTest(command=command):
+                runtime = _RuntimeStub()
+                runtime._try_load_existing_state = lambda *args, **kwargs: RunState(  # type: ignore[method-assign]
+                    run_id="run-1",
+                    mode="main",
+                    requirements={
+                        "Main": RequirementsResult(
+                            project="Main",
+                            redis={
+                                "id": "redis",
+                                "enabled": True,
+                                "container_name": "envctl-redis-main",
+                            },
+                        )
+                    },
+                )
+                orchestrator = LifecycleCleanupOrchestrator(runtime)
+                orchestrator.blast_all_ecosystem_enabled = lambda: False  # type: ignore[method-assign]
+                orchestrator.blast_all_purge_legacy_state_artifacts = lambda: None  # type: ignore[method-assign]
+                output = StringIO()
+
+                with (
+                    patch(
+                        "envctl_engine.runtime.lifecycle_cleanup_orchestrator.stop_requirement_component_containers",
+                        side_effect=RuntimeError("Docker daemon is unavailable"),
+                    ),
+                    redirect_stdout(output),
+                ):
+                    orchestrator.clear_runtime_state(command=command, aggressive=aggressive)
+
+                self.assertEqual(runtime.state_repository.purge_calls, [aggressive])
+                self.assertIn("could not stop redis container", output.getvalue())
+                warnings = [
+                    event
+                    for event in runtime.events
+                    if event.get("event") == "cleanup.dependency_container.warning"
+                ]
+                self.assertEqual(
+                    warnings,
+                    [
+                        {
+                            "event": "cleanup.dependency_container.warning",
+                            "component": "redis",
+                            "detail": "Docker daemon is unavailable",
+                        }
+                    ],
+                )
+
+    def test_targeted_runtime_cleanup_remains_fail_closed(self) -> None:
+        runtime = _RuntimeStub()
+        runtime._try_load_existing_state = lambda *args, **kwargs: RunState(  # type: ignore[method-assign]
+            run_id="run-1",
+            mode="main",
+            requirements={
+                "Main": RequirementsResult(
+                    project="Main",
+                    redis={
+                        "id": "redis",
+                        "enabled": True,
+                        "container_name": "envctl-redis-main",
+                    },
+                )
+            },
+        )
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+
+        with (
+            patch(
+                "envctl_engine.runtime.lifecycle_cleanup_orchestrator.stop_requirement_component_containers",
+                side_effect=RuntimeError("Docker daemon is unavailable"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "Docker daemon is unavailable"),
+        ):
+            orchestrator.clear_runtime_state(command="stop", aggressive=False)
+
+        self.assertEqual(runtime.state_repository.purge_calls, [])
+
     def test_stop_all_emits_spinner_policy_and_lifecycle(self) -> None:
         runtime = _RuntimeStub()
         orchestrator = LifecycleCleanupOrchestrator(runtime)

@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from envctl_engine.runtime.docker_service_runtime import docker_service_container_name
 from envctl_engine.runtime.lifecycle_worktree_containers import legacy_container_name, remove_tree_containers
 from envctl_engine.runtime.lifecycle_worktree_cleanup import WorktreeCleanupDependencies, blast_worktree_before_delete
 from envctl_engine.runtime.lifecycle_worktree_metadata import cleanup_artifact_paths, prune_project_metadata
@@ -12,6 +13,42 @@ from envctl_engine.state.models import RequirementsResult, RunState, ServiceReco
 
 
 class LifecycleWorktreeCleanupTests(unittest.TestCase):
+    def test_remove_tree_containers_removes_managed_application_container(self) -> None:
+        calls: list[list[str]] = []
+        project_root = Path(".").resolve()
+        container_name = docker_service_container_name(
+            project_name="Feature",
+            project_root=project_root,
+            service_name="backend",
+        )
+
+        class Runner:
+            def run(self, command: list[str], **kwargs: object) -> SimpleNamespace:
+                calls.append(command)
+                if command[1:4] == ["ps", "-a", "--format"]:
+                    return SimpleNamespace(returncode=0, stdout=f"app-id|{container_name}\n", stderr="")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        runtime = SimpleNamespace(
+            process_runner=Runner(),
+            env={},
+            config=SimpleNamespace(additional_services=()),
+            _emit=lambda event, **payload: None,
+        )
+        warnings: list[str] = []
+
+        remove_tree_containers(
+            runtime,
+            project_name="Feature",
+            project_root=project_root,
+            include_supabase=False,
+            remove_named_volumes=False,
+            warnings=warnings,
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertIn(["docker", "rm", "-f", "-v", "app-id"], calls)
+
     def test_worktree_cleanup_persists_siblings_from_the_full_multi_project_run(self) -> None:
         loader_calls: list[dict[str, object]] = []
         saved_states: list[RunState] = []

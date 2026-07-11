@@ -48,6 +48,10 @@ def load_state(path: str, *, allowed_root: str | None = None) -> RunState:
             failure_detail=str(svc.get("failure_detail") or "") or None,
             critical=parse_bool(svc.get("critical"), True),
             degraded=parse_bool(svc.get("degraded"), False),
+            runtime_kind=str(svc.get("runtime_kind") or "process"),
+            container_id=str(svc.get("container_id") or "") or None,
+            container_name=str(svc.get("container_name") or "") or None,
+            container_image=str(svc.get("container_image") or "") or None,
         )
         for name, svc in data.get("services", {}).items()
     }
@@ -188,6 +192,10 @@ def state_to_dict(state: RunState) -> dict[str, object]:
                 "failure_detail": svc.failure_detail,
                 "critical": svc.critical,
                 "degraded": svc.degraded,
+                "runtime_kind": svc.runtime_kind,
+                "container_id": svc.container_id,
+                "container_name": svc.container_name,
+                "container_image": svc.container_image,
             }
             for name, svc in state.services.items()
         },

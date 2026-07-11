@@ -47,6 +47,7 @@ class RunReuseIdentityTests(unittest.TestCase):
         self.assertEqual(metadata["project_roots"], {"Main": normalize_project_root("/tmp/repo")})
         identity = metadata["startup_identity"]
         self.assertEqual(identity["mode"], "main")
+        self.assertEqual(identity["application_runtime"], "process")
         self.assertEqual(identity["projects"], [{"name": "Main", "root": normalize_project_root("/tmp/repo")}])
         self.assertEqual(identity["services"], {"backend": True, "frontend": False})
         self.assertIn("fingerprint", identity)
@@ -143,6 +144,21 @@ class RunReuseIdentityTests(unittest.TestCase):
         )
 
         self.assertEqual(mismatch, {"fields": ["mode"]})
+
+        self.assertEqual(
+            _startup_identity_mismatch(
+                {"mode": "main", "services": {"backend": True}},
+                {"mode": "main", "services": {"backend": True}, "application_runtime": "process"},
+            ),
+            {},
+        )
+        self.assertEqual(
+            _startup_identity_mismatch(
+                {"mode": "main", "application_runtime": "process"},
+                {"mode": "main", "application_runtime": "docker"},
+            ),
+            {"fields": ["application_runtime"]},
+        )
 
     def test_root_mismatches_compare_only_strong_roots(self) -> None:
         selected = [ProjectIdentity("Main", "/repo"), ProjectIdentity("Weak", None)]

@@ -108,6 +108,14 @@ class SelectionSupportTests(unittest.TestCase):
             "--project <name>",
             no_target_selected_message("restart", route=_route(mode="trees"), interactive_allowed=False),
         )
+        self.assertIn(
+            "--all --yes",
+            no_target_selected_message("ship", route=_route(mode="trees"), interactive_allowed=False),
+        )
+        self.assertNotIn(
+            "--all --yes",
+            no_target_selected_message("test", route=_route(mode="trees"), interactive_allowed=False),
+        )
 
         self.assertTrue(route_has_explicit_target(_route(flags={"all": True}), runtime))
         self.assertTrue(route_has_explicit_target(_route(projects=["Main"]), runtime))
