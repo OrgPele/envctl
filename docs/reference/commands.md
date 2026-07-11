@@ -253,11 +253,16 @@ envctl pr-preview-controller --command start --pr-number 287
 Behavior:
 
 - starts or reconciles a preview when the configured label is added
+- treats an explicit `--command start` as a forced reconciliation: an existing
+  same-head runtime is stopped before the import/start path runs again, so
+  changed CI environment or secret inputs cannot be hidden by Git identity
 - redeploys labeled PRs when GitHub sends a new-commit event
 - loads a tracked `.envctl` from the exact PR head when present; otherwise it
   falls back to the controller-generated configuration
 - publishes explicitly listed `ENVCTL_PREVIEW_PUBLIC_SERVICES` on deterministic
   TLS hosts and projects matching HTTP/WebSocket source URLs into launch env
+- rejects a routed service whose JSON health response explicitly reports
+  `"ready": false`, even when the endpoint itself returns HTTP 2xx
 - creates `ENVCTL_PREVIEW_GENERATED_SECRETS` ephemerally for each preview start,
   so shared service credentials do not need to be stored in GitHub
 - also redeploys during scheduled reconciliation if the saved preview head is stale

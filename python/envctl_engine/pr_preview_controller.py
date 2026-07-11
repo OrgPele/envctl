@@ -99,6 +99,7 @@ FAILED_START_STATUSES = frozenset({"public_route_unhealthy", "start_failed"})
 PUBLIC_ROUTE_HEALTH_DEADLINE_SECONDS = 30.0
 PUBLIC_ROUTE_HEALTH_INTERVAL_SECONDS = 2.0
 PUBLIC_ROUTE_REQUEST_TIMEOUT_SECONDS = 5.0
+PUBLIC_ROUTE_RESPONSE_BODY_LIMIT_BYTES = 64 * 1024
 PLAN_AGENT_BOOLEAN_CONFIG_KEYS = {
     "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE",
     "CMUX",
@@ -652,6 +653,8 @@ def probe_public_route_url(url: str) -> str | None:
             timeout=PUBLIC_ROUTE_REQUEST_TIMEOUT_SECONDS,
         ) as response:
             status = int(response.status)
+            read = getattr(response, "read", None)
+            body = read(PUBLIC_ROUTE_RESPONSE_BODY_LIMIT_BYTES) if callable(read) else b""
     except urllib.error.HTTPError as exc:
         return f"{url} returned HTTP {exc.code}"
     except urllib.error.URLError as exc:
@@ -661,8 +664,33 @@ def probe_public_route_url(url: str) -> str | None:
     except OSError as exc:
         return f"{url} failed: {exc}"
     if 200 <= status < 400:
+        readiness_failure = semantic_readiness_failure(url, body)
+        if readiness_failure:
+            return readiness_failure
         return None
     return f"{url} returned HTTP {status}"
+
+
+def semantic_readiness_failure(url: str, body: object) -> str | None:
+    if not isinstance(body, (bytes, bytearray)) or not body:
+        return None
+    try:
+        payload = json.loads(bytes(body).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or "ready" not in payload:
+        return None
+    if payload["ready"] is True:
+        return None
+
+    reason = payload.get("reason")
+    safe_reason = ""
+    if isinstance(reason, str):
+        safe_reason = re.sub(r"[^A-Za-z0-9_.:-]+", "_", reason).strip("_")[:80]
+    suffix = f" (reason={safe_reason})" if safe_reason else ""
+    if payload["ready"] is False:
+        return f"{url} reported ready=false{suffix}"
+    return f"{url} returned a non-boolean readiness value{suffix}"
 
 
 def public_route_health(endpoints: dict[str, Any]) -> PublicRouteHealth:
@@ -1623,7 +1651,12 @@ class PreviewController:
             raise SystemExit(f"command {command!r} requires --pr-number")
         pr = self.get_pr(pr_number)
         if command == "start":
-            return self.start(pr, reason="manual workflow dispatch", refresh_ttl=True)
+            return self.start(
+                pr,
+                reason="manual workflow dispatch",
+                refresh_ttl=True,
+                force_restart=True,
+            )
         if command == "stop":
             return self.stop(pr, reason="manual workflow dispatch", comment=True)
         if command == "delete":
@@ -1742,13 +1775,17 @@ class PreviewController:
         *,
         reason: str,
         refresh_ttl: bool = False,
+        force_restart: bool = False,
     ) -> int:
         self.validate_same_repo(pr)
         label_added_at = self.label_active_since(pr.number) or utc_now()
         if refresh_ttl:
             label_added_at = utc_now()
         existing_state = self.load_state(pr.number)
-        if self.current_head_preview_is_running(pr, existing_state):
+        if not force_restart and self.current_head_preview_is_running(
+            pr,
+            existing_state,
+        ):
             assert existing_state is not None
             updated_state = self.refresh_running_preview_state(
                 existing_state,
