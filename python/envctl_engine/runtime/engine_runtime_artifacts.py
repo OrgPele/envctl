@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
+from envctl_engine.runtime.runtime_context import optional_state_repository
 from envctl_engine.runtime.runtime_readiness import (
     FEATURE_MATRIX_RELATIVE_PATH,
     GAP_REPORT_RELATIVE_PATH,
@@ -60,36 +61,37 @@ def write_runtime_readiness_report(
     *,
     run_dir: Path | None = None,
     readiness_result: RuntimeReadinessResult | None = None,
-) -> None:
+) -> bool:
     started = time.monotonic()
     emit = getattr(runtime, "_emit", None)
     cached = _cached_runtime_readiness_payload(runtime)
     if readiness_result is None and cached is not None:
-        _write_runtime_readiness_payload(runtime, report_text=cached, run_dir=run_dir)
+        persisted = _write_runtime_readiness_payload(runtime, report_text=cached, run_dir=run_dir)
         if callable(emit):
             emit(
                 "artifacts.runtime_readiness_report",
                 duration_ms=round((time.monotonic() - started) * 1000.0, 2),
                 used_cached_contract=True,
                 run_dir=str(run_dir) if run_dir is not None else None,
+                persisted=persisted,
             )
-        return
+        return persisted
 
     readiness = (
-        readiness_result
-        if readiness_result is not None
-        else evaluate_runtime_readiness(runtime.config.base_dir)
+        readiness_result if readiness_result is not None else evaluate_runtime_readiness(runtime.config.base_dir)
     )
     report_payload = build_runtime_readiness_report(readiness)
     report_text = json.dumps(report_payload, indent=2, sort_keys=True)
-    _write_runtime_readiness_payload(runtime, report_text=report_text, run_dir=run_dir)
+    persisted = _write_runtime_readiness_payload(runtime, report_text=report_text, run_dir=run_dir)
     if callable(emit):
         emit(
             "artifacts.runtime_readiness_report",
             duration_ms=round((time.monotonic() - started) * 1000.0, 2),
             used_cached_contract=readiness_result is not None,
             run_dir=str(run_dir) if run_dir is not None else None,
+            persisted=persisted,
         )
+    return persisted
 
 
 def _write_runtime_readiness_payload(
@@ -97,12 +99,24 @@ def _write_runtime_readiness_payload(
     *,
     report_text: str,
     run_dir: Path | None,
-) -> None:
+) -> bool:
+    repository = optional_state_repository(runtime)
+    repository_writer = getattr(repository, "write_runtime_artifact", None)
+    if callable(repository_writer):
+        return bool(
+            repository_writer(
+                run_id=run_dir.name if run_dir is not None else None,
+                artifact_name="runtime_readiness_report.json",
+                text=report_text,
+            )
+        )
+
     (runtime.runtime_root / "runtime_readiness_report.json").write_text(report_text, encoding="utf-8")
     runtime.runtime_legacy_root.mkdir(parents=True, exist_ok=True)
     (runtime.runtime_legacy_root / "runtime_readiness_report.json").write_text(report_text, encoding="utf-8")
     if run_dir is not None:
         (run_dir / "runtime_readiness_report.json").write_text(report_text, encoding="utf-8")
+    return True
 
 
 def _write_cached_runtime_readiness_payload(
@@ -110,9 +124,9 @@ def _write_cached_runtime_readiness_payload(
     *,
     run_dir: Path,
     cached: str,
-) -> None:
+) -> bool:
     started = time.monotonic()
-    _write_runtime_readiness_payload(runtime, report_text=cached, run_dir=run_dir)
+    persisted = _write_runtime_readiness_payload(runtime, report_text=cached, run_dir=run_dir)
     emit = getattr(runtime, "_emit", None)
     if callable(emit):
         emit(
@@ -120,10 +134,12 @@ def _write_cached_runtime_readiness_payload(
             duration_ms=round((time.monotonic() - started) * 1000.0, 2),
             used_cached_contract=True,
             run_dir=str(run_dir),
+            persisted=persisted,
         )
+    return persisted
 
 
-def _write_pending_runtime_readiness_payload(runtime: Any, *, run_dir: Path) -> None:
+def _write_pending_runtime_readiness_payload(runtime: Any, *, run_dir: Path) -> bool:
     report = {
         "passed": None,
         "pending": True,
@@ -139,23 +155,29 @@ def _write_pending_runtime_readiness_payload(runtime: Any, *, run_dir: Path) -> 
         "errors": [],
         "warnings": [],
     }
-    _write_runtime_readiness_payload(
+    persisted = _write_runtime_readiness_payload(
         runtime,
         report_text=json.dumps(report, indent=2, sort_keys=True),
         run_dir=run_dir,
     )
     emit = getattr(runtime, "_emit", None)
     if callable(emit):
-        emit("artifacts.runtime_readiness_report.pending", run_dir=str(run_dir))
+        emit("artifacts.runtime_readiness_report.pending", run_dir=str(run_dir), persisted=persisted)
+    return persisted
 
 
 def _start_background_runtime_readiness_report(runtime: Any, *, run_dir: Path) -> None:
     def _worker() -> None:
         try:
-            write_runtime_readiness_report(runtime, run_dir=run_dir)
+            persisted = write_runtime_readiness_report(runtime, run_dir=run_dir)
             emit = getattr(runtime, "_emit", None)
             if callable(emit):
-                emit("artifacts.runtime_readiness_report.complete", run_dir=str(run_dir))
+                event = (
+                    "artifacts.runtime_readiness_report.complete"
+                    if persisted
+                    else "artifacts.runtime_readiness_report.discarded"
+                )
+                emit(event, run_dir=str(run_dir))
         except Exception as exc:  # pragma: no cover
             emit = getattr(runtime, "_emit", None)
             if callable(emit):

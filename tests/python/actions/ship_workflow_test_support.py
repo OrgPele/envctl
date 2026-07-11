@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from envctl_engine.actions.action_git_state_support import ExistingPullRequest
 from envctl_engine.actions.action_ship_support import run_ship_workflow
 
 
@@ -44,6 +45,7 @@ class ShipWorkflowFixture:
         add_ship_pr_label: Callable[[object, Path, str], int] | None = None,
         probe_dirty_worktree: Callable[..., object] | None = None,
         existing_pr_url: Callable[[Path, str], str] | None = None,
+        existing_pull_request: Callable[[Path, str], ExistingPullRequest | None] | None = None,
         partition_envctl_protected_paths: Callable[[str], object] | None = None,
         ordered_unique_paths: Callable[..., list[str]] | None = None,
         github_pr_checks: Callable[..., dict[str, object]] | None = None,
@@ -64,6 +66,7 @@ class ShipWorkflowFixture:
                 add_ship_pr_label=add_ship_pr_label or self.add_ship_pr_label,
                 probe_dirty_worktree=probe_dirty_worktree or self.probe_dirty_worktree,
                 existing_pr_url=existing_pr_url or self.existing_pr_url,
+                existing_pull_request=existing_pull_request,
                 partition_envctl_protected_paths=(
                     partition_envctl_protected_paths or self.partition_envctl_protected_paths
                 ),

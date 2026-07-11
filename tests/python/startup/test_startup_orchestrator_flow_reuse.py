@@ -1,10 +1,108 @@
 # ruff: noqa: F403,F405
 from __future__ import annotations
 
+import json
+import threading
+
+from envctl_engine.runtime.lifecycle_operation_lease import (
+    release_lifecycle_operation,
+    run_exclusive_lifecycle_operation,
+)
+from envctl_engine.state.run_index import StateSelector
+
 from tests.python.startup.startup_orchestrator_flow_test_support import *
 
 
 class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
+    def test_start_heals_multiple_historical_active_owners_for_main(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            historical_candidates = []
+
+            for _index in range(2):
+                engine = self._engine(repo, runtime)
+                with (
+                    patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
+                    redirect_stdout(StringIO()),
+                ):
+                    code = engine.dispatch(
+                        parse_route(["start", "--batch", "--no-infra"], env={"ENVCTL_DEFAULT_MODE": "main"})
+                    )
+                self.assertEqual(code, 0)
+                historical_candidates.append(
+                    engine.state_repository.run_index.candidates(StateSelector("main", ("main",)))[0]
+                )
+
+            engine.state_repository.run_index.replace_all(historical_candidates)
+            for offset, candidate in enumerate(historical_candidates):
+                stale_lock = engine.port_planner.lock_dir / f"{44000 + offset}.lock"
+                stale_lock.write_text(
+                    json.dumps(
+                        {
+                            "owner": "Main:db",
+                            "session": f"historical-{candidate.run_id}",
+                            "pid": 99999999,
+                            "created_at": 0,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            third_engine = self._engine(repo, runtime)
+            with (
+                patch.object(third_engine, "_should_enter_post_start_interactive", return_value=False),
+                redirect_stdout(StringIO()),
+            ):
+                third_code = third_engine.dispatch(
+                    parse_route(["start", "--batch", "--no-infra"], env={"ENVCTL_DEFAULT_MODE": "main"})
+                )
+
+            self.assertEqual(third_code, 0)
+            index_payload = json.loads((third_engine.runtime_root / "run_index.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(index_payload["entries"]), 1)
+            self.assertEqual(
+                set(index_payload["retired_run_ids"]),
+                {candidate.run_id for candidate in historical_candidates},
+            )
+            self.assertEqual(list(third_engine.port_planner.lock_dir.glob("*.lock")), [])
+
+    def test_repeated_no_infra_start_supersedes_old_authority_without_port_locks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            first_engine = self._engine(repo, runtime)
+
+            with (
+                patch.object(first_engine, "_should_enter_post_start_interactive", return_value=False),
+                redirect_stdout(StringIO()),
+            ):
+                first_code = first_engine.dispatch(
+                    parse_route(["start", "--batch", "--no-infra"], env={"ENVCTL_DEFAULT_MODE": "main"})
+                )
+
+            self.assertEqual(first_code, 0)
+            self.assertEqual(list(first_engine.port_planner.lock_dir.glob("*.lock")), [])
+            first_index = json.loads((first_engine.runtime_root / "run_index.json").read_text(encoding="utf-8"))
+            first_run_id = first_index["entries"][0]["run_id"]
+
+            second_engine = self._engine(repo, runtime)
+            with (
+                patch.object(second_engine, "_should_enter_post_start_interactive", return_value=False),
+                redirect_stdout(StringIO()),
+            ):
+                second_code = second_engine.dispatch(
+                    parse_route(["start", "--batch", "--no-infra"], env={"ENVCTL_DEFAULT_MODE": "main"})
+                )
+
+            self.assertEqual(second_code, 0)
+            self.assertEqual(list(second_engine.port_planner.lock_dir.glob("*.lock")), [])
+            second_index = json.loads((second_engine.runtime_root / "run_index.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(second_index["entries"]), 1)
+            self.assertNotEqual(second_index["entries"][0]["run_id"], first_run_id)
+            self.assertIn(first_run_id, second_index["retired_run_ids"])
+
     def test_disabled_startup_reopens_existing_dashboard_run_when_identity_matches(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -33,7 +131,11 @@ class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
             with (
                 patch.object(engine, "_discover_projects", return_value=[context]),
                 patch.object(engine, "_try_load_existing_state", return_value=existing_state),
-                patch.object(engine, "_write_artifacts", side_effect=AssertionError("fresh dashboard state should not be written")),
+                patch.object(
+                    engine,
+                    "_write_artifacts",
+                    side_effect=AssertionError("fresh dashboard state should not be written"),
+                ),
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
                 patch.object(
                     engine.state_repository,
@@ -146,17 +248,27 @@ class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
                 patch.object(
                     engine.planning_worktree_orchestrator,
                     "last_plan_selection_result",
-                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                    return_value=PlanSelectionResult(
+                        raw_projects=[], selected_contexts=[context], created_worktrees=()
+                    ),
                 ),
                 patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", side_effect=_record_launch),
                 patch("envctl_engine.planning.plan_agent.omx_transport._tmux_session_exists", return_value=True),
-                patch("envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds", return_value=(True, "%42")),
+                patch(
+                    "envctl_engine.planning.plan_agent.omx_transport._tmux_display_message_succeeds",
+                    return_value=(True, "%42"),
+                ),
                 patch.object(engine, "_write_artifacts"),
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
             ):
                 out = StringIO()
                 with redirect_stdout(out):
-                    code = engine.dispatch(parse_route(["--plan", "feature-a", "--omx", "--codex", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"}))
+                    code = engine.dispatch(
+                        parse_route(
+                            ["--plan", "feature-a", "--omx", "--codex", "--headless"],
+                            env={"ENVCTL_DEFAULT_MODE": "trees"},
+                        )
+                    )
 
             self.assertEqual(code, 0)
             self.assertEqual(captured_created_worktrees, [["feature-a-1"]])
@@ -166,7 +278,10 @@ class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
                 rendered,
             )
             self.assertIn("attach: tmux attach -t omx-feature-session", rendered)
-            self.assertIn("new session: ENVCTL_USE_REPO_WRAPPER=1 /tmp/repo/bin/envctl --plan feature-a --omx --codex --new-session --headless", rendered)
+            self.assertIn(
+                "new session: ENVCTL_USE_REPO_WRAPPER=1 /tmp/repo/bin/envctl --plan feature-a --omx --codex --new-session --headless",
+                rendered,
+            )
             self.assertIn("kill: tmux kill-session -t omx-feature-session", rendered)
 
     def test_explicit_cmux_plan_launch_reuses_selected_existing_worktree(self) -> None:
@@ -207,13 +322,17 @@ class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
                 patch.object(
                     engine.planning_worktree_orchestrator,
                     "last_plan_selection_result",
-                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                    return_value=PlanSelectionResult(
+                        raw_projects=[], selected_contexts=[context], created_worktrees=()
+                    ),
                 ),
                 patch("envctl_engine.startup.lifecycle.launch_plan_agent_terminals", side_effect=_record_launch),
                 patch.object(engine, "_write_artifacts"),
                 patch.object(engine, "_should_enter_post_start_interactive", return_value=False),
             ):
-                code = engine.dispatch(parse_route(["--plan", "feature-a", "--cmux", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"}))
+                code = engine.dispatch(
+                    parse_route(["--plan", "feature-a", "--cmux", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                )
 
             self.assertEqual(code, 0)
             self.assertEqual(captured_created_worktrees, [["feature-a-1"]])
@@ -252,7 +371,9 @@ class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
                 patch.object(
                     engine.planning_worktree_orchestrator,
                     "last_plan_selection_result",
-                    return_value=PlanSelectionResult(raw_projects=[], selected_contexts=[context], created_worktrees=()),
+                    return_value=PlanSelectionResult(
+                        raw_projects=[], selected_contexts=[context], created_worktrees=()
+                    ),
                 ),
                 patch(
                     "envctl_engine.startup.lifecycle.launch_plan_agent_terminals",
@@ -273,7 +394,10 @@ class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
                 out = StringIO()
                 with redirect_stdout(out):
                     code = engine.dispatch(
-                        parse_route(["--plan", "feature-a", "--tmux", "--opencode", "--headless"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+                        parse_route(
+                            ["--plan", "feature-a", "--tmux", "--opencode", "--headless"],
+                            env={"ENVCTL_DEFAULT_MODE": "trees"},
+                        )
                     )
 
             self.assertEqual(code, 0)
@@ -334,6 +458,73 @@ class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
             written_state = cast(RunState, captured["state"])
             self.assertEqual(written_state.run_id, "run-fresh-after-resume-failure")
             self.assertNotEqual(written_state.run_id, existing_state.run_id)
+
+    def test_resume_failure_after_interactive_release_is_terminal_instead_of_racing_fresh_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = self._repo(root)
+            runtime = root / "runtime"
+            engine = self._engine(repo, runtime)
+            context = self._main_context(repo)
+            metadata = startup_support.build_startup_identity_metadata(
+                engine,
+                runtime_mode="main",
+                project_contexts=[context],
+            )
+            existing_state = RunState(
+                run_id="run-existing",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=str(repo / "backend"),
+                        pid=1111,
+                        requested_port=8000,
+                        actual_port=8000,
+                        status="running",
+                    )
+                },
+                metadata=metadata,
+            )
+            competing_results: list[int] = []
+
+            def released_resume_failure(_route: object) -> int:
+                self.assertTrue(release_lifecycle_operation(engine))
+                competitor = threading.Thread(
+                    target=lambda: competing_results.append(
+                        run_exclusive_lifecycle_operation(
+                            engine,
+                            command="stop",
+                            operation=lambda: 0,
+                        )
+                    )
+                )
+                competitor.start()
+                competitor.join(timeout=2)
+                self.assertFalse(competitor.is_alive())
+                return 1
+
+            with (
+                patch.object(engine, "_discover_projects", return_value=[context]),
+                patch.object(engine, "_try_load_existing_state", return_value=existing_state),
+                patch.object(engine, "_resume", side_effect=released_resume_failure),
+                patch.object(
+                    engine,
+                    "_start_project_context",
+                    side_effect=AssertionError("fresh fallback must not mutate after releasing its lease"),
+                ) as start_project,
+                patch.object(
+                    engine,
+                    "_write_artifacts",
+                    side_effect=AssertionError("terminal resume failure must not write fresh state"),
+                ),
+            ):
+                code = engine.dispatch(parse_route(["start", "--batch"], env={"ENVCTL_DEFAULT_MODE": "main"}))
+
+            self.assertEqual(code, 1)
+            self.assertEqual(competing_results, [0])
+            start_project.assert_not_called()
 
     def test_reuse_expand_failure_writes_failed_state_to_fresh_run_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -481,4 +672,5 @@ class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
             orphan_mock.assert_not_called()
             written_state = cast(RunState, captured["state"])
             self.assertEqual(set(written_state.services), {"feature-a-1 Backend", "feature-b-1 Backend"})
+            self.assertEqual(written_state.metadata["state_source_run_ids"], ["run-existing-expand"])
             self.assertEqual(captured["errors"], [])

@@ -30,6 +30,11 @@ def load_state(path: str, *, allowed_root: str | None = None) -> RunState:
             pid=svc.get("pid"),
             requested_port=svc.get("requested_port"),
             actual_port=svc.get("actual_port"),
+            port_lock_session=(
+                svc["port_lock_session"].strip()
+                if isinstance(svc.get("port_lock_session"), str) and svc["port_lock_session"].strip()
+                else None
+            ),
             log_path=svc.get("log_path"),
             status=svc.get("status", "unknown"),
             synthetic=bool(svc.get("synthetic", False)),
@@ -169,6 +174,7 @@ def state_to_dict(state: RunState) -> dict[str, object]:
                 "pid": svc.pid,
                 "requested_port": svc.requested_port,
                 "actual_port": svc.actual_port,
+                "port_lock_session": svc.port_lock_session,
                 "log_path": svc.log_path,
                 "status": svc.status,
                 "synthetic": svc.synthetic,

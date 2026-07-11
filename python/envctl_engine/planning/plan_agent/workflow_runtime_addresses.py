@@ -7,6 +7,7 @@ from typing import Any
 
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree
 from envctl_engine.runtime.runtime_context import optional_state_repository
+from envctl_engine.state.lookup import call_state_loader
 from envctl_engine.state.models import RunState
 
 
@@ -16,7 +17,7 @@ class RuntimeAddressPromptBuilder:
     worktree: CreatedPlanWorktree | None = None
 
     def prompt_section(self) -> str:
-        state = _latest_runtime_state(self.runtime)
+        state = _latest_runtime_state(self.runtime, worktree=self.worktree)
         if state is None:
             return ""
         lines = [
@@ -56,11 +57,12 @@ def _runtime_addresses_prompt_section(runtime: Any, *, worktree: CreatedPlanWork
     return RuntimeAddressPromptBuilder(runtime, worktree=worktree).prompt_section()
 
 
-def _latest_runtime_state(runtime: Any) -> RunState | None:
+def _latest_runtime_state(runtime: Any, *, worktree: CreatedPlanWorktree | None = None) -> RunState | None:
+    project_names = [worktree.name] if worktree is not None and str(worktree.name).strip() else None
     state_repository = optional_state_repository(runtime)
     if state_repository is not None and hasattr(state_repository, "load_latest"):
         try:
-            state = state_repository.load_latest()
+            state = call_state_loader(state_repository.load_latest, project_names=project_names)
         except Exception:
             state = None
         if isinstance(state, RunState):
@@ -69,7 +71,12 @@ def _latest_runtime_state(runtime: Any) -> RunState | None:
     if callable(try_loader):
         for mode in ("trees", "main"):
             try:
-                state = try_loader(mode=mode, strict_mode_match=True)
+                state = call_state_loader(
+                    try_loader,
+                    mode=mode,
+                    strict_mode_match=True,
+                    project_names=project_names,
+                )
             except Exception:
                 state = None
             if isinstance(state, RunState):

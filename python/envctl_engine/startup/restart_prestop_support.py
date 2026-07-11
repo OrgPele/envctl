@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.lifecycle_requirement_ports import release_port_reservation
+from envctl_engine.state.lookup import call_state_loader
 from envctl_engine.runtime.runtime_context import resolve_port_allocator, resolve_process_runtime
+from envctl_engine.shared.process_cwd import process_cwd
 from envctl_engine.shared.services import service_project_name, service_slug_from_record
 from envctl_engine.startup.startup_selection_support import (
     _restart_selected_services,
@@ -13,6 +15,8 @@ from envctl_engine.startup.startup_selection_support import (
     restart_target_projects,
     restart_target_projects_for_selected_services,
 )
+from envctl_engine.startup.run_reuse_dashboard_restore import metadata_without_dashboard_stopped_services
+from envctl_engine.startup.session import metadata_with_state_sources
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,19 +44,16 @@ class RestartPrestopSelection:
 class RestartOrphanListenerScan:
     ports_by_type: dict[str, set[int]]
     selected_by_cwd: dict[str, set[str]]
+    owners_by_cwd_type: dict[tuple[str, str], tuple[str, ...]] = field(default_factory=dict)
+    port_lock_sessions_by_cwd_type: dict[tuple[str, str], tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class RestartOrphanListenerMatch:
     pid: int
     port: int
-
-
-def process_cwd(pid: int) -> str | None:
-    try:
-        return str(Path(f"/proc/{pid}/cwd").resolve())
-    except OSError:
-        return None
+    owner_candidates: tuple[str, ...] = ()
+    port_lock_sessions: tuple[str, ...] = ()
 
 
 def restart_fallback_start_route(route: Route, *, restart_lookup_mode: str) -> Route:
@@ -68,7 +69,11 @@ def restart_fallback_start_route(route: Route, *, restart_lookup_mode: str) -> R
 
 def restart_prestop_state(*, route: Route, runtime: Any) -> RestartPrestopState:
     restart_lookup_mode = runtime._effective_start_mode(route)
-    resumed = runtime._try_load_existing_state(mode=restart_lookup_mode)
+    resumed = call_state_loader(
+        runtime._try_load_existing_state,
+        mode=restart_lookup_mode,
+        project_names=route.projects or None,
+    )
     if resumed is not None and resumed.mode != restart_lookup_mode:
         runtime._emit(
             "restart.state_mode_mismatch",
@@ -133,7 +138,7 @@ def handle_restart_prestop(
     runtime: Any,
     session: Any,
     suppress_progress_output: Callable[[Route], bool],
-    terminate_restart_orphan_listeners: Callable[..., None],
+    terminate_restart_orphan_listeners: Callable[..., set[int]],
     spinner_factory: Callable[..., Any],
     use_spinner_policy_fn: Callable[[Any], Any],
     resolve_spinner_policy_fn: Callable[[dict[str, str]], Any],
@@ -181,17 +186,30 @@ def handle_restart_prestop(
                 message="Restarting services...",
             )
         try:
-            runtime._terminate_services_from_state(
+            termination_result = runtime._terminate_services_from_state(
                 resumed,
                 selected_services=selected_services,
                 aggressive=False,
                 verify_ownership=True,
             )
-            terminate_restart_orphan_listeners(
+            failed_services = _failed_service_names(termination_result)
+            if failed_services:
+                session.preserve_existing_state_on_failure = True
+                raise RuntimeError(
+                    "Restart aborted because existing services could not be stopped: "
+                    + ", ".join(sorted(failed_services))
+                )
+            failed_orphan_pids = terminate_restart_orphan_listeners(
                 state=resumed,
                 selected_services=selected_services,
                 aggressive=True,
             )
+            if failed_orphan_pids:
+                session.preserve_existing_state_on_failure = True
+                raise RuntimeError(
+                    "Restart aborted because orphan listeners could not be stopped: "
+                    + ", ".join(str(pid) for pid in sorted(failed_orphan_pids))
+                )
             preservation = restart_prestop_preservation(
                 resumed,
                 selected_services=selected_services,
@@ -202,6 +220,17 @@ def handle_restart_prestop(
                 runtime._release_requirement_ports(requirements)
             session.preserved_requirements = dict(preservation.preserved_requirements)
             session.preserved_services = dict(preservation.preserved_services)
+            requested_service_names = {
+                str(name).strip() for name in route.flags.get("services", []) if str(name).strip()
+            }
+            inherited_metadata = metadata_without_dashboard_stopped_services(
+                {**dict(resumed.metadata), **dict(session.base_metadata)},
+                restored_service_names=requested_service_names,
+            )
+            session.base_metadata = metadata_with_state_sources(
+                inherited_metadata,
+                resumed,
+            )
             if use_prestop_spinner:
                 prestop_spinner.succeed("Restart pre-stop complete")
                 runtime._emit(
@@ -239,6 +268,12 @@ def handle_restart_prestop(
     )
     session.runtime_mode = restart_lookup_mode
     return None
+
+
+def _failed_service_names(result: object) -> set[str]:
+    if not isinstance(result, (set, frozenset)):
+        return set()
+    return {str(name).strip() for name in result if str(name).strip()}
 
 
 def restart_prestop_preservation(
@@ -342,6 +377,8 @@ def restart_orphan_listener_scan(
         "frontend": set(range(int(frontend_port_base), int(frontend_port_base) + span)),
     }
     selected_by_cwd: dict[str, set[str]] = {}
+    owners_by_cwd_type: dict[tuple[str, str], tuple[str, ...]] = {}
+    port_lock_sessions_by_cwd_type: dict[tuple[str, str], tuple[str, ...]] = {}
     for service_name, service in getattr(state, "services", {}).items():
         if service_name not in selected_services:
             continue
@@ -350,6 +387,20 @@ def restart_orphan_listener_scan(
         if service_type not in ports_by_type or not cwd:
             continue
         selected_by_cwd.setdefault(cwd, set()).add(service_type)
+        project = str(service_project_name(service) or service_name.rsplit(" ", 1)[0]).strip()
+        if project:
+            owners_by_cwd_type[(cwd, service_type)] = (
+                f"{project}:{service_type}",
+                f"{project}:services:{service_type}-launch",
+                f"{project}:services",
+            )
+        raw_port_lock_session = getattr(service, "port_lock_session", None)
+        port_lock_session = raw_port_lock_session.strip() if isinstance(raw_port_lock_session, str) else ""
+        if port_lock_session:
+            key = (cwd, service_type)
+            port_lock_sessions_by_cwd_type[key] = tuple(
+                dict.fromkeys((*port_lock_sessions_by_cwd_type.get(key, ()), port_lock_session))
+            )
         for attr_name in ("actual_port", "requested_port"):
             port = getattr(service, attr_name, None)
             if isinstance(port, int) and port > 0:
@@ -357,6 +408,8 @@ def restart_orphan_listener_scan(
     return RestartOrphanListenerScan(
         ports_by_type=ports_by_type,
         selected_by_cwd=selected_by_cwd,
+        owners_by_cwd_type=owners_by_cwd_type,
+        port_lock_sessions_by_cwd_type=port_lock_sessions_by_cwd_type,
     )
 
 
@@ -377,7 +430,14 @@ def restart_matching_orphan_listeners(
                     if process_cwd(pid) != cwd:
                         continue
                     seen_pids.add(pid)
-                    matches.append(RestartOrphanListenerMatch(pid=pid, port=port))
+                    matches.append(
+                        RestartOrphanListenerMatch(
+                            pid=pid,
+                            port=port,
+                            owner_candidates=scan.owners_by_cwd_type.get((cwd, service_type), ()),
+                            port_lock_sessions=scan.port_lock_sessions_by_cwd_type.get((cwd, service_type), ()),
+                        )
+                    )
     return matches
 
 
@@ -392,8 +452,8 @@ def terminate_restart_orphan_listeners(
     listener_pids_for_port: Callable[[int], Iterable[int]] | None,
     process_cwd: Callable[[int], str | None],
     terminate_pid: Callable[..., bool] | None,
-    release_port: Callable[[int], None],
-) -> None:
+    port_planner: Any,
+) -> set[int]:
     scan = restart_orphan_listener_scan(
         state,
         selected_services=selected_services,
@@ -402,17 +462,29 @@ def terminate_restart_orphan_listeners(
         port_spacing=port_spacing,
     )
     if not scan.selected_by_cwd:
-        return
+        return set()
     if not callable(listener_pids_for_port) or not callable(terminate_pid):
-        return
+        return set()
     matches = restart_matching_orphan_listeners(
         scan,
         listener_pids_for_port=listener_pids_for_port,
         process_cwd=process_cwd,
     )
+    failed_pids: set[int] = set()
     for match in matches:
         if terminate_pid(match.pid, term_timeout=0.5 if aggressive else 2.0, kill_timeout=1.0):
-            release_port(match.port)
+            expected_sessions = match.port_lock_sessions or (None,)
+            for expected_session in expected_sessions:
+                if release_port_reservation(
+                    port_planner,
+                    match.port,
+                    owner_candidates=match.owner_candidates,
+                    expected_session=expected_session,
+                ):
+                    break
+        else:
+            failed_pids.add(match.pid)
+    return failed_pids
 
 
 def terminate_restart_orphan_listeners_with_runtime(
@@ -421,10 +493,10 @@ def terminate_restart_orphan_listeners_with_runtime(
     state: Any,
     selected_services: set[str],
     aggressive: bool,
-) -> None:
+) -> set[int]:
     process_runtime = resolve_process_runtime(runtime)
     port_allocator = resolve_port_allocator(runtime)
-    terminate_restart_orphan_listeners(
+    return terminate_restart_orphan_listeners(
         state=state,
         selected_services=selected_services,
         aggressive=aggressive,
@@ -432,7 +504,7 @@ def terminate_restart_orphan_listeners_with_runtime(
         frontend_port_base=int(runtime.config.frontend_port_base),
         port_spacing=int(getattr(runtime.config, "port_spacing", 20) or 20),
         listener_pids_for_port=getattr(runtime, "_listener_pids_for_port", None),
-        process_cwd=process_cwd,
+        process_cwd=getattr(process_runtime, "process_cwd", process_cwd),
         terminate_pid=getattr(process_runtime, "terminate", None),
-        release_port=port_allocator.release,
+        port_planner=port_allocator,
     )

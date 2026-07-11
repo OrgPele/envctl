@@ -97,13 +97,19 @@ def trees_start_selection_required(*, route: Route, runtime_mode: str) -> bool:
 def tree_preselected_projects_from_state(
     *, runtime: StartupRuntime, project_contexts: list[ProjectContextLike]
 ) -> list[str]:
-    state = runtime._try_load_existing_state(mode="trees", strict_mode_match=True)
+    repository = getattr(runtime, "state_repository", None)
+    load_all = getattr(repository, "load_all", None)
+    states = [state for state in load_all(mode="trees") if isinstance(state, RunState)] if callable(load_all) else []
+    if not states:
+        state = runtime._try_load_existing_state(mode="trees", strict_mode_match=True)
+        states = [state] if state is not None else []
     available = {str(context.name).strip().lower(): str(context.name).strip() for context in project_contexts}
-    if state is None:
+    if not states:
         return _tree_preselected_projects_from_plans(runtime=runtime, project_contexts=project_contexts)
     preselected: list[str] = []
     seen: set[str] = set()
-    for name in sorted(state_project_names(runtime=runtime, state=state)):
+    active_names = {name for state in states for name in state_project_names(runtime=runtime, state=state)}
+    for name in sorted(active_names):
         normalized = str(name).strip().lower()
         resolved = available.get(normalized)
         if not resolved:
@@ -138,9 +144,7 @@ def _tree_preselected_projects_from_plans(
     ]
     existing_counts = planning_existing_counts(projects=projects, planning_files=planning_files)
     plan_counts = OrderedDict(
-        (plan_file, count)
-        for plan_file in planning_files
-        if (count := int(existing_counts.get(plan_file, 0))) > 0
+        (plan_file, count) for plan_file in planning_files if (count := int(existing_counts.get(plan_file, 0))) > 0
     )
     if not plan_counts:
         return []
@@ -354,7 +358,6 @@ def _project_name_from_service_name(name: str) -> str | None:
     return None
 
 
-
 def _service_filter_types_for_project(
     *, route: Route, project_name: str, configured_service_types: set[str]
 ) -> set[str]:
@@ -470,7 +473,10 @@ def _restart_service_types_for_project(
         )
     return _apply_startup_service_launch_flags(configured_service_types, route=route)
 
+
 def _apply_startup_service_launch_flags(service_types: set[str], *, route: Route) -> set[str]:
+    if route.flags.get("launch_backend") is False and route.flags.get("launch_frontend") is False:
+        return set()
     selected = set(service_types)
     if route.flags.get("launch_backend") is False:
         selected.discard("backend")

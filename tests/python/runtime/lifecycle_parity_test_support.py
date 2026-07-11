@@ -33,7 +33,6 @@ ServiceRecord = models_module.ServiceRecord
 dump_state = state_module.dump_state
 
 
-
 class _NoopPlanner:
     def __init__(self) -> None:
         self.released = False
@@ -46,6 +45,7 @@ class _NoopPlanner:
         _ = owner
         self.released_ports.append(port)
 
+
 class _TrackingPlanner:
     def __init__(self) -> None:
         self.released_session = False
@@ -56,6 +56,7 @@ class _TrackingPlanner:
 
     def release_all(self) -> None:
         self.released_all = True
+
 
 class _TrackingRunner:
     def __init__(self) -> None:
@@ -72,7 +73,7 @@ class _TrackingRunner:
         return True
 
     def is_pid_running(self, pid: int) -> bool:
-        return pid > 0
+        return pid > 0 and pid not in self.terminated
 
     def pid_owns_port(self, pid: int, port: int) -> bool:
         _ = pid, port
@@ -94,10 +95,12 @@ class _TrackingRunner:
             return type("Result", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
         return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
+
 class _OwnershipDenyRunner(_TrackingRunner):
     def pid_owns_port(self, pid: int, port: int) -> bool:
         _ = pid, port
         return False
+
 
 class _ResumeRestoreRunner:
     def __init__(self) -> None:
@@ -174,6 +177,7 @@ class _ResumeRestoreRunner:
         self.terminated.append(pid)
         self._running.discard(pid)
         return True
+
 
 __all__ = [
     "Path",

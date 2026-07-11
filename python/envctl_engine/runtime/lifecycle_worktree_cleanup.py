@@ -30,6 +30,7 @@ from envctl_engine.runtime.lifecycle_worktree_processes import (
 from envctl_engine.runtime.lifecycle_worktree_processes import (
     blast_tree_listener_ports as _blast_tree_listener_ports,
 )
+from envctl_engine.state.lookup import call_state_loader
 from envctl_engine.state.models import RequirementsResult, RunState
 from envctl_engine.state.runtime_map import build_runtime_map
 
@@ -136,7 +137,12 @@ def blast_worktree_before_delete(
     )
 
     for mode in ("trees", "main"):
-        state = runtime._try_load_existing_state(mode=mode, strict_mode_match=True)
+        state = call_state_loader(
+            runtime._try_load_existing_state,
+            mode=mode,
+            strict_mode_match=True,
+            project_names=[normalized_project],
+        )
         if state is None:
             continue
 
@@ -159,33 +165,39 @@ def blast_worktree_before_delete(
         if not selected_services and requirement_key is None:
             continue
 
-        runtime._terminate_services_from_state(
+        termination_result = runtime._terminate_services_from_state(
             state,
             selected_services=selected_services,
             aggressive=True,
             verify_ownership=False,
         )
-        for service_name in selected_services:
+        failed_services = (
+            {str(name) for name in termination_result} if isinstance(termination_result, (set, frozenset)) else set()
+        )
+        stopped_services = selected_services.difference(failed_services)
+        for service_name in stopped_services:
             state.services.pop(service_name, None)
 
-        if requirement_key is not None:
+        if requirement_key is not None and not failed_services:
             requirement_entry = state.requirements.pop(requirement_key, None)
             if requirement_entry is not None:
                 target_ports.update(cleanup.collect_requirement_ports(requirement_entry))
                 release_requirement_ports(runtime, requirement_entry)
 
-        remaining_projects: set[str] = set()
-        for service_name in state.services:
-            project = runtime._project_name_from_service(service_name)
-            if project:
-                remaining_projects.add(project)
-        for project in list(state.requirements.keys()):
-            if project in remaining_projects:
-                continue
-            requirement_entry = state.requirements.pop(project)
-            release_requirement_ports(runtime, requirement_entry)
+        if not failed_services:
+            remaining_projects: set[str] = set()
+            for service_name in state.services:
+                project = runtime._project_name_from_service(service_name)
+                if project:
+                    remaining_projects.add(project)
+            for project in list(state.requirements.keys()):
+                if project in remaining_projects:
+                    continue
+                requirement_entry = state.requirements.pop(project)
+                release_requirement_ports(runtime, requirement_entry)
 
-        artifact_paths.update(cleanup.prune_project_metadata(state, project_name=normalized_project))
+        if not failed_services:
+            artifact_paths.update(cleanup.prune_project_metadata(state, project_name=normalized_project))
 
         try:
             runtime.state_repository.save_selected_stop_state(
@@ -202,15 +214,27 @@ def blast_worktree_before_delete(
                 mode=mode,
                 warning=warning,
             )
-            continue
+            raise RuntimeError(warning) from exc
 
         runtime._emit(
             "cleanup.worktree.state.updated",
             project=normalized_project,
             mode=mode,
-            services_removed=len(selected_services),
-            requirements_removed=(requirement_key is not None),
+            services_removed=len(stopped_services),
+            requirements_removed=(requirement_key is not None and not failed_services),
         )
+        if failed_services:
+            warning = (
+                f"worktree cleanup could not confirm service exit for {normalized_project} ({mode}): "
+                + ", ".join(sorted(failed_services))
+            )
+            runtime._emit(
+                "cleanup.worktree.warning",
+                project=normalized_project,
+                mode=mode,
+                warning=warning,
+            )
+            raise RuntimeError(warning)
 
     if blast_mode:
         cleanup.blast_tree_listener_ports(

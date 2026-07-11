@@ -1,6 +1,7 @@
 # ruff: noqa: F403,F405
 from __future__ import annotations
 
+from envctl_engine.actions.action_git_state_support import ExistingPullRequest
 from tests.python.actions.actions_cli_test_support import *  # noqa: F403,F405
 
 
@@ -80,7 +81,14 @@ class ActionsCliShipTests(unittest.TestCase):
                 patch("envctl_engine.actions.project_action_domain.add_ship_pr_label", return_value=0) as label_pr,
                 patch(
                     "envctl_engine.actions.project_action_domain.existing_pr_url",
-                    side_effect=["", "https://github.com/acme/repo/pull/7"],
+                    return_value="https://github.com/acme/repo/pull/7",
+                ),
+                patch(
+                    "envctl_engine.actions.project_action_domain.existing_pull_request",
+                    side_effect=[
+                        None,
+                        ExistingPullRequest("https://github.com/acme/repo/pull/7", "main"),
+                    ],
                 ),
                 patch(
                     "envctl_engine.actions.project_action_domain._github_pr_checks",
@@ -170,6 +178,10 @@ class ActionsCliShipTests(unittest.TestCase):
                     return_value="https://github.com/acme/repo/pull/7",
                 ),
                 patch(
+                    "envctl_engine.actions.project_action_domain.existing_pull_request",
+                    return_value=ExistingPullRequest("https://github.com/acme/repo/pull/7", "main"),
+                ),
+                patch(
                     "envctl_engine.actions.project_action_domain._github_pr_checks",
                     return_value={
                         "state": "checks_failed",
@@ -245,6 +257,10 @@ class ActionsCliShipTests(unittest.TestCase):
                     "envctl_engine.actions.project_action_domain.existing_pr_url",
                     return_value="https://github.com/acme/repo/pull/7",
                 ),
+                patch(
+                    "envctl_engine.actions.project_action_domain.existing_pull_request",
+                    return_value=ExistingPullRequest("https://github.com/acme/repo/pull/7", "main"),
+                ),
                 redirect_stdout(StringIO()) as stdout,
             ):
                 code = domain.run_ship_action(context)
@@ -284,11 +300,7 @@ class ActionsCliShipTests(unittest.TestCase):
                 if args == ["diff", "--name-only", "--diff-filter=U"]:
                     return "src/service.py\n"
                 if args == ["ls-files", "-u"]:
-                    return (
-                        "100644 aaa 1\tsrc/service.py\n"
-                        "100644 bbb 2\tsrc/service.py\n"
-                        "100644 ccc 3\tsrc/service.py\n"
-                    )
+                    return "100644 aaa 1\tsrc/service.py\n100644 bbb 2\tsrc/service.py\n100644 ccc 3\tsrc/service.py\n"
                 return ""
 
             with (

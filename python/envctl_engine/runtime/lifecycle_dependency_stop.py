@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from typing import Any
 
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.runtime.lifecycle_requirement_ports import component_port_values
-from envctl_engine.state.models import RunState
+from envctl_engine.runtime.lifecycle_requirement_ports import release_requirement_component_port_values
+from envctl_engine.state.models import RequirementsResult, RunState
 
 
 def select_dependency_components_for_stop(state: RunState, route: Route) -> dict[str, set[str]]:
@@ -37,7 +38,7 @@ def release_selected_dependency_components(
     state: RunState,
     selected_dependencies: dict[str, set[str]],
     *,
-    release_component_ports_fn: Callable[[Mapping[str, object]], None],
+    release_component_ports_fn: Callable[[RequirementsResult, str, Mapping[str, object]], None],
 ) -> None:
     for project_name, dependency_ids in selected_dependencies.items():
         requirements = state.requirements.get(project_name)
@@ -48,7 +49,7 @@ def release_selected_dependency_components(
             if not bool(component.get("enabled", False)):
                 continue
             if not bool(component.get("external")):
-                release_component_ports_fn(component)
+                release_component_ports_fn(requirements, dependency_id, component)
             requirements.components[dependency_id] = {}
         if not requirements_have_enabled_components(requirements):
             state.requirements.pop(project_name, None)
@@ -57,10 +58,14 @@ def release_selected_dependency_components(
 def release_requirement_component_ports(
     component: Mapping[str, object],
     *,
-    release_port_fn: Callable[[int], None],
+    port_planner: Any,
+    owner_candidates: tuple[str, ...] = (),
 ) -> None:
-    for port in sorted(component_port_values(component)):
-        release_port_fn(port)
+    release_requirement_component_port_values(
+        port_planner,
+        component,
+        owner_candidates=owner_candidates,
+    )
 
 
 def requirements_have_enabled_components(requirements: object) -> bool:
@@ -68,7 +73,5 @@ def requirements_have_enabled_components(requirements: object) -> bool:
     if not isinstance(components, Mapping):
         return False
     return any(
-        bool(component.get("enabled", False))
-        for component in components.values()
-        if isinstance(component, Mapping)
+        bool(component.get("enabled", False)) for component in components.values() if isinstance(component, Mapping)
     )

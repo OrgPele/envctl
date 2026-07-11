@@ -29,6 +29,15 @@ class HelpTopicsTests(unittest.TestCase):
         self.assertIn("envctl pr-preview-controller - run the GitHub PR-label preview controller", text)
         self.assertIn("--command <name>", text)
 
+    def test_stop_help_distinguishes_detach_from_managed_docker_removal(self) -> None:
+        stop_text = render_command_help(COMMAND_HELP_TOPICS["stop"])
+        stop_all_text = render_command_help(COMMAND_HELP_TOPICS["stop-all"])
+
+        self.assertIn("managed Docker stacks and storage remain reusable", stop_text)
+        self.assertIn("stop-all --remove-volumes", stop_text)
+        self.assertIn("releases dependency records and port locks", stop_all_text)
+        self.assertIn("remove supported managed containers and volumes", stop_all_text)
+
     def test_help_text_for_route_returns_none_for_general_help(self) -> None:
         self.assertIsNone(help_text_for_route(parse_route(["--help"], env={})))
 

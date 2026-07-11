@@ -13,6 +13,29 @@ from envctl_engine.state import dump_state
 
 
 class RuntimeScopeIsolationTests(unittest.TestCase):
+    def test_runtime_uses_repository_canonical_root_through_symlinked_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            real_runtime_dir = root / "real-runtime"
+            runtime_alias = root / "runtime-alias"
+            repo = root / "repo"
+            real_runtime_dir.mkdir()
+            runtime_alias.symlink_to(real_runtime_dir, target_is_directory=True)
+            (repo / ".git").mkdir(parents=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime_alias),
+                }
+            )
+
+            runtime = PythonEngineRuntime(config, env={})
+
+            self.assertEqual(runtime.runtime_root, runtime.state_repository.runtime_root)
+            self.assertEqual(runtime.runtime_legacy_root, runtime.state_repository.runtime_legacy_root)
+            self.assertEqual(runtime.runtime_root, config.runtime_scope_dir.resolve())
+            self.assertEqual(runtime.port_planner.lock_dir, runtime.runtime_root / "locks")
+
     def test_managed_linked_worktree_uses_main_repo_runtime_scope_and_lock_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -27,9 +50,7 @@ class RuntimeScopeIsolationTests(unittest.TestCase):
             (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
 
             main_config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime_dir)})
-            worktree_config = load_config(
-                {"RUN_REPO_ROOT": str(worktree), "RUN_SH_RUNTIME_DIR": str(runtime_dir)}
-            )
+            worktree_config = load_config({"RUN_REPO_ROOT": str(worktree), "RUN_SH_RUNTIME_DIR": str(runtime_dir)})
             main_runtime = PythonEngineRuntime(main_config, env={})
             worktree_runtime = PythonEngineRuntime(worktree_config, env={"ENVCTL_INVOCATION_CWD": str(worktree)})
 
@@ -204,6 +225,83 @@ class RuntimeScopeIsolationTests(unittest.TestCase):
                 legacy_locks.resolve(strict=False),
                 (runtime.runtime_root / "locks").resolve(strict=False),
             )
+
+    def test_scoped_and_read_only_construction_preserve_legacy_artifacts_and_lock_view(self) -> None:
+        for compat_mode in ("scoped_only", "compat_read_only"):
+            with self.subTest(compat_mode=compat_mode), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                runtime_dir = root / "runtime"
+                repo = root / "repo"
+                (repo / ".git").mkdir(parents=True)
+                legacy_root = runtime_dir / "python-engine"
+                legacy_root.mkdir(parents=True)
+                sentinel = legacy_root / "run_state.json"
+                sentinel.write_text("legacy-sentinel", encoding="utf-8")
+                config = load_config(
+                    {
+                        "RUN_REPO_ROOT": str(repo),
+                        "RUN_SH_RUNTIME_DIR": str(runtime_dir),
+                    }
+                )
+
+                runtime = PythonEngineRuntime(
+                    config,
+                    env={"ENVCTL_STATE_COMPAT_MODE": compat_mode},
+                )
+
+                self.assertEqual(sentinel.read_text(encoding="utf-8"), "legacy-sentinel")
+                self.assertFalse((legacy_root / "locks").exists())
+                self.assertTrue(runtime.runtime_root.is_dir())
+
+    def test_construction_rejects_preexisting_scoped_root_symlink_before_external_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime_dir = root / "runtime"
+            repo = root / "repo"
+            (repo / ".git").mkdir(parents=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime_dir),
+                }
+            )
+            external = root / "external"
+            external.mkdir()
+            sentinel = external / "sentinel.txt"
+            sentinel.write_text("untouched", encoding="utf-8")
+            config.runtime_scope_dir.parent.mkdir(parents=True, exist_ok=True)
+            config.runtime_scope_dir.symlink_to(external, target_is_directory=True)
+
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                PythonEngineRuntime(config, env={})
+
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "untouched")
+            self.assertEqual(list(external.iterdir()), [sentinel])
+
+    def test_construction_rejects_preexisting_legacy_root_symlink_before_external_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime_dir = root / "runtime"
+            repo = root / "repo"
+            (repo / ".git").mkdir(parents=True)
+            external = root / "external"
+            external.mkdir()
+            sentinel = external / "sentinel.txt"
+            sentinel.write_text("untouched", encoding="utf-8")
+            runtime_dir.mkdir()
+            (runtime_dir / "python-engine").symlink_to(external, target_is_directory=True)
+            config = load_config(
+                {
+                    "RUN_REPO_ROOT": str(repo),
+                    "RUN_SH_RUNTIME_DIR": str(runtime_dir),
+                }
+            )
+
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                PythonEngineRuntime(config, env={})
+
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "untouched")
+            self.assertEqual(list(external.iterdir()), [sentinel])
 
 
 if __name__ == "__main__":

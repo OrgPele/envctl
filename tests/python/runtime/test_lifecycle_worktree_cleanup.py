@@ -86,6 +86,56 @@ class LifecycleWorktreeCleanupTests(unittest.TestCase):
         self.assertEqual(warnings, [])
         self.assertEqual(calls, ["ports", "cwd", "artifacts", "containers"])
 
+    def test_worktree_delete_aborts_and_retains_authority_when_service_exit_is_unconfirmed(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        saved_states: list[RunState] = []
+        released: list[int] = []
+        service = ServiceRecord(
+            name="Feature Backend",
+            type="backend",
+            cwd="/repo/feature/backend",
+            pid=10,
+            actual_port=8000,
+        )
+        requirements = RequirementsResult(
+            project="Feature",
+            db={"enabled": True, "final": 5432},
+        )
+        state = RunState(
+            run_id="run-1",
+            mode="trees",
+            services={service.name: service},
+            requirements={"Feature": requirements},
+            metadata={"project_roots": {"Feature": "/repo/feature"}},
+        )
+        runtime = SimpleNamespace(
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _try_load_existing_state=lambda **kwargs: state if kwargs["mode"] == "trees" else None,
+            _project_name_from_service=lambda name: "Feature" if "Feature" in name else "",
+            _terminate_services_from_state=lambda *args, **kwargs: {service.name},
+            port_planner=SimpleNamespace(release=lambda port: released.append(port)),
+            state_repository=SimpleNamespace(
+                save_selected_stop_state=lambda **kwargs: saved_states.append(kwargs["state"])
+            ),
+            process_runner=SimpleNamespace(),
+            env={},
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "could not confirm service exit"):
+            blast_worktree_before_delete(
+                runtime,
+                project_name="Feature",
+                project_root=Path("/repo/feature"),
+                source_command="delete-worktree",
+            )
+
+        self.assertEqual(len(saved_states), 1)
+        self.assertIs(saved_states[0].services[service.name], service)
+        self.assertIs(saved_states[0].requirements["Feature"], requirements)
+        self.assertEqual(saved_states[0].metadata["project_roots"], {"Feature": "/repo/feature"})
+        self.assertEqual(released, [])
+        self.assertEqual(events[-1][0], "cleanup.worktree.warning")
+
     def test_prune_project_metadata_returns_test_artifacts_and_removes_empty_keys(self) -> None:
         state = RunState(
             run_id="run-1",
@@ -152,7 +202,9 @@ class LifecycleWorktreeCleanupTests(unittest.TestCase):
 
         self.assertEqual(warnings, [])
         self.assertEqual(killed, [222])
-        self.assertEqual([event for event, _payload in events], ["cleanup.worktree.port.skip", "cleanup.worktree.port.kill"])
+        self.assertEqual(
+            [event for event, _payload in events], ["cleanup.worktree.port.skip", "cleanup.worktree.port.kill"]
+        )
 
     def test_remove_tree_containers_matches_hashed_and_legacy_names_and_removes_volumes(self) -> None:
         calls: list[list[str]] = []

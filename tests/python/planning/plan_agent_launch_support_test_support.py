@@ -124,8 +124,14 @@ class _StateRepositoryHarness:
     def __init__(self, state: RunState | None) -> None:
         self.state = state
 
-    def load_latest(self, *, mode: str | None = None, strict_mode_match: bool = False) -> RunState | None:
-        _ = mode, strict_mode_match
+    def load_latest(
+        self,
+        *,
+        mode: str | None = None,
+        strict_mode_match: bool = False,
+        project_names: list[str] | None = None,
+    ) -> RunState | None:
+        _ = mode, strict_mode_match, project_names
         return self.state
 
 

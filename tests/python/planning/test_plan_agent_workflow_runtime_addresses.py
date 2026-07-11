@@ -24,8 +24,14 @@ class _StateRepositoryHarness:
     def __init__(self, state: RunState | None) -> None:
         self.state = state
 
-    def load_latest(self, *, mode: str | None = None, strict_mode_match: bool = False) -> RunState | None:
-        _ = mode, strict_mode_match
+    def load_latest(
+        self,
+        *,
+        mode: str | None = None,
+        strict_mode_match: bool = False,
+        project_names: list[str] | None = None,
+    ) -> RunState | None:
+        _ = mode, strict_mode_match, project_names
         return self.state
 
 
@@ -127,9 +133,10 @@ class PlanAgentWorkflowRuntimeAddressTests(unittest.TestCase):
         self.assertTrue(_state_service_matches_worktree(matching_service, worktree))
         self.assertFalse(_state_service_matches_worktree(stale_service, worktree))
         self.assertEqual(_component_port({"requested": "0", "resources": {"primary": "49152"}}), 49152)
-        self.assertEqual(_service_address_lines(RunState(run_id="run-1", mode="trees", services={"api": matching_service})), [
-            "Backend (backend): http://localhost:8000"
-        ])
+        self.assertEqual(
+            _service_address_lines(RunState(run_id="run-1", mode="trees", services={"api": matching_service})),
+            ["Backend (backend): http://localhost:8000"],
+        )
 
     def test_runtime_section_uses_legacy_state_loader_when_repository_is_unavailable(self) -> None:
         state = RunState(

@@ -61,17 +61,15 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
                 "backend": backend_enabled,
                 "frontend": frontend_enabled,
             }.get(str(service_name).strip().lower(), False),
-            requirement_enabled_for_mode=lambda _mode, requirement_name: str(requirement_name).strip().lower()
-            in enabled_dependencies,
+            requirement_enabled_for_mode=lambda _mode, requirement_name: (
+                str(requirement_name).strip().lower() in enabled_dependencies
+            ),
         )
         return SimpleNamespace(
             env=dict(external_env or {}),
             config=config,
             _try_load_existing_state=lambda **_kwargs: state,
-            _project_name_from_service=lambda name: str(name)
-            .replace(" Backend", "")
-            .replace(" Frontend", "")
-            .strip(),
+            _project_name_from_service=lambda name: str(name).replace(" Backend", "").replace(" Frontend", "").strip(),
         )
 
     def test_effective_start_mode_switches_main_to_trees_for_setup_worktree(self) -> None:
@@ -142,6 +140,61 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
 
         self.assertEqual(decision.decision_kind, "resume_exact")
         self.assertEqual(decision.reason, "exact_match")
+        self.assertIs(decision.candidate_state, state)
+
+    def test_run_reuse_forwards_selected_project_names_to_state_lookup(self) -> None:
+        context = ProjectContext(name="feature-a", root=Path("/repo/trees/feature-a"), ports={})
+        state = RunState(
+            run_id="run-a",
+            mode="trees",
+            services={
+                "feature-a Backend": ServiceRecord(
+                    name="feature-a Backend",
+                    type="backend",
+                    cwd="/repo/trees/feature-a/backend",
+                )
+            },
+            metadata={"project_roots": {"feature-a": str(context.root)}},
+        )
+        runtime = self._reuse_runtime(state=state)
+        calls: list[dict[str, object]] = []
+        runtime._try_load_existing_state = lambda **kwargs: calls.append(kwargs) or state
+
+        startup_support.evaluate_run_reuse(
+            runtime,
+            runtime_mode="trees",
+            route=Route(command="start", mode="trees"),
+            contexts=[context],
+        )
+
+        self.assertEqual(
+            calls,
+            [{"mode": "trees", "strict_mode_match": True, "project_names": ["feature-a"]}],
+        )
+
+    def test_explicit_no_resume_keeps_matching_candidate_for_safe_replacement(self) -> None:
+        context = ProjectContext(name="feature-a", root=Path("/repo/trees/feature-a"), ports={})
+        state = RunState(
+            run_id="run-a",
+            mode="trees",
+            services={
+                "feature-a Backend": ServiceRecord(
+                    name="feature-a Backend",
+                    type="backend",
+                    cwd="/repo/trees/feature-a/backend",
+                )
+            },
+            metadata={"project_roots": {"feature-a": str(context.root)}},
+        )
+        decision = startup_support.evaluate_run_reuse(
+            self._reuse_runtime(state=state),
+            runtime_mode="trees",
+            route=Route(command="start", mode="trees", flags={"no_resume": True}),
+            contexts=[context],
+        )
+
+        self.assertEqual(decision.decision_kind, "fresh_run")
+        self.assertEqual(decision.reason, "explicit_no_resume")
         self.assertIs(decision.candidate_state, state)
 
     def test_run_reuse_rejects_project_root_mismatch_even_when_names_match(self) -> None:
@@ -571,6 +624,143 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
         reserve_project_ports(runtime, context)
         self.assertEqual(events[-1][0], "port.reserved")
 
+    def test_no_infra_reserves_no_application_or_dependency_ports(self) -> None:
+        reserve_calls: list[tuple[int, str]] = []
+        events: list[tuple[str, dict[str, object]]] = []
+        plans = {
+            name: PortPlan(project="Main", requested=port, assigned=port, final=port, source="fixed")
+            for name, port in {
+                "backend": 8000,
+                "frontend": 9000,
+                "db": 5432,
+                "redis": 6379,
+                "n8n": 5678,
+                "supabase_api": 54321,
+                "worker": 9100,
+            }.items()
+        }
+        runtime = SimpleNamespace(
+            port_planner=SimpleNamespace(
+                reserve_next=lambda assigned, owner: reserve_calls.append((assigned, owner)) or assigned,
+                max_port=65000,
+                availability_mode="lock",
+                update_final_port=lambda plan, reserved, source: None,
+            ),
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _lock_inventory=lambda: [],
+            _requirement_enabled=lambda *_args, **_kwargs: self.fail("disabled dependencies need no lookup"),
+        )
+        route = Route(
+            command="start",
+            mode="main",
+            flags={"launch_backend": False, "launch_frontend": False, "launch_dependencies": False},
+        )
+
+        reserve_project_ports(
+            runtime,
+            ProjectContext(name="Main", root=Path("/repo"), ports=plans),
+            route=route,
+        )
+
+        self.assertEqual(reserve_calls, [])
+        self.assertEqual(
+            [payload["service"] for event, payload in events if event == "port.reservation.skipped"],
+            list(plans),
+        )
+
+    def test_disabled_requirements_do_not_reserve_dependency_ports(self) -> None:
+        reserve_calls: list[tuple[int, str]] = []
+        plans = {
+            "backend": PortPlan("Main", 8000, 8000, 8000, "fixed"),
+            "db": PortPlan("Main", 5432, 5432, 5432, "fixed"),
+            "redis": PortPlan("Main", 6379, 6379, 6379, "fixed"),
+            "n8n": PortPlan("Main", 5678, 5678, 5678, "fixed"),
+            "supabase_api": PortPlan("Main", 54321, 54321, 54321, "fixed"),
+        }
+        runtime = SimpleNamespace(
+            port_planner=SimpleNamespace(
+                reserve_next=lambda assigned, owner: reserve_calls.append((assigned, owner)) or assigned,
+                max_port=65000,
+                availability_mode="lock",
+                update_final_port=lambda plan, reserved, source: None,
+            ),
+            _emit=lambda *_args, **_kwargs: None,
+            _lock_inventory=lambda: [],
+            _requirement_enabled=lambda *_args, **_kwargs: False,
+        )
+
+        reserve_project_ports(
+            runtime,
+            ProjectContext(name="Main", root=Path("/repo"), ports=plans),
+            route=Route(command="start", mode="main", flags={"runtime_scope": "entire-system"}),
+        )
+
+        self.assertEqual(reserve_calls, [(8000, "Main:backend")])
+
+    def test_port_reservations_match_the_selected_runtime_surface(self) -> None:
+        voice = SimpleNamespace(
+            name="voice",
+            depends_on=(),
+            enabled_for_project_root=lambda _mode, _root: True,
+        )
+        cases = (
+            ("frontend only", {"runtime_scope": "frontend"}, {"frontend", "db"}),
+            ("backend only", {"runtime_scope": "backend"}, {"backend", "db"}),
+            ("dependencies only", {"runtime_scope": "dependencies"}, {"db"}),
+            (
+                "no infra",
+                {"launch_backend": False, "launch_frontend": False, "launch_dependencies": False},
+                set(),
+            ),
+            ("selected additional service", {"services": ["Main Voice"]}, {"voice", "db"}),
+        )
+
+        for label, flags, expected_services in cases:
+            with self.subTest(label):
+                reserve_calls: list[tuple[int, str]] = []
+                plans = {
+                    name: PortPlan("Main", port, port, port, "fixed")
+                    for name, port in {
+                        "backend": 8000,
+                        "frontend": 9000,
+                        "voice": 9100,
+                        "db": 5432,
+                        "redis": 6379,
+                        "n8n": 5678,
+                        "supabase_api": 54321,
+                    }.items()
+                }
+                runtime = SimpleNamespace(
+                    config=SimpleNamespace(
+                        additional_services=(voice,),
+                        all_app_service_names_for_mode=lambda _mode, project_root=None: (
+                            "backend",
+                            "frontend",
+                            "voice",
+                        ),
+                    ),
+                    port_planner=SimpleNamespace(
+                        reserve_next=lambda assigned, owner: reserve_calls.append((assigned, owner)) or assigned,
+                        max_port=65000,
+                        availability_mode="lock",
+                        update_final_port=lambda plan, reserved, source: None,
+                    ),
+                    _emit=lambda *_args, **_kwargs: None,
+                    _lock_inventory=lambda: [],
+                    _requirement_enabled=lambda requirement, **_kwargs: requirement == "postgres",
+                )
+
+                reserve_project_ports(
+                    runtime,
+                    ProjectContext(name="Main", root=Path("/repo"), ports=plans),
+                    route=Route(command="start", mode="main", flags=flags),
+                )
+
+                self.assertEqual(
+                    {owner.removeprefix("Main:") for _port, owner in reserve_calls},
+                    expected_services,
+                )
+
     def test_reserve_project_ports_releases_matching_restart_lock_before_reuse(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
         released: list[tuple[int, str | None]] = []
@@ -627,7 +817,9 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
         )
         context = ProjectContext(name="Main", root=Path("/repo"), ports={"backend": port_plan})
 
-        reserve_project_ports(runtime, context, route=Route(command="start", mode="main", flags={"interactive_command": True}))
+        reserve_project_ports(
+            runtime, context, route=Route(command="start", mode="main", flags={"interactive_command": True})
+        )
 
         rebound_payloads = [payload for event, payload in events if event == "port.rebound"]
         self.assertEqual(len(rebound_payloads), 1)

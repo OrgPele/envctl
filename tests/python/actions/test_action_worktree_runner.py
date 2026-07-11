@@ -74,9 +74,9 @@ class ActionWorktreeRunnerTests(unittest.TestCase):
         target_resolution_source = (
             REPO_ROOT / "python/envctl_engine/actions/action_worktree_target_resolution.py"
         ).read_text(encoding="utf-8")
-        self_destruct_source = (
-            REPO_ROOT / "python/envctl_engine/actions/action_worktree_self_destruct.py"
-        ).read_text(encoding="utf-8")
+        self_destruct_source = (REPO_ROOT / "python/envctl_engine/actions/action_worktree_self_destruct.py").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn("class ActionWorktreeDeleteRunner", source)
         self.assertIn("return ActionWorktreeDeleteRunner(", source)
@@ -106,9 +106,9 @@ class ActionWorktreeRunnerTests(unittest.TestCase):
             runtime=runtime,
             require_configured_main_root=True,
             current_cwd=lambda: Path("/should/not/be/used"),
-            discover_tree_projects_fn=lambda repo_root, trees_dir_name: [("feature-a-1", tree_root)]
-            if repo_root == repo and trees_dir_name == "trees"
-            else [],
+            discover_tree_projects_fn=lambda repo_root, trees_dir_name: (
+                [("feature-a-1", tree_root)] if repo_root == repo and trees_dir_name == "trees" else []
+            ),
             main_repo_root_for_linked_worktree_fn=lambda _worktree_root: None,
             git_main_repo_root_for_worktree_fn=lambda _worktree_root, trees_dir_name=None: repo,
         )
@@ -116,6 +116,69 @@ class ActionWorktreeRunnerTests(unittest.TestCase):
         self.assertIsNotNone(target)
         self.assertEqual(getattr(target, "name"), "feature-a-1")
         self.assertEqual(getattr(target, "root"), tree_root)
+
+    def test_resolve_current_worktree_target_accepts_linked_checkout_outside_trees_directory(self) -> None:
+        repo = Path("/tmp/repo").resolve()
+        linked_root = Path("/tmp/envctl-deep-runtime-refactor").resolve()
+        calls: list[tuple[str, ...]] = []
+
+        def run(command, *, cwd, timeout):  # noqa: ANN001
+            self.assertEqual(timeout, 10.0)
+            calls.append(tuple(command))
+            if command[-2:] == ["rev-parse", "--show-toplevel"]:
+                return SimpleNamespace(returncode=0, stdout=f"{linked_root}\n")
+            if command[-2:] == ["branch", "--show-current"]:
+                self.assertEqual(Path(cwd), linked_root)
+                return SimpleNamespace(returncode=0, stdout="agent/deep-runtime-refactor\n")
+            return SimpleNamespace(returncode=1, stdout="")
+
+        runtime = SimpleNamespace(
+            env={"ENVCTL_INVOCATION_CWD": str(linked_root / "python")},
+            raw_runtime=SimpleNamespace(
+                config=SimpleNamespace(base_dir=repo, trees_dir_name="trees"),
+                process_runner=SimpleNamespace(run=run),
+            ),
+        )
+
+        target = resolve_current_worktree_target(
+            runtime=runtime,
+            require_configured_root_match=True,
+            current_cwd=lambda: Path("/should/not/be/used"),
+            discover_tree_projects_fn=lambda _repo_root, _trees_dir_name: [],
+            git_main_repo_root_for_worktree_fn=lambda **_kwargs: repo,
+        )
+
+        self.assertIsNotNone(target)
+        self.assertEqual(getattr(target, "name"), "agent/deep-runtime-refactor")
+        self.assertEqual(getattr(target, "root"), linked_root)
+        self.assertEqual(
+            calls,
+            [
+                ("git", "rev-parse", "--show-toplevel"),
+                ("git", "branch", "--show-current"),
+            ],
+        )
+
+    def test_resolve_current_worktree_target_never_synthesizes_main_checkout_for_tree_mode(self) -> None:
+        repo = Path("/tmp/repo").resolve()
+        runtime = SimpleNamespace(
+            env={"ENVCTL_INVOCATION_CWD": str(repo)},
+            raw_runtime=SimpleNamespace(
+                config=SimpleNamespace(base_dir=repo, trees_dir_name="trees"),
+                process_runner=SimpleNamespace(
+                    run=lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=f"{repo}\n")
+                ),
+            ),
+        )
+
+        target = resolve_current_worktree_target(
+            runtime=runtime,
+            require_configured_root_match=True,
+            discover_tree_projects_fn=lambda _repo_root, _trees_dir_name: [],
+            git_main_repo_root_for_worktree_fn=lambda **_kwargs: repo,
+        )
+
+        self.assertIsNone(target)
 
     def test_run_delete_worktree_action_runs_cleanup_and_delete(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -245,15 +308,14 @@ class ActionWorktreeRunnerTests(unittest.TestCase):
             calls: list[tuple[str, object]] = []
 
             runtime = SimpleNamespace(
-                _blast_worktree_before_delete=lambda **kwargs: (
-                    calls.append(("cleanup", kwargs)) or ["cleanup warning"]
-                ),
+                _blast_worktree_before_delete=lambda **kwargs: calls.append(("cleanup", kwargs)) or ["cleanup warning"],
                 _trees_root_for_worktree=lambda value: calls.append(("trees_root", value)) or tree_root.parent,
             )
             orchestrator = SimpleNamespace(
                 runtime=runtime,
-                resolve_targets=lambda route, *, trees_only: calls.append(("resolve", (route.command, trees_only)))
-                or ([target], None),
+                resolve_targets=lambda route, *, trees_only: (
+                    calls.append(("resolve", (route.command, trees_only))) or ([target], None)
+                ),
                 _main_repo_root_for_worktree=lambda value: calls.append(("main_repo", value)) or tree_root.parent,
                 _spawn_self_destruct_helper=lambda **kwargs: calls.append(("spawn", kwargs)) or True,
             )

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+import json
 from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 from typing import cast
 import unittest
 
-from envctl_engine.runtime.service_manager import ServiceStartDescriptor
+from envctl_engine.runtime.service_manager import ServiceCleanupError, ServiceManager, ServiceStartDescriptor
+from envctl_engine.shared.ports import PortPlanner
 from envctl_engine.startup.service_attach_execution import ServiceAttachRunner
 from envctl_engine.startup.service_execution_records import PreparedServiceLaunch
 from envctl_engine.state.models import PortPlan, ServiceRecord
@@ -17,6 +20,204 @@ def port_plan(port: int) -> PortPlan:
 
 
 class ServiceAttachExecutionTests(unittest.TestCase):
+    def test_later_layer_failure_rolls_back_and_tracks_prior_layer_records(self) -> None:
+        project_root = Path("/tmp/envctl-project")
+        voice = SimpleNamespace(
+            name="voice-runtime",
+            start_cmd="python voice.py",
+            depends_on=("backend",),
+            start_order=25,
+            expect_listener=True,
+            critical=True,
+            env_suffix="VOICE_RUNTIME",
+        )
+        worker = SimpleNamespace(
+            name="worker",
+            start_cmd="python worker.py",
+            depends_on=("voice-runtime",),
+            start_order=50,
+            expect_listener=False,
+            critical=True,
+            env_suffix="WORKER",
+        )
+        attach_layers: list[tuple[str, ...]] = []
+        backend_record = ServiceRecord(
+            name="Main Backend",
+            type="backend",
+            cwd=str(project_root / "backend"),
+            pid=61001,
+            actual_port=8000,
+        )
+
+        def generic_attach(**kwargs: object) -> dict[str, ServiceRecord]:
+            descriptors = tuple(cast(Iterable[ServiceStartDescriptor], kwargs["descriptors"]))
+            layer = tuple(descriptor.service_type for descriptor in descriptors)
+            attach_layers.append(layer)
+            if "worker" not in layer:
+                return {backend_record.name: backend_record}
+            raise RuntimeError("worker startup failed")
+
+        runtime = SimpleNamespace(
+            services=SimpleNamespace(start_services_with_attach=generic_attach),
+            _terminate_started_services=lambda _services: (_ for _ in ()).throw(OSError("layer terminator crashed")),
+            config=SimpleNamespace(
+                app_service_by_name=lambda name: {"voice-runtime": voice, "worker": worker}.get(name)
+            ),
+            _conflict_remaining={},
+            _emit=lambda *_args, **_kwargs: None,
+        )
+        runner = ServiceAttachRunner(
+            runtime=runtime,
+            process_runtime=SimpleNamespace(),
+            port_allocator=SimpleNamespace(
+                reserve_next=lambda port, owner: port,
+                session_id="attach-session",
+            ),
+            project_name="Main",
+            project_root=project_root,
+            backend_plan=port_plan(8000),
+            frontend_plan=port_plan(5173),
+            backend_cwd=project_root / "backend",
+            frontend_cwd=project_root / "frontend",
+            backend_log_path="/logs/backend.txt",
+            frontend_log_path="/logs/frontend.txt",
+            backend_env_extra={},
+            frontend_env_extra={},
+            command_env_builder=lambda port, extra: dict(extra),
+            prepared_launches={
+                "backend": PreparedServiceLaunch(
+                    service_name="backend",
+                    cwd=project_root / "backend",
+                    log_path="/logs/backend.txt",
+                    requested_port=8000,
+                    env={},
+                    command_source="configured",
+                ),
+                "worker": PreparedServiceLaunch(
+                    service_name="worker",
+                    cwd=project_root / "worker",
+                    log_path="/logs/worker.txt",
+                    requested_port=0,
+                    env={},
+                    command_source="configured",
+                    listener_expected=False,
+                ),
+                "voice-runtime": PreparedServiceLaunch(
+                    service_name="voice-runtime",
+                    cwd=project_root / "voice-runtime",
+                    log_path="/logs/voice.txt",
+                    requested_port=8010,
+                    env={},
+                    command_source="configured",
+                ),
+            },
+            selected_service_types={"backend", "voice-runtime", "worker"},
+            additional_services=(voice, worker),
+            backend_listener_expected=True,
+            rebound_delta=0,
+        )
+
+        with self.assertRaises(ServiceCleanupError) as raised:
+            runner.start(attach_parallel=False, on_service_retry=lambda *_args: None)
+
+        self.assertEqual(attach_layers, [("backend", "voice-runtime"), ("worker",)])
+        self.assertIs(raised.exception.unterminated_services["Main Backend"], backend_record)
+        self.assertEqual(backend_record.port_lock_session, "attach-session")
+        self.assertIn("cleanup error: layer terminator crashed", str(raised.exception))
+
+    def test_process_launch_without_pid_never_invents_envctl_or_adjacent_pid(self) -> None:
+        project_root = Path("/tmp/envctl-project")
+        runtime = SimpleNamespace(
+            _conflict_remaining={},
+            _emit=lambda *_args, **_kwargs: None,
+            _service_start_command_resolved=lambda **_kwargs: (["backend"], "configured"),
+        )
+        runner = ServiceAttachRunner(
+            runtime=runtime,
+            process_runtime=SimpleNamespace(start_background=lambda *_args, **_kwargs: object()),
+            port_allocator=SimpleNamespace(reserve_next=lambda port, owner: port),
+            project_name="Main",
+            project_root=project_root,
+            backend_plan=port_plan(8000),
+            frontend_plan=port_plan(5173),
+            backend_cwd=project_root / "backend",
+            frontend_cwd=project_root / "frontend",
+            backend_log_path="/logs/backend.txt",
+            frontend_log_path="/logs/frontend.txt",
+            backend_env_extra={},
+            frontend_env_extra={},
+            command_env_builder=lambda port, extra: dict(extra),
+            prepared_launches={
+                "backend": PreparedServiceLaunch(
+                    service_name="backend",
+                    cwd=project_root / "backend",
+                    log_path="/logs/backend.txt",
+                    requested_port=8000,
+                    env={},
+                    command_source="configured",
+                )
+            },
+            selected_service_types={"backend"},
+            additional_services=(),
+            backend_listener_expected=True,
+            rebound_delta=0,
+        )
+
+        success, error, pid = runner.start_backend(8000)
+
+        self.assertTrue(success)
+        self.assertIsNone(error)
+        self.assertIsNone(pid)
+
+    def test_post_spawn_telemetry_failure_still_returns_real_pid_to_manager(self) -> None:
+        project_root = Path("/tmp/envctl-project")
+
+        def emit(event: str, **payload: object) -> None:
+            if event == "service.start" or payload.get("phase") == "process_launch":
+                raise OSError("event sink failed")
+
+        runtime = SimpleNamespace(
+            _conflict_remaining={},
+            _emit=emit,
+            _service_start_command_resolved=lambda **_kwargs: (["backend"], "configured"),
+        )
+        runner = ServiceAttachRunner(
+            runtime=runtime,
+            process_runtime=SimpleNamespace(start_background=lambda *_args, **_kwargs: SimpleNamespace(pid=62001)),
+            port_allocator=SimpleNamespace(reserve_next=lambda port, owner: port),
+            project_name="Main",
+            project_root=project_root,
+            backend_plan=port_plan(8000),
+            frontend_plan=port_plan(5173),
+            backend_cwd=project_root / "backend",
+            frontend_cwd=project_root / "frontend",
+            backend_log_path="/logs/backend.txt",
+            frontend_log_path="/logs/frontend.txt",
+            backend_env_extra={},
+            frontend_env_extra={},
+            command_env_builder=lambda port, extra: dict(extra),
+            prepared_launches={
+                "backend": PreparedServiceLaunch(
+                    service_name="backend",
+                    cwd=project_root / "backend",
+                    log_path="/logs/backend.txt",
+                    requested_port=8000,
+                    env={},
+                    command_source="configured",
+                )
+            },
+            selected_service_types={"backend"},
+            additional_services=(),
+            backend_listener_expected=True,
+            rebound_delta=0,
+        )
+
+        success, error, pid = runner.start_backend(8000)
+
+        self.assertTrue(success)
+        self.assertIsNone(error)
+        self.assertEqual(pid, 62001)
+
     def test_runner_builds_layered_descriptors_and_preserves_additional_urls(self) -> None:
         project_root = Path("/tmp/envctl-project")
         events: list[tuple[str, dict[str, object]]] = []
@@ -92,14 +293,16 @@ class ServiceAttachExecutionTests(unittest.TestCase):
         )
         process_runtime = SimpleNamespace(
             start_background=lambda command, cwd, env, stdout_path, stderr_path: (
-                process_commands.append((list(command), str(cwd), int(env["PORT"])))
-                or SimpleNamespace(pid=4321)
+                process_commands.append((list(command), str(cwd), int(env["PORT"]))) or SimpleNamespace(pid=4321)
             )
         )
         runner = ServiceAttachRunner(
             runtime=runtime,
             process_runtime=process_runtime,
-            port_allocator=SimpleNamespace(reserve_next=lambda port, owner: port),
+            port_allocator=SimpleNamespace(
+                reserve_next=lambda port, owner: port,
+                session_id="layered-session",
+            ),
             project_name="Main",
             project_root=project_root,
             backend_plan=port_plan(8000),
@@ -152,12 +355,26 @@ class ServiceAttachExecutionTests(unittest.TestCase):
 
         self.assertEqual(layers, [("backend", "voice-runtime"), ("worker",)])
         self.assertEqual(records["Main Backend"].actual_port, 8101)
+        self.assertEqual(
+            {record.port_lock_session for record in records.values()},
+            {"layered-session"},
+        )
         self.assertEqual(records["Main Voice Runtime"].actual_port, 8022)
         self.assertIsNone(records["Main Worker"].actual_port)
         self.assertEqual(records["Main Voice Runtime"].public_url, "http://localhost:8010")
         self.assertIn((["backend", "8000"], str(project_root / "backend"), 8000), process_commands)
-        self.assertIn((["voice.py", "8010", "voice-runtime", str(project_root / "voice-runtime")], str(project_root / "voice-runtime"), 8010), process_commands)
-        self.assertIn(("service.bind.skipped", {"project": "Main", "service": "worker", "reason": "listener_not_expected"}), events)
+        self.assertIn(
+            (
+                ["voice.py", "8010", "voice-runtime", str(project_root / "voice-runtime")],
+                str(project_root / "voice-runtime"),
+                8010,
+            ),
+            process_commands,
+        )
+        self.assertIn(
+            ("service.bind.skipped", {"project": "Main", "service": "worker", "reason": "listener_not_expected"}),
+            events,
+        )
         self.assertTrue(
             any(
                 event == "service.attach.phase"
@@ -182,7 +399,10 @@ class ServiceAttachExecutionTests(unittest.TestCase):
             services=SimpleNamespace(),
             _conflict_remaining={},
             _emit=lambda event, **payload: events.append((event, payload)),
-            _service_start_command_resolved=lambda service_name, project_root, port: ([service_name, str(port)], "configured"),
+            _service_start_command_resolved=lambda service_name, project_root, port: (
+                [service_name, str(port)],
+                "configured",
+            ),
             _detect_service_actual_port=lambda **kwargs: None,
             _listener_truth_enforced=lambda: True,
             _service_listener_failure_detail=lambda **kwargs: "process exited",
@@ -242,12 +462,17 @@ class ServiceAttachExecutionTests(unittest.TestCase):
         attach_kwargs: dict[str, object] = {}
         runtime = SimpleNamespace(
             services=SimpleNamespace(
-                start_project_with_attach=lambda **kwargs: attach_kwargs.update(kwargs)
-                or {"Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd="/repo")}
+                start_project_with_attach=lambda **kwargs: (
+                    attach_kwargs.update(kwargs)
+                    or {"Main Backend": ServiceRecord(name="Main Backend", type="backend", cwd="/repo")}
+                )
             ),
             _conflict_remaining={},
             _emit=lambda event, **payload: None,
-            _service_start_command_resolved=lambda service_name, project_root, port: ([service_name, str(port)], "configured"),
+            _service_start_command_resolved=lambda service_name, project_root, port: (
+                [service_name, str(port)],
+                "configured",
+            ),
             _detect_service_actual_port=lambda **kwargs: kwargs["requested_port"],
             _listener_truth_enforced=lambda: True,
             _service_listener_failure_detail=lambda **kwargs: "",
@@ -255,7 +480,10 @@ class ServiceAttachExecutionTests(unittest.TestCase):
         runner = ServiceAttachRunner(
             runtime=runtime,
             process_runtime=SimpleNamespace(start=lambda *args, **kwargs: SimpleNamespace(pid=123)),
-            port_allocator=SimpleNamespace(reserve_next=lambda port, owner: port),
+            port_allocator=SimpleNamespace(
+                reserve_next=lambda port, owner: port,
+                session_id="legacy-attach-session",
+            ),
             project_name="Main",
             project_root=Path("/repo"),
             backend_plan=port_plan(8000),
@@ -286,8 +514,134 @@ class ServiceAttachExecutionTests(unittest.TestCase):
         records = runner.start(attach_parallel=False, on_service_retry=lambda *args: None)
 
         self.assertIn("Main Backend", records)
+        self.assertEqual(
+            records["Main Backend"].port_lock_session,
+            "legacy-attach-session",
+        )
         self.assertTrue(callable(attach_kwargs["start_backend"]))
         self.assertFalse(attach_kwargs["parallel_start"])
+
+    def test_multiple_service_retries_release_every_failed_port_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            planner = PortPlanner(
+                lock_dir=tmpdir,
+                session_id="startup-session",
+                availability_checker=lambda _port: True,
+            )
+            planner.reserve_next(8000, owner="Main:backend")
+
+            def generic_attach(**kwargs: object) -> dict[str, ServiceRecord]:
+                reserve_next = cast(Callable[[int], int], kwargs["reserve_next"])
+                on_retry = cast(Callable[[str, int, int, int, str | None], None], kwargs["on_retry"])
+                retry_one = reserve_next(8001)
+                on_retry("backend", 8000, retry_one, 1, "address already in use")
+                retry_two = reserve_next(retry_one + 1)
+                on_retry("backend", retry_one, retry_two, 2, "address already in use")
+                return {}
+
+            runtime = SimpleNamespace(
+                services=SimpleNamespace(start_services_with_attach=generic_attach),
+                _conflict_remaining={},
+                _emit=lambda *_args, **_kwargs: None,
+            )
+            runner = ServiceAttachRunner(
+                runtime=runtime,
+                process_runtime=SimpleNamespace(),
+                port_allocator=planner,
+                project_name="Main",
+                project_root=Path("/repo"),
+                backend_plan=port_plan(8000),
+                frontend_plan=port_plan(5173),
+                backend_cwd=Path("/repo/backend"),
+                frontend_cwd=Path("/repo/frontend"),
+                backend_log_path="/logs/backend.txt",
+                frontend_log_path="/logs/frontend.txt",
+                backend_env_extra={},
+                frontend_env_extra={},
+                command_env_builder=lambda port, extra: dict(extra),
+                prepared_launches={
+                    "backend": PreparedServiceLaunch(
+                        service_name="backend",
+                        cwd=Path("/repo/backend"),
+                        log_path="/logs/backend.txt",
+                        requested_port=8000,
+                        env={},
+                        command_source="configured",
+                    )
+                },
+                selected_service_types={"backend"},
+                additional_services=(),
+                backend_listener_expected=True,
+                rebound_delta=0,
+            )
+
+            runner.start(attach_parallel=False, on_service_retry=lambda *_args: None)
+
+            locks = list(Path(tmpdir).glob("*.lock"))
+            self.assertEqual([path.name for path in locks], ["8002.lock"])
+            payload = json.loads(locks[0].read_text(encoding="utf-8"))
+            self.assertEqual(payload["owner"], "Main:services")
+
+    def test_failed_rebound_frontend_releases_attempt_locks_without_bulk_session_release(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            planner = PortPlanner(
+                lock_dir=tmpdir,
+                session_id="startup-session",
+                availability_checker=lambda _port: True,
+            )
+            planner.reserve_next(5173, owner="Main:frontend")
+            live_pids = {123}
+            process_runtime = SimpleNamespace(
+                start_background=lambda *_args, **_kwargs: SimpleNamespace(pid=123),
+                is_pid_running=lambda pid: pid in live_pids,
+                terminate_process_group=lambda pid, **_kwargs: live_pids.discard(pid) or True,
+            )
+            runtime = SimpleNamespace(
+                services=ServiceManager(),
+                _conflict_remaining={},
+                _emit=lambda *_args, **_kwargs: None,
+                _service_start_command_resolved=lambda **_kwargs: (["frontend"], "configured"),
+                _detect_service_actual_port=lambda **_kwargs: None,
+                _listener_truth_enforced=lambda: True,
+                _service_listener_failure_detail=lambda **_kwargs: "listener missing",
+            )
+            runner = ServiceAttachRunner(
+                runtime=runtime,
+                process_runtime=process_runtime,
+                port_allocator=planner,
+                project_name="Main",
+                project_root=Path("/repo"),
+                backend_plan=port_plan(8000),
+                frontend_plan=port_plan(5173),
+                backend_cwd=Path("/repo/backend"),
+                frontend_cwd=Path("/repo/frontend"),
+                backend_log_path="/logs/backend.txt",
+                frontend_log_path="/logs/frontend.txt",
+                backend_env_extra={},
+                frontend_env_extra={},
+                command_env_builder=lambda port, extra: dict(extra),
+                prepared_launches={
+                    "frontend": PreparedServiceLaunch(
+                        service_name="frontend",
+                        cwd=Path("/repo/frontend"),
+                        log_path="/logs/frontend.txt",
+                        requested_port=5173,
+                        env={},
+                        command_source="configured",
+                    )
+                },
+                selected_service_types={"frontend"},
+                additional_services=(),
+                backend_listener_expected=True,
+                rebound_delta=2,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "listener not detected"):
+                runner.start(attach_parallel=False, on_service_retry=lambda *_args: None)
+
+            # Failure finalization keeps the whole session when managed
+            # requirements remain, so per-attempt cleanup must be sufficient.
+            self.assertEqual(list(Path(tmpdir).glob("*.lock")), [])
 
 
 if __name__ == "__main__":

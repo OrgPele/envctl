@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import errno
 import os
 import re
 import shutil
 import signal
 import socket
 import time
+
+from envctl_engine.shared.process_cwd import process_cwd as read_process_cwd
 
 
 class ProcessLifecycleProbeMixin:
@@ -15,8 +18,12 @@ class ProcessLifecycleProbeMixin:
             return False
         try:
             os.kill(pid, 0)
-        except OSError:
+        except ProcessLookupError:
             return False
+        except PermissionError:
+            return True
+        except OSError as exc:
+            return exc.errno != errno.ESRCH
         identity = self._pid_identity(pid)
         if identity is not None:
             try:
@@ -28,6 +35,9 @@ class ProcessLifecycleProbeMixin:
                 if stat.startswith("Z"):
                     return False
         return True
+
+    def process_cwd(self, pid: int) -> str | None:
+        return read_process_cwd(pid, run_probe=self.run_probe)
 
     def wait_for_port(self, port: int, *, host: str = "127.0.0.1", timeout: float = 30.0) -> bool:
         if port <= 0:
@@ -311,7 +321,7 @@ class ProcessLifecycleProbeMixin:
         try:
             signal_sender(pid, signal.SIGTERM)
         except OSError:
-            return True
+            return not self.is_pid_running(pid)
 
         deadline = time.monotonic() + max(term_timeout, 0.0)
         while time.monotonic() < deadline:
@@ -330,7 +340,7 @@ class ProcessLifecycleProbeMixin:
                     return True
             signal_sender(pid, signal.SIGKILL)
         except OSError:
-            return True
+            return not self.is_pid_running(pid)
 
         kill_deadline = time.monotonic() + max(kill_timeout, 0.0)
         while time.monotonic() < kill_deadline:
@@ -356,12 +366,100 @@ class ProcessLifecycleProbeMixin:
         )
 
     def terminate_process_group(self, pid: int, *, term_timeout: float = 2.0, kill_timeout: float = 1.0) -> bool:
-        return self._terminate_with_signal_sender(
-            pid,
-            term_timeout=term_timeout,
-            kill_timeout=kill_timeout,
-            signal_sender=os.killpg,
-        )
+        if pid <= 0:
+            return True
+        try:
+            process_group_id = os.getpgid(pid)
+        except ProcessLookupError:
+            return not self.is_pid_running(pid)
+        except (PermissionError, OSError):
+            return False
+        if process_group_id <= 0:
+            return False
+        if process_group_id == os.getpgrp():
+            return False
+
+        initial_members = self._process_group_member_pids(process_group_id)
+        initial_identities = {member_pid: self._pid_identity(member_pid) for member_pid in initial_members or ()}
+        try:
+            os.killpg(process_group_id, signal.SIGTERM)
+        except OSError:
+            return not self._process_group_is_running(process_group_id) and not self.is_pid_running(pid)
+
+        if self._wait_for_process_group_exit(process_group_id, timeout=term_timeout):
+            return True
+        if not self._process_group_escalation_is_safe(
+            process_group_id,
+            initial_members=initial_members,
+            initial_identities=initial_identities,
+        ):
+            return False
+        try:
+            os.killpg(process_group_id, signal.SIGKILL)
+        except OSError:
+            return not self._process_group_is_running(process_group_id) and not self.is_pid_running(pid)
+        return self._wait_for_process_group_exit(process_group_id, timeout=kill_timeout)
+
+    def _process_group_member_pids(self, process_group_id: int) -> set[int] | None:
+        try:
+            completed = self.run_probe(["ps", "-axo", "pid=,pgid=,stat="])
+        except OSError:
+            return None
+        if completed.returncode != 0:
+            return None
+
+        members: set[int] = set()
+        for line in completed.stdout.splitlines():
+            parts = line.strip().split(maxsplit=2)
+            if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit():
+                continue
+            if int(parts[1]) != process_group_id or parts[2].upper().startswith("Z"):
+                continue
+            members.add(int(parts[0]))
+        return members
+
+    def _process_group_is_running(self, process_group_id: int) -> bool:
+        members = self._process_group_member_pids(process_group_id)
+        if members is not None:
+            return bool(members)
+        try:
+            os.killpg(process_group_id, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError as exc:
+            return exc.errno != errno.ESRCH
+        return True
+
+    def _wait_for_process_group_exit(self, process_group_id: int, *, timeout: float) -> bool:
+        deadline = time.monotonic() + max(timeout, 0.0)
+        while True:
+            if not self._process_group_is_running(process_group_id):
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(0.05, remaining))
+
+    def _process_group_escalation_is_safe(
+        self,
+        process_group_id: int,
+        *,
+        initial_members: set[int] | None,
+        initial_identities: dict[int, str | None],
+    ) -> bool:
+        if process_group_id == os.getpgrp():
+            return False
+        current_members = self._process_group_member_pids(process_group_id)
+        if current_members is None or initial_members is None:
+            return self._process_group_is_running(process_group_id)
+        for member_pid in initial_members.intersection(current_members):
+            initial_identity = initial_identities.get(member_pid)
+            current_identity = self._pid_identity(member_pid)
+            if initial_identity is None or current_identity is None or current_identity == initial_identity:
+                return True
+        return False
 
     def _pid_identity(self, pid: int) -> str | None:
         if pid <= 0:

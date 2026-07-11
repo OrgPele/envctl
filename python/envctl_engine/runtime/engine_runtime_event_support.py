@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.runtime.runtime_context import run_dir_path
+from envctl_engine.runtime.runtime_context import optional_state_repository, run_dir_path
 from envctl_engine.debug.debug_contract import apply_debug_event_contract
 from envctl_engine.debug.debug_utils import debug_env_value, hash_command, hash_value
 from envctl_engine.shared.parsing import parse_bool, parse_int
@@ -70,7 +70,14 @@ def emit(runtime: Any, event_name: str, **payload: object) -> None:
         recorder_payload = dict(safe_payload)
         component_value = recorder_payload.pop("component", None)
         component: str | None = component_value if isinstance(component_value, str) else None
-        runtime._debug_recorder.record(event_name, component=component, **recorder_payload)
+        try:
+            runtime._debug_recorder.record(event_name, component=component, **recorder_payload)
+        except Exception as exc:  # noqa: BLE001
+            # Debug telemetry must never interrupt lifecycle ownership changes.
+            # Disable a failed recorder so a read-only diagnostic sink cannot
+            # repeatedly destabilize the command that it is observing.
+            runtime._debug_recorder_failure = str(exc)
+            runtime._debug_recorder = None
     for listener in list(runtime._emit_listeners):
         try:
             listener(event_name, dict(safe_payload))
@@ -112,6 +119,16 @@ def auto_debug_pack(runtime: Any, *, reason: str) -> None:
 
 def persist_events_snapshot(runtime: Any) -> None:
     events_text = "".join(json.dumps(event, sort_keys=True) + "\n" for event in runtime.events)
+    repository = optional_state_repository(runtime)
+    repository_writer = getattr(repository, "write_runtime_artifact", None)
+    if callable(repository_writer):
+        repository_writer(
+            run_id=_current_run_id(runtime),
+            artifact_name="events.jsonl",
+            text=events_text,
+        )
+        return
+
     (runtime.runtime_root / "events.jsonl").write_text(events_text, encoding="utf-8")
     runtime.runtime_legacy_root.mkdir(parents=True, exist_ok=True)
     (runtime.runtime_legacy_root / "events.jsonl").write_text(events_text, encoding="utf-8")
@@ -121,6 +138,17 @@ def persist_events_snapshot(runtime: Any) -> None:
 
 
 def _current_run_dir(runtime: Any) -> Path | None:
+    run_id = _current_run_id(runtime)
+    if run_id is None:
+        return None
+    try:
+        candidate = run_dir_path(runtime, run_id)
+    except Exception:
+        return None
+    return candidate
+
+
+def _current_run_id(runtime: Any) -> str | None:
     env = getattr(runtime, "env", None)
     if not isinstance(env, dict):
         return None
@@ -130,11 +158,7 @@ def _current_run_dir(runtime: Any) -> Path | None:
     run_id = raw_run_id.strip()
     if not run_id:
         return None
-    try:
-        candidate = run_dir_path(runtime, run_id)
-    except Exception:
-        return None
-    return candidate
+    return run_id
 
 
 def current_session_id(runtime: Any) -> str | None:

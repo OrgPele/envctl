@@ -7,7 +7,11 @@ from typing import Any, Callable, cast
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
-from envctl_engine.startup.session import ProjectStartupResult, StartupSession
+from envctl_engine.startup.session import (
+    ProjectStartupResult,
+    StartupSession,
+    track_startup_failure,
+)
 from envctl_engine.startup.startup_progress import suppress_progress_output as default_suppress_progress_output
 
 
@@ -138,8 +142,11 @@ def start_selected_contexts(
                         project_spinner_group=project_spinner_group,
                         use_project_spinner_group=use_project_spinner_group,
                     )
-        except RuntimeError:
-            _fail_single_spinner(runtime=runtime, active_spinner=active_spinner, enabled=use_single_spinner)
+        except Exception:
+            try:
+                _fail_single_spinner(runtime=runtime, active_spinner=active_spinner, enabled=use_single_spinner)
+            except Exception:  # noqa: BLE001
+                pass
             raise
         _succeed_single_spinner(
             runtime=runtime,
@@ -228,6 +235,7 @@ def _start_contexts_parallel(
 ) -> None:
     completed: dict[str, ProjectStartupResult] = {}
     failures: list[str] = []
+    ui_failures: list[Exception] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_workers) as executor:
         future_map = {
             executor.submit(
@@ -243,7 +251,50 @@ def _start_contexts_parallel(
             context = future_map[future]
             try:
                 result = cast(ProjectStartupResult, future.result())
-                completed[context.name] = result
+            except RuntimeError as exc:
+                track_startup_failure(session, exc)
+                try:
+                    degrade = should_degrade_to_plan_agent_handoff(session, str(exc))
+                except Exception as callback_exc:  # noqa: BLE001
+                    ui_failures.append(callback_exc)
+                    degrade = False
+                if degrade:
+                    try:
+                        record_plan_agent_handoff_local_startup_failure(
+                            session,
+                            project_name=context.name,
+                            error=str(exc),
+                        )
+                        if use_project_spinner_group:
+                            project_spinner_group.mark_success(
+                                context.name,
+                                "AI session running; local startup failed",
+                            )
+                    except Exception as callback_exc:  # noqa: BLE001
+                        ui_failures.append(callback_exc)
+                    continue
+                failures.append(str(exc))
+                try:
+                    runtime._emit("startup.project.failed", project=context.name, error=str(exc))
+                    if use_project_spinner_group:
+                        project_spinner_group.mark_failure(context.name, str(exc))
+                except Exception as callback_exc:  # noqa: BLE001
+                    ui_failures.append(callback_exc)
+                continue
+            except Exception as exc:  # noqa: BLE001
+                track_startup_failure(session, exc)
+                failures.append(str(exc))
+                try:
+                    runtime._emit("startup.project.failed", project=context.name, error=str(exc))
+                    if use_project_spinner_group:
+                        project_spinner_group.mark_failure(context.name, str(exc))
+                except Exception as callback_exc:  # noqa: BLE001
+                    ui_failures.append(callback_exc)
+                continue
+
+            completed[context.name] = result
+            record_project_startup(session, context, result)
+            try:
                 _record_parallel_success(
                     runtime=runtime,
                     session=session,
@@ -257,22 +308,12 @@ def _start_contexts_parallel(
                     use_project_spinner_group=use_project_spinner_group,
                     completed_count=len(completed),
                 )
-            except RuntimeError as exc:
-                if should_degrade_to_plan_agent_handoff(session, str(exc)):
-                    record_plan_agent_handoff_local_startup_failure(session, project_name=context.name, error=str(exc))
-                    if use_project_spinner_group:
-                        project_spinner_group.mark_success(context.name, "AI session running; local startup failed")
-                    continue
-                failures.append(str(exc))
-                runtime._emit("startup.project.failed", project=context.name, error=str(exc))
-                if use_project_spinner_group:
-                    project_spinner_group.mark_failure(context.name, str(exc))
-    for context in session.contexts_to_start:
-        result = completed.get(context.name)
-        if result is not None:
-            record_project_startup(session, context, result)
+            except Exception as exc:  # noqa: BLE001
+                ui_failures.append(exc)
     if failures:
         raise RuntimeError("; ".join(failures))
+    if ui_failures:
+        raise ui_failures[0]
 
 
 def _record_parallel_success(
@@ -335,6 +376,7 @@ def _start_contexts_sequential(
                 ),
             )
         except RuntimeError as exc:
+            track_startup_failure(session, exc)
             if should_degrade_to_plan_agent_handoff(session, str(exc)):
                 record_plan_agent_handoff_local_startup_failure(session, project_name=context.name, error=str(exc))
                 if use_project_spinner_group:

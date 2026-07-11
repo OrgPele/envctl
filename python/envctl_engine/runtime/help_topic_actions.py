@@ -68,6 +68,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         usage=("envctl pr [--project <name>] [--pr-base <branch>]",),
         what_it_does=(
             "resolves the current branch, checks for an existing PR, and creates one with gh or repo helper scripts",
+            "defaults the PR base to dev, then main, then master, while --pr-base remains an explicit override",
             "commits and pushes dirty worktree changes first using envctl commit behavior when needed",
             "uses MAIN_TASK.md or commit history to build a useful PR title/body unless explicit env is provided",
         ),
@@ -76,7 +77,7 @@ ACTIONS_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--pr-base <branch>      set the target base branch",
             "--interactive           opt into prompts/selection instead of default headless action mode",
         ),
-        examples=("envctl pr --project feature-a-1 --pr-base main", "envctl pr --main --pr-base main"),
+        examples=("envctl pr --project feature-a-1", "envctl pr --main --pr-base main"),
         aliases=("prs", "p", "--pr", "--prs"),
         related=("commit", "review", "test"),
     ),

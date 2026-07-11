@@ -2,11 +2,33 @@ from __future__ import annotations
 
 from typing import Any
 
-from .command_policy import dispatch_family_for_command
+from .command_policy import (
+    LIFECYCLE_CLEANUP_COMMANDS,
+    STARTUP_COMMANDS,
+    dispatch_family_for_command,
+)
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.inspection_support import dispatch_direct_inspection
+from envctl_engine.runtime.lifecycle_operation_lease import run_exclusive_lifecycle_operation
 from envctl_engine.runtime.utility_command_support import dispatch_utility_command
 from envctl_engine.shared.process_probe import ProcessProbe
+
+
+_EXCLUSIVE_OPERATION_COMMANDS = frozenset(
+    {
+        *LIFECYCLE_CLEANUP_COMMANDS,
+        *STARTUP_COMMANDS,
+        "blast-worktree",
+        "delete-worktree",
+        "ensure-worktree",
+        "resume",
+        "self-destruct-worktree",
+    }
+)
+
+
+def _requires_exclusive_operation(command: str) -> bool:
+    return command in _EXCLUSIVE_OPERATION_COMMANDS
 
 
 def dispatch(runtime: Any, route: Route) -> int:
@@ -28,7 +50,14 @@ def dispatch(runtime: Any, route: Route) -> int:
         effective_mode=effective_mode,
         command=getattr(route, "command", ""),
     )
-    return dispatch_command(runtime, route)
+    command = str(getattr(route, "command", "")).strip()
+    if not _requires_exclusive_operation(command):
+        return dispatch_command(runtime, route)
+    return run_exclusive_lifecycle_operation(
+        runtime,
+        command=command,
+        operation=lambda: dispatch_command(runtime, route),
+    )
 
 
 def dispatch_command(runtime: Any, route: Route) -> int:

@@ -41,9 +41,9 @@ pass `--interactive` only when you want prompts.
 | `--frontend` | Runtime scope: run or stop frontend app services only. |
 | `--fullstack` | Runtime scope: run or stop backend and frontend app services. |
 | `--both` | Alias for `--fullstack`. |
-| `--dependencies` | Runtime scope: run or stop dependencies only (DB/Redis/etc.), without app services. |
+| `--dependencies` | Runtime scope: run dependencies only, or detach their saved records/port locks on stop without removing reusable managed Docker stacks. |
 | `--deps` | Alias for `--dependencies`. |
-| `--entire-system` | Runtime scope: run or stop dependencies plus backend and frontend services. |
+| `--entire-system` | Runtime scope: run dependencies plus app services; on stop, terminate app services and detach dependency records/locks while keeping managed Docker stacks reusable. |
 | `--only-frontend` | Startup/plan modifier: launch only the frontend app service; skip backend, managed dependencies, and dependency prep. |
 | `--only-backend` | Startup/plan modifier: launch only the backend app service; skip frontend, managed dependencies, and dependency prep. |
 | `--no-deps` | Startup/plan modifier: skip managed dependencies and plan-agent dependency prep. |
