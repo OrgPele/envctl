@@ -141,7 +141,6 @@ def blast_worktree_before_delete(
             runtime._try_load_existing_state,
             mode=mode,
             strict_mode_match=True,
-            project_names=[normalized_project],
         )
         if state is None:
             continue
@@ -182,18 +181,6 @@ def blast_worktree_before_delete(
             requirement_entry = state.requirements.pop(requirement_key, None)
             if requirement_entry is not None:
                 target_ports.update(cleanup.collect_requirement_ports(requirement_entry))
-                release_requirement_ports(runtime, requirement_entry)
-
-        if not failed_services:
-            remaining_projects: set[str] = set()
-            for service_name in state.services:
-                project = runtime._project_name_from_service(service_name)
-                if project:
-                    remaining_projects.add(project)
-            for project in list(state.requirements.keys()):
-                if project in remaining_projects:
-                    continue
-                requirement_entry = state.requirements.pop(project)
                 release_requirement_ports(runtime, requirement_entry)
 
         if not failed_services:

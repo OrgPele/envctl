@@ -14,6 +14,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.startup.resume_restore_support import restore_missing  # noqa: E402
+from envctl_engine.startup.resume_restore_project import ResumeProjectRestoreRunner  # noqa: E402
 import envctl_engine.startup.requirements_project_startup as requirements_project_startup_module  # noqa: E402
 from envctl_engine.startup.protocols import StartupOrchestratorLike  # noqa: E402
 from envctl_engine.startup.requirements_execution import (  # noqa: E402
@@ -34,7 +35,7 @@ from envctl_engine.startup.startup_execution_support import (  # noqa: E402
 from envctl_engine.startup.startup_orchestrator import StartupOrchestrator  # noqa: E402
 from envctl_engine.startup.startup_selection_support import _tree_preselected_projects_from_state  # noqa: E402
 from envctl_engine.config import AppServiceConfig  # noqa: E402
-from envctl_engine.runtime.command_router import parse_route  # noqa: E402
+from envctl_engine.runtime.command_router import Route, parse_route  # noqa: E402
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord  # noqa: E402
 
 
@@ -68,6 +69,57 @@ class _PortAllocatorStub:
 
 
 class StartupSupportModuleDecouplingTests(unittest.TestCase):
+    def test_resume_stale_service_releases_recorded_foreign_session_lock(self) -> None:
+        released: list[tuple[int, str, str]] = []
+
+        class RecordingPortAllocator:
+            session_id = "current-session"
+
+            def release_owned(self, port: int, owner: str, *, expected_session: str) -> bool:
+                released.append((port, owner, expected_session))
+                return True
+
+            def release(self, _port: int, *, owner: str | None = None) -> None:
+                raise AssertionError(f"current-session release must not be used: {owner}")
+
+        allocator = RecordingPortAllocator()
+        service = ServiceRecord(
+            name="Main Frontend",
+            type="frontend",
+            cwd="/tmp/repo/frontend",
+            actual_port=9000,
+            port_lock_session="prior-session",
+            project="Main",
+        )
+        runtime = SimpleNamespace(
+            port_planner=allocator,
+            env={},
+            config=SimpleNamespace(raw={}),
+            _terminate_service_record=lambda *_args, **_kwargs: True,
+            _project_name_from_service=lambda _name: "Main",
+        )
+        runner = ResumeProjectRestoreRunner(
+            orchestrator=SimpleNamespace(),
+            rt=runtime,
+            state=RunState(run_id="run-1", mode="main"),
+            missing_services=[],
+            route_for_startup=Route(command="resume", mode="main"),
+            total_projects=1,
+            use_project_spinner_group=False,
+            project_spinner_group=SimpleNamespace(),
+            use_single_spinner=False,
+            active_spinner=SimpleNamespace(),
+            port_allocator=allocator,
+        )
+
+        terminated_count = runner._stop_stale_services(
+            service_names=[service.name],
+            original_services={service.name: service},
+        )
+
+        self.assertEqual(terminated_count, 1)
+        self.assertEqual(released, [(9000, "Main:frontend", "prior-session")])
+
     def test_post_start_truth_failure_propagates_unterminated_service_records(self) -> None:
         requirements = RequirementsResult(project="Main", health="healthy")
         service = ServiceRecord(

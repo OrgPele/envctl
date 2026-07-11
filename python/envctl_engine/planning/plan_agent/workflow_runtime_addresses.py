@@ -61,27 +61,38 @@ def _latest_runtime_state(runtime: Any, *, worktree: CreatedPlanWorktree | None 
     project_names = [worktree.name] if worktree is not None and str(worktree.name).strip() else None
     state_repository = optional_state_repository(runtime)
     if state_repository is not None and hasattr(state_repository, "load_latest"):
-        try:
-            state = call_state_loader(state_repository.load_latest, project_names=project_names)
-        except Exception:
-            state = None
-        if isinstance(state, RunState):
-            return state
-    try_loader = getattr(runtime, "_try_load_existing_state", None)
-    if callable(try_loader):
-        for mode in ("trees", "main"):
+        for selected_projects in _state_lookup_project_attempts(project_names):
             try:
                 state = call_state_loader(
-                    try_loader,
-                    mode=mode,
-                    strict_mode_match=True,
-                    project_names=project_names,
+                    state_repository.load_latest,
+                    project_names=selected_projects,
                 )
             except Exception:
                 state = None
             if isinstance(state, RunState):
                 return state
+    try_loader = getattr(runtime, "_try_load_existing_state", None)
+    if callable(try_loader):
+        for mode in ("trees", "main"):
+            for selected_projects in _state_lookup_project_attempts(project_names):
+                try:
+                    state = call_state_loader(
+                        try_loader,
+                        mode=mode,
+                        strict_mode_match=True,
+                        project_names=selected_projects,
+                    )
+                except Exception:
+                    state = None
+                if isinstance(state, RunState):
+                    return state
     return None
+
+
+def _state_lookup_project_attempts(project_names: list[str] | None) -> tuple[list[str] | None, ...]:
+    if project_names is None:
+        return (None,)
+    return (project_names, None)
 
 
 def _dependency_address_lines(state: RunState, *, worktree: CreatedPlanWorktree | None = None) -> list[str]:

@@ -306,6 +306,56 @@ class RunReuseSupportTests(unittest.TestCase):
         self.assertEqual(terminated, [{"feature-a Backend"}])
         self.assertEqual(progress, ["Auto-resume disabled; replacing 1 existing service(s)..."])
 
+    def test_backend_scoped_fresh_start_preserves_frontend_and_existing_requirements(self) -> None:
+        route = Route(
+            command="start",
+            mode="trees",
+            flags={"no_resume": True, "runtime_scope": "backend"},
+        )
+        backend = SimpleNamespace(project="feature-a", type="backend")
+        frontend = SimpleNamespace(project="feature-a", type="frontend")
+        requirements = SimpleNamespace(project="feature-a")
+        candidate_state = SimpleNamespace(
+            run_id="run-existing",
+            services={"feature-a Backend": backend, "feature-a Frontend": frontend},
+            requirements={"feature-a": requirements},
+            metadata={},
+        )
+        session = SimpleNamespace(
+            effective_route=route,
+            runtime_mode="trees",
+            selected_contexts=[SimpleNamespace(name="feature-a")],
+            preserved_services={},
+            preserved_requirements={},
+            base_metadata={},
+        )
+        terminated: list[set[str]] = []
+        released: list[object] = []
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(additional_services=()),
+            _emit=lambda *_args, **_kwargs: None,
+            _project_name_from_service=lambda name: str(name).rsplit(" ", 1)[0],
+            _terminate_services_from_state=lambda _state, *, selected_services, **_kwargs: (
+                terminated.append(set(selected_services)) or set()
+            ),
+            _release_requirement_ports=released.append,
+        )
+
+        replace_existing_project_services_for_fresh_start(
+            runtime=runtime,
+            session=session,
+            candidate_state=candidate_state,
+            reason="explicit_no_resume",
+            announce_session_identifiers=lambda _session: None,
+            report_progress=lambda *_args: None,
+            terminate_restart_orphan_listeners=lambda **_kwargs: set(),
+        )
+
+        self.assertEqual(terminated, [{"feature-a Backend"}])
+        self.assertEqual(session.preserved_services, {"feature-a Frontend": frontend})
+        self.assertEqual(session.preserved_requirements, {"feature-a": requirements})
+        self.assertEqual(released, [])
+
     def test_explicit_no_resume_failure_keeps_previous_state_authoritative(self) -> None:
         route = Route(command="start", mode="trees", flags={"no_resume": True})
         original_service = SimpleNamespace(project="feature-a")
@@ -386,7 +436,12 @@ class RunReuseSupportTests(unittest.TestCase):
         self.assertEqual(session.preserved_requirements, {})
 
     def test_explicit_no_resume_supersedes_requirement_only_state(self) -> None:
-        route = Route(command="start", mode="trees", flags={"no_resume": True})
+        route = Route(
+            command="start",
+            mode="trees",
+            projects=["feature-a"],
+            flags={"no_resume": True},
+        )
         target_requirements = SimpleNamespace(project="feature-a")
         other_requirements = SimpleNamespace(project="feature-b")
         candidate_state = SimpleNamespace(

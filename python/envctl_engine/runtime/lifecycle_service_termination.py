@@ -33,7 +33,7 @@ def terminate_started_services(runtime: Any, services: dict[str, object]) -> set
         if not terminated:
             failed.add(name)
         else:
-            _release_service_ports(runtime, name=name, service=service)
+            release_service_ports(runtime, name=name, service=service)
     return failed
 
 
@@ -73,11 +73,11 @@ def terminate_services_from_state(
 
     for name, service, terminated, _port in results:
         if terminated:
-            _release_service_ports(runtime, name=name, service=service)
+            release_service_ports(runtime, name=name, service=service)
     return {name for name, _service, terminated, _port in results if not terminated}
 
 
-def _release_service_ports(runtime: Any, *, name: str, service: object) -> None:
+def release_service_ports(runtime: Any, *, name: str, service: object) -> None:
     port_planner = getattr(runtime, "port_planner", None)
     if port_planner is None:
         return

@@ -43,6 +43,43 @@ class _RuntimeHarness:
 
 
 class PlanAgentWorkflowRuntimeAddressTests(unittest.TestCase):
+    def test_worktree_address_lookup_retries_unfiltered_for_base_project_state(self) -> None:
+        calls: list[list[str] | None] = []
+        state = RunState(
+            run_id="run-base",
+            mode="trees",
+            requirements={
+                "feature-a": RequirementsResult(
+                    project="feature-a",
+                    redis={"enabled": True, "final": 6381},
+                )
+            },
+        )
+
+        class BaseProjectRepository:
+            def load_latest(
+                self,
+                *,
+                mode: str | None = None,
+                strict_mode_match: bool = False,
+                project_names: list[str] | None = None,
+            ) -> RunState | None:
+                _ = mode, strict_mode_match
+                calls.append(project_names)
+                return state if project_names is None else None
+
+        runtime = SimpleNamespace(state_repository=BaseProjectRepository())
+        worktree = CreatedPlanWorktree(
+            name="feature-a-1",
+            root=Path("/repo/trees/feature-a/1"),
+            plan_file="feature-a.md",
+        )
+
+        section = _runtime_addresses_prompt_section(runtime, worktree=worktree)
+
+        self.assertEqual(calls, [["feature-a-1"], None])
+        self.assertIn("Redis (feature-a): redis://localhost:6381", section)
+
     def test_builder_renders_dependency_and_service_addresses_for_matching_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             worktree_root = Path(tmpdir) / "repo" / "trees" / "feature-a-1"
