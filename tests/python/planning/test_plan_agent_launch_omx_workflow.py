@@ -175,7 +175,10 @@ class PlanAgentLaunchOmxWorkflowTests(PlanAgentLaunchSupportTestCase):
             with self.subTest(workflow_name=workflow_name):
                 prompt = f"${workflow_name}\n\nIMPLEMENT TASK BODY"
                 self.assertEqual(
-                    workflow._wrap_omx_initial_prompt_for_workflow(prompt, workflow=workflow_name),
+                    workflow_runtime_support._wrap_omx_initial_prompt_for_workflow(
+                        prompt,
+                        workflow=workflow_name,
+                    ),
                     prompt,
                 )
 

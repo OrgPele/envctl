@@ -16,8 +16,6 @@ from envctl_engine.planning.plan_agent.constants import (
     _DEFAULT_PRESET,
     _DEFAULT_SHELL,
     _PLAN_AGENT_CODEX_CYCLE_CAP,
-    _PLAN_AGENT_WORKFLOW_CODEX_CYCLES,
-    _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT,
     _SUPPORTED_PLAN_AGENT_CLIS,
 )
 from envctl_engine.planning.plan_agent.models import PlanAgentLaunchConfig
@@ -304,12 +302,6 @@ def parse_codex_cycles(raw: object) -> tuple[int, str | None]:
     if value > _PLAN_AGENT_CODEX_CYCLE_CAP:
         return _PLAN_AGENT_CODEX_CYCLE_CAP, "bounded_codex_cycles"
     return value, None
-
-
-def workflow_mode_for_launch_config(launch_config: PlanAgentLaunchConfig) -> str:
-    if codex_tui_queue_workflow_supported(launch_config) and launch_config.codex_cycles > 0:
-        return _PLAN_AGENT_WORKFLOW_CODEX_CYCLES
-    return _PLAN_AGENT_WORKFLOW_SINGLE_PROMPT
 
 
 def codex_tui_queue_workflow_supported(launch_config: PlanAgentLaunchConfig) -> bool:

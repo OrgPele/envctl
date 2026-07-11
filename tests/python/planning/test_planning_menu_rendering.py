@@ -118,9 +118,11 @@ class PlanningMenuRenderingTests(unittest.TestCase):
             patch("sys.stdin.fileno", return_value=7),
             patch("termios.tcgetattr", return_value=[0, 0, 0, 0, 0, 0]),
             patch("termios.tcsetattr"),
+            patch("termios.tcflush"),
             patch("tty.setraw"),
             patch("os.read", return_value=b"\n"),
             patch.object(PlanningSelectionMenu, "flush_pending_input") as flush_mock,
+            patch.object(PlanningSelectionMenu, "_flush_input_buffer") as cleanup_flush_mock,
             patch.object(PlanningSelectionMenu, "_prompt_toolkit_enabled", return_value=False),
             redirect_stdout(StringIO()),
         ):
@@ -132,7 +134,52 @@ class PlanningMenuRenderingTests(unittest.TestCase):
 
         self.assertFalse(result.cancelled)
         self.assertEqual(result.selected_counts, {"a.md": 1})
-        self.assertGreaterEqual(flush_mock.call_count, 2)
+        flush_mock.assert_called_once_with(fd=7)
+        self.assertEqual(cleanup_flush_mock.call_count, 2)
+
+    def test_run_preserves_result_when_cleanup_drain_select_or_read_fails(self) -> None:
+        for key, expected_counts, expected_cancelled in (
+            (b"\n", {"a.md": 1}, False),
+            (b"q", {}, True),
+        ):
+            for failing_operation in ("select", "read"):
+                with self.subTest(key=key, operation=failing_operation):
+                    menu = PlanningSelectionMenu()
+                    tcflush_calls = 0
+
+                    def fail_cleanup_flush(_fd: int, _queue: int) -> None:
+                        nonlocal tcflush_calls
+                        tcflush_calls += 1
+                        if tcflush_calls > 1:
+                            raise termios.error("stale fd")
+
+                    error = OSError("unreadable fd")
+                    read_side_effect = [key, error, error] if failing_operation == "read" else None
+                    select_side_effect = error if failing_operation == "select" else None
+                    with (
+                        patch("sys.stdin.fileno", return_value=7),
+                        patch("termios.tcgetattr", return_value=[0, 0, 0, 0, 0, 0]),
+                        patch("termios.tcsetattr"),
+                        patch("termios.tcflush", side_effect=fail_cleanup_flush),
+                        patch("tty.setraw"),
+                        patch("os.read", return_value=key, side_effect=read_side_effect),
+                        patch(
+                            "select.select",
+                            return_value=([7], [], []),
+                            side_effect=select_side_effect,
+                        ),
+                        patch.object(PlanningSelectionMenu, "_prompt_toolkit_enabled", return_value=False),
+                        redirect_stdout(StringIO()),
+                    ):
+                        result = menu.run(
+                            planning_files=["a.md"],
+                            selected_counts={"a.md": 1},
+                            existing_counts={"a.md": 0},
+                        )
+
+                    self.assertEqual(result.cancelled, expected_cancelled)
+                    self.assertEqual(result.selected_counts, expected_counts)
+                    self.assertGreaterEqual(tcflush_calls, 3)
 
     def test_run_submit_preserves_zero_counts_when_existing_worktrees_present(self) -> None:
         menu = PlanningSelectionMenu()

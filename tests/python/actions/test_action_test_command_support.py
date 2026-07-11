@@ -10,6 +10,7 @@ from envctl_engine.actions.action_test_command_support import ConfiguredTestSpec
 from envctl_engine.actions.action_test_command_support import ActionTestExecutionSpecBuilder
 from envctl_engine.actions.action_test_command_support import SharedTestCommandPlanner
 from envctl_engine.actions.action_test_command_support import build_test_execution_specs
+from envctl_engine.actions.action_test_command_support import build_test_target_contexts
 from envctl_engine.actions.action_test_command_support import is_legacy_tree_test_script
 from envctl_engine.actions.action_test_command_support import normalize_backend_python_test_command
 from envctl_engine.actions.action_test_support_models import TestTargetContext as TargetContext
@@ -57,6 +58,16 @@ class ActionTestCommandSupportTests(unittest.TestCase):
         self.assertEqual(specs[0].project_name, "all-targets")
         self.assertEqual(specs[0].spec.cwd, repo)
         self.assertEqual(specs[0].args, ["projects=feature-a-1", "untested=true"])
+
+    def test_empty_target_contexts_keep_main_fallback_for_non_aggregate_callers(self) -> None:
+        repo = Path("/repo")
+
+        contexts = build_test_target_contexts([], repo_root=repo)
+
+        self.assertEqual(len(contexts), 1)
+        self.assertEqual(contexts[0].project_name, "Main")
+        self.assertEqual(contexts[0].project_root, repo)
+        self.assertIsNone(contexts[0].target_obj)
 
     def test_legacy_tree_script_detection_accepts_absolute_bash_path(self) -> None:
         self.assertTrue(is_legacy_tree_test_script(["bash", "scripts/test-all-trees.sh"]))
