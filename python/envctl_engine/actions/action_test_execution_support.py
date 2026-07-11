@@ -64,7 +64,11 @@ class TestActionExecutionPlanBuilder:
         self._emit_scope_status()
         include_backend, include_frontend = self._selected_services()
         target_contexts = self._target_contexts()
-        _ensure_test_prereqs(self.orchestrator, target_contexts)
+        _ensure_test_prereqs(
+            self.orchestrator,
+            target_contexts,
+            aggregate_untested=self.untested and not target_contexts,
+        )
         execution_specs = self._execution_specs(
             target_contexts=target_contexts,
             include_backend=include_backend,
@@ -238,10 +242,18 @@ def print_test_execution_mode(orchestrator: Any, plan: TestActionExecutionPlan) 
     print(orchestrator._colorize(text, fg=mode_color, bold=True))
 
 
-def _ensure_test_prereqs(orchestrator: Any, target_contexts: list[TestTargetContext]) -> None:
+def _ensure_test_prereqs(
+    orchestrator: Any,
+    target_contexts: list[TestTargetContext],
+    *,
+    aggregate_untested: bool,
+) -> None:
+    project_roots = [Path(context.project_root) for context in target_contexts]
+    if aggregate_untested:
+        project_roots.append(Path(orchestrator.runtime.config.base_dir))
     seen_roots: set[Path] = set()
-    for context in target_contexts:
-        project_root = Path(context.project_root).resolve()
+    for root in project_roots:
+        project_root = root.resolve()
         if project_root in seen_roots:
             continue
         seen_roots.add(project_root)

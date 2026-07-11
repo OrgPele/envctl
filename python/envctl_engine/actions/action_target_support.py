@@ -272,9 +272,14 @@ class _ActionTargetResolver:
         services = self.route.flags.get("services")
         unresolved_service_selectors: tuple[str, ...] = ()
         if isinstance(services, list):
+            project_target_services = _normalized_service_targets(services)
+            if self.route.command in {"test", "test-focused"}:
+                project_target_services = [
+                    selector for selector in project_target_services if selector not in {"backend", "frontend"}
+                ]
             service_projects, unresolved_service_selectors = _resolve_projects_for_services(
                 self.runtime,
-                services,
+                project_target_services,
             )
             unresolved_service_selectors = tuple(
                 selector

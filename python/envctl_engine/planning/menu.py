@@ -109,7 +109,7 @@ class PlanningSelectionMenu:
         finally:
             self._flush_input_buffer(fd=fd)
             self._restore_terminal_state(fd=fd, original_state=original_state)
-            self.flush_pending_input(fd=fd)
+            self._flush_input_buffer(fd=fd)
             sys.stdout.write("\033[0m\033[?25h\n")
             sys.stdout.flush()
 

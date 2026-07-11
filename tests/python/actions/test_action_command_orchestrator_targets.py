@@ -197,13 +197,19 @@ class ActionCommandTargetTests(unittest.TestCase):
         runtime.split_command = lambda raw, *, replacements: raw.split()
         orchestrator = ActionCommandOrchestrator(runtime)
         route = Route(command="test", mode="trees", flags={"untested": True})
+        prereq_roots: list[Path] = []
 
         targets, error = orchestrator.resolve_targets(route, trees_only=False)
-        plan = build_test_action_execution_plan(orchestrator, route, targets)
+        with patch(
+            "envctl_engine.actions.action_test_execution_support.ensure_repo_local_test_prereqs",
+            side_effect=lambda root, emit_status: prereq_roots.append(Path(root)),
+        ):
+            plan = build_test_action_execution_plan(orchestrator, route, targets)
 
         self.assertIsNone(error)
         self.assertEqual(targets, [])
         self.assertEqual(plan.target_contexts, [])
+        self.assertEqual(prereq_roots, [Path("/tmp/repo").resolve()])
         self.assertEqual(len(plan.execution_specs), 1)
         self.assertEqual(plan.execution_specs[0].project_name, "all-targets")
         self.assertEqual(plan.execution_specs[0].args, ["untested=true"])
@@ -258,6 +264,47 @@ class ActionCommandTargetTests(unittest.TestCase):
         projects = orchestrator.projects_for_services(["voice-runtime"])
 
         self.assertEqual(projects, ["Main"])
+
+    def test_builtin_test_service_scopes_keep_current_worktree_when_state_resolves_service(self) -> None:
+        current = SimpleNamespace(name="feature-a-1", root=Path("/tmp/external-feature-a"))
+        for service_name in ("backend", "frontend"):
+            with self.subTest(service=service_name):
+                runtime = _RuntimeStub()
+                runtime.config = SimpleNamespace(
+                    base_dir=Path("/tmp/repo"),
+                    execution_root=current.root,
+                    raw={},
+                )
+                runtime._latest_state = RunState(
+                    run_id="run-1",
+                    mode="trees",
+                    services={
+                        f"feature-a-1 {service_name.title()}": ServiceRecord(
+                            name=f"feature-a-1 {service_name.title()}",
+                            type=service_name,
+                            cwd=str(current.root),
+                            requested_port=8000,
+                            actual_port=8000,
+                            status="running",
+                        )
+                    },
+                )
+                runtime._project_name_from_service = lambda name: (
+                    "feature-a-1" if name.startswith("feature-a-1 ") else ""
+                )
+                runtime._discover_projects = lambda mode: (
+                    [SimpleNamespace(name="Main", root=Path("/tmp/repo"))] if mode == "main" else []
+                )
+                orchestrator = ActionCommandOrchestrator(runtime)
+                orchestrator._resolve_current_worktree_target = lambda **_kwargs: current
+                route = Route(command="test", mode="main", flags={"services": [service_name]})
+
+                targets, error = orchestrator.resolve_targets(route, trees_only=False)
+                selected_services = orchestrator._test_service_selection(route, None, None)
+
+                self.assertIsNone(error)
+                self.assertEqual(targets, [current])
+                self.assertEqual(selected_services, (service_name == "backend", service_name == "frontend"))
 
     def test_test_plan_action_delegates_to_owner(self) -> None:
         runtime = _RuntimeStub()
