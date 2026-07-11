@@ -10,6 +10,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.actions.action_command_orchestrator import ActionCommandOrchestrator
+from envctl_engine.actions.action_test_execution_support import build_test_action_execution_plan
 import envctl_engine.actions.action_test_summary_support as action_test_summary_support_module
 from envctl_engine.actions.action_test_summary_support import (
     write_failed_tests_summary_for_orchestrator,
@@ -182,6 +183,53 @@ class ActionCommandTargetTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(len(targets), 2)
         flush_pending.assert_not_called()
+
+    def test_untested_scope_reaches_legacy_matrix_without_main_project_filter(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.config = SimpleNamespace(
+            base_dir=Path("/tmp/repo"),
+            raw={"ENVCTL_ACTION_TEST_CMD": "bash scripts/test-all-trees.sh"},
+            frontend_test_path="",
+        )
+        runtime._discover_projects = lambda mode: [
+            SimpleNamespace(name="feature-a-1", root=Path("/tmp/repo/trees/feature-a/1"))
+        ]
+        runtime.split_command = lambda raw, *, replacements: raw.split()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="test", mode="trees", flags={"untested": True})
+
+        targets, error = orchestrator.resolve_targets(route, trees_only=False)
+        plan = build_test_action_execution_plan(orchestrator, route, targets)
+
+        self.assertIsNone(error)
+        self.assertEqual(targets, [])
+        self.assertEqual(plan.target_contexts, [])
+        self.assertEqual(len(plan.execution_specs), 1)
+        self.assertEqual(plan.execution_specs[0].project_name, "all-targets")
+        self.assertEqual(plan.execution_specs[0].args, ["untested=true"])
+        self.assertEqual(plan.execution_specs[0].spec.cwd, Path("/tmp/repo"))
+
+    def test_untested_scope_does_not_run_non_matrix_command_against_main(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.config = SimpleNamespace(
+            base_dir=Path("/tmp/repo"),
+            raw={"ENVCTL_ACTION_TEST_CMD": "python -m pytest"},
+            frontend_test_path="",
+        )
+        runtime._discover_projects = lambda mode: [
+            SimpleNamespace(name="feature-a-1", root=Path("/tmp/repo/trees/feature-a/1"))
+        ]
+        runtime.split_command = lambda raw, *, replacements: raw.split()
+        orchestrator = ActionCommandOrchestrator(runtime)
+        route = Route(command="test", mode="trees", flags={"untested": True})
+
+        targets, error = orchestrator.resolve_targets(route, trees_only=False)
+        plan = build_test_action_execution_plan(orchestrator, route, targets)
+
+        self.assertIsNone(error)
+        self.assertEqual(targets, [])
+        self.assertEqual(plan.target_contexts, [])
+        self.assertEqual(plan.execution_specs, [])
 
     def test_projects_for_services_matches_additional_service_slug_from_state(self) -> None:
         runtime = _RuntimeStub()

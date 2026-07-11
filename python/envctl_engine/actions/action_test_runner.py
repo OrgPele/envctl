@@ -82,6 +82,12 @@ def run_test_action(
     execution_specs = plan.execution_specs
     interactive_command = plan.interactive_command
     if not execution_specs:
+        if plan.untested and not plan.target_contexts:
+            print(
+                "No test command supports the all-untested scope. "
+                "Configure a test-all-trees.sh action command or select projects explicitly."
+            )
+            return 1
         print("No test command configured. Set Backend test command or Frontend test command in envctl config.")
         return 1
 

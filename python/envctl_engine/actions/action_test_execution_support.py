@@ -113,6 +113,8 @@ class TestActionExecutionPlanBuilder:
         )
 
     def _target_contexts(self) -> list[TestTargetContext]:
+        if self.untested and not self.targets:
+            return []
         return self.orchestrator._test_target_contexts(self.targets)
 
     def _execution_specs(
