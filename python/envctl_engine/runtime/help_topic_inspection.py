@@ -248,6 +248,8 @@ INSPECTION_HELP_TOPICS: dict[str, CommandHelpTopic] = {
         notes=(
             "intended for CI on a trusted self-hosted runner with gh, docker, git, and envctl available",
             "configuration is supplied through ENVCTL_PREVIEW_* environment variables",
+            "consume this command from CI instead of vendoring a repository-local controller copy",
+            "feature-branch push events only redeploy matching labeled same-repository PRs",
         ),
         aliases=("pr-preview", "github-pr-preview", "--pr-preview-controller", "--pr-preview"),
         related=("import", "start", "qa-user", "endpoints"),

@@ -1337,6 +1337,27 @@ def test_push_event_refreshes_preview_ttl_for_labeled_branch(tmp_path):
     assert "- Reason: push to labeled PR branch feature/demo" in runner.comments[-1]
 
 
+def test_controller_run_dispatches_github_push_payload(tmp_path, monkeypatch):
+    controller = load_controller()
+    event_path = tmp_path / "push.json"
+    event_path.write_text(json.dumps(push_payload(after="newsha")), encoding="utf-8")
+    config = make_config(controller, tmp_path)
+    instance = controller.PreviewController(config, FakeRunner(controller))
+    received = []
+
+    monkeypatch.setattr(
+        instance,
+        "run_push_event",
+        lambda event: received.append(event) or 7,
+    )
+    args = controller.build_parser().parse_args(
+        ["--event-name", "push", "--event-path", str(event_path)]
+    )
+
+    assert instance.run(args) == 7
+    assert received == [push_payload(after="newsha")]
+
+
 def test_push_event_uses_pushed_sha_before_same_head_skip(tmp_path):
     controller = load_controller()
     root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
