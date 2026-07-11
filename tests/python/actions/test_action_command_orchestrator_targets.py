@@ -333,7 +333,7 @@ class ActionCommandTargetTests(unittest.TestCase):
             summary_metadata={"Main": {"status": "passed"}},
         )
 
-    def test_build_test_execution_specs_uses_additional_service_test_command(self) -> None:
+    def test_config_only_service_selector_resolves_current_target_and_builds_test_spec(self) -> None:
         runtime = _RuntimeStub()
         runtime.config = SimpleNamespace(
             base_dir=Path("/tmp/repo"),
@@ -351,10 +351,13 @@ class ActionCommandTargetTests(unittest.TestCase):
         orchestrator = ActionCommandOrchestrator(runtime)
         route = Route(command="test", mode="main", flags={"services": ["voice-runtime"]})
         target = SimpleNamespace(name="Main", root=Path("/tmp/repo"))
+        orchestrator._resolve_current_worktree_target = lambda **_kwargs: target
+
+        targets, error = orchestrator.resolve_targets(route, trees_only=False)
 
         specs = orchestrator._build_test_execution_specs(
             route=route,
-            targets=[target],
+            targets=targets,
             target_contexts=[TargetContext(project_name="Main", project_root=Path("/tmp/repo"), target_obj=target)],
             include_backend=False,
             include_frontend=False,
@@ -362,6 +365,8 @@ class ActionCommandTargetTests(unittest.TestCase):
             untested=False,
         )
 
+        self.assertIsNone(error)
+        self.assertEqual(targets, [target])
         self.assertEqual(len(specs), 1)
         self.assertEqual(specs[0].spec.command, ["python", "-m", "pytest", "voice-runtime/tests"])
         self.assertEqual(specs[0].spec.cwd, Path("/tmp/repo/voice-runtime"))

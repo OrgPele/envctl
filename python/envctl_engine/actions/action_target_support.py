@@ -163,6 +163,16 @@ def _resolve_projects_for_services(
     return _deduplicate_project_names(resolved), tuple(unresolved)
 
 
+def _is_configured_test_service_selector(runtime: Any, route: Route, selector: str) -> bool:
+    if route.command not in {"test", "test-focused"}:
+        return False
+    if selector in {"backend", "frontend"}:
+        return True
+    config = getattr(runtime, "config", None)
+    app_service_by_name = getattr(config, "app_service_by_name", None)
+    return callable(app_service_by_name) and app_service_by_name(selector) is not None
+
+
 def _discover_action_candidates(runtime: Any, route: Route, *, trees_only: bool) -> list[object]:
     mode = "trees" if trees_only else route.mode
     candidates = list(runtime.discover_projects(mode=mode))
@@ -244,12 +254,16 @@ class _ActionTargetResolver:
         project_selectors = {name.lower() for name in self.route.projects}
         project_selectors.update(self.runtime.selectors_from_passthrough(self.route.passthrough_args))
         services = self.route.flags.get("services")
-        has_service_selectors = isinstance(services, list) and bool(services)
         unresolved_service_selectors: tuple[str, ...] = ()
         if isinstance(services, list):
             service_projects, unresolved_service_selectors = _resolve_projects_for_services(
                 self.runtime,
                 services,
+            )
+            unresolved_service_selectors = tuple(
+                selector
+                for selector in unresolved_service_selectors
+                if not _is_configured_test_service_selector(self.runtime, self.route, selector)
             )
             project_selectors.update(project.lower() for project in service_projects)
         run_all = bool(self.route.flags.get("all"))
@@ -258,7 +272,9 @@ class _ActionTargetResolver:
             run_all=run_all,
             untested_selected=untested_selected,
             project_selectors=frozenset(project_selectors),
-            explicit_targeting=bool(project_selectors or has_service_selectors or run_all or untested_selected),
+            explicit_targeting=bool(
+                project_selectors or unresolved_service_selectors or run_all or untested_selected
+            ),
             unresolved_service_selectors=unresolved_service_selectors,
         )
 
