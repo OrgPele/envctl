@@ -8,7 +8,7 @@ This repository is Python-first at runtime. Most behavior changes therefore need
 - did the change accidentally break the supported Python runtime contract?
 
 ## Workflow
-1. Create a branch from `main`.
+1. Create a branch from `dev`.
 2. Keep changes scoped to one objective.
 3. Install the CLI in editable mode:
 
@@ -35,7 +35,7 @@ uv run --extra dev python scripts/release_shipability_gate.py --repo . --check-t
 6. Use narrower `unittest` targets only for focused local iteration; they are no longer the authoritative release-readiness lane.
 
 7. Use conventional commits (`type(scope): subject`).
-8. Open a PR with:
+8. Open a PR targeting `dev` with:
 - `Summary`
 - `Validation`
 - `Impact`
