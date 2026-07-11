@@ -33,9 +33,11 @@ def fresh_start_replacement_services(
         if str(getattr(context, "name", "")).strip()
     }
     runtime_scope = str(route.flags.get("runtime_scope") or "").strip().lower()
+    has_app_launch_selection = any(key in route.flags for key in ("launch_backend", "launch_frontend"))
     replace_all_for_explicit_fresh_start = (
         bool(route.flags.get("no_resume"))
         and not bool(route.flags.get("services"))
+        and not has_app_launch_selection
         and runtime_scope not in {"backend", "frontend", "dependencies", "fullstack"}
     )
     selected: set[str] = set()

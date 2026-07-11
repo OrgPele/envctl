@@ -96,6 +96,7 @@ def finalize_successful_startup(
     print_headless_plan_session_summary: Callable[[StartupSession], None],
     maybe_attach_plan_agent_terminal: Callable[[StartupSession], int | None],
     finalize_plan_agent_degraded_handoff: Callable[[StartupSession], int],
+    run_interactive_dashboard_loop: Callable[[RunState], int] | None = None,
 ) -> int:
     if session.plan_agent_handoff_degraded:
         return finalize_plan_agent_degraded_handoff(session)
@@ -171,7 +172,8 @@ def finalize_successful_startup(
     if attach_code is not None:
         return attach_code
     if runtime._should_enter_post_start_interactive(session.effective_route):
-        return runtime._run_interactive_dashboard_loop(run_state)
+        dashboard_runner = run_interactive_dashboard_loop or runtime._run_interactive_dashboard_loop
+        return dashboard_runner(run_state)
     return 0
 
 
@@ -181,6 +183,7 @@ def finalize_successful_startup_with_runtime(
     *,
     validate_plan_agent_handoff: Callable[..., None],
     print_fn: Callable[[str], None] = print,
+    run_interactive_dashboard_loop: Callable[[RunState], int] | None = None,
 ) -> int:
     orchestrator_like = type("_StartupFinalizationRuntimeFacade", (), {"runtime": runtime})()
     return finalize_successful_startup(
@@ -228,6 +231,7 @@ def finalize_successful_startup_with_runtime(
             validate_plan_agent_handoff=validate_plan_agent_handoff,
             print_fn=print_fn,
         ),
+        run_interactive_dashboard_loop=run_interactive_dashboard_loop,
     )
 
 

@@ -28,9 +28,8 @@ class ServiceAttachExecutionTests(unittest.TestCase):
             services=ServiceManager(),
             _conflict_remaining={},
             _emit=lambda event, **payload: None,
-            _service_start_command_resolved=lambda service_name, project_root, port: (
-                ["python", "app.py", "--port", str(port)],
-                "configured",
+            _service_start_command_resolved=lambda **kwargs: self.fail(
+                f"host command resolution must be skipped: {kwargs}"
             ),
         )
         runner = ServiceAttachRunner(
@@ -89,6 +88,23 @@ class ServiceAttachExecutionTests(unittest.TestCase):
         self.assertEqual(record.container_name, "envctl-app-main-backend")
         self.assertEqual(record.container_image, "example/backend:dev")
         docker_launch.assert_called_once()
+        self.assertEqual(docker_launch.call_args.kwargs["command"], [])
+
+        runtime.config.raw["ENVCTL_BACKEND_DOCKER_COMMAND"] = "uvicorn app:api --port 8000"
+        self.assertEqual(runner._core_service_command("backend", 8001), [])
+
+        runtime.config.raw.pop("ENVCTL_BACKEND_DOCKER_COMMAND")
+        runtime.config.raw["ENVCTL_BACKEND_DOCKER_COMMAND_MODE"] = "service"
+        resolved_calls: list[dict[str, object]] = []
+        runtime._service_start_command_resolved = lambda **kwargs: (
+            resolved_calls.append(kwargs) or ["container-service", "--port", str(kwargs["port"])],
+            "configured",
+        )
+        self.assertEqual(
+            runner._core_service_command("backend", 8001),
+            ["container-service", "--port", "8001"],
+        )
+        self.assertEqual(resolved_calls, [{"service_name": "backend", "project_root": project_root, "port": 8001}])
 
     def test_runner_builds_layered_descriptors_and_preserves_additional_urls(self) -> None:
         project_root = Path("/tmp/envctl-project")

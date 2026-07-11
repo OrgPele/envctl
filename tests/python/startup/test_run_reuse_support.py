@@ -7,6 +7,7 @@ from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.run_reuse_support import (
     dashboard_stopped_service_entries,
     fresh_start_replacement_services,
+    mark_run_reused,
     prepare_dashboard_stopped_service_restore,
     replace_existing_project_services_for_fresh_start,
     metadata_without_dashboard_stopped_services,
@@ -15,6 +16,12 @@ from envctl_engine.startup.run_reuse_support import (
 
 
 class RunReuseSupportTests(unittest.TestCase):
+    def test_mark_run_reused_recovers_from_malformed_counter(self) -> None:
+        updated = mark_run_reused({"run_reuse_count": "not-a-number"}, reason="exact_match")
+
+        self.assertEqual(updated["run_reuse_count"], 1)
+        self.assertEqual(updated["last_reuse_reason"], "exact_match")
+
     def test_run_reuse_debug_orch_groups_only_apply_to_plan_commands(self) -> None:
         runtime = SimpleNamespace(env={"ENVCTL_DEBUG_PLAN_ORCH_GROUP": "alpha+ beta,gamma ,,"})
 
@@ -210,6 +217,89 @@ class RunReuseSupportTests(unittest.TestCase):
 
         selected = fresh_start_replacement_services(
             route=route,
+            selected_contexts=[SimpleNamespace(name="Main")],
+            candidate_state=state,
+            configured_service_types={"backend"},
+            additional_services=(),
+            project_name_from_service=lambda _name: "Main",
+        )
+
+        self.assertEqual(selected, {"Main Backend", "Main Old Worker"})
+
+    def test_explicit_no_resume_honors_launch_only_service_selection(self) -> None:
+        state = SimpleNamespace(
+            services={
+                "Main Backend": SimpleNamespace(name="Main Backend", project="Main", type="backend"),
+                "Main Frontend": SimpleNamespace(name="Main Frontend", project="Main", type="frontend"),
+                "Main Old Worker": SimpleNamespace(
+                    name="Main Old Worker",
+                    project="Main",
+                    type="old-worker",
+                    service_slug="old-worker",
+                ),
+            }
+        )
+
+        cases = (
+            (
+                {
+                    "no_resume": True,
+                    "launch_backend": True,
+                    "launch_frontend": False,
+                    "launch_dependencies": False,
+                },
+                {"Main Backend"},
+            ),
+            (
+                {
+                    "no_resume": True,
+                    "launch_backend": False,
+                    "launch_frontend": True,
+                    "launch_dependencies": False,
+                },
+                {"Main Frontend"},
+            ),
+            (
+                {
+                    "no_resume": True,
+                    "launch_backend": False,
+                    "launch_frontend": False,
+                    "launch_dependencies": False,
+                },
+                set(),
+            ),
+        )
+        for flags, expected in cases:
+            with self.subTest(flags=flags):
+                selected = fresh_start_replacement_services(
+                    route=Route(command="start", mode="main", flags=flags),
+                    selected_contexts=[SimpleNamespace(name="Main")],
+                    candidate_state=state,
+                    configured_service_types={"backend", "frontend"},
+                    additional_services=(),
+                    project_name_from_service=lambda _name: "Main",
+                )
+                self.assertEqual(selected, expected)
+
+    def test_explicit_no_resume_with_no_dependencies_still_replaces_all_app_services(self) -> None:
+        state = SimpleNamespace(
+            services={
+                "Main Backend": SimpleNamespace(name="Main Backend", project="Main", type="backend"),
+                "Main Old Worker": SimpleNamespace(
+                    name="Main Old Worker",
+                    project="Main",
+                    type="old-worker",
+                    service_slug="old-worker",
+                ),
+            }
+        )
+
+        selected = fresh_start_replacement_services(
+            route=Route(
+                command="start",
+                mode="main",
+                flags={"no_resume": True, "launch_dependencies": False},
+            ),
             selected_contexts=[SimpleNamespace(name="Main")],
             candidate_state=state,
             configured_service_types={"backend"},

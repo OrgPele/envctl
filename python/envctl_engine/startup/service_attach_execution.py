@@ -11,8 +11,8 @@ from envctl_engine.runtime.service_manager import ServiceStartDescriptor
 from envctl_engine.runtime.docker_service_runtime import (
     DockerServiceLaunch,
     DockerServiceRuntime,
+    docker_service_container_command_source,
     docker_service_mode_enabled,
-    docker_service_uses_image_command,
 )
 from envctl_engine.startup.service_execution_policy import ordered_service_layers
 from envctl_engine.startup.service_execution_records import PreparedServiceLaunch
@@ -310,11 +310,7 @@ class ServiceAttachRunner:
         if conflict_result is not None:
             return conflict_result
         command_resolve_started = time.monotonic()
-        command, _resolved_source = self.runtime._service_start_command_resolved(
-            service_name="backend",
-            project_root=self.project_root,
-            port=port,
-        )
+        command = self._core_service_command("backend", port)
         self._emit_attach_phase("backend", "command_resolution", command_resolve_started)
         return self._launch_prepared_process(
             service_name="backend",
@@ -337,11 +333,7 @@ class ServiceAttachRunner:
                 owner=f"{self.project_name}:services:frontend-launch",
             )
         command_resolve_started = time.monotonic()
-        command, _resolved_source = self.runtime._service_start_command_resolved(
-            service_name="frontend",
-            project_root=self.project_root,
-            port=launch_port,
-        )
+        command = self._core_service_command("frontend", launch_port)
         self._emit_attach_phase("frontend", "command_resolution", command_resolve_started)
         return self._launch_prepared_process(
             service_name="frontend",
@@ -353,6 +345,21 @@ class ServiceAttachRunner:
             pid_fallback=os.getpid() + 1,
         )
 
+    def _core_service_command(self, service_name: str, port: int) -> list[str]:
+        container_command_source = docker_service_container_command_source(
+            self.runtime,
+            service_name,
+            docker_mode=self.docker_mode or docker_service_mode_enabled(self.runtime),
+        )
+        if container_command_source is not None:
+            return []
+        command, _resolved_source = self.runtime._service_start_command_resolved(
+            service_name=service_name,
+            project_root=self.project_root,
+            port=port,
+        )
+        return command
+
     def start_additional_service(self, service_name: str, port: int) -> tuple[bool, str | None, int | None]:
         conflict_result = self._conflicting_start_result(service_name, port)
         if conflict_result is not None:
@@ -362,11 +369,11 @@ class ServiceAttachRunner:
         if service is None:
             return False, f"unknown additional service {service_name}", None
         command_resolve_started = time.monotonic()
-        if docker_service_uses_image_command(
+        if docker_service_container_command_source(
             self.runtime,
             service_name,
             docker_mode=self.docker_mode or docker_service_mode_enabled(self.runtime),
-        ):
+        ) is not None:
             command = []
         else:
             command = self.runtime._split_command(

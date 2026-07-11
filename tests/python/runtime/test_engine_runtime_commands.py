@@ -45,6 +45,21 @@ class EngineRuntimeCommandsTests(unittest.TestCase):
         self.assertEqual(command, [])
         self.assertEqual(source, "docker_image")
 
+    def test_explicit_docker_command_skips_host_command_resolution(self) -> None:
+        runtime = SimpleNamespace(
+            env={
+                "DOCKER_MODE": "true",
+                "ENVCTL_BACKEND_DOCKER_COMMAND": "uvicorn app:api --port 8000",
+            },
+            config=SimpleNamespace(base_dir=Path("/repo"), raw={}),
+            _command_exists=lambda _executable: self.fail("host command lookup must be skipped"),
+        )
+
+        command, source = service_start_command_resolved(runtime, service_name="backend", port=8000)
+
+        self.assertEqual(command, [])
+        self.assertEqual(source, "docker_command")
+
     def test_docker_service_command_still_requires_executable_on_host(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

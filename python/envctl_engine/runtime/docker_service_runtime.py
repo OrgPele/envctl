@@ -63,14 +63,14 @@ def docker_service_mode_enabled(runtime: Any) -> bool:
     return parse_bool(str(env.get("DOCKER_MODE", "")), False)
 
 
-def docker_service_uses_image_command(
+def docker_service_container_command_source(
     runtime: Any,
     service_name: str,
     *,
     docker_mode: bool | None = None,
-) -> bool:
+) -> str | None:
     if not (docker_service_mode_enabled(runtime) if docker_mode is None else docker_mode):
-        return False
+        return None
     env = getattr(runtime, "env", {})
     raw = getattr(getattr(runtime, "config", None), "raw", {})
     suffix = re.sub(r"[^A-Z0-9]+", "_", service_name.upper()).strip("_") or "SERVICE"
@@ -83,8 +83,23 @@ def docker_service_uses_image_command(
         return ""
 
     if setting("DOCKER_COMMAND"):
-        return False
-    return (setting("DOCKER_COMMAND_MODE") or "image").lower() in {"image", "default"}
+        return "docker_command"
+    if (setting("DOCKER_COMMAND_MODE") or "image").lower() in {"image", "default"}:
+        return "docker_image"
+    return None
+
+
+def docker_service_uses_image_command(
+    runtime: Any,
+    service_name: str,
+    *,
+    docker_mode: bool | None = None,
+) -> bool:
+    return docker_service_container_command_source(
+        runtime,
+        service_name,
+        docker_mode=docker_mode,
+    ) == "docker_image"
 
 
 def state_uses_docker_services(state: object) -> bool:

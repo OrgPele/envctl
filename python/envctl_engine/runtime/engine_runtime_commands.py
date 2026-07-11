@@ -7,7 +7,7 @@ import shutil
 from typing import Any, Mapping
 
 from envctl_engine.runtime.command_resolution import resolve_requirement_start_command, resolve_service_start_command
-from envctl_engine.runtime.docker_service_runtime import docker_service_uses_image_command
+from envctl_engine.runtime.docker_service_runtime import docker_service_container_command_source
 
 SERVICE_LAUNCH_ENV_REMOVALS = {
     "ACTIONS_CACHE_URL",
@@ -106,8 +106,9 @@ def service_start_command_resolved(
     project_root: Path | None = None,
     port: int = 0,
 ) -> tuple[list[str], str]:
-    if docker_service_uses_image_command(runtime, service_name):
-        return [], "docker_image"
+    container_command_source = docker_service_container_command_source(runtime, service_name)
+    if container_command_source is not None:
+        return [], container_command_source
     result = resolve_service_start_command(
         service_name=service_name,
         project_root=(project_root or runtime.config.base_dir),

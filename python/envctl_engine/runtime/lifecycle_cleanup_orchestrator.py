@@ -266,6 +266,19 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
     def _stop_requirement_component_containers(self, component: Mapping[str, object]) -> None:
         stop_requirement_component_containers(self.runtime, component)
 
+    def _stop_requirement_component_containers_best_effort(self, component: Mapping[str, object]) -> None:
+        try:
+            self._stop_requirement_component_containers(component)
+        except Exception as exc:  # noqa: BLE001
+            component_id = str(component.get("id") or "dependency").strip() or "dependency"
+            detail = str(exc).strip() or exc.__class__.__name__
+            self.runtime._emit(  # type: ignore[attr-defined]
+                "cleanup.dependency_container.warning",
+                component=component_id,
+                detail=detail,
+            )
+            print(f"Warning: could not stop {component_id} container during cleanup: {detail}")
+
     def _release_requirement_component_ports(self, component: Mapping[str, object]) -> None:
         port_allocator = self._port_allocator(self.runtime)
         release_requirement_component_ports(component, release_port_fn=port_allocator.release)
@@ -327,7 +340,10 @@ class LifecycleCleanupOrchestrator(LifecycleBlastCleanupSupport):
                 for definition in dependency_definitions():
                     component = requirements.component(definition.id)
                     if bool(component.get("enabled", False)):
-                        self._stop_requirement_component_containers(component)
+                        if command in {"stop-all", "blast-all"}:
+                            self._stop_requirement_component_containers_best_effort(component)
+                        else:
+                            self._stop_requirement_component_containers(component)
 
         if aggressive and self.blast_all_ecosystem_enabled():
             self.blast_all_ecosystem_cleanup(route=route)

@@ -1013,6 +1013,95 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             self.assertEqual(len(warnings), 1)
             self.assertIn("No local app system is configured", str(warnings[0]))
 
+    def test_start_project_services_does_not_skip_docker_only_plan_app_system(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project_root = root / "repo"
+            project_root.mkdir(parents=True, exist_ok=True)
+            run_dir = root / "runtime" / "run-1"
+            events: list[tuple[str, dict[str, object]]] = []
+            prep_calls: list[str] = []
+
+            runtime = SimpleNamespace(
+                port_planner=_PortAllocatorStub(),
+                env={},
+                config=SimpleNamespace(
+                    raw={"ENVCTL_BACKEND_DOCKER_IMAGE": "example/backend:dev"},
+                    explicit_keys=("ENVCTL_BACKEND_DOCKER_IMAGE",),
+                    backend_dir_name="backend",
+                    frontend_dir_name="frontend",
+                    additional_services=(),
+                    backend_dependency_env_section_present=False,
+                    frontend_dependency_env_section_present=False,
+                    main_backend_dependency_env_section_present=False,
+                    main_frontend_dependency_env_section_present=False,
+                    trees_backend_dependency_env_section_present=False,
+                    trees_frontend_dependency_env_section_present=False,
+                    service_dependency_env_section_present={},
+                    mode_service_dependency_env_section_present={},
+                    all_app_service_names_for_mode=lambda mode, project_root=None: ("backend", "frontend"),
+                ),
+                services=SimpleNamespace(),
+                _invoke_envctl_hook=lambda **kwargs: SimpleNamespace(found=False, success=False, payload=None),
+                _run_dir_path=lambda run_id: run_dir,
+                _project_service_env=lambda context, requirements, route=None, service_name=None: {},
+                _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
+                _resolve_frontend_env_file=lambda context, frontend_cwd: None,
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
+                _service_enabled_for_mode=lambda mode, service: True,
+                process_runner=SimpleNamespace(),
+                _prepare_backend_runtime=lambda **kwargs: prep_calls.append("backend"),
+                _prepare_frontend_runtime=lambda **kwargs: prep_calls.append("frontend"),
+                _service_command_source=lambda **kwargs: self.fail(
+                    f"host command source must be skipped: {kwargs}"
+                ),
+                _command_exists=lambda command: False,
+                _emit=lambda event, **payload: events.append((event, payload)),
+            )
+            orchestrator = SimpleNamespace(
+                runtime=runtime,
+                _restart_service_types_for_project=lambda **kwargs: {"backend", "frontend"},
+                _suppress_timing_output=lambda route: True,
+            )
+            context = SimpleNamespace(
+                name="Main",
+                root=project_root,
+                ports={
+                    "backend": SimpleNamespace(final=8000),
+                    "frontend": SimpleNamespace(final=3000),
+                },
+            )
+            route = parse_route(
+                ["--plan", "feature-a", "--docker", "--entire-system", "--batch"],
+                env={},
+            )
+
+            with mock.patch(
+                "envctl_engine.startup.service_project_execution.ServiceAttachRunner"
+            ) as runner_cls:
+                runner_cls.return_value.start.return_value = {}
+                records = start_project_services(
+                    orchestrator,
+                    context,
+                    requirements=RequirementsResult(project="Main", components={}, health="healthy", failures=[]),
+                    run_id="run-1",
+                    route=route,
+                )
+
+            self.assertEqual(records, {})
+            self.assertEqual(prep_calls, [])
+            self.assertTrue(runner_cls.call_args.kwargs["docker_mode"])
+            self.assertEqual(
+                runner_cls.call_args.kwargs["prepared_launches"]["backend"].command_source,
+                "docker_image",
+            )
+            self.assertFalse(
+                any(
+                    event == "service.attach.skipped" and payload.get("reason") == "no_system_configured"
+                    for event, payload in events
+                )
+            )
+
     def test_start_project_services_keeps_missing_command_failure_for_explicit_enablement(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

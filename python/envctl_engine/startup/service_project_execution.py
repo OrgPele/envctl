@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import cast
 
 from envctl_engine.runtime.command_resolution import CommandExists, suggest_service_start_command
-from envctl_engine.runtime.docker_service_runtime import docker_service_mode_enabled
+from envctl_engine.runtime.docker_service_runtime import (
+    docker_service_container_command_source,
+    docker_service_mode_enabled,
+)
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_process_runtime
 from envctl_engine.startup.startup_selection_support import _restart_service_types_for_project
@@ -282,12 +285,18 @@ def start_project_services_impl(
             reason="all_services_disabled",
         )
         return {}
-    if route is not None and route.command == "plan" and _no_local_app_system_configured(
-        rt,
-        mode=effective_mode,
-        project_root=context.root,
-        selected_service_types=selected_service_types,
-        configured_additional_services=configured_additional_services,
+    use_docker_services = bool(route is not None and route.flags.get("docker")) or docker_service_mode_enabled(rt)
+    if (
+        route is not None
+        and route.command == "plan"
+        and not use_docker_services
+        and _no_local_app_system_configured(
+            rt,
+            mode=effective_mode,
+            project_root=context.root,
+            selected_service_types=selected_service_types,
+            configured_additional_services=configured_additional_services,
+        )
     ):
         rt._emit(
             "service.attach.skipped",
@@ -303,7 +312,6 @@ def start_project_services_impl(
         return {}
 
     service_started = time.monotonic()
-    use_docker_services = bool(route is not None and route.flags.get("docker")) or docker_service_mode_enabled(rt)
     prepare_backend_duration_ms = 0.0
     prepare_frontend_duration_ms = 0.0
     prepare_backend = "backend" in selected_service_types
@@ -387,18 +395,30 @@ def start_project_services_impl(
     rebound_delta = parse_int(rt.env.get("ENVCTL_TEST_FRONTEND_REBOUND_DELTA"), 0)
     backend_command_source = None
     if "backend" in selected_service_types:
-        backend_command_source = rt._service_command_source(
-            service_name="backend",
-            project_root=context.root,
-            port=backend_plan.final,
+        backend_command_source = docker_service_container_command_source(
+            rt,
+            "backend",
+            docker_mode=use_docker_services,
         )
+        if backend_command_source is None:
+            backend_command_source = rt._service_command_source(
+                service_name="backend",
+                project_root=context.root,
+                port=backend_plan.final,
+            )
     frontend_command_source = None
     if "frontend" in selected_service_types:
-        frontend_command_source = rt._service_command_source(
-            service_name="frontend",
-            project_root=context.root,
-            port=(frontend_plan.final + rebound_delta if rebound_delta > 0 else frontend_plan.final),
+        frontend_command_source = docker_service_container_command_source(
+            rt,
+            "frontend",
+            docker_mode=use_docker_services,
         )
+        if frontend_command_source is None:
+            frontend_command_source = rt._service_command_source(
+                service_name="frontend",
+                project_root=context.root,
+                port=(frontend_plan.final + rebound_delta if rebound_delta > 0 else frontend_plan.final),
+            )
 
     prepared_launches: dict[str, PreparedServiceLaunch] = {}
     command_env_builder = resolve_command_env_builder(rt)

@@ -336,7 +336,10 @@ class RunReuseEvaluator:
 def mark_run_reused(metadata: Mapping[str, object] | None, *, reason: str) -> dict[str, object]:
     updated = dict(metadata or {})
     raw_count = updated.get("run_reuse_count", 0)
-    count = int(raw_count) if isinstance(raw_count, (bool, float, int, str)) else 0
+    try:
+        count = int(raw_count) if isinstance(raw_count, (bool, float, int, str)) else 0
+    except (OverflowError, TypeError, ValueError):
+        count = 0
     updated["run_reuse_count"] = max(0, count) + 1
     updated["last_reopened_at"] = datetime.now(tz=UTC).isoformat()
     updated["last_reuse_reason"] = reason
