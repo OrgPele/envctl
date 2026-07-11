@@ -572,7 +572,7 @@ If GitHub has attached the pushed head commit but still has no target test check
 `no_checks_reported` immediately instead of waiting for the full timeout. The command returns the structured JSON result by default including
 the PR URL, `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`,
 `failing_checks`, `pending_checks`, and `checks_error`. `--json` remains accepted as a compatibility no-op;
-use `--human` only when compact terminal output is preferred. The check wait timeout defaults to 2 minutes; pending
+use `--human` only when compact terminal output is preferred. The check wait timeout defaults to 3 minutes; pending
 checks after that window are reported as `checks_pending_timeout` without failing the handoff command, while actual failed
 checks still return a non-zero exit. The timeout can be tuned with
 `ENVCTL_SHIP_CHECK_TIMEOUT_SECONDS` and

@@ -77,8 +77,8 @@ def test_github_pr_checks_reports_unavailable_gh_without_running_checks(tmp_path
         "duration_seconds": 0.0,
     }
 
-def test_github_pr_checks_default_timeout_is_two_minute_wait_window() -> None:
-    assert action_ship_checks.DEFAULT_CHECK_TIMEOUT_SECONDS == 120.0
+def test_github_pr_checks_default_timeout_is_three_minute_wait_window() -> None:
+    assert action_ship_checks.DEFAULT_CHECK_TIMEOUT_SECONDS == 180.0
 
 def test_github_pr_checks_default_no_checks_grace_is_fifteen_seconds() -> None:
     assert action_ship_checks.DEFAULT_NO_CHECKS_GRACE_SECONDS == 15.0
