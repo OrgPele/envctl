@@ -82,7 +82,7 @@ def run_test_action(
     execution_specs = plan.execution_specs
     interactive_command = plan.interactive_command
     if not execution_specs:
-        print("No test command configured. Set Backend test command or Frontend test command in envctl config.")
+        print(plan.missing_execution_specs_message)
         return 1
 
     started_at = started_test_timer()

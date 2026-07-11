@@ -35,7 +35,7 @@ class CurrentWorktreeTargetResolver:
         matches = self._matching_candidates(cwd, repo_root=repo_root, trees_dir_name=trees_dir_name)
         if len(matches) == 1:
             return matches[0]
-        if matches or self.require_configured_main_root:
+        if matches:
             return None
         return self._linked_worktree_candidate(
             cwd,
@@ -64,6 +64,9 @@ class CurrentWorktreeTargetResolver:
             repo_root = repo_root_from_worktree_layout(cwd, trees_dir_name)
             if repo_root is None:
                 repo_root = self.main_repo_root_for_linked_worktree(cwd)
+            if repo_root is None:
+                resolver = self.git_main_repo_root_for_worktree or main_repo_root_for_worktree
+                repo_root = resolver(worktree_root=cwd, runtime=self.runtime, trees_dir_name=trees_dir_name)
             if repo_root is None or repo_root.resolve() != configured_root_path:
                 return None
             return repo_root

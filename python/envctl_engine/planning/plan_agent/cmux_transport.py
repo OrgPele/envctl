@@ -25,12 +25,14 @@ from envctl_engine.planning.plan_agent.recovery import (
     _print_launch_summary,
     _queue_failure_event_context,
 )
-from envctl_engine.planning.plan_agent.workflow import (
+from envctl_engine.planning.plan_agent.workflow_runtime_support import (
     _codex_goal_text_for_worktree,
     _emit_codex_goal_event,
+    _surface_respawn_command,
+)
+from envctl_engine.planning.plan_agent.workflow_review_support import (
     _review_original_plan_path,
     _review_prompt_arguments,
-    _surface_respawn_command,
 )
 from envctl_engine.planning.plan_agent.workflow_build import (
     _build_plan_agent_workflow,

@@ -44,12 +44,6 @@ from envctl_engine.planning.worktree_project_catalog import (
     feature_project_candidates as _feature_project_candidates_impl,
     project_sort_key_for_feature as _project_sort_key_for_feature_impl,
 )
-from envctl_engine.planning.worktree_selection_memory import (
-    initial_plan_selected_counts as _initial_plan_selected_counts_impl,
-    load_plan_selection_memory as _load_plan_selection_memory_impl,
-    plan_selection_memory_path as _plan_selection_memory_path_impl,
-    save_plan_selection_memory as _save_plan_selection_memory_impl,
-)
 from envctl_engine.planning.worktree_shared_artifacts import (
     link_repo_local_shared_artifacts as _link_repo_local_shared_artifacts_impl,
 )
@@ -303,13 +297,10 @@ def _prompt_planning_selection(
     self: Any,
     planning_files: list[str],
     raw_projects: list[tuple[str, Path]],
-    *,
-    persist_memory: bool = True,
 ) -> dict[str, int] | None:
     return _planning_runtime_bridge(self).prompt_planning_selection(
         planning_files=planning_files,
         raw_projects=raw_projects,
-        persist_memory=persist_memory,
     )
 
 
@@ -327,20 +318,6 @@ def _adjust_plan_counts_for_fresh_ai_launch(
         raw_projects=raw_projects,
         plan_counts=plan_counts,
         route=route,
-    )
-
-
-def _initial_plan_selected_counts(
-    self: Any,
-    *,
-    planning_files: list[str],
-    existing_counts: dict[str, int],
-) -> dict[str, int]:
-    remembered = self._load_plan_selection_memory()
-    return _initial_plan_selected_counts_impl(
-        planning_files=planning_files,
-        existing_counts=existing_counts,
-        remembered_counts=remembered,
     )
 
 
@@ -430,31 +407,12 @@ def _resolve_planning_selection_target(
     )
 
 
-def _plan_selection_memory_path(self: Any) -> Path:
-    return _plan_selection_memory_path_impl(runtime_root=self.runtime_root)
-
-
 def _planning_root(self: Any) -> Path:
     return _planning_root_impl(planning_dir=self.config.planning_dir)
 
 
 def _planning_done_root(self: Any) -> Path:
     return _planning_done_root_impl(planning_dir=self.config.planning_dir)
-
-
-def _load_plan_selection_memory(self: Any) -> dict[str, int]:
-    return _load_plan_selection_memory_impl(
-        runtime_root=self.runtime_root,
-        runtime_legacy_root=self.runtime_legacy_root,
-    )
-
-
-def _save_plan_selection_memory(self: Any, selected_counts: dict[str, int]) -> None:
-    _save_plan_selection_memory_impl(
-        runtime_root=self.runtime_root,
-        runtime_legacy_root=self.runtime_legacy_root,
-        selected_counts=selected_counts,
-    )
 
 
 def _planning_keep_plan_enabled(self: Any, route: Route) -> bool:

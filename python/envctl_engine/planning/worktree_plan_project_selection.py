@@ -190,7 +190,7 @@ def select_plan_projects(
         return PlanSelectionResult(raw_projects=raw_projects, selected_contexts=[], error="No TTY available.")
 
     dry_run = bool(getattr(route, "flags", {}).get("dry_run"))
-    plan_counts = prompt_planning_selection(planning_files, raw_projects, persist_memory=not dry_run)
+    plan_counts = prompt_planning_selection(planning_files, raw_projects)
     if plan_counts is None:
         output("Planning selection cancelled.")
         return PlanSelectionResult(

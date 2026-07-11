@@ -57,7 +57,7 @@ class CommitActionHarness:
             return subprocess.CompletedProcess(args=args, returncode=0, stdout=self._next_pre_stage_status(), stderr="")
         if args[:3] == ["reset", "-q", "--"]:
             return subprocess.CompletedProcess(args=args, returncode=self.reset_returncode, stdout="", stderr=self.reset_stderr)
-        if args[:2] == ["add", "--"]:
+        if args[:3] == ["add", "--all", "--"]:
             return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
         if args == ["status", "--porcelain"]:
             return subprocess.CompletedProcess(args=args, returncode=0, stdout=self.staged_status, stderr="")
