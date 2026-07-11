@@ -35,6 +35,12 @@ def wait_for_service_listener(
                 return True
         except Exception:  # noqa: BLE001
             pass
+    # A generic port probe is only a safe fallback while the process envctl
+    # launched is still alive. Once that PID has exited, waiting on the port can
+    # hide the real startup error for minutes and can adopt an unrelated process
+    # that happens to bind the same port later.
+    if _launch_pid_definitively_exited(runtime, pid):
+        return False
     if (
         debug_listener_group in {"", "port_fallback"}
         and service_truth_fallback_enabled(runtime)
@@ -49,6 +55,16 @@ def wait_for_service_listener(
         )
         return True
     return False
+
+
+def _launch_pid_definitively_exited(runtime: Any, pid: int) -> bool:
+    checker = getattr(runtime.process_runner, "is_pid_running", None)
+    if not callable(checker):
+        return False
+    try:
+        return not bool(checker(pid))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def process_tree_probe_supported(runtime: Any) -> bool:

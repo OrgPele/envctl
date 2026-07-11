@@ -7,6 +7,8 @@ import time
 from typing import Any, cast
 
 from envctl_engine.runtime.service_manager import ServiceCleanupError, ServiceStartDescriptor
+from envctl_engine.runtime.service_truth_diagnostics import service_listener_failure_class
+from envctl_engine.shared.reason_codes import ServiceFailureReason
 from envctl_engine.startup.service_execution_policy import ordered_service_layers
 from envctl_engine.startup.service_execution_records import PreparedServiceLaunch
 from envctl_engine.startup.session import unconfirmed_service_names
@@ -293,12 +295,24 @@ class ServiceAttachRunner:
         env_extra: dict[str, str],
     ) -> tuple[bool, str | None, int | None]:
         launch_started = time.monotonic()
-        process = self._start_process(
-            command,
-            cwd=str(launch.cwd),
-            env=self.command_env_builder(port=launch_port, extra=env_extra),
-            log_path=launch.log_path,
-        )
+        try:
+            process = self._start_process(
+                command,
+                cwd=str(launch.cwd),
+                env=self.command_env_builder(port=launch_port, extra=env_extra),
+                log_path=launch.log_path,
+            )
+        except OSError as exc:
+            detail = f"process spawn failed for {command[0]}: {exc}"
+            self.runtime._emit(
+                "service.failure",
+                project=self.project_name,
+                service=service_name,
+                failure_class=ServiceFailureReason.PROCESS_SPAWN_FAILED.value,
+                requested_port=event_port,
+                detail=detail,
+            )
+            return False, detail, None
         pid = getattr(process, "pid", None)
         try:
             self._emit_attach_phase(service_name, "process_launch", launch_started)
@@ -533,17 +547,22 @@ class ServiceAttachRunner:
         if self.runtime._listener_truth_enforced():
             detail = self.runtime._service_listener_failure_detail(log_path=log_path, pid=pid)
             error_suffix = f" ({detail})" if detail else ""
+            failure_class = service_listener_failure_class(detail)
             self.runtime._emit(
                 "service.failure",
                 project=self.project_name,
                 service=service_name,
-                failure_class="listener_not_detected",
+                failure_class=failure_class,
                 requested_port=requested,
                 detail=detail,
             )
-            raise RuntimeError(
-                f"{service_name} listener not detected for {self.project_name} on port {failure_port}{error_suffix}"
-            )
+            if failure_class == ServiceFailureReason.DEPENDENCY_MISSING.value:
+                failure_summary = f"{service_name} is missing a required executable or module"
+            elif failure_class == ServiceFailureReason.PROCESS_EXITED.value:
+                failure_summary = f"{service_name} process exited before opening its listener"
+            else:
+                failure_summary = f"{service_name} listener not detected"
+            raise RuntimeError(f"{failure_summary} for {self.project_name} on port {failure_port}{error_suffix}")
         self.runtime._emit(
             "service.failure",
             project=self.project_name,

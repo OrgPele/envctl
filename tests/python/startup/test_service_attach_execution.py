@@ -218,6 +218,56 @@ class ServiceAttachExecutionTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(pid, 62001)
 
+    def test_process_spawn_error_is_structured_without_listener_wait(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(
+            _conflict_remaining={},
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _service_start_command_resolved=lambda **_kwargs: (["missing-backend"], "configured"),
+        )
+        runner = ServiceAttachRunner(
+            runtime=runtime,
+            process_runtime=SimpleNamespace(
+                start_background=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    FileNotFoundError("missing interpreter")
+                )
+            ),
+            port_allocator=SimpleNamespace(reserve_next=lambda port, owner: port),
+            project_name="Main",
+            project_root=Path("/repo"),
+            backend_plan=port_plan(8000),
+            frontend_plan=port_plan(5173),
+            backend_cwd=Path("/repo/backend"),
+            frontend_cwd=Path("/repo/frontend"),
+            backend_log_path="/logs/backend.txt",
+            frontend_log_path="/logs/frontend.txt",
+            backend_env_extra={},
+            frontend_env_extra={},
+            command_env_builder=lambda port, extra: dict(extra),
+            prepared_launches={
+                "backend": PreparedServiceLaunch(
+                    service_name="backend",
+                    cwd=Path("/repo/backend"),
+                    log_path="/logs/backend.txt",
+                    requested_port=8000,
+                    env={},
+                    command_source="configured",
+                )
+            },
+            selected_service_types={"backend"},
+            additional_services=(),
+            backend_listener_expected=True,
+            rebound_delta=0,
+        )
+
+        success, error, pid = runner.start_backend(8000)
+
+        self.assertFalse(success)
+        self.assertIn("process spawn failed for missing-backend", error)
+        self.assertIsNone(pid)
+        failure_events = [payload for event, payload in events if event == "service.failure"]
+        self.assertEqual(failure_events[0]["failure_class"], "process_spawn_failed")
+
     def test_runner_builds_layered_descriptors_and_preserves_additional_urls(self) -> None:
         project_root = Path("/tmp/envctl-project")
         events: list[tuple[str, dict[str, object]]] = []
@@ -440,7 +490,7 @@ class ServiceAttachExecutionTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             RuntimeError,
-            r"voice-runtime listener not detected for Main on port 8010 \(process exited\)",
+            r"voice-runtime process exited before opening its listener for Main on port 8010 \(process exited\)",
         ):
             runner.detect_additional_actual("voice-runtime", pid=4321, requested=8010)
 
@@ -450,13 +500,68 @@ class ServiceAttachExecutionTests(unittest.TestCase):
                 {
                     "project": "Main",
                     "service": "voice-runtime",
-                    "failure_class": "listener_not_detected",
+                    "failure_class": "process_exited",
                     "requested_port": 8010,
                     "detail": "process exited",
                 },
             ),
             events,
         )
+
+    def test_missing_nested_executable_is_reported_as_dependency_failure(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        detail = (
+            "process 2304354 exited; log_path: /tmp/voice-runtime.txt; "
+            "log: scripts/envctl/start-voice-runtime.sh: line 20: exec: python: not found"
+        )
+        runtime = SimpleNamespace(
+            services=SimpleNamespace(),
+            _conflict_remaining={},
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _detect_service_actual_port=lambda **_kwargs: None,
+            _listener_truth_enforced=lambda: True,
+            _service_listener_failure_detail=lambda **_kwargs: detail,
+        )
+        runner = ServiceAttachRunner(
+            runtime=runtime,
+            process_runtime=SimpleNamespace(),
+            port_allocator=SimpleNamespace(reserve_next=lambda port, owner: port),
+            project_name="refactoring-elevenlabs-agent-runtime-automation-and-pipecat-strangler-3",
+            project_root=Path("/repo"),
+            backend_plan=port_plan(8000),
+            frontend_plan=port_plan(5173),
+            backend_cwd=Path("/repo/backend"),
+            frontend_cwd=Path("/repo/frontend"),
+            backend_log_path="/logs/backend.txt",
+            frontend_log_path="/logs/frontend.txt",
+            backend_env_extra={},
+            frontend_env_extra={},
+            command_env_builder=lambda port, extra: dict(extra),
+            prepared_launches={
+                "voice-runtime": PreparedServiceLaunch(
+                    service_name="voice-runtime",
+                    cwd=Path("/repo/voice-runtime"),
+                    log_path="/tmp/voice-runtime.txt",
+                    requested_port=8251,
+                    env={"PORT": "8251"},
+                    command_source="configured",
+                )
+            },
+            selected_service_types={"voice-runtime"},
+            additional_services=(),
+            backend_listener_expected=True,
+            rebound_delta=0,
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "voice-runtime is missing a required executable or module",
+        ):
+            runner.detect_additional_actual("voice-runtime", pid=2304354, requested=8251)
+
+        failure_events = [payload for event, payload in events if event == "service.failure"]
+        self.assertEqual(failure_events[0]["failure_class"], "dependency_missing")
+        self.assertEqual(failure_events[0]["detail"], detail)
 
     def test_core_only_runner_uses_legacy_service_manager_when_generic_attach_is_missing(self) -> None:
         attach_kwargs: dict[str, object] = {}

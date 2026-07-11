@@ -139,6 +139,13 @@ Only simple `${VAR}` placeholders are supported. Shell-style defaults, command s
 
 Frontend launch-env sections may use `ENVCTL_SOURCE_SUPABASE_URL` and `ENVCTL_SOURCE_SUPABASE_ANON_KEY`. They cannot reference `ENVCTL_SOURCE_SUPABASE_SERVICE_ROLE_KEY`; envctl rejects that mapping before launching the frontend process.
 
+Every launched service also receives `ENVCTL_PYTHON_EXECUTABLE`, the absolute
+interpreter path running envctl. Repository-owned shell launchers can use this
+as a bootstrap interpreter on minimal hosts where a `python` command alias is
+not installed. Applications should still create and execute their own project
+environment rather than importing application dependencies from envctl's
+environment.
+
 ## Managed Supabase Ports
 
 Managed Supabase exposes two distinct local resources:
