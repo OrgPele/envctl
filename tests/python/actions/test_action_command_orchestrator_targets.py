@@ -230,6 +230,11 @@ class ActionCommandTargetTests(unittest.TestCase):
         self.assertEqual(targets, [])
         self.assertEqual(plan.target_contexts, [])
         self.assertEqual(plan.execution_specs, [])
+        self.assertEqual(
+            plan.missing_execution_specs_message,
+            "No test command supports the all-untested scope. "
+            "Configure a test-all-trees.sh action command or select projects explicitly.",
+        )
 
     def test_projects_for_services_matches_additional_service_slug_from_state(self) -> None:
         runtime = _RuntimeStub()

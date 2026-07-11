@@ -31,6 +31,15 @@ class TestActionExecutionPlan:
     def multi_project(self) -> bool:
         return len(self.distinct_projects) > 1
 
+    @property
+    def missing_execution_specs_message(self) -> str:
+        if self.untested and not self.target_contexts:
+            return (
+                "No test command supports the all-untested scope. "
+                "Configure a test-all-trees.sh action command or select projects explicitly."
+            )
+        return "No test command configured. Set Backend test command or Frontend test command in envctl config."
+
 
 @dataclass(frozen=True, slots=True)
 class SuiteSpinnerDecision:

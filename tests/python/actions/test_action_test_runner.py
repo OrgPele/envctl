@@ -60,8 +60,10 @@ class ActionTestRunnerShipOnPassTests(unittest.TestCase):
                 return_value=SimpleNamespace(
                     execution_specs=[],
                     interactive_command=False,
-                    untested=True,
-                    target_contexts=[],
+                    missing_execution_specs_message=(
+                        "No test command supports the all-untested scope. "
+                        "Configure a test-all-trees.sh action command or select projects explicitly."
+                    ),
                 ),
             ),
             patch("builtins.print") as printer,
