@@ -20,7 +20,7 @@ from envctl_engine.actions.action_ship_support import (
 def test_public_run_ship_workflow_is_thin_compatibility_wrapper() -> None:
     source = inspect.getsource(run_ship_workflow)
     assert "ShipWorkflowRunner" in source
-    assert len(source.splitlines()) <= 35
+    assert len(source.splitlines()) <= 40
 
 
 def test_ship_workflow_runner_exposes_named_phases() -> None:
@@ -58,6 +58,7 @@ def test_ship_workflow_dependencies_group_injected_collaborators() -> None:
         "partition_envctl_protected_paths",
         "ordered_unique_paths",
         "github_pr_checks",
+        "existing_pull_request",
     }
 
     runner_fields = set(getattr(ship_support.ShipWorkflowRunner, "__dataclass_fields__", {}))

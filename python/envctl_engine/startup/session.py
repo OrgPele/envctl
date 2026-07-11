@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
@@ -54,11 +55,13 @@ class StartupSession:
     restart_state: RunState | None = None
     requirements_by_project: dict[str, RequirementsResult] = field(default_factory=dict)
     services_by_project: dict[str, dict[str, ServiceRecord]] = field(default_factory=dict)
+    unterminated_services: dict[str, ServiceRecord] = field(default_factory=dict)
     started_context_names: list[str] = field(default_factory=list)
     dashboard_after_start: bool = False
     disabled_startup_mode: bool = False
     used_project_spinner_group: bool = False
     strict_truth_failed: bool = False
+    preserve_existing_state_on_failure: bool = False
     failure_message: str | None = None
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -82,6 +85,7 @@ class StartupSession:
         services = dict(self.preserved_services)
         for project_services in self.services_by_project.values():
             services.update(project_services)
+        services.update(self.unterminated_services)
         return services
 
     @property
@@ -111,3 +115,57 @@ class StartupSession:
         if launch_result is None:
             return False
         return str(getattr(launch_result, "status", "")).strip().lower() == "partial"
+
+
+def unconfirmed_service_names(
+    termination_result: object,
+    services: Mapping[str, object],
+) -> set[str]:
+    """Return services whose exit was not positively confirmed.
+
+    The termination contract returns a collection of names that remain alive;
+    an explicit empty collection therefore confirms complete cleanup. Legacy
+    adapters and failed mocks may return ``None`` or another scalar. Treating
+    those values as success loses process and port ownership, so they retain
+    every service for a later verified cleanup pass.
+    """
+
+    if not isinstance(termination_result, Collection) or isinstance(
+        termination_result,
+        (str, bytes, Mapping),
+    ):
+        return set(services)
+    return {name for raw_name in termination_result if (name := str(raw_name).strip()) and name in services}
+
+
+def metadata_with_state_sources(metadata: dict[str, Any], state: RunState) -> dict[str, Any]:
+    """Return metadata that records every state replaced by a new startup run."""
+
+    updated = dict(metadata)
+    source_run_ids = {state.run_id}
+    for source in (
+        updated.get("state_source_run_ids"),
+        state.metadata.get("state_source_run_ids"),
+    ):
+        if not isinstance(source, list):
+            continue
+        source_run_ids.update(str(run_id).strip() for run_id in source if str(run_id).strip())
+    updated["state_source_run_ids"] = sorted(source_run_ids)
+    return updated
+
+
+def track_startup_failure(session: StartupSession, failure: BaseException) -> None:
+    project = str(getattr(failure, "project", "") or "").strip()
+    requirements = getattr(failure, "requirements", None)
+    if project and isinstance(requirements, RequirementsResult):
+        session.requirements_by_project[project] = requirements
+    services = getattr(failure, "unterminated_services", None)
+    if not isinstance(services, dict):
+        return
+    for name, service in services.items():
+        if isinstance(name, str) and isinstance(service, ServiceRecord):
+            session.unterminated_services[name] = service
+
+
+def track_unterminated_services(session: StartupSession, failure: BaseException) -> None:
+    track_startup_failure(session, failure)

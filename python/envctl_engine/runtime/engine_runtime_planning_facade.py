@@ -16,7 +16,6 @@ from envctl_engine.planning.worktree_domain import (
     _planning_done_root as domain_planning_done_root,
     _planning_menu_apply_key as domain_planning_menu_apply_key,
     _planning_root as domain_planning_root,
-    _plan_selection_memory_path as domain_plan_selection_memory_path,
     _preferred_tree_root_for_feature as domain_preferred_tree_root_for_feature,
     _project_sort_key_for_feature as domain_project_sort_key_for_feature,
     _read_planning_menu_escape_sequence as domain_read_planning_menu_escape_sequence,
@@ -54,7 +53,6 @@ class RuntimePlanningFacadeMixin:
     _resolve_planning_selection_target = domain_resolve_planning_selection_target
     _planning_root = domain_planning_root
     _planning_done_root = domain_planning_done_root
-    _plan_selection_memory_path = domain_plan_selection_memory_path
     _create_feature_worktrees = domain_create_feature_worktrees
     _worktree_add_failure = domain_worktree_add_failure
     _setup_worktree_placeholder_fallback_enabled = domain_setup_worktree_placeholder_fallback_enabled
@@ -79,17 +77,6 @@ class RuntimePlanningFacadeMixin:
     ) -> dict[str, int] | None:
         return _planning_orchestrator(self).prompt_planning_selection(planning_files, raw_projects)
 
-    def _initial_plan_selected_counts(
-        self,
-        *,
-        planning_files: list[str],
-        existing_counts: dict[str, int],
-    ) -> dict[str, int]:
-        return _planning_orchestrator(self).initial_plan_selected_counts(
-            planning_files=planning_files,
-            existing_counts=existing_counts,
-        )
-
     def _run_planning_selection_menu(
         self,
         *,
@@ -102,12 +89,6 @@ class RuntimePlanningFacadeMixin:
             selected_counts=selected_counts,
             existing_counts=existing_counts,
         )
-
-    def _load_plan_selection_memory(self) -> dict[str, int]:
-        return _planning_orchestrator(self).load_plan_selection_memory()
-
-    def _save_plan_selection_memory(self, selected_counts: dict[str, int]) -> None:
-        _planning_orchestrator(self).save_plan_selection_memory(selected_counts)
 
     def _planning_keep_plan_enabled(self, route: Route) -> bool:
         return _planning_orchestrator(self).planning_keep_plan_enabled(route)

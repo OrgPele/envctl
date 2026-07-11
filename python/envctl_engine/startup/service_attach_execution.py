@@ -1,21 +1,23 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-import os
 from pathlib import Path
 import time
 from typing import Any, cast
 
-from envctl_engine.runtime.service_manager import ServiceStartDescriptor
 from envctl_engine.runtime.docker_service_runtime import (
     DockerServiceLaunch,
     DockerServiceRuntime,
     docker_service_container_command_source,
     docker_service_mode_enabled,
 )
+from envctl_engine.runtime.service_manager import ServiceCleanupError, ServiceStartDescriptor
+from envctl_engine.runtime.service_truth_diagnostics import service_listener_failure_class
+from envctl_engine.shared.reason_codes import ServiceFailureReason
 from envctl_engine.startup.service_execution_policy import ordered_service_layers
 from envctl_engine.startup.service_execution_records import PreparedServiceLaunch
+from envctl_engine.startup.session import unconfirmed_service_names
 from envctl_engine.state.models import PortPlan, ServiceRecord
 
 
@@ -40,9 +42,11 @@ class ServiceAttachRunner:
     additional_services: tuple[Any, ...]
     backend_listener_expected: bool
     rebound_delta: int
+    _active_service_ports: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    _rebound_launch_ports: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     docker_mode: bool = False
     refresh_cache: bool = False
-    _container_launches: dict[str, DockerServiceLaunch] = field(default_factory=dict, init=False)
+    _container_launches: dict[str, DockerServiceLaunch] = field(default_factory=dict, init=False, repr=False)
 
     def start(
         self,
@@ -51,30 +55,101 @@ class ServiceAttachRunner:
         on_service_retry: Callable[[str, int, int, int, str | None], None],
     ) -> dict[str, ServiceRecord]:
         descriptors = self._service_descriptors()
+        self._active_service_ports = {
+            descriptor.service_type: descriptor.requested_port
+            for descriptor in descriptors
+            if descriptor.requested_port > 0
+        }
+
+        def release_failed_port_then_report(
+            service_type: str,
+            failed_port: int,
+            retry_port: int,
+            attempt: int,
+            error: str | None,
+        ) -> None:
+            self._release_failed_service_port(service_type, failed_port)
+            self._release_rebound_launch_port(service_type)
+            if retry_port > 0:
+                self._active_service_ports[service_type] = retry_port
+            on_service_retry(service_type, failed_port, retry_port, attempt, error)
+
         try:
+            if hasattr(self.runtime.services, "process_runner"):
+                self.runtime.services.process_runner = self.process_runtime
             generic_attach = getattr(self.runtime.services, "start_services_with_attach", None)
             if callable(generic_attach):
                 records = self._start_with_generic_attach(
                     descriptors=descriptors,
                     attach_parallel=attach_parallel,
-                    on_service_retry=on_service_retry,
+                    on_service_retry=release_failed_port_then_report,
                     generic_attach=cast(Callable[..., dict[str, ServiceRecord]], generic_attach),
                 )
             elif self.selected_service_types <= {"backend", "frontend"}:
                 records = self._start_core_services_with_legacy_attach(
                     attach_parallel=attach_parallel,
-                    on_service_retry=on_service_retry,
+                    on_service_retry=release_failed_port_then_report,
                 )
             else:
                 raise RuntimeError("Service manager does not support additional app services")
-        except Exception:
-            self._cleanup_container_launches()
+            self._annotate_container_records(records)
+            self._record_port_lock_session(records.values())
+            return records
+        except Exception as exc:
+            container_cleanup_error: Exception | None = None
+            try:
+                self._cleanup_container_launches()
+            except Exception as cleanup_exc:  # noqa: BLE001
+                container_cleanup_error = cleanup_exc
+            self._record_port_lock_session(dict(getattr(exc, "unterminated_services", {}) or {}).values())
+            self._release_failed_start_reservations(exc)
+            if container_cleanup_error is not None:
+                raise RuntimeError(f"{exc}; Docker cleanup error: {container_cleanup_error}") from exc
             raise
-        self._annotate_container_records(records)
-        return records
+
+    def _record_port_lock_session(self, services: Iterable[object]) -> None:
+        raw_session_id = getattr(self.port_allocator, "session_id", None)
+        session_id = raw_session_id.strip() if isinstance(raw_session_id, str) else ""
+        if not session_id:
+            return
+        for service in services:
+            if isinstance(service, ServiceRecord):
+                service.port_lock_session = session_id
 
     def reserve_next(self, port: int) -> int:
         return self.port_allocator.reserve_next(port, owner=f"{self.project_name}:services")
+
+    def _release_failed_service_port(self, service_type: str, port: int) -> None:
+        release = getattr(self.port_allocator, "release", None)
+        if not callable(release):
+            return
+        for owner in (
+            f"{self.project_name}:{service_type}",
+            f"{self.project_name}:services",
+            f"{self.project_name}:services:{service_type}-launch",
+        ):
+            release(port, owner=owner)
+
+    def _release_rebound_launch_port(self, service_type: str) -> None:
+        port = self._rebound_launch_ports.pop(service_type, None)
+        if port is None:
+            return
+        release = getattr(self.port_allocator, "release", None)
+        if callable(release):
+            release(port, owner=f"{self.project_name}:services:{service_type}-launch")
+
+    def _release_failed_start_reservations(self, error: BaseException) -> None:
+        preserved_service_types = {
+            str(getattr(service, "type", "") or "").strip().lower()
+            for service in dict(getattr(error, "unterminated_services", {}) or {}).values()
+            if _service_has_recorded_pid(service)
+        }
+        for service_type, port in tuple(self._active_service_ports.items()):
+            if service_type in preserved_service_types:
+                continue
+            self._release_failed_service_port(service_type, port)
+            self._active_service_ports.pop(service_type, None)
+            self._release_rebound_launch_port(service_type)
 
     def _start_with_generic_attach(
         self,
@@ -86,18 +161,42 @@ class ServiceAttachRunner:
     ) -> dict[str, ServiceRecord]:
         descriptor_by_type = {descriptor.service_type: descriptor for descriptor in descriptors}
         records: dict[str, ServiceRecord] = {}
-        for layer in ordered_service_layers(
-            tuple(descriptor.service_type for descriptor in descriptors),
-            self.additional_services,
-        ):
-            layer_records = generic_attach(
-                project=self.project_name,
-                descriptors=tuple(descriptor_by_type[name] for name in layer),
-                reserve_next=self.reserve_next,
-                on_retry=on_service_retry,
-                parallel_start=attach_parallel and len(layer) > 1,
-            )
-            records.update(layer_records)
+        try:
+            for layer in ordered_service_layers(
+                tuple(descriptor.service_type for descriptor in descriptors),
+                self.additional_services,
+            ):
+                layer_records = generic_attach(
+                    project=self.project_name,
+                    descriptors=tuple(descriptor_by_type[name] for name in layer),
+                    reserve_next=self.reserve_next,
+                    on_retry=on_service_retry,
+                    parallel_start=attach_parallel and len(layer) > 1,
+                )
+                records.update(layer_records)
+        except Exception as exc:
+            unterminated = dict(getattr(exc, "unterminated_services", {}) or {})
+            terminator = getattr(self.runtime, "_terminate_started_services", None)
+            if records:
+                if callable(terminator):
+                    try:
+                        failed_names = unconfirmed_service_names(
+                            terminator(records),
+                            records,
+                        )
+                    except Exception as cleanup_exc:  # noqa: BLE001
+                        failed_names = set(records)
+                        exc = RuntimeError(f"{exc}; cleanup error: {cleanup_exc}")
+                else:
+                    failed_names = set(records)
+                unterminated.update((name, service) for name, service in records.items() if name in failed_names)
+            if unterminated:
+                names = ", ".join(sorted(unterminated))
+                raise ServiceCleanupError(
+                    f"{exc}; cleanup could not confirm exit for: {names}",
+                    unterminated,
+                ) from exc
+            raise
         return records
 
     def _start_core_services_with_legacy_attach(
@@ -125,6 +224,7 @@ class ServiceAttachRunner:
 
     def _service_descriptors(self) -> list[ServiceStartDescriptor]:
         descriptors: list[ServiceStartDescriptor] = []
+        pid_required = not self._docker_mode_enabled()
         if "backend" in self.selected_service_types:
             descriptors.append(
                 ServiceStartDescriptor(
@@ -135,6 +235,7 @@ class ServiceAttachRunner:
                     detect_actual=self.detect_backend_actual,
                     listener_expected=self.backend_listener_expected,
                     log_path=self.backend_log_path,
+                    pid_required=pid_required,
                 )
             )
         if "frontend" in self.selected_service_types:
@@ -147,6 +248,7 @@ class ServiceAttachRunner:
                     detect_actual=self.detect_frontend_actual,
                     listener_expected=True,
                     log_path=self.frontend_log_path,
+                    pid_required=pid_required,
                 )
             )
         for service in sorted(self.additional_services, key=lambda item: (item.start_order, item.name)):
@@ -156,9 +258,7 @@ class ServiceAttachRunner:
                     service_type=service.name,
                     cwd=str(launch.cwd),
                     requested_port=launch.requested_port,
-                    start=lambda port, service_name=service.name: self.start_additional_service(
-                        service_name, port
-                    ),
+                    start=lambda port, service_name=service.name: self.start_additional_service(service_name, port),
                     detect_actual=lambda pid, requested, service_name=service.name: self.detect_additional_actual(
                         service_name, pid, requested
                     ),
@@ -167,6 +267,7 @@ class ServiceAttachRunner:
                     log_path=launch.log_path,
                     public_url=launch.env.get(f"ENVCTL_SOURCE_SERVICE_{service.env_suffix}_PUBLIC_URL"),
                     health_url=launch.env.get(f"ENVCTL_SOURCE_SERVICE_{service.env_suffix}_HEALTH_URL"),
+                    pid_required=pid_required,
                 )
             )
         return descriptors
@@ -213,11 +314,10 @@ class ServiceAttachRunner:
         launch_port: int,
         event_port: int,
         env_extra: dict[str, str],
-        pid_fallback: int,
     ) -> tuple[bool, str | None, int | None]:
         launch_started = time.monotonic()
         service_env = self.command_env_builder(port=launch_port, extra=env_extra)
-        if self.docker_mode or docker_service_mode_enabled(self.runtime):
+        if self._docker_mode_enabled():
             try:
                 container_launch = DockerServiceRuntime(
                     self.runtime,
@@ -235,29 +335,55 @@ class ServiceAttachRunner:
                     listener_expected=launch.listener_expected,
                     log_path=launch.log_path,
                 )
-            except RuntimeError as exc:
+            except (OSError, RuntimeError) as exc:
                 self._emit_attach_phase(service_name, "container_launch", launch_started)
-                return False, str(exc), None
+                detail = str(exc)
+                self.runtime._emit(
+                    "service.failure",
+                    project=self.project_name,
+                    service=service_name,
+                    failure_class="container_start_failed",
+                    requested_port=event_port,
+                    detail=detail,
+                )
+                return False, detail, None
             self._container_launches[service_name] = container_launch
             process_pid = None
             phase = "container_launch"
         else:
-            process = self._start_process(
-                command,
-                cwd=str(launch.cwd),
-                env=service_env,
-                log_path=launch.log_path,
-            )
-            process_pid = getattr(process, "pid", pid_fallback)
+            try:
+                process = self._start_process(
+                    command,
+                    cwd=str(launch.cwd),
+                    env=service_env,
+                    log_path=launch.log_path,
+                )
+            except OSError as exc:
+                executable = command[0] if command else "<empty command>"
+                detail = f"process spawn failed for {executable}: {exc}"
+                self.runtime._emit(
+                    "service.failure",
+                    project=self.project_name,
+                    service=service_name,
+                    failure_class=ServiceFailureReason.PROCESS_SPAWN_FAILED.value,
+                    requested_port=event_port,
+                    detail=detail,
+                )
+                return False, detail, None
+            pid = getattr(process, "pid", None)
+            process_pid = pid if isinstance(pid, int) and pid > 0 else None
             phase = "process_launch"
-        self._emit_attach_phase(service_name, phase, launch_started)
-        self.runtime._emit(
-            "service.start",
-            project=self.project_name,
-            service=service_name,
-            port=event_port,
-            retry=False,
-        )
+        try:
+            self._emit_attach_phase(service_name, phase, launch_started)
+            self.runtime._emit(
+                "service.start",
+                project=self.project_name,
+                service=service_name,
+                port=event_port,
+                retry=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
         return True, None, process_pid
 
     def _container_actual_port(
@@ -306,6 +432,9 @@ class ServiceAttachRunner:
             self._container_launches.pop(service_name, None)
         return None
 
+    def _docker_mode_enabled(self) -> bool:
+        return self.docker_mode or docker_service_mode_enabled(self.runtime)
+
     def _annotate_container_records(self, records: dict[str, ServiceRecord]) -> None:
         for record in records.values():
             service_name = str(record.service_slug or record.type)
@@ -337,7 +466,6 @@ class ServiceAttachRunner:
             launch_port=port,
             event_port=port,
             env_extra=self.backend_env_extra,
-            pid_fallback=os.getpid(),
         )
 
     def start_frontend(self, port: int) -> tuple[bool, str | None, int | None]:
@@ -350,24 +478,31 @@ class ServiceAttachRunner:
                 launch_port,
                 owner=f"{self.project_name}:services:frontend-launch",
             )
-        command_resolve_started = time.monotonic()
-        command = self._core_service_command("frontend", launch_port)
-        self._emit_attach_phase("frontend", "command_resolution", command_resolve_started)
-        return self._launch_prepared_process(
-            service_name="frontend",
-            command=command,
-            launch=self.prepared_launches["frontend"],
-            launch_port=launch_port,
-            event_port=port,
-            env_extra=self.frontend_env_extra,
-            pid_fallback=os.getpid() + 1,
-        )
+            self._rebound_launch_ports["frontend"] = launch_port
+        try:
+            command_resolve_started = time.monotonic()
+            command = self._core_service_command("frontend", launch_port)
+            self._emit_attach_phase("frontend", "command_resolution", command_resolve_started)
+            result = self._launch_prepared_process(
+                service_name="frontend",
+                command=command,
+                launch=self.prepared_launches["frontend"],
+                launch_port=launch_port,
+                event_port=port,
+                env_extra=self.frontend_env_extra,
+            )
+        except Exception:
+            self._release_rebound_launch_port("frontend")
+            raise
+        if not isinstance(result[2], int) or isinstance(result[2], bool) or result[2] <= 0:
+            self._release_rebound_launch_port("frontend")
+        return result
 
     def _core_service_command(self, service_name: str, port: int) -> list[str]:
         container_command_source = docker_service_container_command_source(
             self.runtime,
             service_name,
-            docker_mode=self.docker_mode or docker_service_mode_enabled(self.runtime),
+            docker_mode=self._docker_mode_enabled(),
         )
         if container_command_source is not None:
             return []
@@ -390,7 +525,7 @@ class ServiceAttachRunner:
         if docker_service_container_command_source(
             self.runtime,
             service_name,
-            docker_mode=self.docker_mode or docker_service_mode_enabled(self.runtime),
+            docker_mode=self._docker_mode_enabled(),
         ) is not None:
             command = []
         else:
@@ -412,7 +547,6 @@ class ServiceAttachRunner:
             launch_port=port,
             event_port=port,
             env_extra=launch.env,
-            pid_fallback=os.getpid(),
         )
 
     def detect_backend_actual(self, pid: int | None, requested: int) -> int | None:
@@ -567,17 +701,22 @@ class ServiceAttachRunner:
         if self.runtime._listener_truth_enforced():
             detail = self.runtime._service_listener_failure_detail(log_path=log_path, pid=pid)
             error_suffix = f" ({detail})" if detail else ""
+            failure_class = service_listener_failure_class(detail)
             self.runtime._emit(
                 "service.failure",
                 project=self.project_name,
                 service=service_name,
-                failure_class="listener_not_detected",
+                failure_class=failure_class,
                 requested_port=requested,
                 detail=detail,
             )
-            raise RuntimeError(
-                f"{service_name} listener not detected for {self.project_name} on port {failure_port}{error_suffix}"
-            )
+            if failure_class == ServiceFailureReason.DEPENDENCY_MISSING.value:
+                failure_summary = f"{service_name} is missing a required executable or module"
+            elif failure_class == ServiceFailureReason.PROCESS_EXITED.value:
+                failure_summary = f"{service_name} process exited before opening its listener"
+            else:
+                failure_summary = f"{service_name} listener not detected"
+            raise RuntimeError(f"{failure_summary} for {self.project_name} on port {failure_port}{error_suffix}")
         self.runtime._emit(
             "service.failure",
             project=self.project_name,
@@ -602,3 +741,10 @@ class ServiceAttachRunner:
             phase=phase,
             duration_ms=round((time.monotonic() - started) * 1000.0, 2),
         )
+
+
+def _service_has_recorded_pid(service: object) -> bool:
+    listener_pids = getattr(service, "listener_pids", None)
+    listeners = listener_pids if isinstance(listener_pids, (list, tuple, set, frozenset)) else ()
+    candidates = [getattr(service, "pid", None), *listeners]
+    return any(isinstance(pid, int) and not isinstance(pid, bool) and pid > 0 for pid in candidates)

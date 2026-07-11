@@ -7,6 +7,10 @@ from typing import Any, cast
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.docker_service_runtime import state_uses_docker_services
 from envctl_engine.runtime.engine_runtime_startup_support import mark_run_reused
+from envctl_engine.runtime.lifecycle_operation_lease import (
+    lifecycle_operation_active,
+    release_lifecycle_operation,
+)
 from envctl_engine.runtime.runtime_context import resolve_state_repository
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.startup.finalization import build_planning_dashboard_state
@@ -41,21 +45,25 @@ class StartupRunReuseResumeHandler:
         self._emit_resume_match_phase()
         self._emit_resume_match_events()
 
+        lifecycle_lease_was_active = lifecycle_operation_active(self.runtime)
         resume_code = self.runtime._resume(self._resume_route())
         if int(resume_code) == 0:
             return self._resume_success_result()
+        lifecycle_lease_was_released = lifecycle_lease_was_active and not lifecycle_operation_active(self.runtime)
         self._handle_resume_failure(
             resume_code=int(resume_code),
             previous_run_id=previous_run_id,
             previous_identifiers_announced=previous_identifiers_announced,
+            allow_fresh_fallback=not lifecycle_lease_was_released,
         )
-        return None
+        return int(resume_code) if lifecycle_lease_was_released else None
 
     def resume_dashboard_run(self) -> int | None:
         self.session.run_id = self.candidate_state.run_id
         self.announce_session_identifiers(self.session)
         self._persist_dashboard_resume_metadata()
         self._emit_dashboard_resume_events()
+        release_lifecycle_operation(self.runtime)
 
         if self.headless_plan_output_only(self.session):
             self.print_headless_plan_session_summary(self.session)
@@ -120,6 +128,7 @@ class StartupRunReuseResumeHandler:
             **self.route.flags,
             "_resume_source_command": self.route.command,
             "_run_reuse_reason": self.decision.decision_kind,
+            "_state_project_names": [str(name) for name in self._selected_project_names],
         }
         if self._attach_plan_agent_after_resume():
             resume_flags["batch"] = True
@@ -154,6 +163,7 @@ class StartupRunReuseResumeHandler:
         resume_code: int,
         previous_run_id: str | None,
         previous_identifiers_announced: bool,
+        allow_fresh_fallback: bool = True,
     ) -> None:
         self.session.run_id = previous_run_id
         self.session.identifiers_announced = previous_identifiers_announced
@@ -174,11 +184,12 @@ class StartupRunReuseResumeHandler:
             mode=self.runtime_mode,
             command=self.route.command,
         )
-        self.replace_existing_project_services_for_fresh_start(
-            self.session,
-            candidate_state=self.candidate_state,
-            reason=self.decision.reason,
-        )
+        if allow_fresh_fallback:
+            self.replace_existing_project_services_for_fresh_start(
+                self.session,
+                candidate_state=self.candidate_state,
+                reason=self.decision.reason,
+            )
 
     def _persist_dashboard_resume_metadata(self) -> None:
         self.candidate_state.metadata = build_planning_dashboard_state(

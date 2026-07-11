@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -115,6 +116,22 @@ class EngineRuntimeCommandsTests(unittest.TestCase):
         self.assertEqual(env["PORT"], "9000")
         self.assertEqual(env["A"], "1")
         self.assertEqual(env["B"], "2")
+        self.assertEqual(env["ENVCTL_PYTHON_EXECUTABLE"], sys.executable)
+
+    def test_command_env_keeps_running_interpreter_authoritative(self) -> None:
+        runtime = SimpleNamespace(env={"ENVCTL_PYTHON_EXECUTABLE": "/stale/runtime/python"})
+
+        with patch(
+            "envctl_engine.runtime.engine_runtime_commands.sys.executable",
+            "/opt/envctl/bin/python",
+        ):
+            env = command_env(
+                runtime,
+                port=9000,
+                extra={"ENVCTL_PYTHON_EXECUTABLE": "/spoofed/project/python"},
+            )
+
+        self.assertEqual(env["ENVCTL_PYTHON_EXECUTABLE"], "/opt/envctl/bin/python")
 
     def test_command_env_strips_github_actions_cleanup_variables(self) -> None:
         runtime = SimpleNamespace(env={"A": "1"})
@@ -179,11 +196,31 @@ class EngineRuntimeCommandsTests(unittest.TestCase):
             script = root / "scripts" / "start-service.sh"
             script.parent.mkdir(parents=True, exist_ok=True)
             script.write_text("#!/usr/bin/env sh\n", encoding="utf-8")
+            script.chmod(0o755)
             runtime = SimpleNamespace(_command_exists=lambda executable: False)
 
             parsed = split_command(runtime, "scripts/start-service.sh {port}", port=8123, cwd=root)
 
         self.assertEqual(parsed, ["scripts/start-service.sh", "8123"])
+
+    def test_split_command_rejects_non_executable_file_and_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            file_path = root / "start-service.sh"
+            file_path.write_text("#!/usr/bin/env sh\n", encoding="utf-8")
+            directory_path = root / "service-dir"
+            directory_path.mkdir()
+            runtime = SimpleNamespace(_command_exists=lambda _executable: True)
+
+            for command in (str(file_path), str(directory_path)):
+                with (
+                    self.subTest(command=command),
+                    self.assertRaisesRegex(
+                        RuntimeError,
+                        "Resolved command executable not found",
+                    ),
+                ):
+                    split_command(runtime, command, cwd=root)
 
     def test_default_python_executable_falls_back_to_python3(self) -> None:
         runtime = SimpleNamespace(env={}, _command_exists=lambda executable: False)

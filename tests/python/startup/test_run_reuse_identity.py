@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -50,6 +52,52 @@ class RunReuseIdentityTests(unittest.TestCase):
         self.assertEqual(identity["services"], {"backend": True, "frontend": False})
         self.assertIn("fingerprint", identity)
 
+    def test_build_startup_identity_metadata_preserves_unselected_roots_without_case_duplicates(self) -> None:
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(
+                backend_dir_name="api",
+                frontend_dir_name="web",
+                additional_services=(),
+                startup_enabled_for_mode=lambda _mode: True,
+                service_enabled_for_mode=lambda _mode, service: service == "backend",
+                requirement_enabled_for_mode=lambda _mode, _requirement: False,
+            )
+        )
+
+        metadata = build_startup_identity_metadata(
+            runtime,
+            runtime_mode="trees",
+            project_contexts=[SimpleNamespace(name="featurea", root=Path("/tmp/new-a"))],
+            base_metadata={
+                "project_roots": {
+                    "FEATUREA": "/tmp/old-a",
+                    "FeatureB": "/tmp/feature-b",
+                }
+            },
+            route=Route(command="start", mode="trees", flags={}),
+        )
+
+        self.assertEqual(
+            metadata["project_roots"],
+            {
+                "featurea": normalize_project_root("/tmp/new-a"),
+                "FeatureB": normalize_project_root("/tmp/feature-b"),
+            },
+        )
+        identity = metadata["startup_identity"]
+        self.assertEqual(
+            identity["projects"],
+            [
+                {"name": "featurea", "root": normalize_project_root("/tmp/new-a")},
+                {"name": "FeatureB", "root": normalize_project_root("/tmp/feature-b")},
+            ],
+        )
+        fingerprint_payload = {key: value for key, value in identity.items() if key != "fingerprint"}
+        self.assertEqual(
+            identity["fingerprint"],
+            hashlib.sha256(json.dumps(fingerprint_payload, sort_keys=True).encode("utf-8")).hexdigest(),
+        )
+
     def test_project_identities_from_state_uses_metadata_requirements_and_services(self) -> None:
         state = RunState(
             run_id="run-1",
@@ -84,7 +132,9 @@ class RunReuseIdentityTests(unittest.TestCase):
 
     def test_startup_identity_mismatch_ignores_matching_fingerprints_and_reports_changed_fields(self) -> None:
         self.assertEqual(
-            _startup_identity_mismatch({"fingerprint": "same", "mode": "main"}, {"fingerprint": "same", "mode": "trees"}),
+            _startup_identity_mismatch(
+                {"fingerprint": "same", "mode": "main"}, {"fingerprint": "same", "mode": "trees"}
+            ),
             {},
         )
 

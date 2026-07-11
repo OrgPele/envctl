@@ -62,9 +62,10 @@ def predicted_merge_conflict_report(
     resolve_base_ref: ResolveBaseRef,
     run_git: RunGit,
     git_output: GitOutput,
+    base_branch_override: str = "",
 ) -> dict[str, object]:
     del branch
-    base_branch = resolve_base_branch(context, git_root)
+    base_branch = base_branch_override.strip() or resolve_base_branch(context, git_root)
     base_ref = resolve_base_ref(git_root, base_branch)
     if not base_ref:
         return {

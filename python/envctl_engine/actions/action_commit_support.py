@@ -19,7 +19,7 @@ from envctl_engine.actions.action_commit_message_support import (
     resolve_commit_message_request,
     write_commit_message_file as _write_commit_message_file,
 )
-from envctl_engine.actions.action_protected_artifacts import EnvctlProtectedPathPartition
+from envctl_engine.actions.action_protected_artifacts import EnvctlProtectedPathPartition, unstaged_stageable_paths
 from envctl_engine.ui.path_links import render_paths_in_terminal_text
 
 RunGitFn = Callable[[Path, list[str]], subprocess.CompletedProcess[str]]
@@ -88,6 +88,7 @@ class CommitWorkflowRunner:
             return None
 
         partition = self.dependencies.partition_envctl_protected_paths(pre_stage_status.stdout)
+        paths_to_stage = unstaged_stageable_paths(pre_stage_status.stdout)
         unstaged_protected_paths = self._unstage_protected_paths(git_root, partition)
         if unstaged_protected_paths is None:
             return None
@@ -97,7 +98,7 @@ class CommitWorkflowRunner:
                 return None
             partition = refreshed_partition
 
-        if not self._stage_paths(git_root, partition.stageable_paths):
+        if not self._stage_paths(git_root, paths_to_stage):
             return None
         self._print_skipped_protected_paths(unstaged_protected_paths, partition.protected_skipped_paths)
         return partition
@@ -141,7 +142,7 @@ class CommitWorkflowRunner:
     def _stage_paths(self, git_root: Path, stageable_paths: list[str]) -> bool:
         if not stageable_paths:
             return True
-        add = self.dependencies.run_git(git_root, ["add", "--", *stageable_paths])
+        add = self.dependencies.run_git(git_root, ["add", "--all", "--", *stageable_paths])
         if add.returncode != 0:
             self.dependencies.print_error("git add failed", add)
             return False

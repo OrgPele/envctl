@@ -63,6 +63,26 @@ def ordered_unique_paths(*path_groups: list[str]) -> list[str]:
     return paths
 
 
+def unstaged_stageable_paths(status_output: str) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for raw_line in str(status_output or "").splitlines():
+        line = raw_line.rstrip("\n")
+        if len(line) < 4:
+            continue
+        is_untracked = line.startswith("?? ")
+        worktree_status = line[1]
+        if not is_untracked and worktree_status == " ":
+            continue
+        candidates = status_candidate_paths(line, include_rename_source=not is_untracked)
+        for candidate in candidates:
+            if is_envctl_local_artifact_path(candidate) or candidate in seen:
+                continue
+            paths.append(candidate)
+            seen.add(candidate)
+    return paths
+
+
 def status_candidate_path(line: str) -> str:
     if line.startswith("?? "):
         return line[3:].strip()
@@ -72,3 +92,16 @@ def status_candidate_path(line: str) -> str:
     if " -> " in payload:
         return payload.split(" -> ", 1)[1].strip()
     return payload
+
+
+def status_candidate_paths(line: str, *, include_rename_source: bool = False) -> list[str]:
+    candidate = status_candidate_path(line)
+    if not candidate:
+        return []
+    if not include_rename_source:
+        return [candidate]
+    payload = line[3:].strip()
+    if " -> " not in payload:
+        return [candidate]
+    source = payload.split(" -> ", 1)[0].strip()
+    return [source, candidate] if source and source != candidate else [candidate]

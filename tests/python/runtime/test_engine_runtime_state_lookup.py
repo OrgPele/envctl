@@ -18,18 +18,28 @@ class EngineRuntimeStateLookupTests(unittest.TestCase):
     def test_try_load_existing_state_emits_fingerprint_after_reload(self) -> None:
         state = RunState(run_id="run-1", mode="main")
         events: list[tuple[str, dict[str, object]]] = []
+        load_calls: list[dict[str, object]] = []
         runtime = SimpleNamespace(
-            state_repository=SimpleNamespace(load_latest=lambda **kwargs: state),
+            state_repository=SimpleNamespace(load_latest=lambda **kwargs: load_calls.append(kwargs) or state),
             _emit=lambda event, **payload: events.append((event, payload)),
             _state_fingerprint=lambda loaded: f"fp:{loaded.run_id}",
         )
 
-        loaded = try_load_existing_state(runtime, mode="main", strict_mode_match=True)
+        loaded = try_load_existing_state(
+            runtime,
+            mode="main",
+            strict_mode_match=True,
+            project_names=["Main"],
+        )
 
         self.assertIs(loaded, state)
         self.assertEqual(
             events,
             [("state.fingerprint.after_reload", {"run_id": "run-1", "state_fingerprint": "fp:run-1"})],
+        )
+        self.assertEqual(
+            load_calls,
+            [{"mode": "main", "strict_mode_match": True, "project_names": ["Main"]}],
         )
 
     def test_state_matches_scope_accepts_missing_scope_and_matches_exact_scope(self) -> None:

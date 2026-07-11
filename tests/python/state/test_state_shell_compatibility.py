@@ -134,6 +134,21 @@ class StateShellCompatibilityTests(unittest.TestCase):
             assert loaded is not None
             self.assertEqual(loaded.mode, "main")
             self.assertIn("Main Backend", loaded.services)
+            primary_index = runtime.runtime_root / "run_index.json"
+            backup_index = runtime.runtime_root / "run_index.backup.json"
+            self.assertEqual(
+                primary_index.read_text(encoding="utf-8"),
+                backup_index.read_text(encoding="utf-8"),
+            )
+            migrated_pointer = Path((runtime.runtime_root / ".last_state.main").read_text(encoding="utf-8").strip())
+            self.assertTrue(migrated_pointer.is_file())
+            self.assertTrue(migrated_pointer.is_relative_to(runtime.runtime_root / "runs"))
+            self.assertTrue(state_path.is_file())
+
+            loaded_again = runtime._try_load_existing_state()
+            self.assertIsNotNone(loaded_again)
+            assert loaded_again is not None
+            self.assertEqual(loaded_again.run_id, loaded.run_id)
 
 
 if __name__ == "__main__":

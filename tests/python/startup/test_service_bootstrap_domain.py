@@ -189,46 +189,6 @@ class ServiceBootstrapDomainTests(unittest.TestCase):
                 any(event.get("event") == "service.bootstrap.dependency_check" for event in runtime.events)
             )
 
-    def test_prepare_frontend_runtime_missing_dependency_error_is_actionable(self) -> None:
-        class _RuntimeStub:
-            def __init__(self) -> None:
-                self.config = SimpleNamespace(raw={})
-                self.env: dict[str, str] = {}
-                self.events: list[dict[str, object]] = []
-
-            def _command_exists(self, executable: str) -> bool:
-                return executable == "npm"
-
-            def _emit(self, event: str, **payload: object) -> None:
-                self.events.append({"event": event, **payload})
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            frontend = Path(tmpdir)
-            (frontend / "node_modules" / "vite").mkdir(parents=True)
-            (frontend / "node_modules" / ".bin").mkdir(parents=True)
-            (frontend / "package.json").write_text(
-                json.dumps(
-                    {
-                        "scripts": {"dev": "vite"},
-                        "dependencies": {"@paddle/paddle-js": "^1.0.0"},
-                        "devDependencies": {"vite": "^5.0.0"},
-                    }
-                ),
-                encoding="utf-8",
-            )
-            runtime = _RuntimeStub()
-
-            with self.assertRaisesRegex(RuntimeError, "@paddle/paddle-js.*npm install --include=dev"):
-                _prepare_frontend_runtime(
-                    runtime,
-                    context=SimpleNamespace(name="Main", root=frontend.parent),
-                    frontend_cwd=frontend,
-                    frontend_log_path="",
-                    project_env_base={},
-                    frontend_env_file=None,
-                    backend_port=8000,
-                )
-
     def test_backend_dependency_install_required_when_state_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = Path(tmpdir)

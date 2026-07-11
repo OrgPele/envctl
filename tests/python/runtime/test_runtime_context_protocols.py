@@ -158,7 +158,6 @@ class RuntimeContextProtocolsTests(unittest.TestCase):
     def test_command_support_uses_runtime_context_dependency_helpers(self) -> None:
         support_paths = [
             REPO_ROOT / "python/envctl_engine/runtime/engine_runtime_event_support.py",
-            REPO_ROOT / "python/envctl_engine/planning/plan_agent/workflow.py",
             REPO_ROOT / "python/envctl_engine/actions/action_test_interrupt_support.py",
             REPO_ROOT / "python/envctl_engine/runtime/playwright_command_support.py",
             REPO_ROOT / "python/envctl_engine/runtime/qa_user_command_support.py",

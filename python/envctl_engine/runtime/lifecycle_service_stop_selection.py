@@ -22,24 +22,26 @@ def select_services_for_stop(
     if bool(route.flags.get("all")):
         return set(state.services.keys())
 
-    runtime_scope = route.flags.get("runtime_scope")
-    if runtime_scope in {"backend", "frontend"}:
-        return {
-            name
-            for name, service in state.services.items()
-            if service_matches_runtime_scope(name, service, str(runtime_scope))
-        }
-    if runtime_scope in {"fullstack", "entire-system"}:
-        return set(state.services.keys())
-    if runtime_scope == "dependencies":
-        return set()
-
     selected, has_selectors = _selected_services_from_route(
         state,
         route,
         project_name_from_service_fn=project_name_from_service_fn,
         selectors_from_passthrough_fn=selectors_from_passthrough_fn,
     )
+
+    runtime_scope = route.flags.get("runtime_scope")
+    if runtime_scope in {"backend", "frontend"}:
+        scoped = {
+            name
+            for name, service in state.services.items()
+            if service_matches_runtime_scope(name, service, str(runtime_scope))
+        }
+        return scoped.intersection(selected) if has_selectors else scoped
+    if runtime_scope in {"fullstack", "entire-system"}:
+        return selected if has_selectors else set(state.services.keys())
+    if runtime_scope == "dependencies":
+        return set()
+
     if not selected and has_selectors:
         return set()
     if not selected and select_dependency_components_for_stop(state, route):

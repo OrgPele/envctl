@@ -65,6 +65,7 @@ class EngineRuntimeCommandParityExplainTests(EngineRuntimeCommandParityTestCase)
             {
                 "port": 8014,
                 "public_url": "http://72.61.80.25:8014",
+                "public_ws_url": "ws://72.61.80.25:8014",
                 "health_url": "http://72.61.80.25:8014/readyz",
             },
         )

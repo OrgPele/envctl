@@ -7,7 +7,7 @@ from tests.python.planning.plan_agent_launch_support_test_support import *
 
 class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
     def test_codex_goal_text_is_compact_and_main_task_first(self) -> None:
-        goal = workflow._codex_goal_text_for_worktree(
+        goal = workflow_runtime_support._codex_goal_text_for_worktree(
             worktree=CreatedPlanWorktree(name="feature-a-1", root=Path("/repo"), plan_file="features/a.md"),
             preset="implement_task",
             workflow_mode="codex_cycles",
@@ -24,7 +24,7 @@ class PlanAgentLaunchCmuxGoalTests(PlanAgentLaunchSupportTestCase):
         self.assertLessEqual(len(goal), 180)
 
     def test_codex_goal_text_preserves_omx_completion_contract(self) -> None:
-        goal = workflow._codex_goal_text_for_worktree(
+        goal = workflow_runtime_support._codex_goal_text_for_worktree(
             worktree=CreatedPlanWorktree(name="feature-a-1", root=Path("/repo"), plan_file="features/a.md"),
             preset="implement_task",
             workflow_mode="single_prompt",

@@ -11,6 +11,9 @@ import pytest
 import envctl_engine.pr_preview_controller as preview_controller
 
 
+REAL_PROBE_PUBLIC_ROUTE_URL = preview_controller.probe_public_route_url
+
+
 def load_controller():
     return preview_controller
 
@@ -44,6 +47,7 @@ class FakeRunner:
         blast_stdout: str = "",
         blast_stderr: str = "",
         import_results=None,
+        repository_envctl_text: str | None = None,
     ):
         self.controller = controller
         self.active_prs = active_prs or []
@@ -61,6 +65,7 @@ class FakeRunner:
         self.blast_stdout = blast_stdout
         self.blast_stderr = blast_stderr
         self.import_results = list(import_results or [])
+        self.repository_envctl_text = repository_envctl_text
         self.calls = []
         self.comments = []
         self.deployments = []
@@ -115,6 +120,15 @@ class FakeRunner:
             return self.ok(argv)
         if argv[:3] == ["git", "fetch", "origin"]:
             return self.ok(argv)
+        if argv[:2] == ["git", "show"]:
+            if self.repository_envctl_text is None:
+                return self.controller.CommandResult(
+                    argv=list(argv),
+                    returncode=128,
+                    stdout="",
+                    stderr=".envctl is not tracked",
+                )
+            return self.ok(argv, stdout=self.repository_envctl_text)
         if argv[:2] == ["git", "-C"]:
             branch = self.root_to_branch.get(str(argv[2]), "feature/demo")
             return self.ok(argv, stdout=f"{branch}\n")
@@ -874,6 +888,94 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     assert "https://pele-monorepo-pr-789-supabase.srv.example.test" in runner.comments[-1]
 
 
+def test_repository_envctl_config_drives_dynamic_public_service_and_secrets(
+    tmp_path,
+):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    repository_config = """\
+ENVCTL_ADDITIONAL_SERVICES=voice-runtime
+ENVCTL_PREVIEW_PUBLIC_SERVICES=voice-runtime
+ENVCTL_PREVIEW_GENERATED_SECRETS=PIPECAT_SERVICE_TOKEN,PIPECAT_WEBHOOK_SECRET,PIPECAT_STREAM_TOKEN_SECRET
+ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE=true
+ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime
+ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010
+ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=../scripts/envctl/start-voice-runtime.sh {port}
+ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz
+ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_URL}
+"""
+    runner = FakeRunner(
+        controller,
+        projects={"projects": [{"name": "feature/demo", "root": str(root), "running": True}]},
+        endpoints={
+            "frontend": {"port": 9000},
+            "backend": {"port": 8000},
+            "dependencies": {"supabase": {"resources": {"api": 54321}}},
+            "additional_services": {
+                "voice-runtime": {
+                    "port": 8010,
+                    "local_url": "http://localhost:8010",
+                    "health_url": "http://localhost:8010/readyz",
+                }
+            },
+        },
+        root_to_branch={str(root): "feature/demo"},
+        repository_envctl_text=repository_config,
+    )
+    base_config = make_config(controller, tmp_path)
+    config = controller.ControllerConfig(
+        **{
+            **base_config.__dict__,
+            "public_base_domain": "srv.example.test",
+            "public_link_token_configured": True,
+        }
+    )
+    instance = controller.PreviewController(config, runner)
+
+    exit_code = instance.run_pull_request_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+
+    assert exit_code == 0
+    envctl_text = (tmp_path / "control" / ".envctl").read_text()
+    assert envctl_text.startswith(controller.GENERATED_ENVCTL_HEADER)
+    assert "Repository-owned .envctl loaded from abc123456789" in envctl_text
+    assert repository_config.strip() in envctl_text
+
+    start_call = next(call for call in runner.calls if call["argv"][:2] == ["envctl", "start"])
+    start_env = start_call["env"]
+    assert (
+        start_env["ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL"]
+        == "https://pele-monorepo-pr-789-voice-runtime.srv.example.test"
+    )
+    generated = {
+        start_env["ENVCTL_SOURCE_PIPECAT_SERVICE_TOKEN"],
+        start_env["ENVCTL_SOURCE_PIPECAT_WEBHOOK_SECRET"],
+        start_env["ENVCTL_SOURCE_PIPECAT_STREAM_TOKEN_SECRET"],
+    }
+    assert len(generated) == 3
+    assert all(len(value) >= 48 for value in generated)
+
+    state = instance.load_state(789)
+    assert state is not None
+    runtime = state.endpoints["additional_services"]["voice-runtime"]
+    assert runtime["public_url"] == ("https://pele-monorepo-pr-789-voice-runtime.srv.example.test")
+    assert runtime["public_health_url"] == ("https://pele-monorepo-pr-789-voice-runtime.srv.example.test/readyz")
+    assert "- Voice Runtime: https://pele-monorepo-pr-789-voice-runtime.srv.example.test" in (runner.comments[-1])
+    docker_runs = command_argvs(runner, "docker", "run")
+    assert len(docker_runs) == 4
+    assert any(
+        "traefik.http.routers.envctl-preview-pr-789-voice-runtime.rule="
+        "Host(`pele-monorepo-pr-789-voice-runtime.srv.example.test`)" in argv
+        for argv in docker_runs
+    )
+
+
 def test_labeled_event_blasts_wrong_branch_import_target_and_retries(tmp_path):
     controller = load_controller()
     root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
@@ -1209,6 +1311,113 @@ def test_manual_start_refreshes_preview_ttl_when_label_is_old(tmp_path):
     assert "2000-01-01" not in runner.comments[-1]
 
 
+def test_manual_start_reconciles_same_head_instead_of_reusing_stale_runtime(
+    tmp_path,
+    monkeypatch,
+):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        projects={"projects": [{"name": "feature/demo", "root": str(root), "running": True}]},
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+    )
+    instance = controller.PreviewController(make_config(controller, tmp_path), runner)
+    pr = controller.pr_from_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=pr.number,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(root),
+            head_ref=pr.head_ref,
+            head_sha=pr.head_sha,
+            status="running",
+            label_added_at="2026-06-14T00:00:00Z",
+            started_at="2026-06-14T00:00:00Z",
+            expires_at="2026-06-14T00:45:00Z",
+            updated_at="2026-06-14T00:00:00Z",
+            endpoints={"frontend": {"public_url": "https://preview.example"}},
+            deployment_id="12345",
+        )
+    )
+    monkeypatch.setattr(instance, "get_pr", lambda _number: pr)
+
+    exit_code = instance.run_command("start", pr.number)
+
+    assert exit_code == 0
+    sequence = [
+        call["argv"][:2]
+        for call in runner.calls
+        if call["argv"][:2] in (["envctl", "stop"], ["envctl", "import"], ["envctl", "start"])
+    ]
+    assert sequence == [
+        ["envctl", "stop"],
+        ["envctl", "import"],
+        ["envctl", "stop"],
+        ["envctl", "start"],
+    ]
+    state = instance.load_state(pr.number)
+    assert state is not None
+    assert state.status == "running"
+    assert state.head_sha == pr.head_sha
+    assert state.started_at != "2026-06-14T00:00:00Z"
+    assert "already running for this head" not in runner.comments[-1]
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"ready": True}, None),
+        (
+            {"ready": False, "reason": "missing_provider_credentials"},
+            "reported ready=false (reason=missing_provider_credentials)",
+        ),
+        (
+            {"ready": "true", "reason": "invalid/value with spaces"},
+            "returned a non-boolean readiness value (reason=invalid_value_with_spaces)",
+        ),
+    ],
+)
+def test_public_route_probe_honors_json_readiness_semantics(
+    monkeypatch,
+    payload,
+    expected,
+):
+    controller = load_controller()
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, limit):
+            body = json.dumps(payload).encode("utf-8")
+            assert len(body) <= limit
+            return body
+
+    monkeypatch.setattr(controller.urllib.request, "urlopen", lambda *_args, **_kwargs: Response())
+
+    result = REAL_PROBE_PUBLIC_ROUTE_URL("https://preview.example/readyz")
+
+    if expected is None:
+        assert result is None
+    else:
+        assert expected in str(result)
+
+
 def test_push_event_refreshes_preview_ttl_for_labeled_branch(tmp_path):
     controller = load_controller()
     root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
@@ -1236,6 +1445,27 @@ def test_push_event_refreshes_preview_ttl_for_labeled_branch(tmp_path):
     assert (expires_at - started_at).total_seconds() > 44 * 60
     assert "2000-01-01" not in runner.comments[-1]
     assert "- Reason: push to labeled PR branch feature/demo" in runner.comments[-1]
+
+
+def test_controller_run_dispatches_github_push_payload(tmp_path, monkeypatch):
+    controller = load_controller()
+    event_path = tmp_path / "push.json"
+    event_path.write_text(json.dumps(push_payload(after="newsha")), encoding="utf-8")
+    config = make_config(controller, tmp_path)
+    instance = controller.PreviewController(config, FakeRunner(controller))
+    received = []
+
+    monkeypatch.setattr(
+        instance,
+        "run_push_event",
+        lambda event: received.append(event) or 7,
+    )
+    args = controller.build_parser().parse_args(
+        ["--event-name", "push", "--event-path", str(event_path)]
+    )
+
+    assert instance.run(args) == 7
+    assert received == [push_payload(after="newsha")]
 
 
 def test_push_event_uses_pushed_sha_before_same_head_skip(tmp_path):

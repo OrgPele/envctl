@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
+
+from envctl_engine.shared.reason_codes import ServiceFailureReason
 
 
 STARTUP_PROGRESS_TOKENS = (
@@ -28,6 +31,9 @@ STARTUP_FAILURE_TOKENS = (
     "No module named",
     "Address already in use",
     "address already in use",
+    "command not found",
+    "exec:",
+    "No such file or directory",
 )
 
 
@@ -64,6 +70,25 @@ def service_listener_failure_detail(runtime: Any, *, log_path: str | None, pid: 
     return "; ".join(parts)
 
 
+def service_listener_failure_class(detail: str | None) -> str:
+    """Classify listener failures using process and log evidence."""
+
+    text = str(detail or "")
+    normalized = text.casefold()
+    missing_executable = bool(
+        "command not found" in normalized
+        or "modulenotfounderror" in normalized
+        or "no module named" in normalized
+        or re.search(r"\bexec:\s+[^:;\s]+:\s+not found\b", normalized)
+        or ("/usr/bin/env:" in normalized and "no such file or directory" in normalized)
+    )
+    if missing_executable:
+        return ServiceFailureReason.DEPENDENCY_MISSING.value
+    if re.search(r"\bprocess(?:\s+\d+)?\s+exited\b", normalized):
+        return ServiceFailureReason.PROCESS_EXITED.value
+    return "listener_not_detected"
+
+
 def tail_log_error_line(log_path: str | None, *, max_chars: int = 800) -> str | None:
     lines = _tail_candidate_lines(log_path)
     if not lines:
@@ -77,6 +102,9 @@ def tail_log_error_line(log_path: str | None, *, max_chars: int = 800) -> str | 
         "Error",
         "Exception",
         "No module named",
+        "command not found",
+        "exec:",
+        "No such file or directory",
     )
     selected = lines[-1]
     selected_index = len(lines) - 1
@@ -115,9 +143,7 @@ def _tail_candidate_lines(log_path: str | None) -> list[str]:
         return []
     try:
         return [
-            line.strip()
-            for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
-            if line.strip()
+            line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()
         ]
     except OSError:
         return []

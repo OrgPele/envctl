@@ -334,9 +334,21 @@ def additional_service_urls(runtime: Any, mode: str, contexts: list[object]) -> 
         }
         public_url = render_additional_service_template(public_url, variables)
         variables[f"ENVCTL_SOURCE_SERVICE_{env_suffix}_PUBLIC_URL"] = public_url
+        if public_url.startswith("https://"):
+            public_ws_url = f"wss://{public_url.removeprefix('https://')}"
+        elif public_url.startswith("http://"):
+            public_ws_url = f"ws://{public_url.removeprefix('http://')}"
+        else:
+            public_ws_url = public_url
+        variables[f"ENVCTL_SOURCE_SERVICE_{env_suffix}_PUBLIC_WS_URL"] = public_ws_url
         health_template = str(getattr(service, "health_url_template", "") or "").strip()
         health_url = render_additional_service_template(health_template, variables) if health_template else None
-        urls[service.name] = {"port": port, "public_url": public_url, "health_url": health_url}
+        urls[service.name] = {
+            "port": port,
+            "public_url": public_url,
+            "public_ws_url": public_ws_url,
+            "health_url": health_url,
+        }
     return urls
 
 
@@ -357,9 +369,9 @@ def additional_service_warnings(runtime: Any, mode: str, contexts: list[object])
             executable = parts[0]
             if "/" not in executable and "\\" not in executable:
                 continue
-            service_dir = (
-                Path(getattr(context, "root")) / str(getattr(service, "dir_name", ".") or ".")
-            ).resolve(strict=False)
+            service_dir = (Path(getattr(context, "root")) / str(getattr(service, "dir_name", ".") or ".")).resolve(
+                strict=False
+            )
             candidate = Path(executable)
             if not candidate.is_absolute():
                 candidate = (service_dir / executable).resolve(strict=False)

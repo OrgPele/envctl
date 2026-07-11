@@ -3,13 +3,39 @@ from __future__ import annotations
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.runtime.service_manager import ServiceManager, ServiceStartDescriptor
+from envctl_engine.runtime.service_manager import (
+    ServiceCleanupError,
+    ServiceManager,
+    ServiceStartDescriptor,
+    ServiceStartError,
+)
 
 
 class ServiceManagerTests(unittest.TestCase):
+    def test_pidless_runtime_descriptor_records_success_without_inventing_a_process(self) -> None:
+        records = ServiceManager().start_services_with_attach(
+            project="Main",
+            descriptors=(
+                ServiceStartDescriptor(
+                    service_type="backend",
+                    cwd="/tmp/main/backend",
+                    requested_port=8000,
+                    start=lambda _port: (True, None, None),
+                    detect_actual=lambda pid, requested: requested if pid is None else self.fail("unexpected PID"),
+                    pid_required=False,
+                ),
+            ),
+            reserve_next=lambda port: port,
+        )
+
+        self.assertIsNone(records["Main Backend"].pid)
+        self.assertEqual(records["Main Backend"].actual_port, 8000)
+
     def test_backend_retries_bind_conflict_and_updates_final_port(self) -> None:
         manager = ServiceManager()
         attempts: list[int] = []
@@ -149,11 +175,14 @@ class ServiceManagerTests(unittest.TestCase):
             )
 
     def test_listener_detection_failure_is_not_retried_as_port_conflict(self) -> None:
-        manager = ServiceManager()
         attempts: list[int] = []
         terminated: list[int] = []
-
-        manager.terminate_process_group = lambda pid, **kwargs: terminated.append(pid) or True  # type: ignore[attr-defined]
+        manager = ServiceManager(
+            process_runner=SimpleNamespace(
+                is_pid_running=lambda _pid: True,
+                terminate_process_group=lambda pid, **_kwargs: terminated.append(pid) or True,
+            )
+        )
 
         def start_backend(port: int) -> tuple[bool, str | None, int | None]:
             attempts.append(port)
@@ -225,7 +254,6 @@ class ServiceManagerTests(unittest.TestCase):
         self.assertFalse(service.listener_expected)
         self.assertIsNone(service.requested_port)
         self.assertIsNone(service.actual_port)
-
 
     def test_start_services_with_attach_returns_degraded_record_for_noncritical_failure(self) -> None:
         manager = ServiceManager()
@@ -330,9 +358,13 @@ class ServiceManagerTests(unittest.TestCase):
         self.assertIsNone(records["Main Worker"].actual_port)
 
     def test_start_services_with_attach_cleans_partial_records_on_failure(self) -> None:
-        manager = ServiceManager()
         terminated: list[int] = []
-        manager.terminate_process_group = lambda pid, **kwargs: terminated.append(pid) or True  # type: ignore[attr-defined]
+        manager = ServiceManager(
+            process_runner=SimpleNamespace(
+                is_pid_running=lambda _pid: True,
+                terminate_process_group=lambda pid, **_kwargs: terminated.append(pid) or True,
+            )
+        )
 
         descriptors = (
             ServiceStartDescriptor(
@@ -360,6 +392,186 @@ class ServiceManagerTests(unittest.TestCase):
             )
 
         self.assertEqual(terminated, [41001])
+
+    def test_listener_failure_fails_closed_when_group_and_raw_cleanup_cannot_prove_exit(self) -> None:
+        runner = SimpleNamespace(
+            is_pid_running=lambda _pid: True,
+            terminate_process_group=lambda *_args, **_kwargs: False,
+            terminate=lambda *_args, **_kwargs: False,
+        )
+        manager = ServiceManager(process_runner=runner)
+
+        with (
+            patch("envctl_engine.shared.process_termination._send_signal", return_value=True),
+            patch("envctl_engine.shared.process_termination.wait_for_pid_exit", side_effect=[False, False]),
+            self.assertRaises(ServiceCleanupError) as raised,
+        ):
+            manager.start_service_with_retry(
+                project="Main",
+                service_type="backend",
+                cwd="/repo/backend",
+                requested_port=8000,
+                start=lambda _port: (True, None, 51001),
+                reserve_next=lambda port: port,
+                detect_actual=lambda *_args: (_ for _ in ()).throw(RuntimeError("backend listener not detected")),
+            )
+
+        record = raised.exception.unterminated_services["Main Backend"]
+        self.assertEqual(record.pid, 51001)
+        self.assertEqual(record.status, "termination_failed")
+
+    def test_non_runtime_detection_exception_still_terminates_started_pid(self) -> None:
+        live_pids = {51501}
+        terminated: list[int] = []
+        manager = ServiceManager(
+            process_runner=SimpleNamespace(
+                is_pid_running=lambda pid: pid in live_pids,
+                terminate_process_group=lambda pid, **_kwargs: (terminated.append(pid), live_pids.discard(pid), True)[
+                    -1
+                ],
+            )
+        )
+
+        with self.assertRaisesRegex(ServiceStartError, "listener probe crashed"):
+            manager.start_service_with_retry(
+                project="Main",
+                service_type="backend",
+                cwd="/repo/backend",
+                requested_port=8000,
+                start=lambda _port: (True, None, 51501),
+                reserve_next=lambda port: port,
+                detect_actual=lambda *_args: (_ for _ in ()).throw(OSError("listener probe crashed")),
+            )
+
+        self.assertEqual(terminated, [51501])
+
+    def test_failed_launcher_pid_is_terminated_before_bind_retry(self) -> None:
+        attempts: list[int] = []
+        terminated: list[int] = []
+        live_pids = {52001}
+        manager = ServiceManager(
+            process_runner=SimpleNamespace(
+                is_pid_running=lambda pid: pid in live_pids,
+                terminate_process_group=lambda pid, **_kwargs: (terminated.append(pid), live_pids.discard(pid), True)[
+                    -1
+                ],
+            )
+        )
+
+        def start(port: int) -> tuple[bool, str | None, int | None]:
+            attempts.append(port)
+            if len(attempts) == 1:
+                return False, "address already in use", 52001
+            return True, None, 52002
+
+        record = manager.start_service_with_retry(
+            project="Main",
+            service_type="backend",
+            cwd="/repo/backend",
+            requested_port=8000,
+            start=start,
+            reserve_next=lambda port: port,
+            detect_actual=lambda _pid, requested: requested,
+        )
+
+        self.assertEqual(attempts, [8000, 8001])
+        self.assertEqual(terminated, [52001])
+        self.assertEqual(record.pid, 52002)
+
+    def test_parallel_rollback_reports_every_service_whose_exit_is_unconfirmed(self) -> None:
+        manager = ServiceManager(
+            process_runner=SimpleNamespace(
+                is_pid_running=lambda _pid: True,
+                terminate_process_group=lambda *_args, **_kwargs: False,
+                terminate=lambda *_args, **_kwargs: False,
+            )
+        )
+        descriptors = (
+            ServiceStartDescriptor(
+                service_type="backend",
+                cwd="/repo/backend",
+                requested_port=8000,
+                start=lambda _port: (True, None, 53001),
+                detect_actual=lambda _pid, requested: requested,
+            ),
+            ServiceStartDescriptor(
+                service_type="frontend",
+                cwd="/repo/frontend",
+                requested_port=3000,
+                start=lambda _port: (False, "boot failed", None),
+                max_retries=0,
+            ),
+        )
+
+        with (
+            patch("envctl_engine.shared.process_termination._send_signal", return_value=True),
+            patch("envctl_engine.shared.process_termination.wait_for_pid_exit", side_effect=[False, False]),
+            self.assertRaises(ServiceCleanupError) as raised,
+        ):
+            manager.start_services_with_attach(
+                project="Main",
+                descriptors=descriptors,
+                reserve_next=lambda port: port,
+                parallel_start=True,
+            )
+
+        self.assertEqual(set(raised.exception.unterminated_services), {"Main Backend"})
+
+    def test_noncritical_listener_cleanup_failure_is_never_downgraded_to_pidless_record(self) -> None:
+        manager = ServiceManager(
+            process_runner=SimpleNamespace(
+                is_pid_running=lambda _pid: True,
+                terminate_process_group=lambda *_args, **_kwargs: False,
+                terminate=lambda *_args, **_kwargs: False,
+            )
+        )
+        descriptor = ServiceStartDescriptor(
+            service_type="worker",
+            cwd="/repo/worker",
+            requested_port=0,
+            start=lambda _port: (True, None, 54001),
+            detect_actual=lambda *_args: (_ for _ in ()).throw(RuntimeError("worker attach failed")),
+            listener_expected=False,
+            critical=False,
+        )
+
+        with (
+            patch("envctl_engine.shared.process_termination._send_signal", return_value=True),
+            patch("envctl_engine.shared.process_termination.wait_for_pid_exit", side_effect=[False, False]),
+            self.assertRaises(ServiceCleanupError) as raised,
+        ):
+            manager.start_services_with_attach(
+                project="Main",
+                descriptors=(descriptor,),
+                reserve_next=lambda port: port,
+            )
+
+        record = raised.exception.unterminated_services["Main Worker"]
+        self.assertEqual(record.pid, 54001)
+        self.assertEqual(record.status, "termination_failed")
+
+    def test_success_without_valid_pid_is_tracked_as_unconfirmed_launch_even_for_non_listener(self) -> None:
+        manager = ServiceManager()
+        descriptor = ServiceStartDescriptor(
+            service_type="worker",
+            cwd="/repo/worker",
+            requested_port=0,
+            start=lambda _port: (True, None, None),
+            listener_expected=False,
+            critical=False,
+        )
+
+        with self.assertRaises(ServiceCleanupError) as raised:
+            manager.start_services_with_attach(
+                project="Main",
+                descriptors=(descriptor,),
+                reserve_next=lambda port: port,
+            )
+
+        record = raised.exception.unterminated_services["Main Worker"]
+        self.assertIsNone(record.pid)
+        self.assertEqual(record.status, "termination_failed")
+        self.assertFalse(record.listener_expected)
 
 
 if __name__ == "__main__":

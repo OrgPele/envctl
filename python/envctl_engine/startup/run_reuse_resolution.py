@@ -21,7 +21,7 @@ from envctl_engine.startup.run_reuse_decision import (
 )
 from envctl_engine.startup.run_reuse_fresh_start import replace_existing_project_services_for_fresh_start_with_defaults
 from envctl_engine.startup.run_reuse_resume import StartupRunReuseResumeHandler
-from envctl_engine.startup.session import StartupSession
+from envctl_engine.startup.session import StartupSession, metadata_with_state_sources
 from envctl_engine.startup.session_lifecycle import announce_session_identifiers, emit_startup_phase
 from envctl_engine.startup.service_bootstrap_domain import configured_service_types_for_mode
 from envctl_engine.startup.startup_progress import report_progress
@@ -137,7 +137,10 @@ class StartupRunReuseResolver:
         self.session.run_id = None
         self.session.preserved_services = dict(candidate_state.services)
         self.session.preserved_requirements = dict(candidate_state.requirements)
-        self.session.base_metadata = mark_run_reused(candidate_state.metadata, reason="reuse_expand")
+        self.session.base_metadata = metadata_with_state_sources(
+            mark_run_reused(candidate_state.metadata, reason="reuse_expand"),
+            candidate_state,
+        )
         state_project_names = {
             str(project.get("name", "")).strip().casefold()
             for project in decision.state_projects
@@ -321,7 +324,7 @@ def resolve_startup_run_reuse_with_runtime(
     runtime: Any,
     session: StartupSession,
     *,
-    terminate_restart_orphan_listeners: Callable[..., None],
+    terminate_restart_orphan_listeners: Callable[..., set[int]],
     validate_attach_target_fn: Callable[..., Any],
     attach_plan_agent_terminal: Callable[..., Any],
     progress_lock: Any,
@@ -362,13 +365,11 @@ def resolve_startup_run_reuse_with_runtime(
             session=session,
             validate_plan_agent_handoff=validate_plan_agent_handoff,
             attach_plan_agent_terminal=attach_plan_agent_terminal,
-            print_headless_plan_session_summary=lambda session, *, attach_target: (
-                print_headless_plan_session_summary(
-                    session,
-                    validate_plan_agent_handoff=validate_plan_agent_handoff,
-                    print_fn=print_fn,
-                    attach_target=attach_target,
-                )
+            print_headless_plan_session_summary=lambda session, *, attach_target: print_headless_plan_session_summary(
+                session,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
+                print_fn=print_fn,
+                attach_target=attach_target,
             ),
         ),
         print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary(
@@ -391,8 +392,6 @@ def resolve_startup_run_reuse_with_runtime(
                 session=session,
                 candidate_state=candidate_state,
                 reason=reason,
-                configured_service_types=set(configured_service_types_for_mode(runtime.config, session.runtime_mode)),
-                additional_services=tuple(getattr(runtime.config, "additional_services", ()) or ()),
                 announce_session_identifiers=lambda session: announce_session_identifiers(
                     runtime,
                     session,

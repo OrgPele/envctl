@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.lifecycle_operation_lease import release_lifecycle_operation
 from envctl_engine.startup.finalization_plan_output import (
     format_degraded_handoff_text_for_terminal,
     headless_plan_output_only,
@@ -96,7 +97,6 @@ def finalize_successful_startup(
     print_headless_plan_session_summary: Callable[[StartupSession], None],
     maybe_attach_plan_agent_terminal: Callable[[StartupSession], int | None],
     finalize_plan_agent_degraded_handoff: Callable[[StartupSession], int],
-    run_interactive_dashboard_loop: Callable[[RunState], int] | None = None,
 ) -> int:
     if session.plan_agent_handoff_degraded:
         return finalize_plan_agent_degraded_handoff(session)
@@ -107,6 +107,7 @@ def finalize_successful_startup(
     artifacts_started = time.monotonic()
     runtime._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
     emit_phase(session, "artifacts_write", artifacts_started, status="ok")
+    release_lifecycle_operation(runtime)
     if requirements_timing_enabled(session.effective_route) and not suppress_timing_output(session.effective_route):
         runtime._emit(
             "startup.debug_tty_group",
@@ -172,8 +173,7 @@ def finalize_successful_startup(
     if attach_code is not None:
         return attach_code
     if runtime._should_enter_post_start_interactive(session.effective_route):
-        dashboard_runner = run_interactive_dashboard_loop or runtime._run_interactive_dashboard_loop
-        return dashboard_runner(run_state)
+        return runtime._run_interactive_dashboard_loop(run_state)
     return 0
 
 
@@ -183,7 +183,6 @@ def finalize_successful_startup_with_runtime(
     *,
     validate_plan_agent_handoff: Callable[..., None],
     print_fn: Callable[[str], None] = print,
-    run_interactive_dashboard_loop: Callable[[RunState], int] | None = None,
 ) -> int:
     orchestrator_like = type("_StartupFinalizationRuntimeFacade", (), {"runtime": runtime})()
     return finalize_successful_startup(
@@ -216,13 +215,11 @@ def finalize_successful_startup_with_runtime(
             session=session,
             validate_plan_agent_handoff=validate_plan_agent_handoff,
             attach_plan_agent_terminal=attach_plan_agent_terminal,
-            print_headless_plan_session_summary=lambda session, *, attach_target: (
-                print_headless_plan_session_summary(
-                    session,
-                    validate_plan_agent_handoff=validate_plan_agent_handoff,
-                    print_fn=print_fn,
-                    attach_target=attach_target,
-                )
+            print_headless_plan_session_summary=lambda session, *, attach_target: print_headless_plan_session_summary(
+                session,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
+                print_fn=print_fn,
+                attach_target=attach_target,
             ),
         ),
         finalize_plan_agent_degraded_handoff=lambda session: finalize_plan_agent_degraded_handoff_with_runtime(
@@ -231,7 +228,6 @@ def finalize_successful_startup_with_runtime(
             validate_plan_agent_handoff=validate_plan_agent_handoff,
             print_fn=print_fn,
         ),
-        run_interactive_dashboard_loop=run_interactive_dashboard_loop,
     )
 
 
@@ -261,13 +257,11 @@ def finalize_plan_agent_degraded_handoff_with_runtime(
             session=session,
             validate_plan_agent_handoff=validate_plan_agent_handoff,
             attach_plan_agent_terminal=attach_plan_agent_terminal,
-            print_headless_plan_session_summary=lambda session, *, attach_target: (
-                print_headless_plan_session_summary(
-                    session,
-                    validate_plan_agent_handoff=validate_plan_agent_handoff,
-                    print_fn=print_fn,
-                    attach_target=attach_target,
-                )
+            print_headless_plan_session_summary=lambda session, *, attach_target: print_headless_plan_session_summary(
+                session,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
+                print_fn=print_fn,
+                attach_target=attach_target,
             ),
         ),
     )
@@ -293,6 +287,7 @@ def finalize_plan_agent_degraded_handoff(
         build_success_run_state=build_success_run_state,
         emit_phase=emit_phase,
     )
+    release_lifecycle_operation(runtime)
     render_plan_agent_degraded_handoff(session)
     if headless_plan_output_only(session):
         return 0

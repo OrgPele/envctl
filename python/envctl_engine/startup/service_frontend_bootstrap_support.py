@@ -51,24 +51,20 @@ def _prepare_frontend_runtime(
     if manager is None:
         return
     missing_dependency = _frontend_missing_direct_dependency(frontend_cwd=frontend_cwd, payload=payload)
-    if missing_dependency is not None and not parse_bool(
+    repair_missing_dependency = missing_dependency is not None and not parse_bool(
         self.env.get("ENVCTL_SKIP_FRONTEND_DEPENDENCY_CHECK"),
         False,
-    ):
+    )
+    if repair_missing_dependency:
         install_command, _fallback_command = _frontend_install_commands(frontend_cwd=frontend_cwd, manager=manager)
         command_text = " ".join(install_command)
         self._emit(
             "service.bootstrap.dependency_check",
             project=context.name,
             service="frontend",
-            status="failed",
+            status="repairing",
             package=missing_dependency,
             install_command=command_text,
-        )
-        raise RuntimeError(
-            "frontend dependency check failed for "
-            f"{context.name}: missing direct dependency {missing_dependency!r} in {frontend_cwd}. "
-            f"Run `{command_text}` in {frontend_cwd}."
         )
     env = self._command_env(port=0, extra=project_env_base)
     if frontend_env_file is not None and frontend_env_file.is_file():
@@ -86,6 +82,9 @@ def _prepare_frontend_runtime(
         env=env,
         dev_script=dev_script,
     )
+    if repair_missing_dependency:
+        runtime_required = True
+        runtime_reason = "direct_dependency_missing"
     if not runtime_required:
         self._emit(
             "service.bootstrap.skip",
@@ -110,6 +109,9 @@ def _prepare_frontend_runtime(
         frontend_cwd=frontend_cwd,
         dev_script=dev_script,
     )
+    if repair_missing_dependency:
+        install_required = True
+        install_reason = "direct_dependency_missing"
     _emit_bootstrap_phase(
         self,
         project=context.name,

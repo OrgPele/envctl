@@ -14,6 +14,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.startup.resume_restore_support import restore_missing  # noqa: E402
+from envctl_engine.startup.resume_restore_project import ResumeProjectRestoreRunner  # noqa: E402
 import envctl_engine.startup.requirements_project_startup as requirements_project_startup_module  # noqa: E402
 from envctl_engine.startup.protocols import StartupOrchestratorLike  # noqa: E402
 from envctl_engine.startup.requirements_execution import (  # noqa: E402
@@ -26,6 +27,7 @@ from envctl_engine.startup.startup_execution_support import (  # noqa: E402
     _maybe_prewarm_docker,
     _requirements_failure_message,
     _shared_main_requirements,
+    ProjectStartupFailure,
     start_requirements_for_project,
     start_project_services,
     start_project_context,
@@ -33,7 +35,7 @@ from envctl_engine.startup.startup_execution_support import (  # noqa: E402
 from envctl_engine.startup.startup_orchestrator import StartupOrchestrator  # noqa: E402
 from envctl_engine.startup.startup_selection_support import _tree_preselected_projects_from_state  # noqa: E402
 from envctl_engine.config import AppServiceConfig  # noqa: E402
-from envctl_engine.runtime.command_router import parse_route  # noqa: E402
+from envctl_engine.runtime.command_router import Route, parse_route  # noqa: E402
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord  # noqa: E402
 
 
@@ -67,6 +69,183 @@ class _PortAllocatorStub:
 
 
 class StartupSupportModuleDecouplingTests(unittest.TestCase):
+    def test_resume_stale_service_releases_recorded_foreign_session_lock(self) -> None:
+        released: list[tuple[int, str, str]] = []
+
+        class RecordingPortAllocator:
+            session_id = "current-session"
+
+            def release_owned(self, port: int, owner: str, *, expected_session: str) -> bool:
+                released.append((port, owner, expected_session))
+                return True
+
+            def release(self, _port: int, *, owner: str | None = None) -> None:
+                raise AssertionError(f"current-session release must not be used: {owner}")
+
+        allocator = RecordingPortAllocator()
+        service = ServiceRecord(
+            name="Main Frontend",
+            type="frontend",
+            cwd="/tmp/repo/frontend",
+            actual_port=9000,
+            port_lock_session="prior-session",
+            project="Main",
+        )
+        runtime = SimpleNamespace(
+            port_planner=allocator,
+            env={},
+            config=SimpleNamespace(raw={}),
+            _terminate_service_record=lambda *_args, **_kwargs: True,
+            _project_name_from_service=lambda _name: "Main",
+        )
+        runner = ResumeProjectRestoreRunner(
+            orchestrator=SimpleNamespace(),
+            rt=runtime,
+            state=RunState(run_id="run-1", mode="main"),
+            missing_services=[],
+            route_for_startup=Route(command="resume", mode="main"),
+            total_projects=1,
+            use_project_spinner_group=False,
+            project_spinner_group=SimpleNamespace(),
+            use_single_spinner=False,
+            active_spinner=SimpleNamespace(),
+            port_allocator=allocator,
+        )
+
+        terminated_count = runner._stop_stale_services(
+            service_names=[service.name],
+            original_services={service.name: service},
+        )
+
+        self.assertEqual(terminated_count, 1)
+        self.assertEqual(released, [(9000, "Main:frontend", "prior-session")])
+
+    def test_post_start_truth_failure_propagates_unterminated_service_records(self) -> None:
+        requirements = RequirementsResult(project="Main", health="healthy")
+        service = ServiceRecord(
+            name="Main Backend",
+            type="backend",
+            cwd="/repo/backend",
+            pid=62001,
+            actual_port=8000,
+        )
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(
+                supabase_auth_users=(),
+                supabase_auth_user_errors=(),
+                supabase_auth_users_strict=True,
+            ),
+            runtime_root=Path("/tmp/runtime"),
+            _reserve_project_ports=lambda _context, route=None: None,
+            _requirements_ready=lambda _value: True,
+            _consume_project_startup_warnings=lambda _project: [],
+            _emit=lambda *_args, **_kwargs: None,
+            _assert_project_services_post_start_truth=lambda **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("backend truth failed")
+            ),
+            _terminate_started_services=lambda _services: None,
+        )
+        orchestrator = SimpleNamespace(
+            runtime=runtime,
+            _report_progress=lambda *_args, **_kwargs: None,
+            start_requirements_for_project=lambda *_args, **_kwargs: requirements,
+            start_project_services=lambda *_args, **_kwargs: {"Main Backend": service},
+        )
+
+        with self.assertRaises(ProjectStartupFailure) as raised:
+            start_project_context(
+                orchestrator,
+                context=SimpleNamespace(name="Main", root=Path("/repo"), ports={}),
+                mode="main",
+                route=parse_route(["start"], env={}),
+                run_id="run-1",
+            )
+
+        self.assertIs(raised.exception.unterminated_services["Main Backend"], service)
+        self.assertIs(raised.exception.requirements, requirements)
+
+    def test_service_attach_failure_preserves_already_started_requirements(self) -> None:
+        requirements = RequirementsResult(
+            project="Main",
+            health="healthy",
+            redis={"enabled": True, "success": True, "final": 6379},
+        )
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(
+                supabase_auth_users=(),
+                supabase_auth_user_errors=(),
+                supabase_auth_users_strict=True,
+            ),
+            runtime_root=Path("/tmp/runtime"),
+            _reserve_project_ports=lambda _context, route=None: None,
+            _requirements_ready=lambda _value: True,
+            _emit=lambda *_args, **_kwargs: None,
+        )
+        orchestrator = SimpleNamespace(
+            runtime=runtime,
+            _report_progress=lambda *_args, **_kwargs: None,
+            start_requirements_for_project=lambda *_args, **_kwargs: requirements,
+            start_project_services=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("backend launch failed")
+            ),
+        )
+
+        with self.assertRaises(ProjectStartupFailure) as raised:
+            start_project_context(
+                orchestrator,
+                context=SimpleNamespace(name="Main", root=Path("/repo"), ports={}),
+                mode="main",
+                route=parse_route(["start"], env={}),
+                run_id="run-1",
+            )
+
+        self.assertEqual(raised.exception.project, "Main")
+        self.assertIs(raised.exception.requirements, requirements)
+
+    def test_cleanup_exception_still_transports_all_started_resources(self) -> None:
+        requirements = RequirementsResult(project="Main", health="healthy")
+        service = ServiceRecord(
+            name="Main Backend",
+            type="backend",
+            cwd="/repo/backend",
+            pid=62002,
+            actual_port=8000,
+        )
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(
+                supabase_auth_users=(),
+                supabase_auth_user_errors=(),
+                supabase_auth_users_strict=True,
+            ),
+            runtime_root=Path("/tmp/runtime"),
+            _reserve_project_ports=lambda _context, route=None: None,
+            _requirements_ready=lambda _value: True,
+            _consume_project_startup_warnings=lambda _project: [],
+            _emit=lambda *_args, **_kwargs: None,
+            _assert_project_services_post_start_truth=lambda **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("truth failed")
+            ),
+            _terminate_started_services=lambda _services: (_ for _ in ()).throw(OSError("terminator crashed")),
+        )
+        orchestrator = SimpleNamespace(
+            runtime=runtime,
+            _report_progress=lambda *_args, **_kwargs: None,
+            start_requirements_for_project=lambda *_args, **_kwargs: requirements,
+            start_project_services=lambda *_args, **_kwargs: {service.name: service},
+        )
+
+        with self.assertRaisesRegex(ProjectStartupFailure, "cleanup error: terminator crashed") as raised:
+            start_project_context(
+                orchestrator,
+                context=SimpleNamespace(name="Main", root=Path("/repo"), ports={}),
+                mode="main",
+                route=parse_route(["start"], env={}),
+                run_id="run-1",
+            )
+
+        self.assertIs(raised.exception.requirements, requirements)
+        self.assertIs(raised.exception.unterminated_services[service.name], service)
+
     def test_startup_execution_support_reexports_new_owner_modules(self) -> None:
         self.assertIs(start_requirements_for_project, requirements_start_impl)
         self.assertIs(start_project_services, service_start_impl)
@@ -325,7 +504,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             self.assertEqual(project_root, Path("/tmp/repo"))
             for dependency_id in ("redis", "supabase", "n8n"):
                 component = req.component(dependency_id)
-                component["runtime_status"] = "healthy" if component.get("final") in {6557, 5610, 5856} else "unreachable"
+                component["runtime_status"] = (
+                    "healthy" if component.get("final") in {6557, 5610, 5856} else "unreachable"
+                )
             return [
                 {"project": project, "component": dependency_id, "status": "unreachable"}
                 for dependency_id in ("redis", "supabase", "n8n")
@@ -352,7 +533,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                     _reserve_project_ports=lambda context: reserved.append(context.name),
                     _emit=lambda event, **payload: events.append((event, payload)),
                 )
-            )
+            ),
         )
 
         with mock.patch(
@@ -366,7 +547,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         self.assertEqual(reused.component("n8n")["final"], 5856)
         self.assertEqual(reserved, ["Main"])
         self.assertEqual(start_requirements.call_count, 1)
-        self.assertIn(("requirements.shared.reuse_stale", {"project": "Main", "source_run_id": "run-stale-main"}), events)
+        self.assertIn(
+            ("requirements.shared.reuse_stale", {"project": "Main", "source_run_id": "run-stale-main"}), events
+        )
 
     def test_start_project_context_rejects_invalid_supabase_auth_user_config_before_services(self) -> None:
         order: list[str] = []
@@ -403,7 +586,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             start_requirements_for_project=lambda context, mode, route: requirements,
         )
 
-        with self.assertRaisesRegex(RuntimeError, "Invalid Supabase Auth user config"):
+        with self.assertRaisesRegex(ProjectStartupFailure, "Invalid Supabase Auth user config") as raised:
             start_project_context(
                 orchestrator,
                 context=SimpleNamespace(name="Main", root=Path("/tmp/repo"), ports={}),
@@ -413,6 +596,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             )
 
         self.assertNotIn("services", order)
+        self.assertIs(raised.exception.requirements, requirements)
 
     def test_start_project_context_syncs_supabase_auth_users_before_services(self) -> None:
         order: list[str] = []
@@ -444,8 +628,10 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             _record_project_startup_warning=lambda project, warning: None,
             _consume_project_startup_warnings=lambda project: [],
             _emit=lambda event, **payload: (
-                order.append(event), events.append((event, payload))
-            ) if event.startswith("supabase.auth_users") else None,
+                (order.append(event), events.append((event, payload)))
+                if event.startswith("supabase.auth_users")
+                else None
+            ),
             _assert_project_services_post_start_truth=lambda **kwargs: None,
             _terminate_started_services=lambda services: None,
         )
@@ -685,7 +871,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             _terminate_service_record=lambda service, **kwargs: terminated_services.append(service.name) or True,
             _service_port=lambda service: service.actual_port,
             _release_requirement_ports=lambda req: self.fail("healthy reused requirements should not be released"),
-            _reserve_project_ports=lambda ctx: self.fail("partial service restore should reserve only selected services"),
+            _reserve_project_ports=lambda ctx: self.fail(
+                "partial service restore should reserve only selected services"
+            ),
             _start_requirements_for_project=lambda *args, **kwargs: self.fail("healthy requirements should be reused"),
             _start_project_services=start_project_services,
         )
@@ -884,7 +1072,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _project_service_env=lambda context, requirements, route=None: {},
                 _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
-                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: (
+                    dict(base_env)
+                ),
                 _service_enabled_for_mode=lambda mode, service: True,
                 process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: None),
                 _prepare_backend_runtime=prepare_backend_runtime,
@@ -963,7 +1153,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _project_service_env=lambda context, requirements, route=None, service_name=None: {},
                 _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
-                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: (
+                    dict(base_env)
+                ),
                 _service_enabled_for_mode=lambda mode, service: True,
                 process_runner=SimpleNamespace(
                     start_background=lambda *args, **kwargs: background_calls.append((args, kwargs))
@@ -1128,7 +1320,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _project_service_env=lambda context, requirements, route=None, service_name=None: {},
                 _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
-                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: (
+                    dict(base_env)
+                ),
                 _service_enabled_for_mode=lambda mode, service: True,
                 process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: None),
                 _prepare_backend_runtime=lambda **kwargs: None,
@@ -1190,7 +1384,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _project_service_env=lambda context, requirements, route=None, service_name=None: {},
                 _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
-                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: (
+                    dict(base_env)
+                ),
                 _service_enabled_for_mode=lambda mode, service: True,
                 process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: None),
                 _prepare_backend_runtime=lambda **kwargs: None,
@@ -1271,12 +1467,16 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _project_service_env=lambda context, requirements, route=None, service_name=None: {},
                 _resolve_backend_env_file=lambda context, backend_cwd: (None, False),
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
-                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: (
+                    dict(base_env)
+                ),
                 _service_enabled_for_mode=lambda mode, service: True,
                 process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: None),
                 _prepare_backend_runtime=lambda **kwargs: None,
                 _prepare_frontend_runtime=lambda **kwargs: None,
-                _service_command_source=lambda service_name, **kwargs: source_calls.append(service_name) or "autodetected",
+                _service_command_source=lambda service_name, **kwargs: (
+                    source_calls.append(service_name) or "autodetected"
+                ),
                 _service_start_command_resolved=lambda service_name, **kwargs: (["npm", "run", "dev"], "autodetected"),
                 _command_exists=lambda command: command in {"npm", "npx"},
                 _detect_service_actual_port=lambda pid, requested_port, service_name, log_path: requested_port,
@@ -1421,15 +1621,17 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
                 _prepare_backend_runtime=lambda **kwargs: None,
                 _prepare_frontend_runtime=lambda **kwargs: None,
-                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: (
+                    dict(base_env)
+                ),
                 _service_enabled_for_mode=service_enabled_for_mode,
                 _service_command_source=lambda **kwargs: "configured",
                 _service_start_command_resolved=lambda service_name, **kwargs: ("python -c pass", "configured"),
                 _split_command=lambda command, **kwargs: ["python", "-c", "pass"],
                 process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)),
-                _detect_service_actual_port=lambda service_name, pid, requested_port, **kwargs: 8022
-                if service_name == "voice-runtime"
-                else requested_port,
+                _detect_service_actual_port=lambda service_name, pid, requested_port, **kwargs: (
+                    8022 if service_name == "voice-runtime" else requested_port
+                ),
                 _listener_truth_enforced=lambda: True,
                 _service_listener_failure_detail=lambda **kwargs: "",
                 _conflict_remaining={},
@@ -1437,7 +1639,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             )
             orchestrator = SimpleNamespace(
                 runtime=runtime,
-                _restart_service_types_for_project=lambda route, project_name, default_service_types: set(default_service_types),
+                _restart_service_types_for_project=lambda route, project_name, default_service_types: set(
+                    default_service_types
+                ),
                 _suppress_timing_output=lambda route: True,
             )
             context = SimpleNamespace(
@@ -1533,13 +1737,18 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
                 _prepare_backend_runtime=lambda **kwargs: None,
                 _prepare_frontend_runtime=lambda **kwargs: None,
-                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: (
+                    dict(base_env)
+                ),
                 _service_enabled_for_mode=lambda mode, service_name: service_name == "voice-runtime",
                 _service_command_source=lambda **kwargs: "configured",
-                _split_command=lambda command, **kwargs: split_calls.append({"command": command, **kwargs}) or [
-                    "scripts/envctl/start-voice-runtime.sh",
-                    str(kwargs["port"]),
-                ],
+                _split_command=lambda command, **kwargs: (
+                    split_calls.append({"command": command, **kwargs})
+                    or [
+                        "scripts/envctl/start-voice-runtime.sh",
+                        str(kwargs["port"]),
+                    ]
+                ),
                 process_runner=SimpleNamespace(start_background=lambda *args, **kwargs: SimpleNamespace(pid=1234)),
                 _detect_service_actual_port=lambda **kwargs: 8010,
                 _listener_truth_enforced=lambda: True,
@@ -1645,7 +1854,9 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                 _resolve_frontend_env_file=lambda context, frontend_cwd: None,
                 _prepare_backend_runtime=lambda **kwargs: None,
                 _prepare_frontend_runtime=lambda **kwargs: None,
-                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: dict(base_env),
+                _service_env_from_file=lambda base_env, env_file, include_app_env_file, env_file_authoritative=False: (
+                    dict(base_env)
+                ),
                 _service_enabled_for_mode=lambda mode, service_name: service_name == "voice-runtime",
                 _service_command_source=lambda **kwargs: "configured",
                 _split_command=lambda command, **kwargs: ["python", "-c", "pass"],

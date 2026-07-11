@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import shlex
+import subprocess
 import sys
 import tempfile
 from contextlib import redirect_stdout
@@ -17,6 +20,9 @@ from tests.python.actions.actions_parity_test_support import (
     load_config,
     parse_route,
 )
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class ActionsGitParityTests(_ActionsParityTestCase):
@@ -224,6 +230,76 @@ class ActionsGitParityTests(_ActionsParityTestCase):
             self.assertEqual(fake_runner.run_calls[0][1], str(target.resolve()))
             self.assertEqual(fake_runner.run_envs[0]["ENVCTL_ACTION_PROJECT"], "feature-a-1")
             self.assertEqual(fake_runner.run_envs[0]["ENVCTL_ACTION_PROJECT_ROOT"], str(target.resolve()))
+
+    def test_repo_wrapper_ship_targets_external_linked_worktree_in_main_and_trees_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            repo = root / "repo"
+            linked = root / "external-linked-worktree"
+            repo.mkdir()
+
+            def git(*args: str, cwd: Path = repo) -> None:
+                subprocess.run(
+                    ["git", *args],
+                    cwd=cwd,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+
+            git("init", "-q", "-b", "main")
+            git("config", "user.email", "envctl-test@example.test")
+            git("config", "user.name", "Envctl Test")
+            (repo / ".envctl").write_text(
+                "ENVCTL_DEFAULT_MODE=trees\nMAIN_STARTUP_ENABLE=false\nTREES_STARTUP_ENABLE=false\n",
+                encoding="utf-8",
+            )
+            (repo / "README.md").write_text("# linked worktree ship test\n", encoding="utf-8")
+            git("add", "-f", ".envctl", "README.md")
+            git("commit", "-q", "-m", "initial")
+            git("worktree", "add", "-q", "-b", "feature/external", str(linked))
+
+            invocation_cwd = linked / "nested" / "source"
+            invocation_cwd.mkdir(parents=True)
+            assertion_script = (
+                "import os,sys; from pathlib import Path; "
+                "expected=Path(sys.argv[1]).resolve(); "
+                "ok=(Path.cwd().resolve()==expected "
+                "and os.environ.get('ENVCTL_ACTION_PROJECT')=='feature/external' "
+                "and Path(os.environ.get('ENVCTL_ACTION_PROJECT_ROOT','')).resolve()==expected); "
+                "raise SystemExit(0 if ok else 9)"
+            )
+            harmless_ship_command = shlex.join(
+                [sys.executable, "-c", assertion_script, str(linked.resolve())]
+            )
+
+            for mode in ("trees", "main"):
+                with self.subTest(mode=mode):
+                    env = dict(os.environ)
+                    for key in ("RUN_REPO_ROOT", "ENVCTL_EXECUTION_ROOT", "ENVCTL_INVOCATION_CWD"):
+                        env.pop(key, None)
+                    env.update(
+                        {
+                            "ENVCTL_ACTION_SHIP_CMD": harmless_ship_command,
+                            "ENVCTL_DEFAULT_MODE": mode,
+                            "ENVCTL_UI_BACKEND": "non_interactive",
+                            "ENVCTL_USE_REPO_WRAPPER": "1",
+                            "RUN_SH_RUNTIME_DIR": str(root / f"runtime-{mode}"),
+                        }
+                    )
+                    completed = subprocess.run(
+                        [str(REPO_ROOT / "bin" / "envctl"), "ship", "--human"],
+                        cwd=invocation_cwd,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        check=False,
+                    )
+
+                    self.assertEqual(completed.returncode, 0, msg=completed.stdout + completed.stderr)
+                    self.assertIn("ship handoff status for feature/external: success", completed.stdout)
+                    self.assertNotIn("ship handoff status for Main", completed.stdout)
 
     def test_git_actions_use_python_native_defaults_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

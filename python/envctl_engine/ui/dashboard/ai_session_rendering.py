@@ -22,7 +22,9 @@ def print_dashboard_ai_session_row(
     current_tmux_target_fn: Callable[..., tuple[str, str]],
 ) -> None:
     import subprocess  # noqa: PLC0415
-    from envctl_engine.planning.plan_agent.workflow import resolve_plan_agent_launch_command  # noqa: PLC0415
+    from envctl_engine.planning.plan_agent.workflow_review_support import (  # noqa: PLC0415
+        resolve_plan_agent_launch_command,
+    )
     from envctl_engine.runtime.session_management import list_tmux_sessions  # noqa: PLC0415
 
     project_root = project_root_fn(self, state=state, project=project)

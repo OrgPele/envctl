@@ -74,6 +74,16 @@ def build_endpoints_payload(
         public_host=public_host,
         runtime=runtime,
     )
+    additional_services = {
+        str(service.name): _service_endpoint(
+            state,
+            project=project,
+            service_type=str(service.name),
+            public_host=public_host,
+            runtime=runtime,
+        )
+        for service in getattr(config, "additional_services", ()) or ()
+    }
     requirements = _requirements_for_project(state, project)
     dependency_summary = dependency_mode_summary(state)
     return {
@@ -86,6 +96,7 @@ def build_endpoints_payload(
         "shared_dependencies": dependency_summary["shared_dependencies"],
         "frontend": frontend,
         "backend": backend,
+        "additional_services": additional_services,
         "dependencies": _dependency_endpoints(requirements),
     }
 
@@ -246,6 +257,11 @@ def _human_endpoints(payload: Mapping[str, object]) -> str:
         endpoint = payload.get(label)
         if isinstance(endpoint, dict):
             lines.append(f"{label}: {endpoint.get('public_url') or endpoint.get('local_url') or 'n/a'}")
+    additional_services = payload.get("additional_services")
+    if isinstance(additional_services, dict):
+        for name, endpoint in sorted(additional_services.items()):
+            if isinstance(endpoint, dict):
+                lines.append(f"{name}: {endpoint.get('public_url') or endpoint.get('local_url') or 'n/a'}")
     return "\n".join(lines)
 
 

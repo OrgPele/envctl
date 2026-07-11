@@ -7,6 +7,7 @@ import unittest
 
 from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.startup.startup_selection_support import (
+    _restart_service_types_for_project,
     restart_include_requirements,
     select_start_tree_projects,
     trees_start_selection_required,
@@ -68,7 +69,9 @@ class StartupSelectionSupportTests(unittest.TestCase):
         self.assertTrue(trees_start_selection_required(route=self._trees_route(raw_args=[]), runtime_mode="trees"))
         self.assertFalse(
             trees_start_selection_required(
-                route=Route(command="plan", mode="trees", raw_args=["--plan"], passthrough_args=[], projects=[], flags={}),
+                route=Route(
+                    command="plan", mode="trees", raw_args=["--plan"], passthrough_args=[], projects=[], flags={}
+                ),
                 runtime_mode="trees",
             )
         )
@@ -151,6 +154,22 @@ class StartupSelectionSupportTests(unittest.TestCase):
         self.assertTrue(restart_include_requirements(parse_route(["restart", "--entire-system"], env={})))
         self.assertTrue(restart_include_requirements(parse_route(["restart"], env={})))
         self.assertFalse(restart_include_requirements(parse_route(["restart", "--service", "Main Frontend"], env={})))
+
+    def test_no_infra_selects_no_additional_application_services(self) -> None:
+        route = Route(
+            command="start",
+            mode="main",
+            flags={"launch_backend": False, "launch_frontend": False, "launch_dependencies": False},
+        )
+
+        self.assertEqual(
+            _restart_service_types_for_project(
+                route=route,
+                project_name="Main",
+                default_service_types={"backend", "frontend", "worker"},
+            ),
+            set(),
+        )
 
 
 if __name__ == "__main__":

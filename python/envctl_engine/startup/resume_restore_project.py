@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.lifecycle_service_termination import release_service_ports
 from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.startup.resume_restore_policy import (
     _configured_restore_service_types,
@@ -349,9 +350,7 @@ class ResumeProjectRestoreRunner:
             )
             if terminated:
                 terminated_count += 1
-                port = self.rt._service_port(service)  # type: ignore[attr-defined]
-                if port is not None:
-                    self.port_allocator.release(port)  # type: ignore[attr-defined]
+                release_service_ports(self.rt, name=service_name, service=service)
         return terminated_count
 
     def _report_progress(

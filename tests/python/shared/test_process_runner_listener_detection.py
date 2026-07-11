@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import signal
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -274,7 +276,9 @@ class ProcessRunnerListenerDetectionTests(unittest.TestCase):
 
         with (
             patch("envctl_engine.shared.process_runner.os.killpg", side_effect=_fake_killpg),
-            patch.object(runner, "is_pid_running", return_value=False),
+            patch("envctl_engine.shared.process_runner.os.getpgid", side_effect=lambda pid: pid),
+            patch.object(runner, "_process_group_member_pids", return_value={4321}),
+            patch.object(runner, "_wait_for_process_group_exit", return_value=True),
             patch.object(runner, "_pid_identity", return_value="orig", create=True),
         ):
             result = runner.terminate_process_group(4321, term_timeout=0.1, kill_timeout=0.1)
@@ -291,13 +295,10 @@ class ProcessRunnerListenerDetectionTests(unittest.TestCase):
 
         with (
             patch("envctl_engine.shared.process_runner.os.killpg", side_effect=_fake_killpg),
-            patch.object(runner, "is_pid_running", side_effect=[True, True, False]),
+            patch("envctl_engine.shared.process_runner.os.getpgid", side_effect=lambda pid: pid),
+            patch.object(runner, "_process_group_member_pids", return_value={5678}),
+            patch.object(runner, "_wait_for_process_group_exit", side_effect=[False, True]),
             patch.object(runner, "_pid_identity", side_effect=["orig"] * 8, create=True),
-            patch(
-                "envctl_engine.shared.process_runner.time.monotonic",
-                side_effect=[0.0, 0.0, 0.2, 0.2, 0.2, 0.4],
-            ),
-            patch("envctl_engine.shared.process_runner.time.sleep", return_value=None),
         ):
             result = runner.terminate_process_group(5678, term_timeout=0.1, kill_timeout=0.1)
 
@@ -313,18 +314,119 @@ class ProcessRunnerListenerDetectionTests(unittest.TestCase):
 
         with (
             patch("envctl_engine.shared.process_runner.os.killpg", side_effect=_fake_killpg),
-            patch.object(runner, "is_pid_running", return_value=True),
+            patch("envctl_engine.shared.process_runner.os.getpgid", side_effect=lambda pid: pid),
+            patch.object(runner, "_process_group_member_pids", return_value={8765}),
+            patch.object(runner, "_wait_for_process_group_exit", return_value=False),
             patch.object(runner, "_pid_identity", side_effect=["orig", "reused"], create=True),
-            patch(
-                "envctl_engine.shared.process_runner.time.monotonic",
-                side_effect=[0.0, 0.0, 0.2, 0.2, 0.2, 0.4],
-            ),
-            patch("envctl_engine.shared.process_runner.time.sleep", return_value=None),
         ):
             result = runner.terminate_process_group(8765, term_timeout=0.1, kill_timeout=0.1)
 
-        self.assertTrue(result)
+        self.assertFalse(result)
         self.assertEqual(killpg_calls, [(8765, signal.SIGTERM)])
+
+    def test_terminate_process_group_kills_term_ignoring_descendant_after_leader_exits(self) -> None:
+        runner = ProcessRunner()
+        parent = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import subprocess,sys,time; "
+                    "subprocess.Popen([sys.executable, '-c', "
+                    "'import os,signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                    "print(os.getpid(), flush=True); time.sleep(60)']); "
+                    "time.sleep(60)"
+                ),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        child_pid = 0
+        try:
+            assert parent.stdout is not None
+            child_pid = int(parent.stdout.readline().strip())
+
+            self.assertTrue(runner.terminate_process_group(parent.pid, term_timeout=0.2, kill_timeout=2.0))
+            parent.wait(timeout=2.0)
+            self.assertFalse(runner.is_pid_running(child_pid))
+        finally:
+            try:
+                os.killpg(parent.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def test_terminate_process_group_resolves_dead_leaders_group_from_live_orphan_member(self) -> None:
+        runner = ProcessRunner()
+        parent = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import os,time; "
+                    "child=os.fork(); "
+                    "print(child, flush=True) if child else None; "
+                    "os._exit(0) if child else time.sleep(60)"
+                ),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        child_pid = 0
+        try:
+            assert parent.stdout is not None
+            child_pid = int(parent.stdout.readline().strip())
+            parent.wait(timeout=2.0)
+            self.assertEqual(os.getpgid(child_pid), parent.pid)
+
+            self.assertTrue(runner.terminate_process_group(child_pid, term_timeout=0.5, kill_timeout=2.0))
+            self.assertFalse(runner.is_pid_running(child_pid))
+        finally:
+            try:
+                os.killpg(parent.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def test_terminate_process_group_does_not_treat_live_eperm_as_success(self) -> None:
+        runner = ProcessRunner()
+
+        with (
+            patch("envctl_engine.shared.process_runner.os.killpg", side_effect=PermissionError),
+            patch("envctl_engine.shared.process_runner.os.getpgid", return_value=8766),
+            patch.object(runner, "is_pid_running", return_value=True),
+            patch.object(runner, "_pid_identity", return_value="orig", create=True),
+        ):
+            result = runner.terminate_process_group(8766, term_timeout=0.0, kill_timeout=0.0)
+
+        self.assertFalse(result)
+
+    def test_terminate_process_group_does_not_treat_missing_group_for_live_pid_as_success(self) -> None:
+        runner = ProcessRunner()
+
+        with (
+            patch("envctl_engine.shared.process_runner.os.killpg", side_effect=ProcessLookupError),
+            patch("envctl_engine.shared.process_runner.os.getpgid", return_value=8767),
+            patch.object(runner, "is_pid_running", return_value=True),
+            patch.object(runner, "_pid_identity", return_value="orig", create=True),
+        ):
+            result = runner.terminate_process_group(8767, term_timeout=0.0, kill_timeout=0.0)
+
+        self.assertFalse(result)
+
+    def test_terminate_does_not_treat_live_eperm_as_success(self) -> None:
+        runner = ProcessRunner()
+
+        with (
+            patch("envctl_engine.shared.process_runner.os.kill", side_effect=PermissionError),
+            patch.object(runner, "is_pid_running", return_value=True),
+            patch.object(runner, "_pid_identity", return_value="orig", create=True),
+        ):
+            result = runner.terminate(8768, term_timeout=0.0, kill_timeout=0.0)
+
+        self.assertFalse(result)
 
     def test_is_pid_running_treats_zombie_process_as_not_running(self) -> None:
         runner = ProcessRunner()
@@ -339,6 +441,12 @@ class ProcessRunnerListenerDetectionTests(unittest.TestCase):
             ),
         ):
             self.assertFalse(runner.is_pid_running(4321))
+
+    def test_is_pid_running_treats_permission_denied_as_still_running(self) -> None:
+        runner = ProcessRunner()
+
+        with patch("envctl_engine.shared.process_runner.os.kill", side_effect=PermissionError):
+            self.assertTrue(runner.is_pid_running(4321))
 
 
 if __name__ == "__main__":

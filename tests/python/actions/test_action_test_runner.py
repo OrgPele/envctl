@@ -49,6 +49,38 @@ def _run(orchestrator: _Orchestrator, route, targets: list[object]) -> int:  # n
 
 
 class ActionTestRunnerShipOnPassTests(unittest.TestCase):
+    def test_untested_scope_without_matrix_command_fails_without_running_main(self) -> None:
+        orchestrator = _Orchestrator()
+        route = parse_route(["test", "--untested"], env={})
+
+        with (
+            patch.object(
+                action_test_runner,
+                "build_test_action_execution_plan",
+                return_value=SimpleNamespace(
+                    execution_specs=[],
+                    interactive_command=False,
+                    missing_execution_specs_message=(
+                        "No test command supports the all-untested scope. "
+                        "Configure a test-all-trees.sh action command or select projects explicitly."
+                    ),
+                ),
+            ),
+            patch("builtins.print") as printer,
+            patch.object(
+                action_test_runner,
+                "execute_test_suites",
+                side_effect=AssertionError("test suites must not run"),
+            ),
+        ):
+            code = _run(orchestrator, route, [])
+
+        self.assertEqual(code, 1)
+        printer.assert_called_once_with(
+            "No test command supports the all-untested scope. "
+            "Configure a test-all-trees.sh action command or select projects explicitly."
+        )
+
     def test_ship_on_pass_rejects_blank_message_before_planning_tests(self) -> None:
         orchestrator = _Orchestrator()
         route = parse_route(["test", "--ship-on-pass="], env={})

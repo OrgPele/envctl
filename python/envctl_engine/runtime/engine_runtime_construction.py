@@ -30,9 +30,23 @@ def initialize_runtime_construction(runtime: Any, config: EngineConfig, *, env: 
     runtime.env = dict(env or {})
     runtime.runtime_legacy_root = config.runtime_dir / "python-engine"
     runtime.runtime_root = config.runtime_scope_dir
-    runtime.runtime_legacy_root.mkdir(parents=True, exist_ok=True)
-    runtime.runtime_root.mkdir(parents=True, exist_ok=True)
-    runtime._ensure_legacy_lock_view()
+    compat_mode = runtime._state_compat_mode()
+    runtime.state_repository = RuntimeStateRepository(
+        runtime_root=runtime.runtime_root,
+        runtime_legacy_root=runtime.runtime_legacy_root,
+        runtime_dir=runtime.config.runtime_dir,
+        runtime_scope_id=runtime.config.runtime_scope_id,
+        compat_mode=compat_mode,
+    )
+    # The repository canonicalizes ancestor symlinks before applying its
+    # containment and ownership checks. Keep every runtime consumer on that
+    # same canonical identity so persisted artifact paths and caller-visible
+    # paths never disagree (for example, macOS /var versus /private/var).
+    runtime.runtime_root = runtime.state_repository.runtime_root
+    runtime.runtime_legacy_root = runtime.state_repository.runtime_legacy_root
+    runtime.state_repository.ensure_runtime_roots()
+    if compat_mode == RuntimeStateRepository.COMPAT_READ_WRITE:
+        runtime._ensure_legacy_lock_view()
     runtime.port_planner = PortPlanner(
         backend_base=config.backend_port_base,
         frontend_base=config.frontend_port_base,
@@ -61,7 +75,6 @@ def initialize_runtime_construction(runtime: Any, config: EngineConfig, *, env: 
         ),
     )
     runtime.requirements = RequirementsOrchestrator()
-    runtime.services = ServiceManager()
     runtime.events = []
     runtime._emit_lock = threading.Lock()
     runtime._emit_listeners = []
@@ -69,9 +82,11 @@ def initialize_runtime_construction(runtime: Any, config: EngineConfig, *, env: 
     runtime._startup_warnings_by_project = {}
     runtime._debug_hash_salt = uuid.uuid4().hex
     runtime._debug_recorder = None
+    runtime._debug_recorder_failure = None
     runtime._active_command_id = None
     runtime._last_debug_bundle_path = None
     runtime.process_runner = ProcessRunner(emit=runtime._emit)
+    runtime.services = ServiceManager(process_runner=runtime.process_runner)
     probe_backend_name = "psutil" if runtime._probe_psutil_enabled() else "shell"
     probe_backend = runtime._build_process_probe_backend()
     runtime.process_probe = ProcessProbe(probe_backend)
@@ -89,13 +104,6 @@ def initialize_runtime_construction(runtime: Any, config: EngineConfig, *, env: 
         "backend": runtime._conflict_count("BACKEND"),
         "frontend": runtime._conflict_count("FRONTEND"),
     }
-    runtime.state_repository = RuntimeStateRepository(
-        runtime_root=runtime.runtime_root,
-        runtime_legacy_root=runtime.runtime_legacy_root,
-        runtime_dir=runtime.config.runtime_dir,
-        runtime_scope_id=runtime.config.runtime_scope_id,
-        compat_mode=runtime._state_compat_mode(),
-    )
     runtime.runtime_context = RuntimeContext(
         config=runtime.config,
         env=runtime.env,
