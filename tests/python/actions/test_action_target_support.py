@@ -145,6 +145,69 @@ class ActionTargetSupportTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(calls, [{"require_configured_main_root": False, "require_configured_root_match": True}])
 
+    def test_unresolved_external_checkout_never_falls_back_to_main_candidate(self) -> None:
+        main = _Target(name="Main", root="/tmp/repo")
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(
+                base_dir=Path("/tmp/repo"),
+                execution_root=Path("/tmp/envctl-external-worktree"),
+            ),
+            discover_projects=lambda mode: [main] if mode == "main" else [],
+            selectors_from_passthrough=lambda _args: [],
+        )
+        route = parse_route(["ship"], env={"ENVCTL_DEFAULT_MODE": "main"})
+
+        selected, error = resolve_action_targets(
+            runtime=runtime,
+            route=route,
+            trees_only=False,
+            resolve_current_worktree_target=lambda **_kwargs: None,
+            interactive_selection_allowed=lambda _route: False,
+            no_target_selected_message=lambda _route: "no ship target",
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(error, "no ship target")
+
+    def test_all_current_checkout_actions_prefer_external_linked_target_in_both_modes(self) -> None:
+        external = _Target(name="feature/external", root="/tmp/envctl-external-worktree")
+        main = _Target(name="Main", root="/tmp/repo")
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(
+                base_dir=Path("/tmp/repo"),
+                execution_root=Path(external.root),
+            ),
+            discover_projects=lambda mode: [main] if mode == "main" else [],
+            selectors_from_passthrough=lambda _args: [],
+        )
+
+        for mode in ("trees", "main"):
+            for command in ("ship", "pr", "commit", "test", "test-focused"):
+                with self.subTest(mode=mode, command=command):
+                    calls: list[dict[str, object]] = []
+                    route = parse_route([command], env={"ENVCTL_DEFAULT_MODE": mode})
+
+                    selected, error = resolve_action_targets(
+                        runtime=runtime,
+                        route=route,
+                        trees_only=False,
+                        resolve_current_worktree_target=lambda **kwargs: calls.append(kwargs) or external,
+                        interactive_selection_allowed=lambda _route: False,
+                        no_target_selected_message=lambda _route: "no target",
+                    )
+
+                    self.assertEqual(selected, [external])
+                    self.assertIsNone(error)
+                    self.assertEqual(
+                        calls,
+                        [
+                            {
+                                "require_configured_main_root": mode == "main",
+                                "require_configured_root_match": True,
+                            }
+                        ],
+                    )
+
     def test_resolve_action_targets_explicit_project_overrides_current_worktree(self) -> None:
         current = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
         requested = _Target(name="feature-b-1", root="/tmp/repo/trees/feature-b/1")

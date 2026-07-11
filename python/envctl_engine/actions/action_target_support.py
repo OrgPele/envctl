@@ -248,7 +248,23 @@ class _ActionTargetResolver:
             require_configured_main_root=self.route.mode == "main",
             require_configured_root_match=True,
         )
-        return ([current], None) if current is not None else None
+        if current is not None:
+            return [current], None
+        if self._execution_root_differs_from_configured_root():
+            return [], self.no_target_selected_message(self.route)
+        return None
+
+    def _execution_root_differs_from_configured_root(self) -> bool:
+        raw_runtime = getattr(self.runtime, "raw_runtime", self.runtime)
+        config = getattr(raw_runtime, "config", None)
+        base_dir = getattr(config, "base_dir", None)
+        execution_root = getattr(config, "execution_root", None)
+        if base_dir is None or execution_root is None:
+            return False
+        try:
+            return Path(str(base_dir)).expanduser().resolve() != Path(str(execution_root)).expanduser().resolve()
+        except OSError:
+            return True
 
     def _request_from_route(self) -> _ActionTargetRequest:
         project_selectors = {name.lower() for name in self.route.projects}
