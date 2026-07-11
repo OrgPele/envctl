@@ -441,6 +441,7 @@ class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
                 patch.object(engine, "_discover_projects", return_value=[context]),
                 patch.object(engine, "_try_load_existing_state", return_value=existing_state),
                 patch.object(engine, "_resume", return_value=1),
+                patch.object(engine, "_terminate_services_from_state", return_value=set()) as terminate_mock,
                 patch.object(engine, "_new_run_id", return_value="run-fresh-after-resume-failure"),
                 patch.object(engine, "_start_project_context", side_effect=RuntimeError("fresh startup failed")),
                 patch.object(
@@ -455,6 +456,7 @@ class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
                 code = engine.dispatch(parse_route(["start", "--batch"], env={"ENVCTL_DEFAULT_MODE": "main"}))
 
             self.assertEqual(code, 1)
+            self.assertEqual(terminate_mock.call_count, 1)
             written_state = cast(RunState, captured["state"])
             self.assertEqual(written_state.run_id, "run-fresh-after-resume-failure")
             self.assertNotEqual(written_state.run_id, existing_state.run_id)

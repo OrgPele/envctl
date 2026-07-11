@@ -225,12 +225,20 @@ class EngineRuntimeResumeStartupTests(_EngineRuntimeRealStartupTestCase):
 
             second_engine = PythonEngineRuntime(self._config(repo, runtime, extra={"BACKEND_DIR": "api"}), env={})
             second_engine._reconcile_state_truth = lambda _state: []  # type: ignore[assignment]
-            with patch.object(
-                second_engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])
+            with (
+                patch.object(
+                    second_engine,
+                    "_terminate_services_from_state",
+                    return_value=set(),
+                ) as terminate_mock,
+                patch.object(
+                    second_engine, "_start_project_context", side_effect=lambda **kwargs: fake_result(kwargs["context"])
+                ),
             ):
                 second_code = second_engine.dispatch(parse_route(["--plan", "feature-a", "--batch"], env={}))
 
             self.assertEqual(second_code, 0)
+            self.assertEqual(terminate_mock.call_count, 1)
             second_state = second_engine.state_repository.load_latest(mode="trees", strict_mode_match=True)
             self.assertIsNotNone(second_state)
             assert second_state is not None
