@@ -254,6 +254,12 @@ Behavior:
 
 - starts or reconciles a preview when the configured label is added
 - redeploys labeled PRs when GitHub sends a new-commit event
+- loads a tracked `.envctl` from the exact PR head when present; otherwise it
+  falls back to the controller-generated configuration
+- publishes explicitly listed `ENVCTL_PREVIEW_PUBLIC_SERVICES` on deterministic
+  TLS hosts and projects matching HTTP/WebSocket source URLs into launch env
+- creates `ENVCTL_PREVIEW_GENERATED_SECRETS` ephemerally for each preview start,
+  so shared service credentials do not need to be stored in GitHub
 - also redeploys during scheduled reconciliation if the saved preview head is stale
 - stops previews when the label is removed
 - deletes imported worktrees when a PR closes or merges

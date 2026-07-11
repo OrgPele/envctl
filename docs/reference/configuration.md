@@ -58,6 +58,7 @@ VITE_SUPABASE_ANON_KEY=${ENVCTL_SOURCE_SUPABASE_ANON_KEY}  # frontend-safe Supab
 
 # >>> envctl service voice-runtime launch env >>>
 VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}
+VOICE_RUNTIME_PUBLIC_WS_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_WS_URL}
 # <<< envctl service voice-runtime launch env <<<
 
 # >>> envctl main service voice-runtime launch env >>>
@@ -125,6 +126,7 @@ Supported template inputs include:
 - `ENVCTL_SOURCE_SERVICE_<SUFFIX>_PORT`
 - `ENVCTL_SOURCE_SERVICE_<SUFFIX>_URL`
 - `ENVCTL_SOURCE_SERVICE_<SUFFIX>_PUBLIC_URL`
+- `ENVCTL_SOURCE_SERVICE_<SUFFIX>_PUBLIC_WS_URL`
 - `ENVCTL_SOURCE_SERVICE_<SUFFIX>_HEALTH_URL`
 - `ENVCTL_SOURCE_SUPABASE_USER_<SUFFIX>_ID`
 - `ENVCTL_SOURCE_SUPABASE_USER_<SUFFIX>_EMAIL`
@@ -194,6 +196,8 @@ ENVCTL_SERVICE_VOICE_RUNTIME_EXPECT_LISTENER=true
 ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz
 ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}
 ENVCTL_SERVICE_VOICE_RUNTIME_TEST_CMD=scripts/envctl/test-voice-runtime.sh
+ENVCTL_PREVIEW_PUBLIC_SERVICES=voice-runtime
+ENVCTL_PREVIEW_GENERATED_SECRETS=PIPECAT_SERVICE_TOKEN,PIPECAT_WEBHOOK_SECRET,PIPECAT_STREAM_TOKEN_SECRET
 
 ENVCTL_SERVICE_WORKER_ENABLE=true
 ENVCTL_SERVICE_WORKER_DIR=backend
@@ -217,6 +221,8 @@ Supported keys use `ENVCTL_SERVICE_<SUFFIX>_...`, where `<SUFFIX>` is the upperc
 | `ENVCTL_SERVICE_<SUFFIX>_EXPECT_LISTENER` | `true` | Set `false` for workers and schedulers that do not bind a port. |
 | `ENVCTL_SERVICE_<SUFFIX>_HEALTH_URL` | unset | Template stored/projected for tooling and launch env aliases. |
 | `ENVCTL_SERVICE_<SUFFIX>_PUBLIC_URL` | derived from host/port | Template for the service public URL source variable. |
+| `ENVCTL_PREVIEW_PUBLIC_SERVICES` | unset | Additional services exposed on deterministic public hosts by `envctl pr-preview-controller`. |
+| `ENVCTL_PREVIEW_GENERATED_SECRETS` | unset | Env names generated ephemerally per preview and exposed only as `ENVCTL_SOURCE_<NAME>` launch inputs. |
 | `ENVCTL_SERVICE_<SUFFIX>_START_ORDER` | `100` | Coarse ordering for additional services after built-in service descriptors. |
 | `ENVCTL_SERVICE_<SUFFIX>_DEPENDS_ON` | unset | Comma-separated references to `backend`, `frontend`, configured additional services, or configured dependency ids. Unknown references and service cycles fail validation/startup with actionable diagnostics. Dependency ids such as `redis`, `postgres`, `supabase`, or `n8n` validate the relationship and influence service ordering/metadata, but they do not by themselves enable disabled infrastructure; keep the matching `MAIN_*_ENABLE` / `TREES_*_ENABLE` dependency setting enabled when the service requires that infrastructure at runtime. |
 | `ENVCTL_SERVICE_<SUFFIX>_CRITICAL` | `true` | `true` keeps fail-fast startup. `false` records a degraded failed service with cwd/log/port/failure metadata and allows healthy independent services to continue. |

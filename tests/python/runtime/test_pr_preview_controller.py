@@ -44,6 +44,7 @@ class FakeRunner:
         blast_stdout: str = "",
         blast_stderr: str = "",
         import_results=None,
+        repository_envctl_text: str | None = None,
     ):
         self.controller = controller
         self.active_prs = active_prs or []
@@ -61,6 +62,7 @@ class FakeRunner:
         self.blast_stdout = blast_stdout
         self.blast_stderr = blast_stderr
         self.import_results = list(import_results or [])
+        self.repository_envctl_text = repository_envctl_text
         self.calls = []
         self.comments = []
         self.deployments = []
@@ -115,6 +117,15 @@ class FakeRunner:
             return self.ok(argv)
         if argv[:3] == ["git", "fetch", "origin"]:
             return self.ok(argv)
+        if argv[:2] == ["git", "show"]:
+            if self.repository_envctl_text is None:
+                return self.controller.CommandResult(
+                    argv=list(argv),
+                    returncode=128,
+                    stdout="",
+                    stderr=".envctl is not tracked",
+                )
+            return self.ok(argv, stdout=self.repository_envctl_text)
         if argv[:2] == ["git", "-C"]:
             branch = self.root_to_branch.get(str(argv[2]), "feature/demo")
             return self.ok(argv, stdout=f"{branch}\n")
@@ -872,6 +883,94 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     assert "https://pele-monorepo-pr-789.srv.example.test" in runner.comments[-1]
     assert "https://pele-monorepo-pr-789-api.srv.example.test" in runner.comments[-1]
     assert "https://pele-monorepo-pr-789-supabase.srv.example.test" in runner.comments[-1]
+
+
+def test_repository_envctl_config_drives_dynamic_public_service_and_secrets(
+    tmp_path,
+):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    repository_config = """\
+ENVCTL_ADDITIONAL_SERVICES=voice-runtime
+ENVCTL_PREVIEW_PUBLIC_SERVICES=voice-runtime
+ENVCTL_PREVIEW_GENERATED_SECRETS=PIPECAT_SERVICE_TOKEN,PIPECAT_WEBHOOK_SECRET,PIPECAT_STREAM_TOKEN_SECRET
+ENVCTL_SERVICE_VOICE_RUNTIME_ENABLE=true
+ENVCTL_SERVICE_VOICE_RUNTIME_DIR=voice-runtime
+ENVCTL_SERVICE_VOICE_RUNTIME_PORT_BASE=8010
+ENVCTL_SERVICE_VOICE_RUNTIME_START_CMD=../scripts/envctl/start-voice-runtime.sh {port}
+ENVCTL_SERVICE_VOICE_RUNTIME_HEALTH_URL=http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz
+ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_URL}
+"""
+    runner = FakeRunner(
+        controller,
+        projects={"projects": [{"name": "feature/demo", "root": str(root), "running": True}]},
+        endpoints={
+            "frontend": {"port": 9000},
+            "backend": {"port": 8000},
+            "dependencies": {"supabase": {"resources": {"api": 54321}}},
+            "additional_services": {
+                "voice-runtime": {
+                    "port": 8010,
+                    "local_url": "http://localhost:8010",
+                    "health_url": "http://localhost:8010/readyz",
+                }
+            },
+        },
+        root_to_branch={str(root): "feature/demo"},
+        repository_envctl_text=repository_config,
+    )
+    base_config = make_config(controller, tmp_path)
+    config = controller.ControllerConfig(
+        **{
+            **base_config.__dict__,
+            "public_base_domain": "srv.example.test",
+            "public_link_token_configured": True,
+        }
+    )
+    instance = controller.PreviewController(config, runner)
+
+    exit_code = instance.run_pull_request_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+
+    assert exit_code == 0
+    envctl_text = (tmp_path / "control" / ".envctl").read_text()
+    assert envctl_text.startswith(controller.GENERATED_ENVCTL_HEADER)
+    assert "Repository-owned .envctl loaded from abc123456789" in envctl_text
+    assert repository_config.strip() in envctl_text
+
+    start_call = next(call for call in runner.calls if call["argv"][:2] == ["envctl", "start"])
+    start_env = start_call["env"]
+    assert (
+        start_env["ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL"]
+        == "https://pele-monorepo-pr-789-voice-runtime.srv.example.test"
+    )
+    generated = {
+        start_env["ENVCTL_SOURCE_PIPECAT_SERVICE_TOKEN"],
+        start_env["ENVCTL_SOURCE_PIPECAT_WEBHOOK_SECRET"],
+        start_env["ENVCTL_SOURCE_PIPECAT_STREAM_TOKEN_SECRET"],
+    }
+    assert len(generated) == 3
+    assert all(len(value) >= 48 for value in generated)
+
+    state = instance.load_state(789)
+    assert state is not None
+    runtime = state.endpoints["additional_services"]["voice-runtime"]
+    assert runtime["public_url"] == ("https://pele-monorepo-pr-789-voice-runtime.srv.example.test")
+    assert runtime["public_health_url"] == ("https://pele-monorepo-pr-789-voice-runtime.srv.example.test/readyz")
+    assert "- Voice Runtime: https://pele-monorepo-pr-789-voice-runtime.srv.example.test" in (runner.comments[-1])
+    docker_runs = command_argvs(runner, "docker", "run")
+    assert len(docker_runs) == 4
+    assert any(
+        "traefik.http.routers.envctl-preview-pr-789-voice-runtime.rule="
+        "Host(`pele-monorepo-pr-789-voice-runtime.srv.example.test`)" in argv
+        for argv in docker_runs
+    )
 
 
 def test_labeled_event_blasts_wrong_branch_import_target_and_retries(tmp_path):
