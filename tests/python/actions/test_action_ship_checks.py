@@ -299,6 +299,46 @@ def test_github_pr_checks_can_detect_success_before_next_progress_heartbeat(tmp_
     assert checks["duration_seconds"] == 2.0
     assert updates == []
 
+
+def test_github_pr_checks_ignores_transient_empty_rollup_after_checks_start(tmp_path: Path) -> None:
+    clock = {"now": 0.0}
+    outputs = [
+        {
+            "headRefOid": "newsha",
+            "statusCheckRollup": [{"name": "pytest", "workflowName": "Tests", "status": "IN_PROGRESS"}],
+        },
+        {"headRefOid": "newsha", "statusCheckRollup": []},
+        {
+            "headRefOid": "newsha",
+            "statusCheckRollup": [
+                {"name": "pytest", "workflowName": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"}
+            ],
+        },
+    ]
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["/usr/bin/gh", "api"]:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="[]", stderr="")
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=json.dumps(outputs.pop(0)), stderr="")
+
+    def fake_sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    checks = github_pr_checks(
+        tmp_path,
+        expected_head_sha="newsha",
+        timeout_seconds=30.0,
+        poll_interval_seconds=1.0,
+        no_checks_grace_seconds=0.0,
+        run_command=fake_run,
+        monotonic=lambda: clock["now"],
+        sleep=fake_sleep,
+    )
+
+    assert checks["state"] == "checks_passed"
+    assert checks["duration_seconds"] == 2.0
+    assert outputs == []
+
 def test_github_pr_checks_waits_for_expected_head_sha_before_accepting_rollup(tmp_path: Path) -> None:
     calls: list[list[str]] = []
     outputs = [

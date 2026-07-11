@@ -99,8 +99,13 @@ class ShipCheckPoller:
 
     def run(self) -> dict[str, object]:
         next_progress_at = self.timing.progress_interval_seconds
+        last_observed_checks: Mapping[str, object] | None = None
         while True:
             result = self._query()
+            if _result_reports_target_checks(result):
+                last_observed_checks = result
+            elif result.get("state") == "no_checks_reported" and last_observed_checks is not None:
+                result = _pending_after_transient_empty_rollup(result, last_observed_checks)
             if _ship_check_result_is_terminal(result):
                 return result
 
@@ -236,6 +241,42 @@ def _ship_check_result_is_terminal(result: Mapping[str, object]) -> bool:
     if state != "checks_failed":
         return state in TERMINAL_SHIP_CHECK_STATES
     return not _failed_check_logs_are_retryable(result)
+
+
+def _result_reports_target_checks(result: Mapping[str, object]) -> bool:
+    synthetic_waiters = {"github_checks", "github_head_ref"}
+    for key in ("failing_checks", "passed_checks", "pending_checks"):
+        checks = result.get(key)
+        if not isinstance(checks, list):
+            continue
+        for check in checks:
+            if not isinstance(check, Mapping):
+                continue
+            name = str(check.get("name") or "").strip()
+            if name and name not in synthetic_waiters:
+                return True
+    return False
+
+
+def _pending_after_transient_empty_rollup(
+    result: Mapping[str, object],
+    last_observed: Mapping[str, object],
+) -> dict[str, object]:
+    pending = last_observed.get("pending_checks")
+    pending_checks = list(pending) if isinstance(pending, list) and pending else [
+        {"name": "github_checks", "state": "WAITING"}
+    ]
+    passed = last_observed.get("passed_checks")
+    pr_checks = last_observed.get("pr_checks")
+    return {
+        **result,
+        "state": "checks_pending_timeout",
+        "failing_checks": [],
+        "passed_checks": list(passed) if isinstance(passed, list) else [],
+        "pending_checks": pending_checks,
+        "pr_checks": list(pr_checks) if isinstance(pr_checks, list) else [],
+        "error": "GitHub temporarily returned an empty check rollup after target checks were already observed.",
+    }
 
 
 def _check_progress_message(
