@@ -62,9 +62,7 @@ def service_env_overlays(
 
 def _process_service_overlay_source() -> dict[str, str]:
     return {
-        key: value
-        for key, value in os.environ.items()
-        if value and key.startswith(_SERVICE_OVERLAY_SOURCE_PREFIXES)
+        key: value for key, value in os.environ.items() if value and key.startswith(_SERVICE_OVERLAY_SOURCE_PREFIXES)
     }
 
 
@@ -192,6 +190,11 @@ def _add_service_source_env(
         env[f"{suffix}_PUBLIC_URL"] = _render_service_source_template(public_url_template, env)
     else:
         env[f"{suffix}_PUBLIC_URL"] = env[f"{suffix}_URL"]
+    public_url = env[f"{suffix}_PUBLIC_URL"]
+    if public_url.startswith("https://"):
+        env[f"{suffix}_PUBLIC_WS_URL"] = f"wss://{public_url.removeprefix('https://')}"
+    elif public_url.startswith("http://"):
+        env[f"{suffix}_PUBLIC_WS_URL"] = f"ws://{public_url.removeprefix('http://')}"
     if health_url_template:
         env[f"{suffix}_HEALTH_URL"] = _render_service_source_template(health_url_template, env)
 

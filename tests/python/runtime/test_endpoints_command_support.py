@@ -68,6 +68,16 @@ class EndpointsCommandSupportTests(unittest.TestCase):
                     actual_port=3100,
                     public_url="https://feature-a.example.test",
                 ),
+                "feature-a-1 Voice Runtime": ServiceRecord(
+                    name="feature-a-1 Voice Runtime",
+                    type="voice-runtime",
+                    cwd="/repo/trees/feature-a/1/voice-runtime",
+                    project="feature-a-1",
+                    status="running",
+                    actual_port=8110,
+                    public_url="https://voice.feature-a.example.test",
+                    health_url="http://localhost:8110/readyz",
+                ),
                 "feature-b-1 Frontend": ServiceRecord(
                     name="feature-b-1 Frontend",
                     type="frontend",
@@ -95,7 +105,10 @@ class EndpointsCommandSupportTests(unittest.TestCase):
             state,
             project="feature-a-1",
             env={"ENVCTL_PUBLIC_HOST": "public.example.test"},
-            config=SimpleNamespace(raw={}),
+            config=SimpleNamespace(
+                raw={},
+                additional_services=(SimpleNamespace(name="voice-runtime"),),
+            ),
         )
 
         self.assertTrue(payload["ok"])
@@ -108,6 +121,15 @@ class EndpointsCommandSupportTests(unittest.TestCase):
         self.assertEqual(payload["frontend"]["public_url"], "https://feature-a.example.test")
         self.assertEqual(payload["backend"]["local_url"], "http://localhost:8100")
         self.assertEqual(payload["backend"]["public_url"], "http://public.example.test:8100")
+        self.assertEqual(payload["additional_services"]["voice-runtime"]["port"], 8110)
+        self.assertEqual(
+            payload["additional_services"]["voice-runtime"]["public_url"],
+            "https://voice.feature-a.example.test",
+        )
+        self.assertEqual(
+            payload["additional_services"]["voice-runtime"]["health_url"],
+            "http://localhost:8110/readyz",
+        )
         self.assertEqual(payload["dependencies"]["redis"]["port"], 6380)
         self.assertEqual(payload["dependencies"]["supabase"]["port"], 54321)
         self.assertEqual(payload["dependencies"]["supabase"]["resources"], {"api": 54321, "db": 5432, "primary": 5432})

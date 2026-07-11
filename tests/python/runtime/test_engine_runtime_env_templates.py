@@ -289,7 +289,9 @@ class EngineRuntimeEnvTemplatesTests(EngineRuntimeEnvTestCase):
         frontend_env = project_service_env(
             runtime, context, requirements=requirements, route=None, service_name="frontend"
         )
-        backend_env = project_service_env(runtime, context, requirements=requirements, route=None, service_name="backend")
+        backend_env = project_service_env(
+            runtime, context, requirements=requirements, route=None, service_name="backend"
+        )
 
         self.assertEqual(internal_env["DB_PORT"], "5432")
         self.assertEqual(internal_env["SUPABASE_DB_PORT"], "5432")
@@ -513,6 +515,11 @@ class EngineRuntimeEnvTemplatesTests(EngineRuntimeEnvTestCase):
                             template="${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_URL}",
                             line_number=1,
                         ),
+                        SimpleNamespace(
+                            name="VOICE_RUNTIME_PUBLIC_WS_URL",
+                            template="${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PUBLIC_WS_URL}",
+                            line_number=2,
+                        ),
                     )
                 },
                 mode_service_dependency_env_section_present={("main", "voice-runtime"): True},
@@ -522,26 +529,26 @@ class EngineRuntimeEnvTemplatesTests(EngineRuntimeEnvTestCase):
                         SimpleNamespace(
                             name="PELE_API_BASE_URL",
                             template="${ENVCTL_SOURCE_BACKEND_URL}",
-                            line_number=2,
+                            line_number=3,
                         ),
                     )
                 },
-                app_service_by_name=lambda name: SimpleNamespace(
-                    env_suffix="VOICE_RUNTIME",
-                    public_url_template="http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}",
-                    health_url_template="http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz",
-                )
-                if name == "voice-runtime"
-                else None,
+                app_service_by_name=lambda name: (
+                    SimpleNamespace(
+                        env_suffix="VOICE_RUNTIME",
+                        public_url_template="https://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}",
+                        health_url_template="http://${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_HOST}:${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_PORT}/readyz",
+                    )
+                    if name == "voice-runtime"
+                    else None
+                ),
             ),
         )
         context = SimpleNamespace(
             name="Main",
             ports={
                 "backend": PortPlan(project="Main", requested=8000, assigned=8000, final=8000, source="assigned"),
-                "voice-runtime": PortPlan(
-                    project="Main", requested=8010, assigned=8010, final=8010, source="assigned"
-                ),
+                "voice-runtime": PortPlan(project="Main", requested=8010, assigned=8010, final=8010, source="assigned"),
                 "db": PortPlan(project="Main", requested=5432, assigned=5432, final=5432, source="assigned"),
                 "redis": PortPlan(project="Main", requested=6380, assigned=6380, final=6380, source="assigned"),
                 "n8n": PortPlan(project="Main", requested=5678, assigned=5678, final=5678, source="assigned"),
@@ -565,7 +572,8 @@ class EngineRuntimeEnvTemplatesTests(EngineRuntimeEnvTestCase):
             service_name="backend",
         )
 
-        self.assertEqual(voice_env["VOICE_RUNTIME_PUBLIC_URL"], "http://localhost:8010")
+        self.assertEqual(voice_env["VOICE_RUNTIME_PUBLIC_URL"], "https://localhost:8010")
+        self.assertEqual(voice_env["VOICE_RUNTIME_PUBLIC_WS_URL"], "wss://localhost:8010")
         self.assertEqual(voice_env["PELE_API_BASE_URL"], "http://localhost:8000")
         self.assertNotIn("VOICE_RUNTIME_PUBLIC_URL", backend_env)
 
