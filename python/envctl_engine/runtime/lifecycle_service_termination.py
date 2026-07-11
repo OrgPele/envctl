@@ -51,7 +51,10 @@ def terminate_service_record(runtime: Any, service: object, *, aggressive: bool,
         container = str(
             getattr(service, "container_id", "") or getattr(service, "container_name", "") or ""
         ).strip()
-        stopped = DockerServiceRuntime(runtime, runtime.process_runner).stop(container)
+        stopped = DockerServiceRuntime(runtime, runtime.process_runner).stop(
+            container,
+            verify_ownership=verify_ownership,
+        )
         pid = getattr(service, "pid", None)
         if isinstance(pid, int) and pid > 0:
             try:

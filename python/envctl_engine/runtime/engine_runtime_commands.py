@@ -106,17 +106,15 @@ def service_start_command_resolved(
     project_root: Path | None = None,
     port: int = 0,
 ) -> tuple[list[str], str]:
-    command_exists = runtime._command_exists
     if docker_service_uses_image_command(runtime, service_name):
-        def command_exists(_executable: str) -> bool:
-            return True
+        return [], "docker_image"
     result = resolve_service_start_command(
         service_name=service_name,
         project_root=(project_root or runtime.config.base_dir),
         port=port,
         env=runtime.env,
         config_raw=runtime.config.raw,
-        command_exists=command_exists,
+        command_exists=runtime._command_exists,
     )
     return result.command, result.source
 

@@ -20,20 +20,19 @@ from envctl_engine.runtime.engine_runtime_commands import (  # noqa: E402
 
 
 class EngineRuntimeCommandsTests(unittest.TestCase):
-    def test_docker_image_command_does_not_require_container_executable_on_host(self) -> None:
+    def test_docker_image_command_skips_host_command_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            (root / "frontend").mkdir()
             runtime = SimpleNamespace(
                 env={
                     "DOCKER_MODE": "true",
-                    "ENVCTL_FRONTEND_START_CMD": "container-only-server --port {port}",
+                    "ENVCTL_FRONTEND_DOCKER_IMAGE": "example/frontend:dev",
                 },
                 config=SimpleNamespace(
                     base_dir=root,
                     raw={"FRONTEND_DIR": "frontend"},
                 ),
-                _command_exists=lambda _executable: False,
+                _command_exists=lambda _executable: self.fail("host command lookup must be skipped"),
             )
 
             command, source = service_start_command_resolved(
@@ -43,8 +42,8 @@ class EngineRuntimeCommandsTests(unittest.TestCase):
                 port=8010,
             )
 
-        self.assertEqual(command, ["container-only-server", "--port", "8010"])
-        self.assertEqual(source, "configured")
+        self.assertEqual(command, [])
+        self.assertEqual(source, "docker_image")
 
     def test_docker_service_command_still_requires_executable_on_host(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

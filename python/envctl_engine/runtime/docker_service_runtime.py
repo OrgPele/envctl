@@ -256,12 +256,36 @@ class DockerServiceRuntime:
         pid = getattr(process, "pid", None)
         return pid if isinstance(pid, int) and pid > 0 else None
 
-    def stop(self, container: str, *, remove: bool = True) -> bool:
+    def stop(
+        self,
+        container: str,
+        *,
+        remove: bool = True,
+        verify_ownership: bool = False,
+    ) -> bool:
         if not container:
             return True
+        if verify_ownership and not self._container_owned_by_runtime_scope(container):
+            return False
         command = ["docker", "rm", "--force", container] if remove else ["docker", "stop", container]
         result = self.process_runtime.run(command, timeout=30.0)
         return result.returncode == 0 or "No such container" in str(result.stderr or "")
+
+    def _container_owned_by_runtime_scope(self, container: str) -> bool:
+        inspected = self.process_runtime.run(
+            [
+                "docker",
+                "container",
+                "inspect",
+                "--format",
+                f"{{{{index .Config.Labels {json.dumps(_RUNTIME_SCOPE_LABEL)}}}}}",
+                container,
+            ],
+            timeout=10.0,
+        )
+        if inspected.returncode != 0:
+            return "No such" in str(inspected.stderr or "")
+        return str(inspected.stdout or "").strip() == self._runtime_scope_identity()
 
     def container_running(self, container: str) -> bool:
         if not container:
@@ -548,6 +572,7 @@ class DockerServiceRuntime:
     def _container_port(self, service_name: str, host_port: int, *, image: str) -> int:
         value = self._setting(service_name, "DOCKER_PORT")
         if not value:
+            self._ensure_image_available(image)
             exposed = self._single_exposed_port(image)
             return exposed if exposed is not None else host_port
         try:
@@ -557,6 +582,18 @@ class DockerServiceRuntime:
         if port <= 0 or port > 65535:
             raise RuntimeError(f"Invalid Docker container port for {service_name}: {value!r}")
         return port
+
+    def _ensure_image_available(self, image: str) -> None:
+        if self._image_exists(image):
+            return
+        self.runtime._emit("service.container.pull", image=image)
+        pulled = self.process_runtime.run(
+            ["docker", "pull", image],
+            timeout=self._timeout("ENVCTL_DOCKER_PULL_TIMEOUT_SECONDS", 300.0),
+        )
+        if pulled.returncode != 0:
+            detail = str(pulled.stderr or pulled.stdout or f"failed to pull Docker image {image}").strip()
+            raise RuntimeError(detail)
 
     def _single_exposed_port(self, image: str) -> int | None:
         result = self.process_runtime.run(

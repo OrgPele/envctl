@@ -71,13 +71,25 @@ def classify_dirty_porcelain(status_output: str) -> tuple[bool, bool, bool]:
 
 
 def detect_default_branch(git_root: Path, *, git_output: Callable[[Path, list[str]], str]) -> str:
-    ref = git_output(git_root, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
-    if ref.startswith("origin/"):
-        return ref.split("origin/", 1)[1]
+    origin_default = _origin_default_branch(git_root, git_output=git_output)
+    if origin_default:
+        return origin_default
     for candidate in ("main", "master"):
         if git_output(git_root, ["rev-parse", "--verify", candidate]).strip():
             return candidate
     return "main"
+
+
+def _origin_default_branch(git_root: Path, *, git_output: Callable[[Path, list[str]], str]) -> str:
+    ref = git_output(git_root, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
+    if ref.startswith("origin/"):
+        return ref.split("origin/", 1)[1]
+    remote_head = git_output(git_root, ["ls-remote", "--symref", "origin", "HEAD"])
+    for line in remote_head.splitlines():
+        prefix = "ref: refs/heads/"
+        if line.startswith(prefix) and line.rstrip().endswith("\tHEAD"):
+            return line[len(prefix) :].split("\t", 1)[0].strip()
+    return ""
 
 
 def detect_pr_base_branch(git_root: Path, *, git_output: Callable[[Path, list[str]], str]) -> str:
@@ -103,7 +115,7 @@ def detect_pr_base_branch(git_root: Path, *, git_output: Callable[[Path, list[st
         for ref in (f"origin/{candidate}", candidate):
             if git_output(git_root, ["rev-parse", "--verify", ref]).strip():
                 return candidate
-    return "master"
+    return _origin_default_branch(git_root, git_output=git_output) or "master"
 
 
 def existing_pr_url(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,12 +24,15 @@ class _Runner:
         self.terminated: list[int] = []
         self.build_env: dict[str, str] = {}
         self.existing_container: tuple[bool, str] | None = None
+        self.local_images: set[str] = set()
+        self.remote_exposed_ports: dict[str, dict[str, object]] = {}
 
     def run(self, command, **_kwargs):
         argv = [str(part) for part in command]
         self.calls.append(argv)
         if argv[:2] == ["docker", "build"]:
             self.build_env = dict(_kwargs.get("env", {}))
+            self.local_images.add(argv[argv.index("--tag") + 1])
         if argv[:2] == ["docker", "run"]:
             env_file = Path(argv[argv.index("--env-file") + 1])
             self.env_file_payload = env_file.read_text(encoding="utf-8")
@@ -37,11 +41,23 @@ class _Runner:
             if self.existing_container is None:
                 return SimpleNamespace(returncode=1, stdout="", stderr="No such container")
             running, owner = self.existing_container
+            format_value = argv[argv.index("--format") + 1]
+            if ".State.Running" not in format_value:
+                return SimpleNamespace(returncode=0, stdout=f"{owner}\n", stderr="")
             return SimpleNamespace(returncode=0, stdout=f"{str(running).lower()}|{owner}\n", stderr="")
         if argv[:3] == ["docker", "inspect", "--format"]:
             return SimpleNamespace(returncode=0 if self.running else 1, stdout="true\n" if self.running else "", stderr="")
         if argv[:3] == ["docker", "image", "inspect"]:
-            return SimpleNamespace(returncode=1, stdout="", stderr="missing")
+            image = argv[-1]
+            if image not in self.local_images:
+                return SimpleNamespace(returncode=1, stdout="", stderr="missing")
+            if "--format" in argv:
+                payload = self.remote_exposed_ports.get(image, {})
+                return SimpleNamespace(returncode=0, stdout=json.dumps(payload) + "\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="[]\n", stderr="")
+        if argv[:2] == ["docker", "pull"]:
+            self.local_images.add(argv[-1])
+            return SimpleNamespace(returncode=0, stdout="pulled\n", stderr="")
         if argv[:3] == ["docker", "rm", "--force"]:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         if argv[:2] == ["docker", "logs"]:
@@ -254,6 +270,58 @@ def test_configured_image_runs_without_build_and_preserves_browser_public_url(tm
     assert "PORT=9000" in runner.env_file_payload
     assert "HOST=0.0.0.0" in runner.env_file_payload
     assert launch.image == "example/frontend:dev"
+
+
+def test_remote_image_is_pulled_before_exposed_port_detection(tmp_path: Path) -> None:
+    runner = _Runner()
+    image = "example/frontend:remote"
+    runner.remote_exposed_ports[image] = {"80/tcp": {}}
+    runtime, _events = _runtime(tmp_path, runner, env={"ENVCTL_FRONTEND_DOCKER_IMAGE": image})
+
+    DockerServiceRuntime(runtime, runner).launch(
+        project_name="Main",
+        project_root=tmp_path,
+        service_name="frontend",
+        cwd=tmp_path,
+        command=[],
+        env={},
+        host_port=9100,
+        container_port=9100,
+        listener_expected=True,
+        log_path=str(tmp_path / "frontend.log"),
+    )
+
+    pull_index = runner.calls.index(["docker", "pull", image])
+    exposed_inspect_index = next(
+        index
+        for index, call in enumerate(runner.calls)
+        if call[:3] == ["docker", "image", "inspect"] and "--format" in call
+    )
+    run_index = next(index for index, call in enumerate(runner.calls) if call[:2] == ["docker", "run"])
+    assert pull_index < exposed_inspect_index < run_index
+    assert "127.0.0.1:9100:80" in runner.calls[run_index]
+
+
+def test_verified_stop_refuses_container_from_another_runtime_scope(tmp_path: Path) -> None:
+    runner = _Runner()
+    runner.existing_container = (True, "another-runtime")
+    runtime, _events = _runtime(tmp_path, runner)
+
+    stopped = terminate_service_record(
+        runtime,
+        ServiceRecord(
+            name="Main Backend",
+            type="backend",
+            cwd=str(tmp_path),
+            runtime_kind="docker",
+            container_id="reused-container-id",
+        ),
+        aggressive=False,
+        verify_ownership=True,
+    )
+
+    assert not stopped
+    assert not any(call[:3] == ["docker", "rm", "--force"] for call in runner.calls)
 
 
 def test_container_state_drives_health_and_stop(tmp_path: Path) -> None:

@@ -118,7 +118,10 @@ def stop_requirement_component_containers(runtime: Any, component: Mapping[str, 
             if removed.returncode != 0:
                 detail = removed.stderr or removed.stdout or "failed stopping Supabase containers"
                 raise RuntimeError(str(detail).strip())
-        return
+            return
+        # Native Supabase DB startup records the concrete container name and
+        # does not attach a Compose project label. Fall through to direct
+        # removal when the saved component is not a Compose stack.
     removed = process_runner.run(["docker", "rm", "--force", container_name], timeout=30.0)
     if removed.returncode != 0 and "No such container" not in str(removed.stderr or ""):
         raise RuntimeError(str(removed.stderr or removed.stdout or f"failed stopping {container_name}").strip())

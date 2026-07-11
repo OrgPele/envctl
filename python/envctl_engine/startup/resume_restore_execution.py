@@ -7,6 +7,7 @@ import time
 from typing import Callable, Mapping
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.docker_service_runtime import state_uses_docker_services
 from envctl_engine.state.models import RunState
 from envctl_engine.startup.resume_restore_project import ResumeProjectRestoreRunner, _round_ms
 from envctl_engine.startup.resume_restore_results import apply_restore_result
@@ -113,6 +114,7 @@ def _execute_restore_missing(
     use_single_spinner = use_spinner and not use_project_spinner_group
     suppress_timing_output = use_project_spinner_group or use_single_spinner
     route_for_startup = _route_for_resume_restore(route, state=state, suppress_timing_output=suppress_timing_output)
+    _apply_restore_runtime_mode(rt, route_for_startup)
     if use_single_spinner:
         rt._emit(  # type: ignore[attr-defined]
             "ui.spinner.lifecycle",
@@ -240,6 +242,8 @@ def _route_for_resume_restore(
         **route_for_startup.flags,
         "_resume_restore": True,
     }
+    if state_uses_docker_services(state):
+        flags["docker"] = True
     if suppress_timing_output:
         flags["_suppress_timing_print"] = True
     return Route(
@@ -250,6 +254,11 @@ def _route_for_resume_restore(
         projects=route_for_startup.projects,
         flags=flags,
     )
+
+
+def _apply_restore_runtime_mode(runtime: object, route: Route) -> None:
+    if bool(route.flags.get("docker")):
+        getattr(runtime, "env")["DOCKER_MODE"] = "true"
 
 
 def _run_restore_jobs(

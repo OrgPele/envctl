@@ -55,6 +55,40 @@ class LifecycleDependencyStopTests(unittest.TestCase):
         )
         self.assertIn(["docker", "rm", "--force", "one", "two"], calls)
 
+    def test_stop_native_supabase_falls_back_to_saved_container_name(self) -> None:
+        calls: list[list[str]] = []
+
+        def run(command, **_kwargs):  # noqa: ANN001
+            argv = [str(part) for part in command]
+            calls.append(argv)
+            if argv[:3] == ["docker", "ps", "--all"]:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        stop_requirement_component_containers(
+            SimpleNamespace(process_runner=SimpleNamespace(run=run)),
+            {
+                "id": "supabase",
+                "enabled": True,
+                "container_name": "envctl-feature-supabase-db-1",
+            },
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                [
+                    "docker",
+                    "ps",
+                    "--all",
+                    "--quiet",
+                    "--filter",
+                    "label=com.docker.compose.project=envctl-feature-supabase-db-1",
+                ],
+                ["docker", "rm", "--force", "envctl-feature-supabase-db-1"],
+            ],
+        )
+
     def test_select_dependency_components_filters_unknown_projects_dependencies_and_disabled_components(self) -> None:
         state = RunState(
             run_id="run-1",
