@@ -1724,6 +1724,61 @@ class StateRepositoryContractTests(unittest.TestCase):
             self.assertEqual((loaded.run_id, loaded.mode), ("run-main", "main"))
             self.assertEqual(load_state(str(runtime_root / "run_state.json")).run_id, "run-main")
 
+    def test_non_strict_project_lookup_filters_projects_before_newest_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir) / "runtime"
+            repo = RuntimeStateRepository(
+                runtime_root=runtime_dir / "scope",
+                runtime_legacy_root=runtime_dir / "python-engine",
+                runtime_dir=runtime_dir,
+                runtime_scope_id="repo-123",
+                compat_mode=RuntimeStateRepository.SCOPED_ONLY,
+            )
+            repo.save_resume_state(
+                state=RunState(
+                    run_id="run-tree",
+                    mode="trees",
+                    services={
+                        "FeatureA Backend": ServiceRecord(
+                            name="FeatureA Backend",
+                            type="backend",
+                            cwd="/tmp/FeatureA/backend",
+                            project="FeatureA",
+                        )
+                    },
+                    metadata={"project_names": ["FeatureA"]},
+                ),
+                emit=lambda *_args, **_kwargs: None,
+                runtime_map_builder=lambda _state: {},
+            )
+            repo.save_resume_state(
+                state=RunState(
+                    run_id="run-main",
+                    mode="main",
+                    services={
+                        "Main Backend": ServiceRecord(
+                            name="Main Backend",
+                            type="backend",
+                            cwd="/tmp/main/backend",
+                            project="Main",
+                        )
+                    },
+                    metadata={"project_names": ["Main"]},
+                ),
+                emit=lambda *_args, **_kwargs: None,
+                runtime_map_builder=lambda _state: {},
+            )
+
+            loaded = repo.load_latest(
+                mode="main",
+                strict_mode_match=False,
+                project_names=["FeatureA"],
+            )
+
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual((loaded.run_id, loaded.mode), ("run-tree", "trees"))
+
     def test_resuming_older_mode_reactivates_it_without_changing_project_ownership_precedence(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime_dir = Path(tmpdir) / "runtime"

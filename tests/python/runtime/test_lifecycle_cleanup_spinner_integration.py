@@ -257,6 +257,25 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         self.assertEqual(terminated, ["run-a", "run-b"])
         self.assertEqual(runtime.state_repository.purge_calls, [False])
 
+    def test_plain_stop_all_terminates_active_runs_across_modes(self) -> None:
+        runtime = _RuntimeStub()
+        runtime.state_repository.active_states = [
+            RunState(run_id="run-main", mode="main"),
+            RunState(run_id="run-tree", mode="trees"),
+        ]
+        terminated: list[str] = []
+        runtime._terminate_services_from_state = (  # type: ignore[method-assign]
+            lambda state, **_kwargs: terminated.append(state.run_id) or set()
+        )
+
+        code = LifecycleCleanupOrchestrator(runtime).execute(
+            Route(command="stop-all", mode="main")
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(terminated, ["run-main", "run-tree"])
+        self.assertEqual(runtime.state_repository.active_states, [])
+
     def test_stop_all_trees_preserves_main_registry_alias_and_port_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -303,6 +322,7 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
             main_port = planner.reserve_next(8111, owner="Main:backend")
             runtime = _RuntimeStub()
             runtime.state_repository = repository  # type: ignore[assignment]
+            runtime._state_lookup_strict_mode_match = lambda _route: True  # type: ignore[method-assign]
             runtime.port_planner = planner
             terminated: list[str] = []
             runtime._terminate_services_from_state = (  # type: ignore[method-assign]
@@ -363,6 +383,7 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
 
             runtime = _RuntimeStub()
             runtime.state_repository = repository  # type: ignore[assignment]
+            runtime._state_lookup_strict_mode_match = lambda _route: True  # type: ignore[method-assign]
             termination_calls: list[str] = []
             runtime._terminate_services_from_state = (  # type: ignore[method-assign]
                 lambda state, **_kwargs: termination_calls.append(state.run_id) or set()
@@ -715,6 +736,7 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
             lambda state, **_kwargs: {"Main Backend"} if state.run_id == "run-failed" else set()
         )
 
+        runtime._state_lookup_strict_mode_match = lambda _route: True  # type: ignore[method-assign]
         code = LifecycleCleanupOrchestrator(runtime).execute(Route(command="stop-all", mode="main"))
 
         self.assertEqual(code, 1)

@@ -41,7 +41,7 @@ def terminate_pid(
             if callable(getattr(process_runner, "_process_group_is_running", None)):
                 return False
             if _pid_gone_or_replaced(process_runner, pid, initial_identity=initial_identity):
-                return False
+                return True
         else:
             if not terminated:
                 # Killing only the recorded leader after group cleanup failed

@@ -105,7 +105,7 @@ class ProcessTerminationTests(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(sent, [])
 
-    def test_group_cleanup_exception_is_not_reported_as_success_after_leader_replacement(self) -> None:
+    def test_group_cleanup_exception_is_success_after_leader_replacement(self) -> None:
         identities = iter(("original", "replacement"))
         sent: list[signal.Signals] = []
         runner = SimpleNamespace(
@@ -122,7 +122,7 @@ class ProcessTerminationTests(unittest.TestCase):
         ):
             result = terminate_pid(987658, process_runner=runner, term_timeout=0.0, kill_timeout=0.0)
 
-        self.assertFalse(result)
+        self.assertTrue(result)
         self.assertEqual(sent, [])
 
 

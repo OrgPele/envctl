@@ -697,6 +697,45 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
 
         self.assertEqual(reserve_calls, [(8000, "Main:backend")])
 
+    def test_setup_worktree_reserves_dependencies_for_effective_trees_mode(self) -> None:
+        reserve_calls: list[tuple[int, str]] = []
+        enabled_modes: list[str] = []
+        runtime = SimpleNamespace(
+            port_planner=SimpleNamespace(
+                reserve_next=lambda assigned, owner: reserve_calls.append(
+                    (assigned, owner)
+                )
+                or assigned,
+                max_port=65000,
+                availability_mode="lock",
+                update_final_port=lambda plan, reserved, source: None,
+            ),
+            _emit=lambda *_args, **_kwargs: None,
+            _lock_inventory=lambda: [],
+            _setup_worktree_requested=lambda _route: True,
+            _requirement_enabled=lambda _dependency, *, mode, route: (
+                enabled_modes.append(mode) or mode == "trees"
+            ),
+        )
+        route = Route(
+            command="start",
+            mode="main",
+            flags={"setup_worktree": True, "runtime_scope": "entire-system"},
+        )
+
+        reserve_project_ports(
+            runtime,
+            ProjectContext(
+                name="FeatureA",
+                root=Path("/repo/trees/FeatureA"),
+                ports={"db": PortPlan("FeatureA", 5432, 5432, 5432, "fixed")},
+            ),
+            route=route,
+        )
+
+        self.assertEqual(enabled_modes, ["trees"])
+        self.assertEqual(reserve_calls, [(5432, "FeatureA:db")])
+
     def test_port_reservations_match_the_selected_runtime_surface(self) -> None:
         voice = SimpleNamespace(
             name="voice",

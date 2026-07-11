@@ -25,7 +25,12 @@ _PORT_REAP_LOCK = threading.Lock()
 
 
 def effective_start_mode(runtime: Any, route: Route) -> str:
-    if route.mode == "main" and runtime._setup_worktree_requested(route):
+    setup_worktree_requested = getattr(runtime, "_setup_worktree_requested", None)
+    if (
+        route.mode == "main"
+        and callable(setup_worktree_requested)
+        and setup_worktree_requested(route)
+    ):
         return "trees"
     return route.mode
 
@@ -289,6 +294,7 @@ def _port_reservation_enabled(
 ) -> bool:
     if route is None:
         return True
+    runtime_mode = effective_start_mode(runtime, route)
 
     dependency_ids = {
         definition.id
@@ -301,7 +307,10 @@ def _port_reservation_enabled(
         enabled = getattr(runtime, "_requirement_enabled", None)
         if not callable(enabled):
             return True
-        return any(bool(enabled(dependency_id, mode=route.mode, route=route)) for dependency_id in dependency_ids)
+        return any(
+            bool(enabled(dependency_id, mode=runtime_mode, route=route))
+            for dependency_id in dependency_ids
+        )
 
     return selected_app_services is None or service_name in selected_app_services
 
@@ -314,10 +323,11 @@ def _selected_app_services_for_port_reservation(
 ) -> set[str] | None:
     if route is None:
         return None
+    runtime_mode = effective_start_mode(runtime, route)
     try:
         configured_service_types = configured_service_types_for_mode(
             runtime,
-            route.mode,
+            runtime_mode,
             Path(context.root),
         )
     except AttributeError:
@@ -330,7 +340,7 @@ def _selected_app_services_for_port_reservation(
         for service in getattr(getattr(runtime, "config", None), "additional_services", ())
         if additional_service_enabled_for_context(
             service,
-            mode=route.mode,
+            mode=runtime_mode,
             project_root=Path(context.root),
         )
     )

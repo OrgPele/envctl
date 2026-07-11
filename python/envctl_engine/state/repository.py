@@ -401,13 +401,28 @@ class RuntimeStateRepository:
                     candidates,
                     allowed_root=allowed_root,
                 )
+                selected_project_keys = normalized_project_names(selected_projects)
+                if selected_project_keys:
+                    valid_candidates = [
+                        indexed
+                        for indexed in valid_candidates
+                        if selected_project_keys.intersection(
+                            normalized_project_names(
+                                self._project_names_from_state(indexed.state)
+                            )
+                        )
+                    ]
                 if not valid_candidates:
                     return None
                 newest_mode = max(
                     valid_candidates,
                     key=lambda indexed: indexed.candidate.activation_sequence,
                 ).candidate.mode
-                candidates = [candidate for candidate in candidates if candidate.mode == newest_mode]
+                candidates = [
+                    indexed.candidate
+                    for indexed in valid_candidates
+                    if indexed.candidate.mode == newest_mode
+                ]
             indexed_candidate = self._load_index_candidates(
                 candidates,
                 allowed_root=allowed_root,

@@ -441,7 +441,13 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
             rt._emit("cleanup.stop", aggressive=aggressive)  # type: ignore[attr-defined]
         state_repository = self._state_repository(rt)
         load_all = getattr(state_repository, "load_all", None)
-        mode_filter = route.mode if command == "stop-all" and route is not None else None
+        mode_filter = None
+        if (
+            command == "stop-all"
+            and route is not None
+            and rt._state_lookup_strict_mode_match(route)  # type: ignore[attr-defined]
+        ):
+            mode_filter = route.mode
         if callable(load_all):
             states = [state for state in load_all(mode=mode_filter) if isinstance(state, RunState)]
         else:
