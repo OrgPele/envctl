@@ -19,6 +19,7 @@ from envctl_engine.planning.plan_agent.workflow_e2e_prompt_context import (
     _shape_queue_message_text as _shape_queue_message_text,
 )
 from envctl_engine.runtime.prompt_install_support import (
+    codex_skill_invocation_for_preset,
     resolve_codex_direct_prompt_body,
     resolve_opencode_direct_prompt_body,
 )
@@ -55,6 +56,32 @@ def _workflow_step_prompt_text(
         preset=step.text,
         worktree=worktree,
     )
+
+
+def _cmux_workflow_step_prompt_text(
+    runtime: Any,
+    *,
+    launch_config: PlanAgentLaunchConfig,
+    cli: str,
+    step: _PlanAgentWorkflowStep,
+    worktree: CreatedPlanWorktree | None = None,
+) -> tuple[str, str | None]:
+    if _cmux_uses_codex_skill_invocation(cli=cli, step=step):
+        try:
+            return codex_skill_invocation_for_preset(preset=step.text), None
+        except LookupError:
+            pass
+    return _workflow_step_prompt_text(
+        runtime,
+        launch_config=launch_config,
+        cli=cli,
+        step=step,
+        worktree=worktree,
+    )
+
+
+def _cmux_uses_codex_skill_invocation(*, cli: str, step: _PlanAgentWorkflowStep) -> bool:
+    return str(cli).strip().lower() == "codex" and step.kind in {"submit_direct_prompt", "queue_direct_prompt"}
 
 
 def _resolve_preset_submission_text(

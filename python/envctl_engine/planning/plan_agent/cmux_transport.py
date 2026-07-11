@@ -37,6 +37,7 @@ from envctl_engine.planning.plan_agent.workflow_build import (
     _tab_title_for_worktree,
 )
 from envctl_engine.planning.plan_agent.workflow_prompt_support import (
+    _cmux_workflow_step_prompt_text,
     _resolve_preset_submission_text,
     _workflow_step_prompt_text,
 )
@@ -213,7 +214,7 @@ def _run_surface_bootstrap(
         launch_cli_bootstrap_commands_fn=_launch_cli_bootstrap_commands,
         wait_for_cli_ready_fn=_wait_for_cli_ready,
         maybe_submit_surface_codex_goal_fn=_maybe_submit_surface_codex_goal,
-        workflow_step_prompt_text_fn=_workflow_step_prompt_text,
+        workflow_step_prompt_text_fn=_cmux_workflow_step_prompt_text,
         submit_direct_prompt_workflow_step_fn=_submit_direct_prompt_workflow_step,
         submit_prompt_workflow_step_fn=_submit_prompt_workflow_step,
         queue_codex_workflow_steps_fn=_queue_codex_workflow_steps,
@@ -372,7 +373,7 @@ def _queue_codex_workflow_steps(
         queued_steps=queued_steps,
         launch_config=launch_config,
         cli=cli,
-        workflow_step_prompt_text_fn=_workflow_step_prompt_text,
+        workflow_step_prompt_text_fn=_cmux_workflow_step_prompt_text,
         codex_goal_text_for_worktree_fn=_codex_goal_text_for_worktree,
         paste_surface_text_fn=_paste_surface_text,
         queue_codex_message_fn=_queue_codex_message,

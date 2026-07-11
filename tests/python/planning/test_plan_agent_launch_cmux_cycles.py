@@ -118,29 +118,22 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                     rt,
                     route=parse_route(["--plan", "feature-a"], env={}),
                     created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
-                )
+            )
 
             self.assertEqual(result.status, "launched")
-            self.assertTrue(
-                any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and "You are implementing real code, end-to-end." in str(call[-1])
-                    for call in rt.process_runner.calls
-                )
-            )
-            self.assertTrue(
-                any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and "You are preparing the next implementation iteration" in str(call[-1])
-                    for call in rt.process_runner.calls
-                )
-            )
-            self.assertTrue(
-                any(
-                    call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
-                    and "You are finalizing an implementation" in str(call[-1])
-                    for call in rt.process_runner.calls
-                )
+            set_buffer_texts = [
+                call[-1]
+                for call in rt.process_runner.calls
+                if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
+            ]
+            self.assertEqual(
+                [text for text in set_buffer_texts if text.startswith("$envctl-")],
+                [
+                    "$envctl-implement-task",
+                    "$envctl-continue-task",
+                    "$envctl-implement-task",
+                    "$envctl-finalize-task",
+                ],
             )
             self.assertEqual(
                 self._events(rt, "planning.agent_launch.workflow_queued"),
@@ -258,7 +251,7 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
 
         self.assertIsNone(reason)
         self.assertEqual(len(pasted_texts), 1)
-        self.assertIn("You are finalizing an implementation", pasted_texts[0])
+        self.assertEqual(pasted_texts[0], "$envctl-finalize-task")
         self.assertEqual(sent_keys, ["tab"])
 
     def test_cmux_codex_queue_fails_when_message_remains_in_textbox_after_tab(self) -> None:
@@ -462,6 +455,78 @@ class PlanAgentLaunchCmuxCyclesTests(PlanAgentLaunchSupportTestCase):
                     "fullstack_pr_url_e2e_active": False,
                     "fullstack_pr_url_e2e_reason": "disabled",
                     "pr_review_comments_followup_enable": False,
+                }
+            ],
+        )
+
+    def test_codex_cycle_cmux_launch_requests_six_but_submits_commands_with_cycles_capped_to_three(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "repo"
+            runtime = Path(tmpdir) / "runtime"
+            repo.mkdir(parents=True, exist_ok=True)
+            rt = self._runtime(
+                repo,
+                runtime,
+                env={
+                    "ENVCTL_PLAN_AGENT_TERMINALS_ENABLE": "true",
+                    "ENVCTL_PLAN_AGENT_CMUX_WORKSPACE": "workspace:7",
+                    "ENVCTL_PLAN_AGENT_CODEX_CYCLES": "6",
+                },
+            )
+            rt.process_runner = _RecordingRunner(
+                outputs=[subprocess.CompletedProcess(args=["cmux"], returncode=0, stdout="surface:9\n", stderr="")]
+            )
+
+            buffer = StringIO()
+            with (
+                redirect_stdout(buffer),
+                patch("envctl_engine.planning.plan_agent.cmux_transport.threading.Thread", _ImmediateThread),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_cli_ready", return_value=None),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_surface_codex_goal_active", return_value=True),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._wait_for_codex_queue_ready", return_value=True),
+                patch("envctl_engine.planning.plan_agent.cmux_transport._queue_codex_message", return_value=True),
+            ):
+                _ImmediateThread.created = []
+                result = launch_plan_agent_terminals(
+                    rt,
+                    route=parse_route(["--plan", "feature-a"], env={}),
+                    created_worktrees=(CreatedPlanWorktree(name="feature-a-1", root=repo, plan_file="a.md"),),
+                )
+
+        self.assertEqual(result.status, "launched")
+        self.assertIn("Plan agent launch queued Codex cycle workflow (cycles=3)", buffer.getvalue())
+        set_buffer_texts = [
+            call[-1]
+            for call in rt.process_runner.calls
+            if call[:4] == ["cmux", "set-buffer", "--name", "envctl-surface-9"]
+        ]
+        self.assertGreaterEqual(len(set_buffer_texts), 2)
+        self.assertTrue(set_buffer_texts[0].startswith("/goal "))
+        self.assertEqual(
+            [text for text in set_buffer_texts if text.startswith("$envctl-")],
+            [
+                "$envctl-implement-task",
+                "$envctl-continue-task",
+                "$envctl-implement-task",
+                "$envctl-continue-task",
+                "$envctl-implement-task",
+                "$envctl-finalize-task",
+            ],
+        )
+        self.assertEqual(
+            self._events(rt, "planning.agent_launch.workflow_queued"),
+            [
+                {
+                    "event": "planning.agent_launch.workflow_queued",
+                    "workspace_id": "workspace:7",
+                    "surface_id": "surface:9",
+                    "worktree": "feature-a-1",
+                    "cli": "codex",
+                    "workflow_mode": "codex_cycles",
+                    "codex_cycles": 3,
+                    "queued_steps": 7,
+                    "queued_steps_confirmed": 7,
+                    "transport": "cmux",
                 }
             ],
         )

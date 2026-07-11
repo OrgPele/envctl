@@ -4,6 +4,7 @@ from typing import Mapping
 
 from envctl_engine.runtime.prompt_install_codex_skills import (
     _codex_skill_markdown_path,
+    _codex_skill_metadata,
     _extract_codex_skill_prompt_body,
 )
 from envctl_engine.runtime.prompt_install_paths import (
@@ -21,6 +22,18 @@ from envctl_engine.runtime.prompt_install_templates import (
 
 def codex_preset_uses_direct_submission(preset: str) -> bool:
     return bool(str(preset).strip())
+
+
+def codex_skill_invocation_for_preset(*, preset: str, arguments: str = "") -> str:
+    normalized_preset = str(preset).strip()
+    if not normalized_preset:
+        raise LookupError("Preset is required for Codex skill invocation")
+    metadata = _codex_skill_metadata(normalized_preset)
+    invocation = f"${metadata.skill_name}"
+    normalized_arguments = str(arguments).strip()
+    if not normalized_arguments:
+        return invocation
+    return f"{invocation} {normalized_arguments}"
 
 
 def resolve_codex_direct_prompt_body(

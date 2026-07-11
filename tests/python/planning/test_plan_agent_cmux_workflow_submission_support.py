@@ -135,7 +135,7 @@ class PlanAgentCmuxWorkflowSubmissionSupportTests(unittest.TestCase):
                 paste_surface_text_fn=paste_surface_text_fn,
                 send_surface_key_fn=send_surface_key_fn,
             )
-        )
+    )
         self.assertEqual(calls, [("paste", "run this directly"), ("key", "enter")])
 
     def test_queue_codex_workflow_steps_preserves_goal_step_before_prompt(self) -> None:
