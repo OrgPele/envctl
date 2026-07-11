@@ -13,7 +13,7 @@ from typing import Callable, cast
 
 from envctl_engine.dashboard_metadata import DASHBOARD_STOPPED_SERVICES_KEY
 from envctl_engine.shared.artifact_names import safe_artifact_stem
-from envctl_engine.state import load_legacy_shell_state, load_state, state_to_dict
+from envctl_engine.state import load_legacy_shell_state, load_state, load_state_from_pointer, state_to_dict
 from envctl_engine.state.fingerprints import file_fingerprint, state_fingerprint, text_fingerprint
 from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.state.persistence import (
@@ -1111,10 +1111,14 @@ class RuntimeStateRepository:
                     continue
         recovered_run_ids = {state.run_id for _, _, state, _ in recovered}
         for root in self._legacy_migration_roots():
-            for candidate_path, legacy_loader in (
+            legacy_candidates = [
                 (root / "run_state.json", self._load_state_file_candidate),
                 (root / "run_state.state", self._load_legacy_shell_candidate),
-            ):
+            ]
+            legacy_candidates.extend(
+                (pointer, self._load_pointer_candidate) for pointer in self._legacy_pointer_paths(root)
+            )
+            for candidate_path, legacy_loader in legacy_candidates:
                 if candidate_path.is_symlink() or not candidate_path.is_file():
                     continue
                 try:
@@ -1129,6 +1133,10 @@ class RuntimeStateRepository:
                         project_names = self._project_names_from_ports_manifest(root / "ports_manifest.json")
                     if not project_names:
                         project_names = self._project_names_from_pointers(root, candidate_path)
+                    if not project_names and candidate_path.name.startswith(".last_state.trees."):
+                        project_name = candidate_path.name.removeprefix(".last_state.trees.").strip()
+                        if project_name:
+                            project_names = [project_name]
                     state.metadata["repo_scope_id"] = self.runtime_scope_id
                     state.metadata["project_names"] = sorted(set(project_names), key=str.casefold)
                     recovered.append((candidate_path.stat().st_mtime_ns, candidate_path, state, project_names))
@@ -1172,6 +1180,22 @@ class RuntimeStateRepository:
         if self.compat_mode != self.SCOPED_ONLY and self.runtime_legacy_root != self.runtime_root:
             roots.append(self.runtime_legacy_root)
         return roots
+
+    @staticmethod
+    def _legacy_pointer_paths(root: Path) -> list[Path]:
+        candidates = [
+            root / ".last_state.main",
+            *sorted(root.glob(".last_state.trees.*")),
+            root / ".last_state",
+        ]
+        return [pointer for pointer in candidates if not pointer.is_symlink() and pointer.is_file()]
+
+    @staticmethod
+    def _load_pointer_candidate(path: Path, *, allowed_root: str) -> RunState | None:
+        try:
+            return load_state_from_pointer(str(path), allowed_root=allowed_root)
+        except Exception:
+            return None
 
     def _stage_legacy_revision(self, *, state: RunState, source_path: Path) -> Path:
         run_dir = self.run_dir_path(state.run_id)
