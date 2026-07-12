@@ -96,6 +96,9 @@ PR_PREVIEW_START_ENV_PREFIXES = (
     "ENVCTL_BACKEND_ENV__",
     "ENVCTL_FRONTEND_ENV__",
 )
+PR_PREVIEW_SERVICE_ENV_OVERLAY_PATTERN = re.compile(
+    r"^ENVCTL_[A-Z][A-Z0-9_]*_ENV__[A-Z_][A-Z0-9_]*$"
+)
 FAILED_START_STATUSES = frozenset({"public_route_unhealthy", "start_failed"})
 PUBLIC_ROUTE_HEALTH_DEADLINE_SECONDS = 30.0
 PUBLIC_ROUTE_HEALTH_INTERVAL_SECONDS = 2.0
@@ -847,7 +850,11 @@ def pr_preview_start_env_overrides() -> dict[str, str]:
     return {
         key: value
         for key, value in os.environ.items()
-        if key.startswith(PR_PREVIEW_START_ENV_PREFIXES) and str(value).strip()
+        if (
+            key.startswith(PR_PREVIEW_START_ENV_PREFIXES)
+            or PR_PREVIEW_SERVICE_ENV_OVERLAY_PATTERN.fullmatch(key)
+        )
+        and str(value).strip()
     }
 
 
