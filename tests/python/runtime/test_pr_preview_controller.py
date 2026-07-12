@@ -972,6 +972,16 @@ ENVCTL_SERVICE_VOICE_RUNTIME_PUBLIC_URL=${ENVCTL_SOURCE_SERVICE_VOICE_RUNTIME_UR
     assert len(generated) == 3
     assert all(len(value) >= 48 for value in generated)
 
+    import_call = next(call for call in runner.calls if call["argv"][:2] == ["envctl", "import"])
+    import_env = import_call["env"]
+    for name in (
+        "PIPECAT_SERVICE_TOKEN",
+        "PIPECAT_WEBHOOK_SECRET",
+        "PIPECAT_STREAM_TOKEN_SECRET",
+    ):
+        key = f"ENVCTL_SOURCE_{name}"
+        assert import_env[key] == start_env[key]
+
     state = instance.load_state(789)
     assert state is not None
     runtime = state.endpoints["additional_services"]["voice-runtime"]
