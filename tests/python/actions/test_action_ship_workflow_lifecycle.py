@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from envctl_engine.actions.action_git_state_support import ExistingPullRequest
 from tests.python.actions.ship_workflow_test_support import ship_workflow_fixture
 
 
@@ -53,6 +54,82 @@ def test_run_ship_workflow_reuses_existing_pr_and_reports_failed_checks() -> Non
     assert result.payload["pr_url"] == "https://github.com/acme/repo/pull/7"
     assert checks_expected_sha == "abc123"
     assert result.payload["checks_expected_head_sha"] == "abc123"
+
+
+def test_run_ship_workflow_reconciles_explicit_base_before_reusing_existing_pr() -> None:
+    with ship_workflow_fixture() as fixture:
+        fixture.context.env["ENVCTL_PR_BASE"] = "dev"
+        pr_calls: list[object] = []
+        resolved_bases: list[str] = []
+
+        def run_pr_action(context: object) -> int:
+            pr_calls.append(context)
+            return 0
+
+        def resolve_base_ref(_git_root: Path, base_branch: str) -> str:
+            resolved_bases.append(base_branch)
+            return f"origin/{base_branch}"
+
+        result = fixture.run(run_pr_action=run_pr_action, resolve_base_ref=resolve_base_ref)
+
+    assert result.code == 0
+    assert pr_calls == [fixture.context]
+    assert resolved_bases == ["dev"]
+    assert result.payload["pr_created"] is False
+    assert result.payload["pr_url"] == "https://github.com/acme/repo/pull/7"
+    assert result.payload["step_statuses"] == ["clean_no_changes", "pr_exists", "checks_passed"]
+
+
+def test_run_ship_workflow_predicts_conflicts_against_implicit_existing_pr_base() -> None:
+    with ship_workflow_fixture() as fixture:
+        resolved_bases: list[str] = []
+
+        def resolve_base_branch(_context: object, _git_root: Path) -> str:
+            raise AssertionError("default resolver must not replace an existing PR base")
+
+        def resolve_base_ref(_git_root: Path, base_branch: str) -> str:
+            resolved_bases.append(base_branch)
+            return f"origin/{base_branch}"
+
+        result = fixture.run(
+            existing_pull_request=lambda _git_root, _branch: ExistingPullRequest(
+                url="https://github.com/acme/repo/pull/7",
+                base_branch="main",
+            ),
+            resolve_base_branch=resolve_base_branch,
+            resolve_base_ref=resolve_base_ref,
+        )
+
+    assert result.code == 0
+    assert resolved_bases == ["main"]
+    assert result.payload["merge_conflicts"]["base_branch"] == "main"
+
+
+def test_run_ship_workflow_tracks_concurrent_pr_winner_after_pr_action_recovers() -> None:
+    with ship_workflow_fixture() as fixture:
+        existing_calls = 0
+        pr_calls = 0
+
+        def existing_pr_url(_git_root: Path, _branch: str) -> str:
+            nonlocal existing_calls
+            existing_calls += 1
+            return "" if existing_calls == 1 else "https://github.com/acme/repo/pull/9"
+
+        def run_pr_action(_context: object) -> int:
+            nonlocal pr_calls
+            pr_calls += 1
+            return 0
+
+        result = fixture.run(
+            existing_pr_url=existing_pr_url,
+            run_pr_action=run_pr_action,
+        )
+
+    assert result.code == 0
+    assert pr_calls == 1
+    assert existing_calls >= 2
+    assert result.payload["pr_url"] == "https://github.com/acme/repo/pull/9"
+    assert result.payload["step_statuses"] == ["clean_no_changes", "pr_created", "checks_passed"]
 
 
 def test_run_ship_workflow_pushes_clean_local_head_when_existing_pr_branch_is_stale() -> None:
@@ -357,6 +434,4 @@ def test_run_ship_workflow_does_not_report_commit_success_when_dirty_artifacts_a
     assert result.payload["committed"] is False
     assert result.payload["pushed"] is False
     assert result.payload["protected_local_artifacts_skipped"] == [".envctl-state/code-intelligence.json"]
-    assert result.stderr.splitlines() == [
-        "ship: PR already exists for Main: https://github.com/acme/repo/pull/7"
-    ]
+    assert result.stderr.splitlines() == ["ship: PR already exists for Main: https://github.com/acme/repo/pull/7"]

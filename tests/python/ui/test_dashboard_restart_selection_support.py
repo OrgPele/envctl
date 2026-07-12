@@ -36,6 +36,19 @@ class RestartSelectionSupportTests(unittest.TestCase):
         result = dashboard_stopped_services_by_project(state)
         self.assertEqual(result, {"p1": {"backend": "p1 Backend", "frontend": "p1 Frontend"}})
 
+    def test_dashboard_stopped_services_by_project_includes_additional_services(self) -> None:
+        state = _make_state(metadata={
+            "dashboard_stopped_services": [
+                {"project": "p1", "type": "voice-runtime", "name": "opaque-agent"},
+                {"project": "p1", "type": "worker", "name": ""},
+            ]
+        })
+
+        self.assertEqual(
+            dashboard_stopped_services_by_project(state),
+            {"p1": {"voice-runtime": "opaque-agent", "worker": "p1 Worker"}},
+        )
+
     def test_dashboard_project_configured_services_empty(self) -> None:
         state = _make_state()
         result = dashboard_project_configured_services(state)

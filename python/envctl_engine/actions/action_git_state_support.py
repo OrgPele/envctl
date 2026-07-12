@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import os
 from pathlib import Path
 import subprocess
 from typing import Callable
+
+from envctl_engine.shared.git_branch_support import (
+    PREFERRED_PR_BASE_BRANCHES,
+    detect_preferred_default_branch,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +25,12 @@ class DirtyWorktreeReport:
     @property
     def dirty(self) -> bool:
         return self.staged or self.unstaged or self.untracked
+
+
+@dataclass(frozen=True, slots=True)
+class ExistingPullRequest:
+    url: str
+    base_branch: str
 
 
 def resolve_git_root(project_root: Path, repo_root: Path) -> Path:
@@ -71,13 +84,66 @@ def classify_dirty_porcelain(status_output: str) -> tuple[bool, bool, bool]:
 
 
 def detect_default_branch(git_root: Path, *, git_output: Callable[[Path, list[str]], str]) -> str:
-    ref = git_output(git_root, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
-    if ref.startswith("origin/"):
-        return ref.split("origin/", 1)[1]
-    for candidate in ("main", "master"):
-        if git_output(git_root, ["rev-parse", "--verify", candidate]).strip():
-            return candidate
-    return "main"
+    return detect_preferred_default_branch(
+        lambda args: git_output(git_root, list(args)),
+        probe_remote_heads=True,
+    )
+
+
+def detect_pr_base_branch(git_root: Path, *, git_output: Callable[[Path, list[str]], str]) -> str:
+    for branch in PREFERRED_PR_BASE_BRANCHES:
+        for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
+            if git_output(git_root, ["rev-parse", "--verify", ref]).strip():
+                return branch
+    return detect_default_branch(git_root, git_output=git_output)
+
+
+def existing_pull_request(
+    git_root: Path,
+    branch: str,
+    *,
+    gh_path: str | None,
+    run_process: Callable[..., subprocess.CompletedProcess[str]],
+) -> ExistingPullRequest | None:
+    branch_name = branch.strip()
+    if not branch_name or branch_name in {"HEAD", "unknown"}:
+        return None
+    if gh_path is None:
+        return None
+    listed = run_process(
+        [
+            gh_path,
+            "pr",
+            "list",
+            "--head",
+            branch_name,
+            "--state",
+            "open",
+            "--limit",
+            "1",
+            "--json",
+            "url,baseRefName",
+        ],
+        cwd=str(git_root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        return None
+    try:
+        payload = json.loads(listed.stdout or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, list) or not payload or not isinstance(payload[0], dict):
+        return None
+    url = str(payload[0].get("url") or "").strip()
+    if not url:
+        return None
+    return ExistingPullRequest(
+        url=url,
+        base_branch=str(payload[0].get("baseRefName") or "").strip(),
+    )
 
 
 def existing_pr_url(
@@ -87,21 +153,42 @@ def existing_pr_url(
     gh_path: str | None,
     run_process: Callable[..., subprocess.CompletedProcess[str]],
 ) -> str:
-    branch_name = branch.strip()
-    if not branch_name or branch_name in {"HEAD", "unknown"}:
-        return ""
+    existing = existing_pull_request(
+        git_root,
+        branch,
+        gh_path=gh_path,
+        run_process=run_process,
+    )
+    return existing.url if existing is not None else ""
+
+
+def update_pull_request_base(
+    git_root: Path,
+    pull_request: ExistingPullRequest,
+    base_branch: str,
+    *,
+    gh_path: str | None,
+    run_process: Callable[..., subprocess.CompletedProcess[str]],
+) -> subprocess.CompletedProcess[str]:
+    branch = base_branch.strip()
+    command = [*([gh_path] if gh_path else ["gh"]), "pr", "edit", pull_request.url, "--base", branch]
     if gh_path is None:
-        return ""
-    listed = run_process(
-        [gh_path, "pr", "list", "--head", branch_name, "--state", "open", "--json", "url", "--jq", ".[0].url"],
+        return subprocess.CompletedProcess(
+            command,
+            127,
+            stdout="",
+            stderr=(
+                "gh is required to update the existing pull request base. "
+                f"Install or authenticate gh, then run: gh pr edit {pull_request.url} --base {branch}"
+            ),
+        )
+    return run_process(
+        command,
         cwd=str(git_root),
         text=True,
         capture_output=True,
         check=False,
     )
-    if listed.returncode != 0:
-        return ""
-    return listed.stdout.strip()
 
 
 def run_git(
@@ -110,12 +197,24 @@ def run_git(
     *,
     run_process: Callable[..., subprocess.CompletedProcess[str]],
 ) -> subprocess.CompletedProcess[str]:
-    return run_process(
-        ["git", "-C", str(git_root), *args],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    command = ["git", "-C", str(git_root), *args]
+    options: dict[str, object] = {
+        "text": True,
+        "capture_output": True,
+        "check": False,
+    }
+    if args[:1] == ["ls-remote"]:
+        options["timeout"] = 10
+        options["env"] = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        return run_process(command, **options)
+    except subprocess.TimeoutExpired as exc:
+        return subprocess.CompletedProcess(
+            command,
+            124,
+            stdout=str(exc.stdout or ""),
+            stderr="Timed out while querying remote branches.",
+        )
 
 
 def git_output(

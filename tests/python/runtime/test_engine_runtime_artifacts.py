@@ -21,7 +21,7 @@ from envctl_engine.runtime.engine_runtime_artifacts import (  # noqa: E402
 )
 from envctl_engine.runtime.engine_runtime_event_support import persist_events_snapshot  # noqa: E402
 from envctl_engine.runtime.runtime_readiness import RuntimeReadinessResult  # noqa: E402
-from envctl_engine.state.models import PortPlan, RunState  # noqa: E402
+from envctl_engine.state.models import PortPlan, RunState, ServiceRecord  # noqa: E402
 
 
 class EngineRuntimeArtifactsTests(unittest.TestCase):
@@ -59,8 +59,42 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
         self.assertIn("envctl Python engine run summary", rendered)
         self.assertIn("- Main: backend=8000 frontend=9000 db=5432 redis=6379 n8n=5678", rendered)
 
+    def test_print_summary_prefers_preserved_service_truth_over_unused_planned_port(self) -> None:
+        context = SimpleNamespace(
+            name="Main",
+            ports={
+                name: PortPlan(project="Main", requested=port, assigned=port, final=port, source="fixed")
+                for name, port in {
+                    "backend": 8001,
+                    "frontend": 9001,
+                    "db": 5432,
+                    "redis": 6379,
+                    "n8n": 5678,
+                }.items()
+            },
+        )
+        state = RunState(
+            run_id="run-restart",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend", type="backend", cwd="/repo/backend", actual_port=8001
+                ),
+                "Main Frontend": ServiceRecord(
+                    name="Main Frontend", type="frontend", cwd="/repo/frontend", actual_port=9000
+                ),
+            },
+        )
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            print_summary(SimpleNamespace(), state, [context])
+
+        self.assertIn("- Main: backend=8001 frontend=9000", buffer.getvalue())
+
     def test_write_artifacts_forwards_expected_state_repository_payload(self) -> None:
         captured: dict[str, object] = {}
+        committed: list[bool] = []
 
         def save_run(**kwargs):  # noqa: ANN003
             captured.update(kwargs)
@@ -76,13 +110,22 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
         )
         state = RunState(run_id="run-1", mode="main")
 
-        write_artifacts(runtime, state, [SimpleNamespace(name="Main")], errors=["boom"])
+        write_artifacts(
+            runtime,
+            state,
+            [SimpleNamespace(name="Main")],
+            errors=["boom"],
+            on_commit=lambda: committed.append(True),
+        )
 
         self.assertIs(captured["state"], state)
         self.assertEqual(captured["errors"], ["boom"])
         self.assertEqual(captured["events"], [{"event": "x"}])
         self.assertTrue(callable(captured["runtime_map_builder"]))
         self.assertTrue(callable(captured["write_runtime_readiness_report"]))
+        self.assertTrue(callable(captured["on_commit"]))
+        captured["on_commit"]()
+        self.assertEqual(committed, [True])
 
     def test_persist_events_snapshot_updates_bound_run_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -106,6 +149,34 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
             self.assertEqual((runtime_root / "events.jsonl").read_text(encoding="utf-8"), expected)
             self.assertEqual((legacy_root / "events.jsonl").read_text(encoding="utf-8"), expected)
             self.assertEqual((run_dir / "events.jsonl").read_text(encoding="utf-8"), expected)
+
+    def test_persist_events_snapshot_uses_repository_fence_for_bound_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_root = Path(tmpdir) / "runtime"
+            legacy_root = Path(tmpdir) / "legacy"
+            calls: list[dict[str, object]] = []
+            runtime = SimpleNamespace(
+                events=[{"event": "test"}],
+                runtime_root=runtime_root,
+                runtime_legacy_root=legacy_root,
+                env={"ENVCTL_DEBUG_UI_RUN_ID": "run-1"},
+                state_repository=SimpleNamespace(write_runtime_artifact=lambda **kwargs: calls.append(kwargs) or False),
+            )
+
+            persist_events_snapshot(runtime)
+
+            self.assertEqual(
+                calls,
+                [
+                    {
+                        "run_id": "run-1",
+                        "artifact_name": "events.jsonl",
+                        "text": '{"event": "test"}\n',
+                    }
+                ],
+            )
+            self.assertFalse((runtime_root / "events.jsonl").exists())
+            self.assertFalse((legacy_root / "events.jsonl").exists())
 
     def test_write_artifacts_writes_runtime_readiness_report_synchronously_without_explicit_async_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -235,6 +306,51 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
         self.assertEqual(run_report["gap_report"]["sha256"], "gap123")
         self.assertEqual(run_report["feature_matrix"]["sha256"], "matrix123")
 
+    def test_readiness_report_does_not_bypass_repository_when_stale_run_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_root = Path(tmpdir) / "runtime"
+            legacy_root = Path(tmpdir) / "legacy"
+            run_dir = runtime_root / "runs" / "run-retired"
+            calls: list[dict[str, object]] = []
+            result = RuntimeReadinessResult(
+                passed=True,
+                report_path=Path(tmpdir) / "gap.json",
+                report_generated_at="now",
+                report_sha256="gap",
+                matrix_path=Path(tmpdir) / "matrix.json",
+                matrix_generated_at="now",
+                matrix_sha256="matrix",
+                parity_manifest_path=Path(tmpdir) / "manifest.json",
+                parity_manifest_generated_at="now",
+                parity_manifest_sha256="manifest",
+                blocking_gap_count=0,
+                high_gap_count=0,
+                medium_gap_count=0,
+                low_gap_count=0,
+                total_gap_count=0,
+                errors=[],
+                warnings=[],
+            )
+            runtime = SimpleNamespace(
+                runtime_root=runtime_root,
+                runtime_legacy_root=legacy_root,
+                config=SimpleNamespace(base_dir=Path(tmpdir)),
+                state_repository=SimpleNamespace(write_runtime_artifact=lambda **kwargs: calls.append(kwargs) or False),
+            )
+
+            persisted = write_runtime_readiness_report(
+                runtime,
+                run_dir=run_dir,
+                readiness_result=result,
+            )
+
+            self.assertFalse(persisted)
+            self.assertEqual(calls[0]["run_id"], "run-retired")
+            self.assertEqual(calls[0]["artifact_name"], "runtime_readiness_report.json")
+            self.assertFalse((runtime_root / "runtime_readiness_report.json").exists())
+            self.assertFalse((legacy_root / "runtime_readiness_report.json").exists())
+            self.assertFalse((run_dir / "runtime_readiness_report.json").exists())
+
     def test_write_runtime_readiness_report_reuses_cached_payload_when_report_hash_matches(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
@@ -249,10 +365,16 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
             run_dir.mkdir()
             report_text = json.dumps({"generated_at": "now", "summary": {"total_gap_count": 0}}, sort_keys=True)
             report_hash = hashlib.sha256(report_text.encode("utf-8")).hexdigest()
-            matrix_text = json.dumps({"generated_at": "now", "features": [], "summary": {"feature_count": 0}}, sort_keys=True)
-            matrix_hash = hashlib.sha256((json.dumps(json.loads(matrix_text), indent=2, sort_keys=True) + "\n").encode("utf-8")).hexdigest()
+            matrix_text = json.dumps(
+                {"generated_at": "now", "features": [], "summary": {"feature_count": 0}}, sort_keys=True
+            )
+            matrix_hash = hashlib.sha256(
+                (json.dumps(json.loads(matrix_text), indent=2, sort_keys=True) + "\n").encode("utf-8")
+            ).hexdigest()
             gap_report_path.write_text(report_text, encoding="utf-8")
-            matrix_path.write_text(json.dumps(json.loads(matrix_text), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            matrix_path.write_text(
+                json.dumps(json.loads(matrix_text), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
             manifest_path.write_text(
                 json.dumps({"generated_at": "now", "commands": {}, "modes": {}}, sort_keys=True), encoding="utf-8"
             )

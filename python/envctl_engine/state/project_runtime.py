@@ -1,11 +1,32 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from envctl_engine.dashboard_metadata import (
+    DASHBOARD_CONFIGURED_SERVICE_TYPES_KEY,
+    DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
+    DASHBOARD_STOPPED_SERVICES_KEY,
+    normalize_dashboard_service_types,
+)
 from envctl_engine.shared.services import service_project_name
+from envctl_engine.state.fingerprints import text_fingerprint
 from envctl_engine.state.models import RequirementsResult, RunState
+
+
+PROJECT_SCOPED_METADATA_MAP_KEYS = (
+    "project_roots",
+    "project_pr_links",
+    "project_test_summaries",
+    "project_action_reports",
+    DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
+)
+_PROJECT_TEST_METADATA_COMPANION_KEYS = (
+    "project_test_results_root",
+    "project_test_results_updated_at",
+)
 
 
 @dataclass(slots=True)
@@ -59,10 +80,54 @@ class ProjectRuntimeResolution:
         }
 
 
+def requirement_keys_for_project(state: RunState, project: str) -> list[str]:
+    target = str(project).strip().casefold()
+    if not target:
+        return []
+    exact = [key for key in state.requirements if str(key).strip().casefold() == target]
+    owner_aliases = [
+        key
+        for key, requirements in state.requirements.items()
+        if key not in exact
+        and str(getattr(requirements, "project", "") or "").strip().casefold() == target
+    ]
+    return [*exact, *owner_aliases]
+
+
+def requirement_key_for_project(state: RunState, project: str) -> str | None:
+    target = str(project).strip().casefold()
+    if not target:
+        return None
+    exact = [key for key in state.requirements if str(key).strip().casefold() == target]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        raise RuntimeError(
+            f"Ambiguous requirements authority for {project}: " + ", ".join(sorted(exact))
+        )
+    owner_aliases = [
+        key
+        for key, requirements in state.requirements.items()
+        if str(getattr(requirements, "project", "") or "").strip().casefold() == target
+    ]
+    if len(owner_aliases) == 1:
+        return owner_aliases[0]
+    if len(owner_aliases) > 1:
+        raise RuntimeError(
+            f"Ambiguous requirements authority for {project}: " + ", ".join(sorted(owner_aliases))
+        )
+    return None
+
+
+def requirements_for_project(state: RunState, project: str) -> RequirementsResult | None:
+    key = requirement_key_for_project(state, project)
+    return state.requirements.get(key) if key is not None else None
+
+
 def active_project_names(state: RunState, *, runtime: Any | None = None) -> list[str]:
     names: set[str] = set()
-    for name in getattr(state, "requirements", {}) or {}:
-        normalized = str(name).strip()
+    for storage_key, requirements in (getattr(state, "requirements", {}) or {}).items():
+        normalized = str(getattr(requirements, "project", "") or storage_key).strip()
         if normalized:
             names.add(normalized)
     for service_name, service in (getattr(state, "services", {}) or {}).items():
@@ -140,6 +205,7 @@ def resolve_requested_project_state(
         state=filter_state_to_projects(state, selected, runtime=runtime),
     )
 
+
 def _service_project_name(service_name: str, service: object, *, runtime: Any | None = None) -> str:
     explicit_project = str(getattr(service, "project", "") or "").strip()
     if explicit_project:
@@ -171,10 +237,8 @@ def filter_state_to_projects(
         if _service_project_name(name, service, runtime=runtime) in selected
     }
     requirements = _filtered_requirements(state.requirements, selected)
-    metadata = dict(state.metadata)
-    roots = metadata.get("project_roots")
-    if isinstance(roots, Mapping):
-        metadata["project_roots"] = {str(name): value for name, value in roots.items() if str(name) in selected}
+    metadata = filter_project_scoped_metadata(state.metadata, selected)
+    metadata["project_names"] = sorted(selected, key=lambda value: (value.casefold(), value))
     return RunState(
         run_id=state.run_id,
         mode=state.mode,
@@ -187,11 +251,114 @@ def filter_state_to_projects(
     )
 
 
+def filter_project_scoped_metadata(
+    metadata: Mapping[str, object],
+    projects: list[str] | tuple[str, ...] | set[str] | frozenset[str],
+    *,
+    case_sensitive: bool = True,
+) -> dict[str, object]:
+    """Return metadata containing only records owned by the selected projects.
+
+    Runtime state has several independently evolved project-keyed metadata
+    surfaces. Keeping their filtering in one place prevents a selected state
+    from retaining dashboard, PR, test, or action data for another run.
+    """
+
+    selected = {str(project).strip() for project in projects if str(project).strip()}
+    normalized_selected = selected if case_sensitive else {project.casefold() for project in selected}
+
+    def selected_project(project: object) -> bool:
+        value = str(project).strip()
+        if not value:
+            return False
+        return value in normalized_selected if case_sensitive else value.casefold() in normalized_selected
+
+    filtered = dict(metadata)
+    for key in PROJECT_SCOPED_METADATA_MAP_KEYS:
+        raw = metadata.get(key)
+        if not isinstance(raw, Mapping):
+            if key in metadata:
+                filtered.pop(key, None)
+            continue
+        retained = {str(project): value for project, value in raw.items() if selected_project(project)}
+        if retained:
+            filtered[key] = retained
+        else:
+            filtered.pop(key, None)
+
+    raw_stopped = metadata.get(DASHBOARD_STOPPED_SERVICES_KEY)
+    if isinstance(raw_stopped, list):
+        stopped: list[dict[str, object]] = []
+        for item in raw_stopped:
+            if not isinstance(item, Mapping) or not selected_project(item.get("project", "")):
+                continue
+            if not str(item.get("name", "")).strip() or not str(item.get("type", "")).strip():
+                continue
+            stopped.append(dict(item))
+        if stopped:
+            filtered[DASHBOARD_STOPPED_SERVICES_KEY] = stopped
+        else:
+            filtered.pop(DASHBOARD_STOPPED_SERVICES_KEY, None)
+    elif DASHBOARD_STOPPED_SERVICES_KEY in metadata:
+        filtered.pop(DASHBOARD_STOPPED_SERVICES_KEY, None)
+
+    raw_summaries = metadata.get("project_test_summaries")
+    retained_summaries = filtered.get("project_test_summaries")
+    summaries_were_narrowed = (
+        isinstance(raw_summaries, Mapping)
+        and isinstance(retained_summaries, Mapping)
+        and len(retained_summaries) != len(raw_summaries)
+    )
+    if not isinstance(retained_summaries, Mapping) or not retained_summaries or summaries_were_narrowed:
+        for key in _PROJECT_TEST_METADATA_COMPANION_KEYS:
+            filtered.pop(key, None)
+
+    if DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY in metadata or DASHBOARD_STOPPED_SERVICES_KEY in metadata:
+        configured_types: set[str] = set()
+        configured = filtered.get(DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY)
+        if isinstance(configured, Mapping):
+            for service_types in configured.values():
+                configured_types.update(normalize_dashboard_service_types(service_types))
+        stopped = filtered.get(DASHBOARD_STOPPED_SERVICES_KEY)
+        if isinstance(stopped, list):
+            configured_types.update(
+                normalize_dashboard_service_types(
+                    [item.get("type", "") for item in stopped if isinstance(item, Mapping)]
+                )
+            )
+        if configured_types:
+            filtered[DASHBOARD_CONFIGURED_SERVICE_TYPES_KEY] = sorted(configured_types)
+        else:
+            filtered.pop(DASHBOARD_CONFIGURED_SERVICE_TYPES_KEY, None)
+
+    raw_identity = metadata.get("startup_identity")
+    if isinstance(raw_identity, Mapping):
+        identity = dict(raw_identity)
+        raw_projects = identity.get("projects")
+        identity_projects = raw_projects if isinstance(raw_projects, list) else []
+        identity["projects"] = [
+            dict(project)
+            for project in identity_projects
+            if isinstance(project, Mapping) and selected_project(project.get("name", ""))
+        ]
+        identity.pop("fingerprint", None)
+        serialized = json.dumps(identity, sort_keys=True)
+        identity["fingerprint"] = text_fingerprint(serialized)
+        filtered["startup_identity"] = identity
+
+    return filtered
+
+
 def _filtered_requirements(
     requirements: Mapping[str, RequirementsResult],
     selected: set[str],
 ) -> dict[str, RequirementsResult]:
-    direct = {project: req for project, req in requirements.items() if project in selected}
+    selected_keys = {str(project).strip().casefold() for project in selected if str(project).strip()}
+    direct = {
+        storage_key: req
+        for storage_key, req in requirements.items()
+        if str(getattr(req, "project", "") or storage_key).strip().casefold() in selected_keys
+    }
     if direct:
         return direct
     # Shared tree dependency state often stores requirements under Main. When a
@@ -281,7 +448,6 @@ def cwd_runtime_warnings(
     ]
 
 
-
 def project_resolution_event_payload(
     resolution: ProjectRuntimeResolution,
     state: RunState,
@@ -308,8 +474,8 @@ def project_resolution_event_payload(
 
 def _runtime_truth_project_names(state: RunState, *, runtime: Any | None = None) -> list[str]:
     names: set[str] = set()
-    for name in getattr(state, "requirements", {}) or {}:
-        normalized = str(name).strip()
+    for storage_key, requirements in (getattr(state, "requirements", {}) or {}).items():
+        normalized = str(getattr(requirements, "project", "") or storage_key).strip()
         if normalized:
             names.add(normalized)
     for service_name, service in (getattr(state, "services", {}) or {}).items():

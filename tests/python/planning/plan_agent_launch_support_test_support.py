@@ -26,25 +26,28 @@ from envctl_engine.planning.plan_agent import (
     terminal_screen,
     tmux_session,
     tmux_transport,
-    workflow,
+    workflow_build,
+    workflow_prompt_support,
+    workflow_review_support,
+    workflow_runtime_support,
 )
-from envctl_engine.planning.plan_agent.models import _WorkspaceLaunchTarget
+from envctl_engine.planning.plan_agent.models import _PlanAgentWorkflowStep, _WorkspaceLaunchTarget
 from envctl_engine.planning.plan_agent_launch_support import CreatedPlanWorktree, launch_plan_agent_terminals
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 
 _screen_looks_ready = terminal_screen._screen_looks_ready
 _prompt_submit_screen_looks_ready = terminal_screen._prompt_submit_screen_looks_ready
-_tab_title_for_worktree = workflow._tab_title_for_worktree
-_build_plan_agent_workflow = cast(Any, workflow._build_plan_agent_workflow)
-_finalization_instruction_text = cast(Any, workflow._finalization_instruction_text)
-_first_cycle_completion_instruction_text = cast(Any, workflow._first_cycle_completion_instruction_text)
-_intermediate_cycle_completion_instruction_text = cast(Any, workflow._intermediate_cycle_completion_instruction_text)
-_browser_e2e_instruction_text = cast(Any, workflow._browser_e2e_instruction_text)
-_pr_review_comments_instruction_text = cast(Any, workflow._pr_review_comments_instruction_text)
+_tab_title_for_worktree = workflow_build._tab_title_for_worktree
+_build_plan_agent_workflow = cast(Any, workflow_build._build_plan_agent_workflow)
+_finalization_instruction_text = cast(Any, workflow_build._finalization_instruction_text)
+_first_cycle_completion_instruction_text = cast(Any, workflow_build._first_cycle_completion_instruction_text)
+_intermediate_cycle_completion_instruction_text = cast(Any, workflow_build._intermediate_cycle_completion_instruction_text)
+_browser_e2e_instruction_text = cast(Any, workflow_build._browser_e2e_instruction_text)
+_pr_review_comments_instruction_text = cast(Any, workflow_build._pr_review_comments_instruction_text)
 _wait_for_codex_queue_ready = cast(Any, cmux_transport._wait_for_codex_queue_ready)
 _codex_goal_screen_looks_active = cast(Any, terminal_screen._codex_goal_screen_looks_active)
-_workflow_step_prompt_text = cast(Any, workflow._workflow_step_prompt_text)
+_workflow_step_prompt_text = cast(Any, workflow_prompt_support._workflow_step_prompt_text)
 _ensure_tmux_window = cast(Any, tmux_transport._ensure_tmux_window)
 _tmux_session_name_for_worktree = cast(Any, tmux_transport._tmux_session_name_for_worktree)
 _run_tmux_worktree_bootstrap = cast(Any, tmux_transport._run_tmux_worktree_bootstrap)
@@ -124,8 +127,14 @@ class _StateRepositoryHarness:
     def __init__(self, state: RunState | None) -> None:
         self.state = state
 
-    def load_latest(self, *, mode: str | None = None, strict_mode_match: bool = False) -> RunState | None:
-        _ = mode, strict_mode_match
+    def load_latest(
+        self,
+        *,
+        mode: str | None = None,
+        strict_mode_match: bool = False,
+        project_names: list[str] | None = None,
+    ) -> RunState | None:
+        _ = mode, strict_mode_match, project_names
         return self.state
 
 

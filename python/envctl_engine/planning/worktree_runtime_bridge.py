@@ -201,13 +201,10 @@ class PlanningRuntimeBridge:
         self,
         planning_files: list[str],
         raw_projects: list[tuple[str, Path]],
-        *,
-        persist_memory: bool = True,
     ) -> dict[str, int] | None:
         return self.selection_bridge().prompt_planning_selection(
             planning_files=planning_files,
             raw_projects=raw_projects,
-            persist_memory=persist_memory,
         )
 
     def run_planning_selection_menu(

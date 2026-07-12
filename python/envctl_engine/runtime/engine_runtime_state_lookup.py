@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
+
+from envctl_engine.state.lookup import call_state_loader
 
 
 def try_load_existing_state(
@@ -8,8 +11,14 @@ def try_load_existing_state(
     *,
     mode: str | None = None,
     strict_mode_match: bool = False,
+    project_names: Sequence[str] | None = None,
 ) -> object | None:
-    state = runtime.state_repository.load_latest(mode=mode, strict_mode_match=strict_mode_match)
+    state = call_state_loader(
+        runtime.state_repository.load_latest,
+        mode=mode,
+        strict_mode_match=strict_mode_match,
+        project_names=project_names,
+    )
     if state is not None:
         runtime._emit(
             "state.fingerprint.after_reload",

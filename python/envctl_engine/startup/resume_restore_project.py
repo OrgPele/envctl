@@ -5,15 +5,33 @@ from pathlib import Path
 import time
 
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.state.models import RunState, ServiceRecord
+from envctl_engine.runtime.lifecycle_service_termination import release_service_ports
+from envctl_engine.shared.services import resolve_service_project_name
+from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 from envctl_engine.startup.resume_restore_policy import (
     _configured_restore_service_types,
+    _requirements_for_project,
     _requirements_reuse_decision,
     _reserve_application_service_ports,
     _resume_terminate_aggressive,
     _route_for_partial_service_restore,
     _service_types_for_names,
 )
+
+
+class _StaleServiceTerminationError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        unconfirmed_service_names: list[str],
+        confirmed_service_names: list[str],
+    ) -> None:
+        self.unconfirmed_service_names = list(unconfirmed_service_names)
+        self.confirmed_service_names = list(confirmed_service_names)
+        super().__init__(
+            "stale service termination could not be confirmed: "
+            + ", ".join(sorted(self.unconfirmed_service_names))
+        )
 
 
 @dataclass(slots=True)
@@ -101,15 +119,20 @@ class ResumeProjectRestoreRunner:
         )
         project_service_names = [
             name
-            for name in list(self.state.services.keys())
-            if self.rt._project_name_from_service(name).lower() == project.lower()  # type: ignore[attr-defined]
+            for name, service in list(self.state.services.items())
+            if resolve_service_project_name(
+                name,
+                service,
+                project_name_from_service=self.rt._project_name_from_service,  # type: ignore[attr-defined]
+            ).casefold()
+            == project.casefold()
         ]
         original_services: dict[str, ServiceRecord] = {
             name: self.state.services[name] for name in project_service_names if name in self.state.services
         }
         missing_set = set(self.missing_services)
         missing_project_service_names = [name for name in project_service_names if name in missing_set]
-        original_requirements = self.state.requirements.get(project)
+        original_requirements = _requirements_for_project(self.state, project)
         context_root = getattr(context, "root", None)
         requirements_reused, requirements_reuse_reason = _requirements_reuse_decision(
             self.orchestrator,
@@ -144,21 +167,42 @@ class ResumeProjectRestoreRunner:
         elif configured_service_types:
             selected_service_types = set(configured_service_types)
 
-        existing_requirements = original_requirements
-        if existing_requirements is not None and not requirements_reused:
+        confirmed_old_service_names: list[str] = []
+        replacement_requirements: RequirementsResult | None = None
+        try:
             self._report_progress(
                 project,
-                f"{prefix} Releasing previous requirement ports...",
-                single_message=f"{prefix} Releasing previous requirement ports for {project}...",
+                f"{prefix} Stopping stale services...",
+                single_message=f"{prefix} Stopping stale services for {project}...",
             )
-            release_started = time.monotonic()
-            self.rt._release_requirement_ports(existing_requirements)  # type: ignore[attr-defined]
+            stop_started = time.monotonic()
+            terminated_count = self._stop_stale_services(
+                service_names=selected_service_names,
+                original_services=original_services,
+            )
+            confirmed_old_service_names = list(selected_service_names)
             mark_step(
-                "release_requirement_ports",
-                duration_ms=_round_ms(time.monotonic() - release_started),
+                "stop_stale_services",
+                duration_ms=_round_ms(time.monotonic() - stop_started),
+                stale_service_count=len(selected_service_names),
+                terminated_count=terminated_count,
+                aggressive=_resume_terminate_aggressive(self.orchestrator, self.rt),
             )
 
-        try:
+            existing_requirements = original_requirements
+            if existing_requirements is not None and not requirements_reused:
+                self._report_progress(
+                    project,
+                    f"{prefix} Releasing previous requirement ports...",
+                    single_message=f"{prefix} Releasing previous requirement ports for {project}...",
+                )
+                release_started = time.monotonic()
+                self.rt._release_requirement_ports(existing_requirements)  # type: ignore[attr-defined]
+                mark_step(
+                    "release_requirement_ports",
+                    duration_ms=_round_ms(time.monotonic() - release_started),
+                )
+
             if requirements_reused and requirements_for_services is not None:
                 requirements = requirements_for_services
                 mark_step("start_requirements", duration_ms=0.0, status="reused")
@@ -168,6 +212,7 @@ class ResumeProjectRestoreRunner:
                 requirements = self.rt._start_requirements_for_project(
                     context, mode=self.state.mode, route=project_route_for_startup
                 )  # type: ignore[attr-defined]
+                replacement_requirements = requirements
                 mark_step(
                     "start_requirements",
                     duration_ms=_round_ms(time.monotonic() - requirements_started),
@@ -194,25 +239,9 @@ class ResumeProjectRestoreRunner:
                         "error": error_message,
                         "steps": step_durations_ms,
                         "total_ms": project_total,
+                        "remove_service_names": confirmed_old_service_names,
+                        "requirements": requirements,
                     }
-
-            self._report_progress(
-                project,
-                f"{prefix} Stopping stale services...",
-                single_message=f"{prefix} Stopping stale services for {project}...",
-            )
-            stop_started = time.monotonic()
-            terminated_count = self._stop_stale_services(
-                service_names=selected_service_names,
-                original_services=original_services,
-            )
-            mark_step(
-                "stop_stale_services",
-                duration_ms=_round_ms(time.monotonic() - stop_started),
-                stale_service_count=len(selected_service_names),
-                terminated_count=terminated_count,
-                aggressive=_resume_terminate_aggressive(self.orchestrator, self.rt),
-            )
 
             self._report_progress(
                 project,
@@ -274,7 +303,25 @@ class ResumeProjectRestoreRunner:
                 "requirements": requirements,
                 "remove_service_names": selected_service_names,
             }
-        except RuntimeError as exc:
+        except Exception as exc:  # noqa: BLE001
+            confirmed_from_error = getattr(exc, "confirmed_service_names", None)
+            if isinstance(confirmed_from_error, list):
+                confirmed_old_service_names = [
+                    name for name in confirmed_from_error if isinstance(name, str) and name
+                ]
+            exception_requirements = getattr(exc, "requirements", None)
+            if isinstance(exception_requirements, RequirementsResult):
+                replacement_requirements = exception_requirements
+            raw_unterminated = getattr(exc, "unterminated_services", None)
+            unterminated_services = (
+                {
+                    name: service
+                    for name, service in raw_unterminated.items()
+                    if isinstance(name, str) and isinstance(service, ServiceRecord)
+                }
+                if isinstance(raw_unterminated, dict)
+                else {}
+            )
             mark_step("exception", status="error", error=str(exc))
             self._mark_failure(
                 project,
@@ -294,6 +341,9 @@ class ResumeProjectRestoreRunner:
                 "error": str(exc),
                 "steps": step_durations_ms,
                 "total_ms": project_total,
+                "remove_service_names": confirmed_old_service_names,
+                "requirements": replacement_requirements,
+                "unterminated_services": unterminated_services,
             }
 
     def _route_with_spinner_updates(self, project: str, prefix: str) -> Route:
@@ -337,6 +387,7 @@ class ResumeProjectRestoreRunner:
         original_services: dict[str, ServiceRecord],
     ) -> int:
         terminated_count = 0
+        unconfirmed: list[str] = []
         aggressive_terminate = _resume_terminate_aggressive(self.orchestrator, self.rt)
         for service_name in service_names:
             service = original_services.get(service_name)
@@ -349,9 +400,16 @@ class ResumeProjectRestoreRunner:
             )
             if terminated:
                 terminated_count += 1
-                port = self.rt._service_port(service)  # type: ignore[attr-defined]
-                if port is not None:
-                    self.port_allocator.release(port)  # type: ignore[attr-defined]
+                release_service_ports(self.rt, name=service_name, service=service)
+            else:
+                unconfirmed.append(service_name)
+        if unconfirmed:
+            raise _StaleServiceTerminationError(
+                unconfirmed_service_names=unconfirmed,
+                confirmed_service_names=[
+                    name for name in service_names if name in original_services and name not in unconfirmed
+                ],
+            )
         return terminated_count
 
     def _report_progress(

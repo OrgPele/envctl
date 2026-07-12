@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from envctl_engine.actions.action_ship_contract import emit_ship_progress
+from envctl_engine.actions.action_ship_pr_context import explicit_pr_base as _explicit_pr_base
 
 
 FinishShip = Callable[..., int]
@@ -18,6 +19,19 @@ def run_ship_pr_phase(
     finish: FinishShip,
 ) -> int | None:
     if state.pr_url:
+        explicit_base = _explicit_pr_base(context)
+        if explicit_base:
+            pr_code = run_pr_action(context)
+            if pr_code != 0:
+                return finish(
+                    state,
+                    status="pr_failed",
+                    ok=False,
+                    commit_sha=state.after_sha,
+                    pr_url=state.pr_url,
+                    pr_created=False,
+                )
+            state.pr_url = existing_pr_url(state.git_root, state.branch) or state.pr_url
         state.step_statuses.append("pr_exists")
         emit_ship_progress(f"ship: PR already exists for {context.project_name}: {state.pr_url}")
         return None

@@ -24,8 +24,14 @@ class _StateRepositoryHarness:
     def __init__(self, state: RunState | None) -> None:
         self.state = state
 
-    def load_latest(self, *, mode: str | None = None, strict_mode_match: bool = False) -> RunState | None:
-        _ = mode, strict_mode_match
+    def load_latest(
+        self,
+        *,
+        mode: str | None = None,
+        strict_mode_match: bool = False,
+        project_names: list[str] | None = None,
+    ) -> RunState | None:
+        _ = mode, strict_mode_match, project_names
         return self.state
 
 
@@ -37,6 +43,43 @@ class _RuntimeHarness:
 
 
 class PlanAgentWorkflowRuntimeAddressTests(unittest.TestCase):
+    def test_worktree_address_lookup_retries_unfiltered_for_base_project_state(self) -> None:
+        calls: list[list[str] | None] = []
+        state = RunState(
+            run_id="run-base",
+            mode="trees",
+            requirements={
+                "feature-a": RequirementsResult(
+                    project="feature-a",
+                    redis={"enabled": True, "final": 6381},
+                )
+            },
+        )
+
+        class BaseProjectRepository:
+            def load_latest(
+                self,
+                *,
+                mode: str | None = None,
+                strict_mode_match: bool = False,
+                project_names: list[str] | None = None,
+            ) -> RunState | None:
+                _ = mode, strict_mode_match
+                calls.append(project_names)
+                return state if project_names is None else None
+
+        runtime = SimpleNamespace(state_repository=BaseProjectRepository())
+        worktree = CreatedPlanWorktree(
+            name="feature-a-1",
+            root=Path("/repo/trees/feature-a/1"),
+            plan_file="feature-a.md",
+        )
+
+        section = _runtime_addresses_prompt_section(runtime, worktree=worktree)
+
+        self.assertEqual(calls, [["feature-a-1"], None])
+        self.assertIn("Redis (feature-a): redis://localhost:6381", section)
+
     def test_builder_renders_dependency_and_service_addresses_for_matching_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             worktree_root = Path(tmpdir) / "repo" / "trees" / "feature-a-1"
@@ -120,16 +163,25 @@ class PlanAgentWorkflowRuntimeAddressTests(unittest.TestCase):
             cwd="/tmp/repo/trees/feature-a-2/apps/api",
             requested_port=8000,
         )
+        metadata_service = ServiceRecord(
+            name="Opaque API Process",
+            type="backend",
+            cwd="/tmp/outside-project-root",
+            requested_port=8100,
+            project="feature-a",
+        )
         stale_service = ServiceRecord(name="feature-b backend", type="backend", cwd="", actual_port=9000)
 
         self.assertTrue(_state_project_matches_worktree("feature-a", worktree))
         self.assertFalse(_state_project_matches_worktree("feature-b", worktree))
         self.assertTrue(_state_service_matches_worktree(matching_service, worktree))
+        self.assertTrue(_state_service_matches_worktree(metadata_service, worktree))
         self.assertFalse(_state_service_matches_worktree(stale_service, worktree))
         self.assertEqual(_component_port({"requested": "0", "resources": {"primary": "49152"}}), 49152)
-        self.assertEqual(_service_address_lines(RunState(run_id="run-1", mode="trees", services={"api": matching_service})), [
-            "Backend (backend): http://localhost:8000"
-        ])
+        self.assertEqual(
+            _service_address_lines(RunState(run_id="run-1", mode="trees", services={"api": matching_service})),
+            ["Backend (backend): http://localhost:8000"],
+        )
 
     def test_runtime_section_uses_legacy_state_loader_when_repository_is_unavailable(self) -> None:
         state = RunState(

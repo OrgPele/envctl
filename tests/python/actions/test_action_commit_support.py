@@ -48,10 +48,98 @@ class ActionCommitSupportTests(unittest.TestCase):
             )
 
             self.assertEqual(code, 0)
-            self.assertIn(["add", "--", "app.py"], seen)
+            self.assertIn(["add", "--all", "--", "app.py"], seen)
             self.assertTrue(any(args[:2] == ["commit", "-F"] for args in seen))
             self.assertIn(["push", "-u", "origin", "feature-branch"], seen)
             self.assertEqual(ledger.read_text(encoding="utf-8"), "Old summary\n\nNew summary\n\n### Envctl pointer ###\n")
+
+    def test_stage_paths_records_unstaged_tracked_deletions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            git_root = Path(temp_dir)
+
+            def run_git(_git_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    ["git", *args],
+                    cwd=git_root,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+
+            for args in (
+                ["init"],
+                ["config", "user.email", "envctl-tests@example.invalid"],
+                ["config", "user.name", "Envctl Tests"],
+            ):
+                self.assertEqual(run_git(git_root, args).returncode, 0)
+            obsolete = git_root / "obsolete.py"
+            obsolete.write_text("obsolete = True\n", encoding="utf-8")
+            self.assertEqual(run_git(git_root, ["add", "obsolete.py"]).returncode, 0)
+            self.assertEqual(run_git(git_root, ["commit", "-m", "initial"]).returncode, 0)
+            obsolete.unlink()
+
+            runner = action_commit_support.CommitWorkflowRunner(
+                context=SimpleNamespace(),
+                dependencies=action_commit_support.CommitWorkflowDependencies(
+                    resolve_git_root=lambda project_root, _repo_root: project_root,
+                    git_available=True,
+                    git_output=lambda _git_root, _args: "",
+                    run_git=run_git,
+                    print_error=lambda _prefix, _result: None,
+                    partition_envctl_protected_paths=partition_envctl_protected_paths,
+                    ordered_unique_paths=lambda *groups: [item for group in groups for item in group],
+                ),
+            )
+
+            self.assertTrue(runner._stage_paths(git_root, ["obsolete.py"]))
+            staged = run_git(git_root, ["diff", "--cached", "--name-status"])
+            self.assertEqual(staged.returncode, 0)
+            self.assertEqual(staged.stdout.strip(), "D\tobsolete.py")
+
+    def test_stage_candidates_preserves_an_already_staged_deletion(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            git_root = Path(temp_dir)
+
+            def run_git(_git_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    ["git", *args],
+                    cwd=git_root,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+
+            for args in (
+                ["init"],
+                ["config", "user.email", "envctl-tests@example.invalid"],
+                ["config", "user.name", "Envctl Tests"],
+            ):
+                self.assertEqual(run_git(git_root, args).returncode, 0)
+            obsolete = git_root / "obsolete.py"
+            obsolete.write_text("obsolete = True\n", encoding="utf-8")
+            self.assertEqual(run_git(git_root, ["add", "obsolete.py"]).returncode, 0)
+            self.assertEqual(run_git(git_root, ["commit", "-m", "initial"]).returncode, 0)
+            obsolete.unlink()
+            self.assertEqual(run_git(git_root, ["add", "--all"]).returncode, 0)
+
+            runner = action_commit_support.CommitWorkflowRunner(
+                context=SimpleNamespace(),
+                dependencies=action_commit_support.CommitWorkflowDependencies(
+                    resolve_git_root=lambda project_root, _repo_root: project_root,
+                    git_available=True,
+                    git_output=lambda _git_root, _args: "",
+                    run_git=run_git,
+                    print_error=lambda _prefix, _result: None,
+                    partition_envctl_protected_paths=partition_envctl_protected_paths,
+                    ordered_unique_paths=lambda *groups: [item for group in groups for item in group],
+                ),
+            )
+
+            partition = runner._stage_commit_candidates(git_root)
+            self.assertIsNotNone(partition)
+            staged = run_git(git_root, ["diff", "--cached", "--name-status"])
+            self.assertEqual(staged.returncode, 0)
+            self.assertEqual(staged.stdout.strip(), "D\tobsolete.py")
 
     def test_read_commit_ledger_segment_reports_empty_pointer(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

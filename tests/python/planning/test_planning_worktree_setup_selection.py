@@ -73,7 +73,6 @@ class PlanningWorktreeSetupSelectionTests(PlanningWorktreeSetupTestCase):
             orchestrator = engine.planning_worktree_orchestrator
             route = parse_route(["--plan", "--dry-run"], env={})
             sync_calls: list[dict[str, int]] = []
-            save_calls: list[dict[str, int]] = []
 
             def fake_menu(
                 planning_files: list[str],
@@ -88,13 +87,9 @@ class PlanningWorktreeSetupSelectionTests(PlanningWorktreeSetupTestCase):
                 sync_calls.append(dict(kwargs["plan_counts"]))  # type: ignore[index,arg-type]
                 return engine._sync_plan_worktrees_from_plan_counts(**kwargs)  # type: ignore[arg-type]
 
-            def fake_save(chosen: dict[str, int]) -> None:
-                save_calls.append(dict(chosen))
-
             with (
                 patch.object(orchestrator, "_run_planning_selection_menu", side_effect=fake_menu),
                 patch.object(orchestrator, "_sync_plan_worktrees_from_plan_counts", side_effect=fake_sync),
-                patch.object(orchestrator, "_save_plan_selection_memory", side_effect=fake_save),
                 patch.object(sys.stdin, "isatty", return_value=True),
                 patch.object(sys.stdout, "isatty", return_value=True),
             ):
@@ -102,8 +97,8 @@ class PlanningWorktreeSetupSelectionTests(PlanningWorktreeSetupTestCase):
 
             self.assertEqual([ctx.name for ctx in selected], ["feature_task-1"])
             self.assertEqual(sync_calls, [])
-            self.assertEqual(save_calls, [])
             self.assertFalse((repo / "trees" / "feature_task" / "1").exists())
+            self.assertEqual(list(runtime.rglob("planning_selection.json")), [])
             result = orchestrator.last_plan_selection_result()
             self.assertEqual([worktree.name for worktree in result.created_worktrees], ["feature_task-1"])
 

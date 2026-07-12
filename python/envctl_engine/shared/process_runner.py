@@ -7,12 +7,14 @@ import socket as socket
 import subprocess
 import time as time
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, TextIO
+from typing import Any, Callable, Mapping, NoReturn, Sequence, TextIO
 from envctl_engine.shared.process_launch_support import (
     LaunchRecord as LaunchRecord,
+    ProcessHandoffCleanupError as ProcessHandoffCleanupError,
     ProcessLaunchMixin,
     _hash_command as _hash_command,
     _stdio_policy_name as _stdio_policy_name,
+    _terminate_unhanded_process,
 )
 from envctl_engine.shared.process_lifecycle_probe import ProcessLifecycleProbeMixin
 from envctl_engine.shared.process_streaming_support import ProcessStreamingMixin
@@ -24,6 +26,35 @@ class ProcessRunner(ProcessLaunchMixin, ProcessLifecycleProbeMixin, ProcessStrea
     def __init__(self, *, emit: Callable[..., Any] | None = None) -> None:
         self._emit = emit
         self._launch_records: list[LaunchRecord] = []
+
+    def _raise_unconfirmed_process_cleanup(
+        self,
+        *,
+        process: object,
+        command: Sequence[str],
+        cwd: str | Path | None,
+        stdin: object,
+        cause: BaseException,
+    ) -> NoReturn:
+        try:
+            self._record_launch(
+                launch_intent="foreground_cleanup_unconfirmed",
+                command=command,
+                pid=getattr(process, "pid", None),
+                cwd=cwd,
+                stdin_policy=_stdio_policy_name(stdin, inherited_label="inherit"),
+                stdout_policy="pipe",
+                stderr_policy="pipe",
+                controller_input_owner_allowed=False,
+                active=True,
+                emit_event=False,
+            )
+        except BaseException:  # noqa: BLE001 - the durable error still carries the process
+            pass
+        raise ProcessHandoffCleanupError(
+            process=process,
+            launch_intent="foreground_completion",
+        ) from cause
 
     def run(
         self,
@@ -55,30 +86,14 @@ class ProcessRunner(ProcessLaunchMixin, ProcessLifecycleProbeMixin, ProcessStrea
                     process_started_callback(int(process.pid))
                 except Exception:
                     pass
-            stdout, stderr = process.communicate(timeout=timeout)
-            return subprocess.CompletedProcess(
-                args=command,
-                returncode=process.returncode,
-                stdout=stdout,
-                stderr=stderr,
-            )
-        except subprocess.TimeoutExpired as exc:
-            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-            stderr_prefix = exc.stderr if isinstance(exc.stderr, str) else ""
-            if process is not None and process.pid > 0:
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except OSError:
-                    pass
-                try:
-                    extra_stdout, extra_stderr = process.communicate(timeout=2.0)
-                    if isinstance(extra_stdout, str):
-                        stdout = f"{stdout}{extra_stdout}"
-                    if isinstance(extra_stderr, str):
-                        stderr_prefix = f"{stderr_prefix}{extra_stderr}"
-                except subprocess.TimeoutExpired:
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+                stderr_prefix = exc.stderr if isinstance(exc.stderr, str) else ""
+                if process.pid > 0:
                     try:
-                        os.killpg(process.pid, signal.SIGKILL)
+                        os.killpg(process.pid, signal.SIGTERM)
                     except OSError:
                         pass
                     try:
@@ -88,14 +103,52 @@ class ProcessRunner(ProcessLaunchMixin, ProcessLifecycleProbeMixin, ProcessStrea
                         if isinstance(extra_stderr, str):
                             stderr_prefix = f"{stderr_prefix}{extra_stderr}"
                     except subprocess.TimeoutExpired:
-                        pass
-            return self._timeout_result(
-                command,
-                timeout=timeout,
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except OSError:
+                            pass
+                        try:
+                            extra_stdout, extra_stderr = process.communicate(timeout=2.0)
+                            if isinstance(extra_stdout, str):
+                                stdout = f"{stdout}{extra_stdout}"
+                            if isinstance(extra_stderr, str):
+                                stderr_prefix = f"{stderr_prefix}{extra_stderr}"
+                        except subprocess.TimeoutExpired:
+                            pass
+                cleanup_confirmed = _terminate_unhanded_process(process)
+                if not cleanup_confirmed:
+                    self._raise_unconfirmed_process_cleanup(
+                        process=process,
+                        command=command,
+                        cwd=cwd,
+                        stdin=stdin,
+                        cause=exc,
+                    )
+                return self._timeout_result(
+                    command,
+                    timeout=timeout,
+                    stdout=stdout,
+                    stderr_prefix=stderr_prefix,
+                )
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=process.returncode,
                 stdout=stdout,
-                stderr_prefix=stderr_prefix,
+                stderr=stderr,
             )
-        except OSError:
+        except BaseException as exc:  # noqa: BLE001 - a failed completion must not orphan the child
+            if isinstance(exc, ProcessHandoffCleanupError):
+                raise
+            if process is not None:
+                if _terminate_unhanded_process(process):
+                    raise
+                self._raise_unconfirmed_process_cleanup(
+                    process=process,
+                    command=command,
+                    cwd=cwd,
+                    stdin=stdin,
+                    cause=exc,
+                )
             raise
 
     def run_probe(

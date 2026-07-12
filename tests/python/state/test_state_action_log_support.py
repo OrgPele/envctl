@@ -103,6 +103,30 @@ class StateActionLogSupportTests(unittest.TestCase):
             self.assertIn("Main Frontend: log missing", rendered)
             self.assertIn("Main Worker: log=n/a", rendered)
 
+    def test_clear_service_logs_advances_docker_cursor_without_snapshot_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "docker-backend.log"
+            marker = Path(f"{log_path}.docker-since")
+            state = RunState(
+                run_id="run-docker",
+                mode="main",
+                services={
+                    "Main Backend": ServiceRecord(
+                        name="Main Backend",
+                        type="backend",
+                        cwd=tmp,
+                        log_path=str(log_path),
+                        runtime_kind="docker",
+                    )
+                },
+            )
+
+            summary = StateActionLogSupport.clear_service_logs(state, quiet=True)
+
+            self.assertEqual(summary, (1, 0, 0, 0))
+            self.assertFalse(log_path.exists())
+            self.assertTrue(marker.is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

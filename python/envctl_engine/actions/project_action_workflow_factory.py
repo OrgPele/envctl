@@ -7,7 +7,7 @@ import subprocess
 from typing import Any
 
 import envctl_engine.actions.action_ship_support as ship_support
-from envctl_engine.actions.action_git_state_support import DirtyWorktreeReport
+from envctl_engine.actions.action_git_state_support import DirtyWorktreeReport, ExistingPullRequest
 from envctl_engine.actions.action_review_context import ReviewActionContext
 from envctl_engine.actions.action_review_base_support import ReviewBaseResolution
 from envctl_engine.actions.action_review_original_plan_support import OriginalPlanResolution
@@ -41,6 +41,8 @@ class ProjectActionWorkflowCommitSources:
 class ProjectActionWorkflowPullRequestSources:
     resolve_base_branch_fn: Callable[[Any, Path], str]
     existing_pr_url_fn: Callable[[Path, str], str]
+    existing_pull_request_fn: Callable[[Path, str], ExistingPullRequest | None]
+    update_pull_request_base_fn: Callable[[Path, ExistingPullRequest, str], subprocess.CompletedProcess[str]]
     probe_dirty_worktree_source_fn: Callable[..., DirtyWorktreeReport]
     run_commit_action_fn: Callable[[Any], int]
     pr_title_fn: Callable[[Any, Path, str], str]
@@ -89,6 +91,8 @@ class ProjectActionWorkflowFactory:
             pull_request=ProjectActionPullRequestWorkflowDependencies(
                 resolve_base_branch_fn=self.pull_request.resolve_base_branch_fn,
                 existing_pr_url_fn=self.pull_request.existing_pr_url_fn,
+                existing_pull_request_fn=self.pull_request.existing_pull_request_fn,
+                update_pull_request_base_fn=self.pull_request.update_pull_request_base_fn,
                 probe_dirty_worktree_fn=self.probe_dirty_worktree,
                 run_commit_action_fn=self.pull_request.run_commit_action_fn,
                 pr_title_fn=self.pull_request.pr_title_fn,

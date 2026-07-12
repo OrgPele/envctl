@@ -253,11 +253,16 @@ envctl pr-preview-controller --command start --pr-number 287
 Behavior:
 
 - starts or reconciles a preview when the configured label is added
+- treats an explicit `--command start` as a forced reconciliation: an existing
+  same-head runtime is stopped before the import/start path runs again, so
+  changed CI environment or secret inputs cannot be hidden by Git identity
 - redeploys labeled PRs when GitHub sends a new-commit event
 - loads a tracked `.envctl` from the exact PR head when present; otherwise it
   falls back to the controller-generated configuration
 - publishes explicitly listed `ENVCTL_PREVIEW_PUBLIC_SERVICES` on deterministic
   TLS hosts and projects matching HTTP/WebSocket source URLs into launch env
+- rejects a routed service whose JSON health response explicitly reports
+  `"ready": false`, even when the endpoint itself returns HTTP 2xx
 - creates `ENVCTL_PREVIEW_GENERATED_SECRETS` ephemerally for each preview start,
   so shared service credentials do not need to be stored in GitHub
 - also redeploys during scheduled reconciliation if the saved preview head is stale
@@ -270,6 +275,22 @@ Behavior:
   are killed without deleting copied runtime storage
 - records GitHub deployments and marks them inactive when previews stop
 - is intended for trusted CI runners with `gh`, `git`, Docker, and envctl available
+
+Integration ownership:
+
+- envctl is the canonical owner of preview event parsing, branch-to-PR
+  matching, worktree lifecycle, runtime cleanup, comments, and deployments;
+  consuming repositories should invoke the installed command instead of
+  vendoring a controller copy
+- the caller workflow should forward `pull_request_target`, feature-branch
+  `push`, `schedule`, and `workflow_dispatch` events through
+  `GITHUB_EVENT_NAME` and `GITHUB_EVENT_PATH`
+- feature-branch `push` events are restricted to open same-repository PRs with
+  the configured preview label; deleted branches, tags, forks, and unmatched
+  branches are ignored
+- install or select the desired envctl revision before invoking the command;
+  this keeps controller rollout/version policy in CI while behavior and tests
+  remain centralized in envctl
 
 
 ## Runtime Resolution Events
@@ -291,6 +312,10 @@ High-value command families:
 - `plan`
 - `import`
 - `test`
+
+When `envctl pr` or `envctl ship` opens a pull request without an explicit
+`ENVCTL_PR_BASE`, it selects the first branch that exists in this order:
+`dev`, `main`, then `master`. Both remote branches and local refs are checked.
 - `logs`
 - `health`
 - `errors`
@@ -387,6 +412,14 @@ envctl stop --entire-system --headless
 envctl kill --backend --headless     # alias for stop --backend
 envctl kill-all --headless           # alias for stop-all
 ```
+
+Plain dependency cleanup is intentionally storage-preserving: `stop --dependencies`
+and plain `stop-all` release saved dependency records and scoped port locks, but
+leave envctl-managed Docker dependency stacks and their storage available for a
+later start to reuse. Use `stop-all --remove-volumes` to remove supported managed
+containers and volumes, or `blast-all` for aggressive ecosystem cleanup.
+Explicit `--main` and `--trees` cleanup is mode-scoped: it never stops or retires
+the other mode's saved runtime.
 
 For AI plan-agent launches, `--entire-system` starts configured or autodetected local app services. In a repo/worktree
 with no explicit backend, frontend, or additional-service configuration and no supported autodetectable app layout,
@@ -522,6 +555,11 @@ Commit defaults:
 - write one complete next commit message in `.envctl-commit-message.md` rather than multiple fragmented summaries only when using the fallback ledger
 - envctl-local control artifacts (`.envctl*`, `.codegraph/`, `.serena/project.local.yml`, `MAIN_TASK.md`, `OLD_TASK_*.md`, `trees/`) stay local; if a broad `git add .` stages them, `envctl commit` unstages those protected paths before committing normal changes
 
+PR defaults:
+
+- `envctl pr` and `envctl ship` target `dev` when that remote branch exists, otherwise `main`, otherwise `master`; use `--pr-base <branch>` to override the selection explicitly
+- an existing open PR for the current head branch is rediscovered before creation, so rerunning the command reports or updates the same PR instead of opening a duplicate
+
 Optional plan-agent launch config for `--plan` and `--import`:
 
 `envctl ship` is the preferred AI handoff command. From inside the current
@@ -534,7 +572,7 @@ If GitHub has attached the pushed head commit but still has no target test check
 `no_checks_reported` immediately instead of waiting for the full timeout. The command returns the structured JSON result by default including
 the PR URL, `pr_created`, `operation_statuses`, `checks_state`, `passed_checks`,
 `failing_checks`, `pending_checks`, and `checks_error`. `--json` remains accepted as a compatibility no-op;
-use `--human` only when compact terminal output is preferred. The check wait timeout defaults to 2 minutes; pending
+use `--human` only when compact terminal output is preferred. The check wait timeout defaults to 3 minutes; pending
 checks after that window are reported as `checks_pending_timeout` without failing the handoff command, while actual failed
 checks still return a non-zero exit. The timeout can be tuned with
 `ENVCTL_SHIP_CHECK_TIMEOUT_SECONDS` and

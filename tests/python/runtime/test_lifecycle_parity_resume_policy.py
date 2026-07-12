@@ -174,6 +174,8 @@ class LifecycleResumePolicyParityTests(unittest.TestCase):
             runtime = Path(tmpdir) / "runtime"
             run_dir = runtime / "python-engine"
             (repo / ".git").mkdir(parents=True, exist_ok=True)
+            (repo / "backend").mkdir(parents=True, exist_ok=True)
+            (repo / "frontend").mkdir(parents=True, exist_ok=True)
             run_dir.mkdir(parents=True, exist_ok=True)
 
             state = RunState(
@@ -199,7 +201,15 @@ class LifecycleResumePolicyParityTests(unittest.TestCase):
                     "RUN_SH_RUNTIME_DIR": str(runtime),
                 }
             )
-            engine = PythonEngineRuntime(config, env={})
+            engine = PythonEngineRuntime(
+                config,
+                env={
+                    "ENVCTL_BACKEND_START_CMD": "sh -lc 'sleep 1'",
+                    "ENVCTL_FRONTEND_START_CMD": "sh -lc 'sleep 1'",
+                },
+            )
+            restore_runner = _ResumeRestoreRunner(listeners_ready=True)
+            engine.process_runner = restore_runner  # type: ignore[assignment]
             code = engine.dispatch(parse_route(["--resume"], env={}))
 
             self.assertEqual(code, 0)

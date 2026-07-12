@@ -12,6 +12,7 @@ from envctl_engine.startup.run_reuse_resolution import (
 )
 from envctl_engine.startup.run_reuse_support import RunReuseDecision
 from envctl_engine.startup.session import StartupSession
+from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 
 
 def _session(route: Route) -> StartupSession:
@@ -57,6 +58,67 @@ class StartupRunReuseResolutionTests(unittest.TestCase):
     def test_run_reuse_resume_uses_named_resume_handler_owner(self) -> None:
         self.assertTrue(callable(StartupRunReuseResumeHandler.resume_matching_run))
         self.assertTrue(callable(StartupRunReuseResumeHandler.resume_dashboard_run))
+
+    def test_auto_resume_exception_preserves_existing_run_authority(self) -> None:
+        route = Route(command="start", mode="main")
+        session = _session(route)
+        candidate = RunState(
+            run_id="old-run",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd="/tmp/main",
+                    project="Main",
+                    pid=101,
+                )
+            },
+            requirements={"Main": RequirementsResult(project="Main")},
+            metadata={"authority": "old"},
+        )
+        runtime = _RuntimeStub()
+
+        def fail_resume(_route: Route) -> int:
+            raise OSError("resume lock unlink failed")
+
+        runtime._resume = fail_resume  # type: ignore[attr-defined]
+        handler = StartupRunReuseResumeHandler(
+            runtime=runtime,
+            session=session,
+            route=route,
+            runtime_mode="main",
+            decision=RunReuseDecision(
+                candidate_state=candidate,
+                decision_kind="resume_exact",
+                reason="exact_match",
+                selected_projects=[{"name": "Main", "root": None}],
+                state_projects=[{"name": "Main", "root": None}],
+            ),
+            candidate_state=candidate,
+            reuse_started=0.0,
+            announce_session_identifiers=lambda current: setattr(current, "identifiers_announced", True),
+            emit_phase=lambda *_args, **_kwargs: None,
+            headless_plan_output_only=lambda _session: False,
+            maybe_attach_plan_agent_terminal=lambda _session: None,
+            print_headless_plan_session_summary=lambda _session: None,
+            print_plan_dry_run_preview=lambda _session: None,
+            configured_service_types_for_mode=lambda _mode: [],
+            replace_existing_project_services_for_fresh_start=lambda *_args, **_kwargs: self.fail(
+                "exception must not enter fresh fallback"
+            ),
+        )
+
+        with self.assertRaisesRegex(OSError, "resume lock unlink failed"):
+            handler.resume_matching_run()
+
+        self.assertIsNone(session.run_id)
+        self.assertFalse(session.identifiers_announced)
+        self.assertTrue(session.preserve_existing_state_on_failure)
+        self.assertEqual(session.preserved_services, candidate.services)
+        self.assertEqual(session.preserved_requirements, candidate.requirements)
+        self.assertEqual(session.base_metadata["authority"], "old")
+        self.assertEqual(session.base_metadata["state_source_run_ids"], ["old-run"])
 
     def test_planning_prs_branch_runs_pr_action_after_reuse_evaluation_and_skips_startup(self) -> None:
         route = Route(command="plan", mode="trees", raw_args=[], passthrough_args=[], projects=[], flags={"planning_prs": True})
@@ -142,7 +204,7 @@ class StartupRunReuseResolutionTests(unittest.TestCase):
         result = resolve_startup_run_reuse_with_runtime(
             runtime,
             session,
-            terminate_restart_orphan_listeners=lambda **kwargs: None,
+            terminate_restart_orphan_listeners=lambda **kwargs: set(),
             validate_attach_target_fn=lambda *args, **kwargs: None,
             attach_plan_agent_terminal=lambda *args, **kwargs: None,
             progress_lock=None,

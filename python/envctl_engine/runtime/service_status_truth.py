@@ -6,6 +6,33 @@ from envctl_engine.shared.process_probe import ShellProbeBackend
 
 
 def service_truth_status(runtime: Any, service: object) -> str:
+    if str(getattr(service, "runtime_kind", "process") or "process").lower() == "docker":
+        from envctl_engine.runtime.docker_service_runtime import DockerServiceRuntime
+
+        container = str(
+            getattr(service, "container_id", "") or getattr(service, "container_name", "") or ""
+        ).strip()
+        docker_runtime = DockerServiceRuntime(runtime, runtime.process_runner)
+        if not docker_runtime.container_running(container):
+            status = "stale"
+        elif not bool(getattr(service, "listener_expected", True)):
+            status = "running"
+        else:
+            port = getattr(service, "actual_port", None) or getattr(service, "requested_port", None)
+            try:
+                reachable = isinstance(port, int) and port > 0 and bool(
+                    runtime.process_runner.wait_for_port(port, timeout=runtime._service_truth_timeout())
+                )
+            except Exception:  # noqa: BLE001
+                reachable = False
+            status = "running" if reachable else "unreachable"
+        runtime._emit(
+            "service.truth.check",
+            service=service_display_name(service),
+            status=status,
+            reason_code=f"container_truth_status_{status}",
+        )
+        return status
     backend = getattr(runtime.process_probe, "backend", None)
     if isinstance(backend, ShellProbeBackend):
         backend.process_runner = runtime.process_runner

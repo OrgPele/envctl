@@ -18,10 +18,25 @@ from envctl_engine.runtime.engine_runtime_state_truth import (  # noqa: E402
     requirement_truth_issues,
     state_fingerprint,
 )
+from envctl_engine.runtime.requirement_reconcile_truth import requirement_truth_identity  # noqa: E402
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord  # noqa: E402
 
 
 class EngineRuntimeStateTruthTests(unittest.TestCase):
+    def test_collision_requirement_truth_uses_authoritative_project_and_root(self) -> None:
+        requirements = RequirementsResult(project="Main", redis={"enabled": True, "final": 6381})
+        state = RunState(
+            run_id="run-collision",
+            mode="main",
+            requirements={"Main Restart Collision": requirements},
+            metadata={"project_roots": {"Main": "/repo/main"}},
+        )
+
+        project, root = requirement_truth_identity(state, "Main Restart Collision", requirements)
+
+        self.assertEqual(project, "Main")
+        self.assertEqual(root, Path("/repo/main"))
+
     def test_state_fingerprint_changes_when_state_changes(self) -> None:
         first = RunState(run_id="run-1", mode="main", services={})
         second = RunState(

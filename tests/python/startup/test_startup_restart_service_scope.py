@@ -87,7 +87,9 @@ class StartupRestartServiceScopeTests(StartupSpinnerIntegrationTestCase):
             engine._discover_projects = lambda mode: [context]  # type: ignore[method-assign]
             engine._reserve_project_ports = lambda _context, route=None: None  # type: ignore[method-assign]
             engine._terminate_services_from_state = (  # type: ignore[method-assign]
-                lambda state, selected_services, aggressive, verify_ownership: terminate_calls.append(selected_services)
+                lambda state, selected_services, aggressive, verify_ownership: (
+                    terminate_calls.append(selected_services) or set()
+                )
             )
             engine._release_requirement_ports = (  # type: ignore[method-assign]
                 lambda _requirements: release_calls.append("released")
@@ -217,7 +219,9 @@ class StartupRestartServiceScopeTests(StartupSpinnerIntegrationTestCase):
             engine._discover_projects = lambda mode: [context]  # type: ignore[method-assign]
             engine._reserve_project_ports = lambda _context, route=None: None  # type: ignore[method-assign]
             engine._terminate_services_from_state = (  # type: ignore[method-assign]
-                lambda state, selected_services, aggressive, verify_ownership: terminate_calls.append(selected_services)
+                lambda state, selected_services, aggressive, verify_ownership: (
+                    terminate_calls.append(selected_services) or set()
+                )
             )
             engine._release_requirement_ports = (  # type: ignore[method-assign]
                 lambda _requirements: self.fail("requirements should be preserved for stopped service restart")
@@ -354,7 +358,9 @@ class StartupRestartServiceScopeTests(StartupSpinnerIntegrationTestCase):
             engine._discover_projects = lambda mode: [context]  # type: ignore[method-assign]
             engine._reserve_project_ports = lambda _context, route=None: None  # type: ignore[method-assign]
             engine._terminate_services_from_state = (  # type: ignore[method-assign]
-                lambda state, selected_services, aggressive, verify_ownership: terminate_calls.append(selected_services)
+                lambda state, selected_services, aggressive, verify_ownership: (
+                    terminate_calls.append(selected_services) or set()
+                )
             )
             engine._release_requirement_ports = (  # type: ignore[method-assign]
                 lambda _requirements: self.fail("shared requirements should be preserved for app-only restart")

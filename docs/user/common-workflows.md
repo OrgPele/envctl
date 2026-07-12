@@ -68,6 +68,12 @@ envctl stop --entire-system --headless
 envctl kill-all --headless
 ```
 
+`stop --dependencies` and plain `stop-all` preserve managed Docker dependency
+stacks and storage for reuse while releasing their saved records and port locks.
+Use `stop-all --remove-volumes` or `blast-all` when those managed containers must
+also be removed. Pass `--main` or `--trees` to clean only that saved runtime mode;
+the other mode remains active.
+
 When you invoke a specific action command directly, envctl stays non-interactive by default.
 For example, `envctl kill-all`, `envctl pr`, `envctl test`, `envctl logs`, and `envctl migrate`
 behave like their `--headless` forms. Add `--interactive` only when you want envctl to prompt
@@ -211,6 +217,33 @@ This is especially useful:
 - after config changes
 - before CI or agent automation
 - when debugging resume surprises
+
+## Run the Same System in Docker
+
+Use `--docker` to preserve envctl's main/trees, selective-service, dependency, dashboard, health,
+logs, restart, and stop workflows while replacing app host processes with managed containers:
+
+```bash
+envctl start --main --entire-system --docker --headless
+envctl start --trees --entire-system --isolated-deps --docker --headless
+```
+
+If a service directory contains a `Dockerfile`, envctl builds it with Docker's layer cache. Otherwise,
+configure an existing image with `ENVCTL_BACKEND_DOCKER_IMAGE`, `ENVCTL_FRONTEND_DOCKER_IMAGE`, or
+the corresponding prefix for an additional app service. Production-oriented images commonly need
+`ENVCTL_<SERVICE>_DOCKER_COMMAND` and `ENVCTL_<SERVICE>_DOCKER_PORT` so the service listens on
+`0.0.0.0` at the expected container port.
+
+```bash
+envctl endpoints --json
+envctl health --json
+envctl logs --project Main --service backend
+envctl restart --project Main --service backend --docker --headless
+envctl stop --project Main --entire-system
+```
+
+See [Configuration: Docker application runtime](../reference/configuration.md#docker-application-runtime)
+for image, Dockerfile, command, port, workdir, target, and cache-policy settings.
 
 ## Debug a Bad Interactive Session
 

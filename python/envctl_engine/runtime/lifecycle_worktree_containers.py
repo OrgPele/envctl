@@ -7,6 +7,7 @@ from typing import Any
 from envctl_engine.requirements.common_contracts import build_container_name
 from envctl_engine.requirements.docker_runtime import run_docker, run_result_error
 from envctl_engine.requirements.supabase import build_supabase_project_name
+from envctl_engine.runtime.docker_service_runtime import docker_service_container_name
 
 
 def legacy_container_name(*, prefix: str, project_name: str) -> str:
@@ -36,6 +37,20 @@ def remove_tree_containers(
         legacy_container_name(prefix="envctl-redis", project_name=project_name): "redis",
         legacy_container_name(prefix="envctl-n8n", project_name=project_name): "n8n",
     }
+    app_service_names = ["backend", "frontend"]
+    app_service_names.extend(
+        str(getattr(service, "name", "") or "").strip()
+        for service in getattr(getattr(runtime, "config", None), "additional_services", ())
+        if str(getattr(service, "name", "") or "").strip()
+    )
+    for service_name in app_service_names:
+        exact_names[
+            docker_service_container_name(
+                project_name=project_name,
+                project_root=resolved_root,
+                service_name=service_name,
+            )
+        ] = service_name
     supabase_prefixes: set[str] = set()
     if include_supabase:
         supabase_prefixes = {

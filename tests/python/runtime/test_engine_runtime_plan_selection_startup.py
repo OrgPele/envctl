@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 import tempfile
@@ -74,36 +73,6 @@ class EngineRuntimePlanSelectionStartupTests(_EngineRuntimeRealStartupTestCase):
             code = engine.dispatch(route)
 
             self.assertEqual(code, 1)
-
-    def test_initial_plan_selected_counts_prefers_existing_counts(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo = Path(tmpdir) / "repo"
-            runtime = Path(tmpdir) / "runtime"
-            (repo / ".git").mkdir(parents=True, exist_ok=True)
-            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
-            selected = engine._initial_plan_selected_counts(
-                planning_files=["backend/task-a.md", "backend/task-b.md"],
-                existing_counts={"backend/task-a.md": 2, "backend/task-b.md": 1},
-            )
-            self.assertEqual(selected, {"backend/task-a.md": 2, "backend/task-b.md": 1})
-
-    def test_initial_plan_selected_counts_ignores_memory_when_existing_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo = Path(tmpdir) / "repo"
-            runtime = Path(tmpdir) / "runtime"
-            (repo / ".git").mkdir(parents=True, exist_ok=True)
-            engine = PythonEngineRuntime(self._config(repo, runtime), env={})
-            memory_path = runtime / "python-engine" / "planning_selection.json"
-            memory_path.parent.mkdir(parents=True, exist_ok=True)
-            memory_path.write_text(
-                json.dumps({"selected_counts": {"backend/task-a.md": 3}}, indent=2, sort_keys=True),
-                encoding="utf-8",
-            )
-            selected = engine._initial_plan_selected_counts(
-                planning_files=["backend/task-a.md", "backend/task-b.md"],
-                existing_counts={},
-            )
-            self.assertEqual(selected, {"backend/task-a.md": 0, "backend/task-b.md": 0})
 
     def test_planning_menu_apply_key_supports_arrow_navigation_and_count_adjustment(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

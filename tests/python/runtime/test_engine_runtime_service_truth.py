@@ -16,6 +16,7 @@ from envctl_engine.runtime.engine_runtime_service_truth import (  # noqa: E402
     listener_pids_for_port,
     rebind_stale_service_pid,
     refresh_service_listener_pids,
+    service_listener_failure_class,
     service_listener_failure_detail,
     service_truth_fallback_enabled,
     service_truth_status,
@@ -34,6 +35,7 @@ class _RunnerStub:
         self.listener_pids_result: list[int] = []
         self.process_tree_listener_pids_result: list[int] = []
         self.running_result = True
+        self.wait_for_port_calls: list[tuple[int, float]] = []
 
     def wait_for_pid_port(
         self,
@@ -49,6 +51,7 @@ class _RunnerStub:
 
     def wait_for_port(self, port: int, *, host: str = "127.0.0.1", timeout: float = 30.0) -> bool:  # noqa: ARG002
         _ = host
+        self.wait_for_port_calls.append((port, timeout))
         return self.wait_for_port_result
 
     def find_pid_listener_port(self, pid: int, requested_port: int, *, max_delta: int) -> int | None:  # noqa: ARG002
@@ -120,6 +123,16 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
         self.assertIn("startup still in progress: INFO:     Waiting for application startup.", detail)
         self.assertNotIn("log: INFO:     Waiting for application startup.", detail)
 
+    def test_service_listener_failure_class_recognizes_missing_nested_executable(self) -> None:
+        detail = (
+            "process 2304354 exited; log_path: /tmp/voice-runtime.txt; "
+            "log: scripts/envctl/start-voice-runtime.sh: line 20: exec: python: not found"
+        )
+
+        self.assertEqual(service_listener_failure_class(detail), "dependency_missing")
+        self.assertEqual(service_listener_failure_class("process 42 exited"), "process_exited")
+        self.assertEqual(service_listener_failure_class("listener timed out"), "listener_not_detected")
+
     def test_wait_for_service_listener_uses_port_probe_fallback(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
         runner = _RunnerStub()
@@ -138,6 +151,25 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(events[0][0], "service.bind.port_fallback")
         self.assertEqual(events[0][1]["service"], "Main Backend")
+        self.assertEqual(runner.wait_for_port_calls, [(8000, 2.0)])
+
+    def test_wait_for_service_listener_never_falls_back_after_launch_pid_exits(self) -> None:
+        runner = _RunnerStub()
+        runner.running_result = False
+        runner.wait_for_port_result = True
+        runner.process_tree_probe_supported = False
+        runtime = SimpleNamespace(
+            process_runner=runner,
+            config=SimpleNamespace(runtime_truth_mode="auto"),
+            _listener_probe_supported=True,
+            _service_listener_timeout=lambda: 300.0,
+            _emit=lambda *_args, **_kwargs: None,
+        )
+
+        ok = wait_for_service_listener(runtime, 2304354, 8251, service_name="voice-runtime")
+
+        self.assertFalse(ok)
+        self.assertEqual(runner.wait_for_port_calls, [])
 
     def test_wait_for_service_listener_rejects_generic_port_when_process_tree_probe_is_available(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
@@ -236,8 +268,7 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
                 self.wait_calls += 1
                 if self.wait_calls == 2:
                     self.log_path.write_text(
-                        "INFO:     Waiting for application startup.\n"
-                        "INFO:     Application startup complete.\n",
+                        "INFO:     Waiting for application startup.\nINFO:     Application startup complete.\n",
                         encoding="utf-8",
                     )
                 return True
@@ -309,9 +340,7 @@ class EngineRuntimeServiceTruthTests(unittest.TestCase):
                 )
 
         self.assertEqual(detected, 8000)
-        self.assertTrue(
-            any(event == "service.startup.progress.listener_accepted" for event, _payload in events)
-        )
+        self.assertTrue(any(event == "service.startup.progress.listener_accepted" for event, _payload in events))
         self.assertFalse(any(event == "service.startup.progress.timeout" for event, _payload in events))
         self.assertFalse(any(event == "service.bind.actual.discovered" for event, _payload in events))
 

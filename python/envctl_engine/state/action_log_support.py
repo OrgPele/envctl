@@ -204,7 +204,34 @@ class StateActionLogSupport:
             if not raw_path:
                 return 0, 0, 1, 0, (None if quiet else f"{service.name}: log=n/a")
             log_path = Path(raw_path)
+            is_docker = str(getattr(service, "runtime_kind", "process") or "process").lower() == "docker"
             if not log_path.is_file():
+                if is_docker:
+                    try:
+                        Path(f"{log_path}.docker-since").touch()
+                        line = f"{service.name}: Docker log cursor advanced at {log_path}"
+                        return 1, 0, 0, 0, (
+                            None
+                            if quiet
+                            else render_paths_in_terminal_text(
+                                line,
+                                paths=[log_path],
+                                env=env,
+                                interactive_tty=interactive_tty,
+                            )
+                        )
+                    except OSError as exc:
+                        line = f"{service.name}: failed to clear Docker logs at {log_path} ({exc})"
+                        return 0, 0, 0, 1, (
+                            None
+                            if quiet
+                            else render_paths_in_terminal_text(
+                                line,
+                                paths=[log_path],
+                                env=env,
+                                interactive_tty=interactive_tty,
+                            )
+                        )
                 line = f"{service.name}: log missing at {log_path}"
                 return 0, 1, 0, 0, (
                     None
@@ -219,6 +246,8 @@ class StateActionLogSupport:
             try:
                 with log_path.open("w", encoding="utf-8"):
                     pass
+                if is_docker:
+                    Path(f"{log_path}.docker-since").touch()
                 line = f"{service.name}: log cleared at {log_path}"
                 return 1, 0, 0, 0, (
                     None

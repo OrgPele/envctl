@@ -43,6 +43,16 @@ class RuntimeStructureLayoutTests(unittest.TestCase):
         self.assertIn("LifecycleBlastCleanupSupport", orchestrator_text)
         self.assertLessEqual(len(orchestrator_text.splitlines()), 760)
 
+    def test_runtime_lifecycle_cleanup_has_full_cleanup_owner(self) -> None:
+        owner = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "lifecycle_full_cleanup.py"
+        orchestrator = REPO_ROOT / "python" / "envctl_engine" / "runtime" / "lifecycle_cleanup_orchestrator.py"
+
+        self.assertTrue(owner.is_file())
+        owner_text = owner.read_text(encoding="utf-8")
+        orchestrator_text = orchestrator.read_text(encoding="utf-8")
+        self.assertIn("def clear_runtime_state", owner_text)
+        self.assertIn("from envctl_engine.runtime.lifecycle_full_cleanup import", orchestrator_text)
+
     def test_runtime_command_parity_tests_are_split_by_owner(self) -> None:
         runtime_tests = REPO_ROOT / "tests" / "python" / "runtime"
         expected = [

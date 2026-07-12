@@ -10,6 +10,7 @@ from typing import Mapping
 import envctl_engine.actions.action_commit_support as commit_support
 import envctl_engine.actions.action_pr_label_support as pr_label_support
 import envctl_engine.actions.action_git_state_support as git_state_support
+import envctl_engine.actions.action_pr_git_support as pr_git_support
 import envctl_engine.actions.action_pr_message_support as pr_message_support
 import envctl_engine.actions.action_review_artifact_support as review_artifact_support
 import envctl_engine.actions.action_review_base_support as review_base_support
@@ -46,6 +47,7 @@ ENVCTL_COMMIT_POINTER_MARKER = commit_support.ENVCTL_COMMIT_POINTER_MARKER
 __all__ = [
     "ActionProjectContext",
     "DirtyWorktreeReport",
+    "ExistingPullRequest",
     "EnvctlProtectedPathPartition",
     "OriginalPlanResolution",
     "ReviewBaseResolution",
@@ -70,6 +72,7 @@ __all__ = [
     "_unmerged_stage_entries",
     "_write_pr_body_file",
     "detect_default_branch",
+    "existing_pull_request",
     "existing_pr_url",
     "probe_dirty_worktree",
     "resolve_git_root",
@@ -78,6 +81,7 @@ __all__ = [
     "run_pr_action",
     "run_review_action",
     "run_ship_action",
+    "update_pull_request_base",
 ]
 
 
@@ -97,6 +101,7 @@ ReviewBaseResolution = review_base_support.ReviewBaseResolution
 ReviewBaseResolutionError = review_base_support.ReviewBaseResolutionError
 OriginalPlanResolution = review_original_plan_support.OriginalPlanResolution
 
+
 def _workflow_runner() -> ProjectActionWorkflowRunner:
     return workflow_factory.ProjectActionWorkflowFactory(
         git=workflow_factory.ProjectActionWorkflowGitSources(
@@ -115,6 +120,8 @@ def _workflow_runner() -> ProjectActionWorkflowRunner:
         pull_request=workflow_factory.ProjectActionWorkflowPullRequestSources(
             resolve_base_branch_fn=_resolve_pr_base_branch,
             existing_pr_url_fn=existing_pr_url,
+            existing_pull_request_fn=existing_pull_request,
+            update_pull_request_base_fn=update_pull_request_base,
             probe_dirty_worktree_source_fn=probe_dirty_worktree,
             run_commit_action_fn=run_commit_action,
             pr_title_fn=_pr_title,
@@ -279,8 +286,12 @@ def run_review_action(context: ActionProjectContext) -> int:
 
 
 DirtyWorktreeReport = git_state_support.DirtyWorktreeReport
+ExistingPullRequest = git_state_support.ExistingPullRequest
 resolve_git_root = git_state_support.resolve_git_root
 _classify_dirty_porcelain = git_state_support.classify_dirty_porcelain
+existing_pr_url = pr_git_support.existing_pr_url
+existing_pull_request = pr_git_support.existing_pull_request
+update_pull_request_base = pr_git_support.update_pull_request_base
 
 
 def probe_dirty_worktree(project_root: Path, repo_root: Path, *, project_name: str = "") -> DirtyWorktreeReport:
@@ -294,15 +305,6 @@ def probe_dirty_worktree(project_root: Path, repo_root: Path, *, project_name: s
 
 def detect_default_branch(git_root: Path) -> str:
     return git_state_support.detect_default_branch(git_root, git_output=_git_output)
-
-
-def existing_pr_url(git_root: Path, branch: str) -> str:
-    return git_state_support.existing_pr_url(
-        git_root,
-        branch,
-        gh_path=shutil.which("gh"),
-        run_process=subprocess.run,
-    )
 
 
 _resolve_original_plan = review_original_plan_support.resolve_original_plan
@@ -335,7 +337,7 @@ def _resolve_pr_base_branch(context: ActionProjectContext, git_root: Path) -> st
     explicit = str(context.env.get("ENVCTL_PR_BASE", "")).strip()
     if explicit:
         return explicit
-    return detect_default_branch(git_root)
+    return git_state_support.detect_pr_base_branch(git_root, git_output=_git_output)
 
 
 _resolve_analyze_mode = review_iteration_support.resolve_analyze_mode

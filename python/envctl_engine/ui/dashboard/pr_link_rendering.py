@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from envctl_engine.shared.services import service_for_project_type
 from envctl_engine.state.models import RunState
 
 
@@ -72,8 +73,8 @@ def dashboard_project_root(self: Any, *, state: RunState, project: str) -> Path 
         if isinstance(root_raw, str) and root_raw.strip():
             return Path(root_raw).expanduser()
 
-    for service_suffix in (" Backend", " Frontend"):
-        service = state.services.get(f"{project}{service_suffix}")
+    for service_type in ("backend", "frontend"):
+        service = service_for_project_type(state, project=project, service_type=service_type)
         cwd_raw = getattr(service, "cwd", None)
         if not isinstance(cwd_raw, str) or not cwd_raw.strip():
             continue

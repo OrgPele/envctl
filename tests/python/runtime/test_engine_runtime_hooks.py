@@ -126,13 +126,24 @@ class EngineRuntimeHooksTests(unittest.TestCase):
                             "port": 9010,
                             "status": "healthy",
                         },
+                        {
+                            "name": "Opaque Worker Process",
+                            "type": "voice-runtime",
+                            "pid": 103,
+                            "port": 9020,
+                        },
                     ]
                 },
             )
 
-        self.assertEqual(sorted(records.keys()), ["feature/a-1 Backend", "feature/a-1 Frontend"])
+        self.assertEqual(
+            sorted(records.keys()),
+            ["Opaque Worker Process", "feature/a-1 Backend", "feature/a-1 Frontend"],
+        )
         self.assertEqual(records["feature/a-1 Backend"].actual_port, 8010)
         self.assertEqual(records["feature/a-1 Frontend"].requested_port, 9010)
+        self.assertEqual(records["Opaque Worker Process"].project, "feature/a-1")
+        self.assertEqual(records["Opaque Worker Process"].service_slug, "voice-runtime")
         self.assertEqual(context.ports["backend"].final, 8010)
         self.assertEqual(context.ports["frontend"].final, 9010)
 

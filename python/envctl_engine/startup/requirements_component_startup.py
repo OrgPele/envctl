@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.requirements.orchestrator import FailureClass, RequirementOutcome
 from envctl_engine.requirements.supabase import (
     evaluate_managed_supabase_reliability_contract,
@@ -273,6 +274,8 @@ class RequirementComponentStarter:
         failure_class: FailureClass,
         error: str | None,
     ) -> None:
+        if retry_port != failed_port:
+            self._release_failed_requirement_port(failed_port)
         reason_code = self.runtime.requirements.reason_code_for_failure(service_name, failure_class, error=error)
         self.runtime._emit(
             "requirements.retry",
@@ -286,6 +289,23 @@ class RequirementComponentStarter:
             reason_code=reason_code,
             error=(error or "").strip() or None,
         )
+
+    def _release_failed_requirement_port(self, port: int) -> None:
+        release = getattr(self.runtime.port_planner, "release", None)
+        if not callable(release):
+            return
+        resource_keys = {
+            resource.legacy_port_key
+            for definition in dependency_definitions()
+            if definition.id == self.name
+            for resource in definition.resources
+        }
+        for owner_suffix in (*sorted(resource_keys), "requirements"):
+            try:
+                release(port, owner=f"{self.context.name}:{owner_suffix}")
+            except TypeError:
+                release(port)
+                return
 
     def _finalize_outcome(self, outcome: RequirementOutcome) -> RequirementOutcome:
         if outcome.success and isinstance(self.native_effective_port, int) and self.native_effective_port > 0:

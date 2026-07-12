@@ -212,8 +212,8 @@ def stop_project_order(state: RunState, runtime: Any, *, project_names_from_stat
         if name and name.casefold() not in seen:
             seen.add(name.casefold())
             names.append(name)
-    for project_name in state.requirements:
-        name = str(project_name).strip()
+    for storage_name, requirements in state.requirements.items():
+        name = str(getattr(requirements, "project", "") or storage_name).strip()
         if name and name.casefold() not in seen:
             seen.add(name.casefold())
             names.append(name)
@@ -242,8 +242,8 @@ def stop_services_by_project(state: RunState, runtime: Any) -> dict[str, list[tu
 def stop_dependencies_by_project(state: RunState) -> dict[str, list[tuple[str, str]]]:
     labels = {definition.id: definition.display_name for definition in dependency_definitions()}
     dependencies_by_project: dict[str, list[tuple[str, str]]] = {}
-    for project_name, requirements in state.requirements.items():
-        project = str(project_name).strip()
+    for storage_name, requirements in state.requirements.items():
+        project = str(getattr(requirements, "project", "") or storage_name).strip()
         if not project:
             continue
         for definition in dependency_definitions():

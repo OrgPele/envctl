@@ -4,9 +4,11 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import sys
 from typing import Any, Mapping
 
 from envctl_engine.runtime.command_resolution import resolve_requirement_start_command, resolve_service_start_command
+from envctl_engine.runtime.docker_service_runtime import docker_service_container_command_source
 
 SERVICE_LAUNCH_ENV_REMOVALS = {
     "ACTIONS_CACHE_URL",
@@ -105,6 +107,9 @@ def service_start_command_resolved(
     project_root: Path | None = None,
     port: int = 0,
 ) -> tuple[list[str], str]:
+    container_command_source = docker_service_container_command_source(runtime, service_name)
+    if container_command_source is not None:
+        return [], container_command_source
     result = resolve_service_start_command(
         service_name=service_name,
         project_root=(project_root or runtime.config.base_dir),
@@ -150,14 +155,14 @@ def split_command(
 
 
 def _command_exists_for_cwd(runtime: Any, executable: str, *, cwd: str | Path | None) -> bool:
-    if runtime._command_exists(executable):
-        return True
-    if cwd is None or ("/" not in executable and "\\" not in executable):
-        return False
+    if "/" not in executable and "\\" not in executable:
+        return bool(runtime._command_exists(executable))
     candidate = Path(executable).expanduser()
-    if candidate.is_absolute():
-        return candidate.exists()
-    return (Path(cwd) / candidate).exists()
+    if not candidate.is_absolute():
+        if cwd is None:
+            return False
+        candidate = Path(cwd) / candidate
+    return candidate.is_file() and os.access(candidate, os.X_OK)
 
 
 def command_env(runtime: Any, *, port: int, extra: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -166,6 +171,15 @@ def command_env(runtime: Any, *, port: int, extra: Mapping[str, str] | None = No
     env["PORT"] = str(port)
     if extra:
         env.update(extra)
+    # Every envctl process necessarily has one known-good Python executable,
+    # even on minimal hosts that intentionally provide no ``python`` shim.
+    # Repository-owned launchers can use this explicit path to bootstrap their
+    # own isolated environments without guessing which command name exists.
+    python_executable = str(sys.executable or "").strip()
+    if python_executable:
+        env["ENVCTL_PYTHON_EXECUTABLE"] = python_executable
+    else:
+        env.pop("ENVCTL_PYTHON_EXECUTABLE", None)
     for key in SERVICE_LAUNCH_ENV_REMOVALS:
         env.pop(key, None)
     return env

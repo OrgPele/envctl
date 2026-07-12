@@ -19,6 +19,7 @@ class CommandFlagStorageTests(unittest.TestCase):
     def test_boolean_flag_name_maps_known_runtime_flags(self) -> None:
         self.assertEqual(boolean_flag_name("--headless"), "batch")
         self.assertEqual(boolean_flag_name("--cmux"), "cmux")
+        self.assertEqual(boolean_flag_name("--ignore-service-deps"), "ignore_service_deps")
 
     def test_store_value_flag_extends_repeatable_values(self) -> None:
         flags: dict[str, object] = {"services": ["backend"]}

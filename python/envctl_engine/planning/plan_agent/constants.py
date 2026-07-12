@@ -66,7 +66,6 @@ _CODEX_QUEUE_CONFIRMED_MARKERS = (
     "queued follow-up messages",
     "follow-up inputs",
 )
-_OPENCODE_READY_PROMPT_RE = re.compile(r"^[ \t]*[>›❯»][ \t]*.*$")
 _OPENCODE_LOADING_MARKERS = (
     "loading",
     "starting",

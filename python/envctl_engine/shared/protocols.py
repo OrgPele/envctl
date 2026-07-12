@@ -72,6 +72,8 @@ class PortAllocator(Protocol):
 
     def release(self, port: int, owner: str | None = None) -> None: ...
 
+    def release_owned(self, port: int, owner: str, *, expected_session: str) -> bool: ...
+
     def release_session(self) -> None: ...
 
     def release_all(self) -> None: ...
@@ -92,6 +94,7 @@ class StateRepository(Protocol):
         emit: Callable[..., None],
         runtime_map_builder: Callable[[object], dict[str, object]],
         write_runtime_readiness_report: Callable[[Path], None] | None = None,
+        on_commit: Callable[[], None] | None = None,
     ) -> object: ...
 
     def save_resume_state(
@@ -108,11 +111,32 @@ class StateRepository(Protocol):
         state: object,
         emit: Callable[..., None],
         runtime_map_builder: Callable[[object], dict[str, object]],
+        authoritative_project_names: Sequence[str] | None = None,
     ) -> dict[str, object]: ...
 
-    def load_latest(self, *, mode: str | None = None, strict_mode_match: bool = False) -> object | None: ...
+    def load_latest(
+        self,
+        *,
+        mode: str | None = None,
+        strict_mode_match: bool = False,
+        project_names: Sequence[str] | None = None,
+    ) -> object | None: ...
 
-    def load_by_pointer(self, pointer_path: str) -> object: ...
+    def load_all(self, *, mode: str | None = None) -> Sequence[object]: ...
+
+    def has_active_runs(self) -> bool: ...
+
+    def write_runtime_artifact(
+        self,
+        *,
+        run_id: str | None,
+        artifact_name: str,
+        text: str,
+    ) -> bool: ...
+
+    def deactivate_run(self, run_id: str) -> bool: ...
+
+    def deactivate_runs(self, run_ids: Sequence[str]) -> bool: ...
 
     def purge(self, *, aggressive: bool = False) -> None: ...
 

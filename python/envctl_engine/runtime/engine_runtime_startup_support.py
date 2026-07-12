@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.startup.run_reuse_support import (
     build_startup_identity_metadata as build_startup_identity_metadata_impl,
@@ -11,13 +12,21 @@ from envctl_engine.startup.run_reuse_support import (
     state_has_resumable_services as state_has_resumable_services_impl,
 )
 from envctl_engine.startup.protocols import ProjectContextLike
+from envctl_engine.startup.service_execution_environment import configured_service_types_for_mode
+from envctl_engine.startup.service_execution_policy import additional_service_enabled_for_context
+from envctl_engine.startup.startup_selection_support import _restart_service_types_for_project
 from envctl_engine.state.models import PortPlan, RunState
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.planning import discover_tree_projects
 
 
 def effective_start_mode(runtime: Any, route: Route) -> str:
-    if route.mode == "main" and runtime._setup_worktree_requested(route):
+    setup_worktree_requested = getattr(runtime, "_setup_worktree_requested", None)
+    if (
+        route.mode == "main"
+        and callable(setup_worktree_requested)
+        and setup_worktree_requested(route)
+    ):
         return "trees"
     return route.mode
 
@@ -197,7 +206,21 @@ def discover_projects(
 
 
 def reserve_project_ports(runtime: Any, context: ProjectContextLike, route: Route | None = None) -> None:
+    selected_app_services = _selected_app_services_for_port_reservation(runtime, context=context, route=route)
     for service_name, plan in context.ports.items():
+        if not _port_reservation_enabled(
+            runtime,
+            service_name=service_name,
+            route=route,
+            selected_app_services=selected_app_services,
+        ):
+            runtime._emit(
+                "port.reservation.skipped",
+                project=context.name,
+                service=service_name,
+                reason="startup_surface_disabled",
+            )
+            continue
         owner = f"{context.name}:{service_name}"
         restart_preferred_port = plan.assigned if getattr(plan, "source", "") == "restart" else None
         restart_conflict_detail = None
@@ -243,6 +266,73 @@ def reserve_project_ports(runtime: Any, context: ProjectContextLike, route: Rout
             plan.assigned = reserved
             plan.final = reserved
         runtime._emit("port.reserved", project=context.name, service=service_name, port=reserved)
+
+
+def _port_reservation_enabled(
+    runtime: Any,
+    *,
+    service_name: str,
+    route: Route | None,
+    selected_app_services: set[str] | None,
+) -> bool:
+    if route is None:
+        return True
+    runtime_mode = effective_start_mode(runtime, route)
+
+    dependency_ids = {
+        definition.id
+        for definition in dependency_definitions()
+        if any(resource.legacy_port_key == service_name for resource in definition.resources)
+    }
+    if dependency_ids:
+        if route.flags.get("launch_dependencies") is False:
+            return False
+        enabled = getattr(runtime, "_requirement_enabled", None)
+        if not callable(enabled):
+            return True
+        return any(
+            bool(enabled(dependency_id, mode=runtime_mode, route=route))
+            for dependency_id in dependency_ids
+        )
+
+    return selected_app_services is None or service_name in selected_app_services
+
+
+def _selected_app_services_for_port_reservation(
+    runtime: Any,
+    *,
+    context: ProjectContextLike,
+    route: Route | None,
+) -> set[str] | None:
+    if route is None:
+        return None
+    runtime_mode = effective_start_mode(runtime, route)
+    try:
+        configured_service_types = configured_service_types_for_mode(
+            runtime,
+            runtime_mode,
+            Path(context.root),
+        )
+    except AttributeError:
+        dependency_port_names = {
+            resource.legacy_port_key for definition in dependency_definitions() for resource in definition.resources
+        }
+        configured_service_types = set(context.ports).difference(dependency_port_names)
+    configured_additional_services = tuple(
+        service
+        for service in getattr(getattr(runtime, "config", None), "additional_services", ())
+        if additional_service_enabled_for_context(
+            service,
+            mode=runtime_mode,
+            project_root=Path(context.root),
+        )
+    )
+    return _restart_service_types_for_project(
+        route=route,
+        project_name=context.name,
+        default_service_types=configured_service_types,
+        additional_services=configured_additional_services,
+    )
 
 
 def _release_restart_preferred_lock(port_planner: Any, port: int, *, owner: str) -> None:

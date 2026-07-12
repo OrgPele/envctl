@@ -28,7 +28,7 @@ from envctl_engine.planning.plan_agent.models import (
 from envctl_engine.planning.plan_agent.omx_transport import validate_plan_agent_attach_target
 from envctl_engine.planning.plan_agent.recovery import plan_agent_native_recovery_command
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
-from envctl_engine.planning.plan_agent.workflow import resolve_plan_agent_launch_command
+from envctl_engine.planning.plan_agent.workflow_review_support import resolve_plan_agent_launch_command
 
 __all__ = (
     "AgentTerminalLaunchResult",

@@ -18,7 +18,6 @@ from envctl_engine.planning import (
     resolve_planning_files,
     select_projects_for_plan_files,
 )
-from envctl_engine.planning.worktree_selection_memory import initial_plan_selected_counts
 
 
 def _init_repo_with_commit(repo: Path) -> None:
@@ -256,16 +255,6 @@ class PlanningSelectionTests(unittest.TestCase):
         )
 
         self.assertEqual(counts["backend/task.md"], 0)
-
-    def test_initial_plan_selected_counts_do_not_resurrect_deleted_worktrees_from_memory(self) -> None:
-        selected = initial_plan_selected_counts(
-            planning_files=["backend/task.md", "frontend/task.md"],
-            existing_counts={"backend/task.md": 0, "frontend/task.md": 2},
-            remembered_counts={"backend/task.md": 3, "frontend/task.md": 1},
-        )
-
-        self.assertEqual(selected, {"backend/task.md": 0, "frontend/task.md": 2})
-
 
 if __name__ == "__main__":
     unittest.main()

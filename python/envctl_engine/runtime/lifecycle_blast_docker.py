@@ -10,7 +10,10 @@ from envctl_engine.ui.status_symbols import STATUS_SUCCESS, STATUS_WARNING
 def matches_blast_container(*, image: str, name: str) -> bool:
     image_l = image.lower()
     name_l = name.lower()
-    return any(token in name_l or token in image_l for token in ("supabase", "n8n", "redis", "postgres"))
+    return any(
+        token in name_l or token in image_l
+        for token in ("envctl-app-", "supabase", "n8n", "redis", "postgres")
+    )
 
 
 class BlastDockerCleanupSupport:

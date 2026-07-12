@@ -5,12 +5,17 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.docker_service_runtime import state_uses_docker_services
 from envctl_engine.runtime.engine_runtime_startup_support import mark_run_reused
+from envctl_engine.runtime.lifecycle_operation_lease import (
+    lifecycle_operation_active,
+    release_lifecycle_operation,
+)
 from envctl_engine.runtime.runtime_context import resolve_state_repository
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.startup.finalization import build_planning_dashboard_state
 from envctl_engine.startup.run_reuse_decision import RunReuseDecision
-from envctl_engine.startup.session import StartupSession
+from envctl_engine.startup.session import StartupSession, metadata_with_state_sources
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,26 +40,52 @@ class StartupRunReuseResumeHandler:
     def resume_matching_run(self) -> int | None:
         previous_run_id = self.session.run_id
         previous_identifiers_announced = self.session.identifiers_announced
-        self.session.run_id = self.candidate_state.run_id
-        self.announce_session_identifiers(self.session)
-        self._emit_resume_match_phase()
-        self._emit_resume_match_events()
-
-        resume_code = self.runtime._resume(self._resume_route())
-        if int(resume_code) == 0:
-            return self._resume_success_result()
-        self._handle_resume_failure(
-            resume_code=int(resume_code),
-            previous_run_id=previous_run_id,
-            previous_identifiers_announced=previous_identifiers_announced,
-        )
-        return None
+        previous_authority = self._session_authority()
+        try:
+            self.session.run_id = self.candidate_state.run_id
+            self.announce_session_identifiers(self.session)
+            self._emit_resume_match_phase()
+            self._emit_resume_match_events()
+            lifecycle_lease_was_active = lifecycle_operation_active(self.runtime)
+            resume_code = self.runtime._resume(self._resume_route())
+            if int(resume_code) == 0:
+                result = self._resume_success_result()
+                self._restore_session_authority(previous_authority)
+                return result
+            lifecycle_lease_was_released = lifecycle_lease_was_active and not lifecycle_operation_active(self.runtime)
+            self._handle_resume_failure(
+                resume_code=int(resume_code),
+                previous_run_id=previous_run_id,
+                previous_identifiers_announced=previous_identifiers_announced,
+                allow_fresh_fallback=not lifecycle_lease_was_released,
+            )
+            return int(resume_code) if lifecycle_lease_was_released else None
+        except Exception:
+            self.session.run_id = previous_run_id
+            self.session.identifiers_announced = previous_identifiers_announced
+            self._bind_candidate_failure_authority(previous_authority)
+            raise
 
     def resume_dashboard_run(self) -> int | None:
+        previous_run_id = self.session.run_id
+        previous_identifiers_announced = self.session.identifiers_announced
+        previous_authority = self._session_authority()
+        try:
+            result = self._resume_dashboard_run_guarded()
+        except Exception:
+            self.session.run_id = previous_run_id
+            self.session.identifiers_announced = previous_identifiers_announced
+            self._bind_candidate_failure_authority(previous_authority)
+            raise
+        self._restore_session_authority(previous_authority)
+        return result
+
+    def _resume_dashboard_run_guarded(self) -> int | None:
         self.session.run_id = self.candidate_state.run_id
         self.announce_session_identifiers(self.session)
         self._persist_dashboard_resume_metadata()
         self._emit_dashboard_resume_events()
+        release_lifecycle_operation(self.runtime)
 
         if self.headless_plan_output_only(self.session):
             self.print_headless_plan_session_summary(self.session)
@@ -72,6 +103,48 @@ class StartupRunReuseResumeHandler:
         if enter_interactive_dashboard:
             return self.runtime._run_interactive_dashboard_loop(self.candidate_state)
         return 0
+
+    def _session_authority(
+        self,
+    ) -> tuple[dict[str, object], dict[str, object], dict[str, object], bool]:
+        return (
+            dict(self.session.preserved_services),
+            dict(self.session.preserved_requirements),
+            dict(self.session.base_metadata),
+            bool(self.session.preserve_existing_state_on_failure),
+        )
+
+    def _restore_session_authority(
+        self,
+        authority: tuple[dict[str, object], dict[str, object], dict[str, object], bool],
+    ) -> None:
+        services, requirements, metadata, preserve = authority
+        self.session.preserved_services = dict(services)  # type: ignore[assignment]
+        self.session.preserved_requirements = dict(requirements)  # type: ignore[assignment]
+        self.session.base_metadata = dict(metadata)
+        self.session.preserve_existing_state_on_failure = preserve
+
+    def _bind_candidate_failure_authority(
+        self,
+        prior: tuple[dict[str, object], dict[str, object], dict[str, object], bool],
+    ) -> None:
+        prior_services, prior_requirements, prior_metadata, _prior_preserve = prior
+        self.session.preserved_services = {  # type: ignore[assignment]
+            **dict(self.candidate_state.services),
+            **prior_services,
+        }
+        self.session.preserved_requirements = {  # type: ignore[assignment]
+            **dict(self.candidate_state.requirements),
+            **prior_requirements,
+        }
+        self.session.base_metadata = metadata_with_state_sources(
+            {
+                **dict(self.candidate_state.metadata),
+                **prior_metadata,
+            },
+            self.candidate_state,
+        )
+        self.session.preserve_existing_state_on_failure = True
 
     @property
     def _match_mode(self) -> str:
@@ -119,9 +192,13 @@ class StartupRunReuseResumeHandler:
             **self.route.flags,
             "_resume_source_command": self.route.command,
             "_run_reuse_reason": self.decision.decision_kind,
+            "_state_project_names": [str(name) for name in self._selected_project_names],
         }
         if self._attach_plan_agent_after_resume():
             resume_flags["batch"] = True
+        if state_uses_docker_services(self.candidate_state):
+            resume_flags["docker"] = True
+            self.runtime.env["DOCKER_MODE"] = "true"
         return Route(
             command="resume",
             mode=self.runtime_mode,
@@ -150,6 +227,7 @@ class StartupRunReuseResumeHandler:
         resume_code: int,
         previous_run_id: str | None,
         previous_identifiers_announced: bool,
+        allow_fresh_fallback: bool = True,
     ) -> None:
         self.session.run_id = previous_run_id
         self.session.identifiers_announced = previous_identifiers_announced
@@ -170,11 +248,12 @@ class StartupRunReuseResumeHandler:
             mode=self.runtime_mode,
             command=self.route.command,
         )
-        self.replace_existing_project_services_for_fresh_start(
-            self.session,
-            candidate_state=self.candidate_state,
-            reason=self.decision.reason,
-        )
+        if allow_fresh_fallback:
+            self.replace_existing_project_services_for_fresh_start(
+                self.session,
+                candidate_state=self.candidate_state,
+                reason=self.decision.reason,
+            )
 
     def _persist_dashboard_resume_metadata(self) -> None:
         self.candidate_state.metadata = build_planning_dashboard_state(

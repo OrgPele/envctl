@@ -28,9 +28,6 @@ def apply_setup_worktree_selection(
 ) -> list[ProjectContextLike]:
     if not setup_worktree_requested(route):
         return project_contexts
-    if bool(route.flags.get("docker")):
-        raise RuntimeError("setup-worktrees is not supported in Docker mode.")
-
     multi_entries = coerce_setup_entries(
         route=route,
         flag_name="setup_worktrees",

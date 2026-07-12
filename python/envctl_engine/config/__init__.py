@@ -220,9 +220,6 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
     runtime_scope_id = _runtime_scope_id(base_dir=base_dir, env=env, resolved=resolved)
     runtime_scope_dir = runtime_dir / "python-engine" / runtime_scope_id
 
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    runtime_scope_dir.mkdir(parents=True, exist_ok=True)
-
     dependency_ports: dict[str, dict[str, int]] = {}
     for definition in _dependency_definitions():
         resources: dict[str, int] = {}
@@ -283,9 +280,11 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
     plan_agent_cmux_workspace = str(resolved.get("ENVCTL_PLAN_AGENT_CMUX_WORKSPACE", "") or "").strip()
     plan_agent_superset_project = str(resolved.get("ENVCTL_PLAN_AGENT_SUPERSET_PROJECT", "") or "").strip()
     plan_agent_superset_workspace = str(resolved.get("ENVCTL_PLAN_AGENT_SUPERSET_WORKSPACE", "") or "").strip()
-    plan_agent_terminals_enable = parse_bool(resolved.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"), False) or bool(
-        plan_agent_cmux_workspace
-    ) or bool(plan_agent_superset_project or plan_agent_superset_workspace)
+    plan_agent_terminals_enable = (
+        parse_bool(resolved.get("ENVCTL_PLAN_AGENT_TERMINALS_ENABLE"), False)
+        or bool(plan_agent_cmux_workspace)
+        or bool(plan_agent_superset_project or plan_agent_superset_workspace)
+    )
     additional_services, additional_service_errors = _parse_additional_services(resolved)
     supabase_auth_users, supabase_auth_user_errors = _parse_supabase_auth_users(resolved)
 
@@ -358,8 +357,7 @@ def load_config(env: Mapping[str, str] | None = None) -> EngineConfig:
         plan_agent_cli_cmd=str(resolved.get("ENVCTL_PLAN_AGENT_CLI_CMD", "") or "").strip(),
         plan_agent_cmux_workspace=plan_agent_cmux_workspace,
         plan_agent_surface_transport=(
-            str(resolved.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT", "cmux") or "cmux").strip().lower()
-            or "cmux"
+            str(resolved.get("ENVCTL_PLAN_AGENT_SURFACE_TRANSPORT", "cmux") or "cmux").strip().lower() or "cmux"
         ),
         plan_agent_superset_project=plan_agent_superset_project,
         plan_agent_superset_workspace=plan_agent_superset_workspace,

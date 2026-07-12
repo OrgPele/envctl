@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -14,11 +15,77 @@ from envctl_engine.runtime.engine_runtime_commands import (  # noqa: E402
     command_env,
     command_override_value,
     default_python_executable,
+    service_start_command_resolved,
     split_command,
 )
 
 
 class EngineRuntimeCommandsTests(unittest.TestCase):
+    def test_docker_image_command_skips_host_command_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            runtime = SimpleNamespace(
+                env={
+                    "DOCKER_MODE": "true",
+                    "ENVCTL_FRONTEND_DOCKER_IMAGE": "example/frontend:dev",
+                },
+                config=SimpleNamespace(
+                    base_dir=root,
+                    raw={"FRONTEND_DIR": "frontend"},
+                ),
+                _command_exists=lambda _executable: self.fail("host command lookup must be skipped"),
+            )
+
+            command, source = service_start_command_resolved(
+                runtime,
+                service_name="frontend",
+                project_root=root,
+                port=8010,
+            )
+
+        self.assertEqual(command, [])
+        self.assertEqual(source, "docker_image")
+
+    def test_explicit_docker_command_skips_host_command_resolution(self) -> None:
+        runtime = SimpleNamespace(
+            env={
+                "DOCKER_MODE": "true",
+                "ENVCTL_BACKEND_DOCKER_COMMAND": "uvicorn app:api --port 8000",
+            },
+            config=SimpleNamespace(base_dir=Path("/repo"), raw={}),
+            _command_exists=lambda _executable: self.fail("host command lookup must be skipped"),
+        )
+
+        command, source = service_start_command_resolved(runtime, service_name="backend", port=8000)
+
+        self.assertEqual(command, [])
+        self.assertEqual(source, "docker_command")
+
+    def test_docker_service_command_still_requires_executable_on_host(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "frontend").mkdir()
+            runtime = SimpleNamespace(
+                env={
+                    "DOCKER_MODE": "true",
+                    "ENVCTL_FRONTEND_DOCKER_COMMAND_MODE": "service",
+                    "ENVCTL_FRONTEND_START_CMD": "missing-command --port {port}",
+                },
+                config=SimpleNamespace(
+                    base_dir=root,
+                    raw={"FRONTEND_DIR": "frontend"},
+                ),
+                _command_exists=lambda _executable: False,
+            )
+
+            with self.assertRaises(RuntimeError):
+                service_start_command_resolved(
+                    runtime,
+                    service_name="frontend",
+                    project_root=root,
+                    port=8010,
+                )
+
     def test_command_override_value_prefers_runtime_env(self) -> None:
         runtime = SimpleNamespace(
             env={"DB_HOST": "env-db"},
@@ -49,6 +116,22 @@ class EngineRuntimeCommandsTests(unittest.TestCase):
         self.assertEqual(env["PORT"], "9000")
         self.assertEqual(env["A"], "1")
         self.assertEqual(env["B"], "2")
+        self.assertEqual(env["ENVCTL_PYTHON_EXECUTABLE"], sys.executable)
+
+    def test_command_env_keeps_running_interpreter_authoritative(self) -> None:
+        runtime = SimpleNamespace(env={"ENVCTL_PYTHON_EXECUTABLE": "/stale/runtime/python"})
+
+        with patch(
+            "envctl_engine.runtime.engine_runtime_commands.sys.executable",
+            "/opt/envctl/bin/python",
+        ):
+            env = command_env(
+                runtime,
+                port=9000,
+                extra={"ENVCTL_PYTHON_EXECUTABLE": "/spoofed/project/python"},
+            )
+
+        self.assertEqual(env["ENVCTL_PYTHON_EXECUTABLE"], "/opt/envctl/bin/python")
 
     def test_command_env_strips_github_actions_cleanup_variables(self) -> None:
         runtime = SimpleNamespace(env={"A": "1"})
@@ -113,11 +196,31 @@ class EngineRuntimeCommandsTests(unittest.TestCase):
             script = root / "scripts" / "start-service.sh"
             script.parent.mkdir(parents=True, exist_ok=True)
             script.write_text("#!/usr/bin/env sh\n", encoding="utf-8")
+            script.chmod(0o755)
             runtime = SimpleNamespace(_command_exists=lambda executable: False)
 
             parsed = split_command(runtime, "scripts/start-service.sh {port}", port=8123, cwd=root)
 
         self.assertEqual(parsed, ["scripts/start-service.sh", "8123"])
+
+    def test_split_command_rejects_non_executable_file_and_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            file_path = root / "start-service.sh"
+            file_path.write_text("#!/usr/bin/env sh\n", encoding="utf-8")
+            directory_path = root / "service-dir"
+            directory_path.mkdir()
+            runtime = SimpleNamespace(_command_exists=lambda _executable: True)
+
+            for command in (str(file_path), str(directory_path)):
+                with (
+                    self.subTest(command=command),
+                    self.assertRaisesRegex(
+                        RuntimeError,
+                        "Resolved command executable not found",
+                    ),
+                ):
+                    split_command(runtime, command, cwd=root)
 
     def test_default_python_executable_falls_back_to_python3(self) -> None:
         runtime = SimpleNamespace(env={}, _command_exists=lambda executable: False)

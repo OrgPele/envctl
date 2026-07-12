@@ -73,13 +73,16 @@ class StartupFingerprintReplacementTests(StartupSpinnerIntegrationTestCase):
             terminate_calls: list[tuple[set[str] | None, bool]] = []
             call_order: list[str] = []
 
-            engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
+            engine._try_load_existing_state = (  # type: ignore[method-assign]
+                lambda mode=None, strict_mode_match=False, project_names=None: previous_state
+            )
             engine._discover_projects = lambda mode: [context]  # type: ignore[method-assign]
             engine._terminate_services_from_state = (  # type: ignore[method-assign]
                 lambda state, selected_services, aggressive, verify_ownership: (
                     call_order.append("terminate"),
                     terminate_calls.append((selected_services, verify_ownership)),
-                )
+                    set(),
+                )[-1]
             )
             engine._start_project_context = (  # type: ignore[method-assign]
                 lambda context, mode, route, run_id: (
@@ -109,7 +112,7 @@ class StartupFingerprintReplacementTests(StartupSpinnerIntegrationTestCase):
                         warnings=[],
                     ),
                 )[1]
-                )
+            )
 
             code = engine.dispatch(parse_route(["--main", "--managed-deps", "--batch"], env={}))
 

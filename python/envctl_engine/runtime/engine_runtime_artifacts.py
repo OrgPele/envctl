@@ -6,8 +6,9 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
+from envctl_engine.runtime.runtime_context import optional_state_repository
 from envctl_engine.runtime.runtime_readiness import (
     FEATURE_MATRIX_RELATIVE_PATH,
     GAP_REPORT_RELATIVE_PATH,
@@ -27,7 +28,14 @@ class _SummaryContext(Protocol):
     ports: Mapping[str, _FinalPort]
 
 
-def write_artifacts(runtime: Any, state: object, contexts: list[object], *, errors: list[str]) -> None:
+def write_artifacts(
+    runtime: Any,
+    state: object,
+    contexts: list[object],
+    *,
+    errors: list[str],
+    on_commit: Callable[[], None] | None = None,
+) -> None:
     started = time.monotonic()
     cached = _cached_runtime_readiness_payload(runtime)
     paths = runtime.state_repository.save_run(
@@ -42,6 +50,7 @@ def write_artifacts(runtime: Any, state: object, contexts: list[object], *, erro
             if cached is not None
             else (lambda run_dir: _write_pending_runtime_readiness_payload(runtime, run_dir=run_dir))
         ),
+        on_commit=on_commit,
     )
     runtime._emit(
         "artifacts.write",
@@ -60,36 +69,37 @@ def write_runtime_readiness_report(
     *,
     run_dir: Path | None = None,
     readiness_result: RuntimeReadinessResult | None = None,
-) -> None:
+) -> bool:
     started = time.monotonic()
     emit = getattr(runtime, "_emit", None)
     cached = _cached_runtime_readiness_payload(runtime)
     if readiness_result is None and cached is not None:
-        _write_runtime_readiness_payload(runtime, report_text=cached, run_dir=run_dir)
+        persisted = _write_runtime_readiness_payload(runtime, report_text=cached, run_dir=run_dir)
         if callable(emit):
             emit(
                 "artifacts.runtime_readiness_report",
                 duration_ms=round((time.monotonic() - started) * 1000.0, 2),
                 used_cached_contract=True,
                 run_dir=str(run_dir) if run_dir is not None else None,
+                persisted=persisted,
             )
-        return
+        return persisted
 
     readiness = (
-        readiness_result
-        if readiness_result is not None
-        else evaluate_runtime_readiness(runtime.config.base_dir)
+        readiness_result if readiness_result is not None else evaluate_runtime_readiness(runtime.config.base_dir)
     )
     report_payload = build_runtime_readiness_report(readiness)
     report_text = json.dumps(report_payload, indent=2, sort_keys=True)
-    _write_runtime_readiness_payload(runtime, report_text=report_text, run_dir=run_dir)
+    persisted = _write_runtime_readiness_payload(runtime, report_text=report_text, run_dir=run_dir)
     if callable(emit):
         emit(
             "artifacts.runtime_readiness_report",
             duration_ms=round((time.monotonic() - started) * 1000.0, 2),
             used_cached_contract=readiness_result is not None,
             run_dir=str(run_dir) if run_dir is not None else None,
+            persisted=persisted,
         )
+    return persisted
 
 
 def _write_runtime_readiness_payload(
@@ -97,12 +107,24 @@ def _write_runtime_readiness_payload(
     *,
     report_text: str,
     run_dir: Path | None,
-) -> None:
+) -> bool:
+    repository = optional_state_repository(runtime)
+    repository_writer = getattr(repository, "write_runtime_artifact", None)
+    if callable(repository_writer):
+        return bool(
+            repository_writer(
+                run_id=run_dir.name if run_dir is not None else None,
+                artifact_name="runtime_readiness_report.json",
+                text=report_text,
+            )
+        )
+
     (runtime.runtime_root / "runtime_readiness_report.json").write_text(report_text, encoding="utf-8")
     runtime.runtime_legacy_root.mkdir(parents=True, exist_ok=True)
     (runtime.runtime_legacy_root / "runtime_readiness_report.json").write_text(report_text, encoding="utf-8")
     if run_dir is not None:
         (run_dir / "runtime_readiness_report.json").write_text(report_text, encoding="utf-8")
+    return True
 
 
 def _write_cached_runtime_readiness_payload(
@@ -110,9 +132,9 @@ def _write_cached_runtime_readiness_payload(
     *,
     run_dir: Path,
     cached: str,
-) -> None:
+) -> bool:
     started = time.monotonic()
-    _write_runtime_readiness_payload(runtime, report_text=cached, run_dir=run_dir)
+    persisted = _write_runtime_readiness_payload(runtime, report_text=cached, run_dir=run_dir)
     emit = getattr(runtime, "_emit", None)
     if callable(emit):
         emit(
@@ -120,10 +142,12 @@ def _write_cached_runtime_readiness_payload(
             duration_ms=round((time.monotonic() - started) * 1000.0, 2),
             used_cached_contract=True,
             run_dir=str(run_dir),
+            persisted=persisted,
         )
+    return persisted
 
 
-def _write_pending_runtime_readiness_payload(runtime: Any, *, run_dir: Path) -> None:
+def _write_pending_runtime_readiness_payload(runtime: Any, *, run_dir: Path) -> bool:
     report = {
         "passed": None,
         "pending": True,
@@ -139,23 +163,29 @@ def _write_pending_runtime_readiness_payload(runtime: Any, *, run_dir: Path) -> 
         "errors": [],
         "warnings": [],
     }
-    _write_runtime_readiness_payload(
+    persisted = _write_runtime_readiness_payload(
         runtime,
         report_text=json.dumps(report, indent=2, sort_keys=True),
         run_dir=run_dir,
     )
     emit = getattr(runtime, "_emit", None)
     if callable(emit):
-        emit("artifacts.runtime_readiness_report.pending", run_dir=str(run_dir))
+        emit("artifacts.runtime_readiness_report.pending", run_dir=str(run_dir), persisted=persisted)
+    return persisted
 
 
 def _start_background_runtime_readiness_report(runtime: Any, *, run_dir: Path) -> None:
     def _worker() -> None:
         try:
-            write_runtime_readiness_report(runtime, run_dir=run_dir)
+            persisted = write_runtime_readiness_report(runtime, run_dir=run_dir)
             emit = getattr(runtime, "_emit", None)
             if callable(emit):
-                emit("artifacts.runtime_readiness_report.complete", run_dir=str(run_dir))
+                event = (
+                    "artifacts.runtime_readiness_report.complete"
+                    if persisted
+                    else "artifacts.runtime_readiness_report.discarded"
+                )
+                emit(event, run_dir=str(run_dir))
         except Exception as exc:  # pragma: no cover
             emit = getattr(runtime, "_emit", None)
             if callable(emit):
@@ -221,12 +251,28 @@ def _runtime_readiness_async_enabled(runtime: Any) -> bool:
 
 
 def print_summary(_runtime: Any, state: object, contexts: Sequence[_SummaryContext]) -> None:
-    _ = state
     print("envctl Python engine run summary")
     for context in contexts:
-        backend = context.ports["backend"].final
-        frontend = context.ports["frontend"].final
+        backend = _summary_service_port(state, context.name, "backend") or context.ports["backend"].final
+        frontend = _summary_service_port(state, context.name, "frontend") or context.ports["frontend"].final
         db = context.ports["db"].final
         redis = context.ports["redis"].final
         n8n = context.ports["n8n"].final
         print(f"- {context.name}: backend={backend} frontend={frontend} db={db} redis={redis} n8n={n8n}")
+
+
+def _summary_service_port(state: object, project_name: str, service_type: str) -> int | None:
+    for service_name, service in getattr(state, "services", {}).items():
+        project = str(getattr(service, "project", "") or "").strip()
+        if not project:
+            suffix = f" {service_type}".lower()
+            rendered_name = str(service_name)
+            project = rendered_name[: -len(suffix)] if rendered_name.lower().endswith(suffix) else ""
+        if project.casefold() != project_name.casefold():
+            continue
+        if str(getattr(service, "type", "") or "").casefold() != service_type.casefold():
+            continue
+        port = getattr(service, "actual_port", None) or getattr(service, "requested_port", None)
+        if isinstance(port, int) and port > 0:
+            return port
+    return None

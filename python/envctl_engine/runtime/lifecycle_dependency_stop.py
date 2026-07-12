@@ -1,35 +1,63 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from typing import Any
 
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.runtime.lifecycle_requirement_ports import component_port_values
-from envctl_engine.state.models import RunState
+from envctl_engine.runtime.lifecycle_requirement_ports import release_requirement_component_port_values
+from envctl_engine.state.models import RequirementsResult, RunState
 
 
-def select_dependency_components_for_stop(state: RunState, route: Route) -> dict[str, set[str]]:
+def select_dependency_components_for_stop(
+    state: RunState,
+    route: Route,
+    *,
+    requested_projects: Iterable[str] | None = None,
+) -> dict[str, set[str]]:
+    if route.flags.get("runtime_scope") == "entire-system":
+        explicit_project_scope = requested_projects is not None
+        normalized_projects = {
+            str(project).strip().casefold()
+            for project in (route.projects if requested_projects is None else requested_projects)
+            if str(project).strip()
+        }
+        return {
+            project_name: {
+                definition.id
+                for definition in dependency_definitions()
+                if bool(requirements.component(definition.id).get("enabled", False))
+            }
+            for project_name, requirements in state.requirements.items()
+            if (not explicit_project_scope and not normalized_projects)
+            or str(requirements.project or project_name).strip().casefold() in normalized_projects
+        }
     raw_components = route.flags.get("stop_dependency_components")
     if not isinstance(raw_components, list):
         return {}
 
     known_definitions = {definition.id for definition in dependency_definitions()}
     selected: dict[str, set[str]] = {}
-    project_key_by_lower = {str(project).strip().casefold(): project for project in state.requirements}
+    project_keys_by_lower: dict[str, list[str]] = {}
+    for storage_key, requirements in state.requirements.items():
+        project = str(requirements.project or storage_key).strip().casefold()
+        if project:
+            project_keys_by_lower.setdefault(project, []).append(storage_key)
     for raw in raw_components:
         project_name, separator, dependency_id = str(raw).partition(":")
         if not separator:
             continue
-        project_key = project_key_by_lower.get(project_name.strip().casefold())
-        if project_key is None:
+        project_keys = project_keys_by_lower.get(project_name.strip().casefold(), [])
+        if not project_keys:
             continue
         normalized_dependency = dependency_id.strip().lower()
         if normalized_dependency not in known_definitions:
             continue
-        component = state.requirements[project_key].component(normalized_dependency)
-        if not bool(component.get("enabled", False)):
-            continue
-        selected.setdefault(project_key, set()).add(normalized_dependency)
+        for project_key in project_keys:
+            component = state.requirements[project_key].component(normalized_dependency)
+            if not bool(component.get("enabled", False)):
+                continue
+            selected.setdefault(project_key, set()).add(normalized_dependency)
     return selected
 
 
@@ -37,7 +65,8 @@ def release_selected_dependency_components(
     state: RunState,
     selected_dependencies: dict[str, set[str]],
     *,
-    release_component_ports_fn: Callable[[Mapping[str, object]], None],
+    release_component_ports_fn: Callable[[RequirementsResult, str, Mapping[str, object]], None],
+    stop_component_fn: Callable[[Mapping[str, object]], None] | None = None,
 ) -> None:
     for project_name, dependency_ids in selected_dependencies.items():
         requirements = state.requirements.get(project_name)
@@ -48,7 +77,9 @@ def release_selected_dependency_components(
             if not bool(component.get("enabled", False)):
                 continue
             if not bool(component.get("external")):
-                release_component_ports_fn(component)
+                if stop_component_fn is not None:
+                    stop_component_fn(component)
+                release_component_ports_fn(requirements, dependency_id, component)
             requirements.components[dependency_id] = {}
         if not requirements_have_enabled_components(requirements):
             state.requirements.pop(project_name, None)
@@ -57,10 +88,14 @@ def release_selected_dependency_components(
 def release_requirement_component_ports(
     component: Mapping[str, object],
     *,
-    release_port_fn: Callable[[int], None],
+    port_planner: Any,
+    owner_candidates: tuple[str, ...] = (),
 ) -> None:
-    for port in sorted(component_port_values(component)):
-        release_port_fn(port)
+    release_requirement_component_port_values(
+        port_planner,
+        component,
+        owner_candidates=owner_candidates,
+    )
 
 
 def requirements_have_enabled_components(requirements: object) -> bool:
@@ -68,7 +103,51 @@ def requirements_have_enabled_components(requirements: object) -> bool:
     if not isinstance(components, Mapping):
         return False
     return any(
-        bool(component.get("enabled", False))
-        for component in components.values()
-        if isinstance(component, Mapping)
+        bool(component.get("enabled", False)) for component in components.values() if isinstance(component, Mapping)
     )
+
+
+def stop_requirement_component_containers(runtime: Any, component: Mapping[str, object]) -> None:
+    if bool(component.get("external")) or bool(component.get("simulated")):
+        return
+    container_name = str(component.get("container_name") or "").strip()
+    if not container_name:
+        return
+    process_runner = getattr(runtime, "process_runner", None)
+    if process_runner is None:
+        return
+    if str(component.get("id") or "").strip().lower() == "supabase":
+        compose_project = _supabase_compose_project(container_name)
+        listed = process_runner.run(
+            [
+                "docker",
+                "ps",
+                "--all",
+                "--quiet",
+                "--filter",
+                f"label=com.docker.compose.project={compose_project}",
+            ],
+            timeout=30.0,
+        )
+        if listed.returncode != 0:
+            raise RuntimeError(str(listed.stderr or listed.stdout or "failed listing Supabase containers").strip())
+        container_ids = [line.strip() for line in str(listed.stdout or "").splitlines() if line.strip()]
+        if container_ids:
+            removed = process_runner.run(["docker", "rm", "--force", *container_ids], timeout=60.0)
+            if removed.returncode != 0:
+                detail = removed.stderr or removed.stdout or "failed stopping Supabase containers"
+                raise RuntimeError(str(detail).strip())
+            return
+        # Native Supabase DB startup records the concrete container name and
+        # does not attach a Compose project label. Fall through to direct
+        # removal when the saved component is not a Compose stack.
+    removed = process_runner.run(["docker", "rm", "--force", container_name], timeout=30.0)
+    if removed.returncode != 0 and "No such container" not in str(removed.stderr or ""):
+        raise RuntimeError(str(removed.stderr or removed.stdout or f"failed stopping {container_name}").strip())
+
+
+def _supabase_compose_project(container_name: str) -> str:
+    db_container_suffix = "-supabase-db-1"
+    if container_name.endswith(db_container_suffix):
+        return container_name[: -len(db_container_suffix)]
+    return container_name

@@ -8,6 +8,18 @@ from envctl_engine.state.models import RunState
 
 def prune_project_metadata(state: RunState, *, project_name: str) -> list[Path]:
     removed_paths: list[Path] = []
+    normalized_project = str(project_name).strip().casefold()
+    raw_project_names = state.metadata.get("project_names")
+    if isinstance(raw_project_names, list):
+        remaining_project_names = [
+            name
+            for name in raw_project_names
+            if str(name).strip().casefold() != normalized_project
+        ]
+        if remaining_project_names:
+            state.metadata["project_names"] = remaining_project_names
+        else:
+            state.metadata.pop("project_names", None)
     for metadata_key in ("project_pr_links", "project_roots"):
         raw = state.metadata.get(metadata_key)
         if not isinstance(raw, dict):

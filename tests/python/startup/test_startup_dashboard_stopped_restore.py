@@ -77,7 +77,9 @@ class StartupDashboardStoppedRestoreTests(StartupSpinnerIntegrationTestCase):
             )
             captured_state: dict[str, RunState] = {}
 
-            engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
+            engine._try_load_existing_state = (  # type: ignore[method-assign]
+                lambda mode=None, strict_mode_match=False, project_names=None: previous_state
+            )
             engine._discover_projects = lambda mode: [context]  # type: ignore[method-assign]
             engine._reserve_project_ports = lambda _context, route=None: None  # type: ignore[method-assign]
             engine._resume = lambda route: self.fail("startup should start stopped services, not auto-resume")  # type: ignore[method-assign]

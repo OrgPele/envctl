@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from tests.python.actions.actions_cli_test_support import *  # noqa: F403,F405
+from envctl_engine.actions.action_git_state_support import ExistingPullRequest
 
 
 class ActionsCliPrTests(unittest.TestCase):
@@ -31,11 +32,14 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.git_state_support.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch(
-                    "envctl_engine.actions.project_action_domain.existing_pr_url",
-                    return_value="https://github.com/acme/supportopia/pull/42",
+                    "envctl_engine.actions.project_action_domain.existing_pull_request",
+                    return_value=ExistingPullRequest(
+                        url="https://github.com/acme/supportopia/pull/42",
+                        base_branch="main",
+                    ),
                 ),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
@@ -93,9 +97,9 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.git_state_support.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
-                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.existing_pull_request", return_value=None),
                 patch("envctl_engine.actions.project_action_domain.probe_dirty_worktree") as dirty_probe,
                 patch("envctl_engine.actions.project_action_domain.run_commit_action", return_value=0) as commit_action,
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
@@ -144,9 +148,9 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.git_state_support.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
-                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.existing_pull_request", return_value=None),
                 patch("envctl_engine.actions.project_action_domain.probe_dirty_worktree") as dirty_probe,
                 patch("envctl_engine.actions.project_action_domain.run_commit_action", return_value=1) as commit_action,
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
@@ -221,9 +225,9 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.git_state_support.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
-                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.existing_pull_request", return_value=None),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
             ):
@@ -300,9 +304,9 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.git_state_support.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
-                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.existing_pull_request", return_value=None),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
             ):
@@ -367,9 +371,9 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.git_state_support.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
-                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.existing_pull_request", return_value=None),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
             ):
@@ -429,9 +433,9 @@ class ActionsCliPrTests(unittest.TestCase):
 
             with (
                 patch.dict(os.environ, {"ENVCTL_PR_BODY": "Typed PR body\n\nWith details."}, clear=False),
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.git_state_support.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
-                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.existing_pull_request", return_value=None),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
             ):
@@ -493,9 +497,9 @@ class ActionsCliPrTests(unittest.TestCase):
                 patch.dict(os.environ, {"ENVCTL_ACTION_INTERACTIVE": "1"}, clear=False),
                 patch("sys.stdin.isatty", return_value=True),
                 patch("builtins.input", side_effect=AssertionError("input() should not be called for pr action")),
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.git_state_support.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
-                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.existing_pull_request", return_value=None),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
             ):
@@ -551,9 +555,9 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.git_state_support.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
-                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.existing_pull_request", return_value=None),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
             ):
@@ -600,9 +604,9 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.git_state_support.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
-                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.existing_pull_request", return_value=None),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
             ):
@@ -657,9 +661,9 @@ class ActionsCliPrTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args=command, returncode=1, stdout="", stderr="unexpected command")
 
             with (
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.git_state_support.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
-                patch("envctl_engine.actions.project_action_domain.existing_pr_url", return_value=""),
+                patch("envctl_engine.actions.project_action_domain.existing_pull_request", return_value=None),
                 patch("envctl_engine.actions.project_action_domain.shutil.which", side_effect=fake_which),
                 patch("envctl_engine.actions.project_action_domain.subprocess.run", side_effect=fake_run),
             ):

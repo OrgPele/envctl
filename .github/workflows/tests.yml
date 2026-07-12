@@ -1,6 +1,6 @@
 name: Tests
 
-# Runs the canonical contributor validation lane on every PR targeting `main`.
+# Runs the canonical contributor validation lane on every PR targeting `dev` or `main`.
 # The lane matches `docs/developer/contributing.md`:
 #
 #   uv run --extra dev pytest -q
@@ -9,12 +9,12 @@ name: Tests
 #
 # `pull_request` already fires on PR open, reopen, and every push to the head
 # branch (the `synchronize` event), so a separate `push` trigger would just
-# double the runs. Post-merge work on `main` is handled by `release.yml`.
+# double the runs. Release publishing from `main` is handled explicitly by `release.yml`.
 #
 # Jobs run in parallel:
 #   - pytest:   the slow lane
 #   - package:  python -m build + release shipability gate
-#   - lint:     ruff (non-blocking until main is green)
+#   - lint:     ruff (non-blocking until the lint baseline is green)
 #
 # All three restore uv's cache through GitHub's official cache action keyed by
 # uv.lock so dependency installs reuse already-downloaded wheels without relying
@@ -31,6 +31,7 @@ name: Tests
 on:
   pull_request:
     branches:
+      - dev
       - main
 
 permissions:

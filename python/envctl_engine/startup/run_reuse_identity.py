@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from envctl_engine.requirements.core import dependency_ids
 from envctl_engine.requirements.external import dependency_external_mode
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.shared.services import resolve_service_project_name
 from envctl_engine.state.models import RunState
 
 
@@ -27,19 +28,31 @@ def build_startup_identity_metadata(
     route: Route | None = None,
 ) -> dict[str, object]:
     metadata = dict(base_metadata or {})
-    project_roots = {
-        str(getattr(context, "name", "")).strip(): root
-        for context, root in (
-            (context, normalize_project_root(getattr(context, "root", None))) for context in project_contexts
-        )
-        if str(getattr(context, "name", "")).strip() and root
-    }
+    roots_by_key: dict[str, tuple[str, str]] = {}
+    existing_roots = metadata.get("project_roots")
+    if isinstance(existing_roots, Mapping):
+        for raw_name, raw_root in existing_roots.items():
+            name = str(raw_name).strip()
+            root = normalize_project_root(raw_root)
+            if name and root:
+                roots_by_key[name.casefold()] = (name, root)
+    for context in project_contexts:
+        name = str(getattr(context, "name", "")).strip()
+        root = normalize_project_root(getattr(context, "root", None))
+        if name and root:
+            roots_by_key[name.casefold()] = (name, root)
+    project_roots = {name: root for name, root in (roots_by_key[key] for key in sorted(roots_by_key))}
     identity_payload = _startup_identity_payload(
         runtime,
         runtime_mode=runtime_mode,
         project_contexts=project_contexts,
         route=route,
     )
+    identity_payload["projects"] = [{"name": name, "root": root} for name, root in project_roots.items()]
+    identity_payload.pop("fingerprint", None)
+    identity_payload["fingerprint"] = hashlib.sha256(
+        json.dumps(identity_payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
     metadata["project_roots"] = project_roots
     metadata["startup_identity"] = identity_payload
     return metadata
@@ -65,7 +78,9 @@ def _startup_identity_mismatch(previous: Mapping[str, object], current: Mapping[
 
 
 def _startup_identity_comparison_payload(identity: Mapping[str, object]) -> dict[str, object]:
-    return {str(key): value for key, value in identity.items() if str(key) != "fingerprint"}
+    payload = {str(key): value for key, value in identity.items() if str(key) != "fingerprint"}
+    payload.setdefault("application_runtime", "process")
+    return payload
 
 
 def project_identities_from_contexts(contexts: list[object]) -> list[ProjectIdentity]:
@@ -87,13 +102,17 @@ def project_identities_from_state(runtime: Any, state: RunState) -> list[Project
         if not normalized_name:
             continue
         names[normalized_name] = normalize_project_root(root_value)
-    for project_name in state.requirements:
-        normalized_name = str(project_name).strip()
+    for storage_name, requirements in state.requirements.items():
+        normalized_name = str(getattr(requirements, "project", "") or storage_name).strip()
         if not normalized_name:
             continue
         names.setdefault(normalized_name, normalize_project_root(roots.get(normalized_name)))
-    for service_name in state.services:
-        project_name = runtime._project_name_from_service(service_name)
+    for service_name, service in state.services.items():
+        project_name = resolve_service_project_name(
+            service_name,
+            service,
+            project_name_from_service=runtime._project_name_from_service,
+        )
         normalized_name = str(project_name).strip()
         if not normalized_name:
             continue
@@ -166,6 +185,12 @@ def _startup_identity_payload(
     }
     payload = {
         "mode": runtime_mode,
+        "application_runtime": (
+            "docker"
+            if bool(route is not None and route.flags.get("docker"))
+            or str(getattr(runtime, "env", {}).get("DOCKER_MODE", "")).strip().lower() == "true"
+            else "process"
+        ),
         "projects": identities_to_payload(project_identities_from_contexts(project_contexts)),
         "startup_enabled": startup_enabled,
         "services": services,

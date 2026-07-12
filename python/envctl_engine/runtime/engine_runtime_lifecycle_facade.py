@@ -27,8 +27,8 @@ class RuntimeLifecycleFacadeMixin:
     def _release_port_session(self) -> None:
         runtime_release_port_session(self)
 
-    def _clear_runtime_state(self, *, command: str, aggressive: bool = False, route: Route | None = None) -> None:
-        self.lifecycle_cleanup_orchestrator.clear_runtime_state(
+    def _clear_runtime_state(self, *, command: str, aggressive: bool = False, route: Route | None = None) -> bool:
+        return self.lifecycle_cleanup_orchestrator.clear_runtime_state(
             command=command,
             aggressive=aggressive,
             route=route,
@@ -54,8 +54,8 @@ class RuntimeLifecycleFacadeMixin:
     def _blast_all_docker_cleanup(self, *, route: Route | None) -> int:
         return self.lifecycle_cleanup_orchestrator.blast_all_docker_cleanup(route=route)
 
-    def _terminate_started_services(self, services: dict[str, object]) -> None:
-        runtime_terminate_started_services(self, services)
+    def _terminate_started_services(self, services: dict[str, object]) -> set[str]:
+        return runtime_terminate_started_services(self, services)
 
     def _terminate_services_from_state(
         self,
@@ -64,8 +64,8 @@ class RuntimeLifecycleFacadeMixin:
         selected_services: set[str] | None,
         aggressive: bool,
         verify_ownership: bool,
-    ) -> None:
-        runtime_terminate_services_from_state(
+    ) -> set[str]:
+        return runtime_terminate_services_from_state(
             self,
             state,
             selected_services=selected_services,

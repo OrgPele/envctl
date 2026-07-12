@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+from dataclasses import replace
 from pathlib import Path
 
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
@@ -30,6 +31,11 @@ def load_state(path: str, *, allowed_root: str | None = None) -> RunState:
             pid=svc.get("pid"),
             requested_port=svc.get("requested_port"),
             actual_port=svc.get("actual_port"),
+            port_lock_session=(
+                svc["port_lock_session"].strip()
+                if isinstance(svc.get("port_lock_session"), str) and svc["port_lock_session"].strip()
+                else None
+            ),
             log_path=svc.get("log_path"),
             status=svc.get("status", "unknown"),
             synthetic=bool(svc.get("synthetic", False)),
@@ -43,6 +49,14 @@ def load_state(path: str, *, allowed_root: str | None = None) -> RunState:
             failure_detail=str(svc.get("failure_detail") or "") or None,
             critical=parse_bool(svc.get("critical"), True),
             degraded=parse_bool(svc.get("degraded"), False),
+            runtime_kind=str(svc.get("runtime_kind") or "process"),
+            container_id=str(svc.get("container_id") or "") or None,
+            container_name=str(svc.get("container_name") or "") or None,
+            container_image=str(svc.get("container_image") or "") or None,
+            container_launch_token=str(svc.get("container_launch_token") or "") or None,
+            container_cleanup_pending_since=parse_float_or_none(
+                svc.get("container_cleanup_pending_since")
+            ),
         )
         for name, svc in data.get("services", {}).items()
     }
@@ -58,7 +72,7 @@ def load_state(path: str, *, allowed_root: str | None = None) -> RunState:
                 "n8n": payload.get("n8n", {}),
             }
         requirements[name] = RequirementsResult(
-            project=name,
+            project=str(payload.get("project") or name),
             components=components,
             health=str(payload.get("health", "unknown") or "unknown"),
             failures=list(payload.get("failures", [])),
@@ -131,8 +145,36 @@ def merge_states(states: list[RunState]) -> RunState:
     merged_pointers: dict[str, str] = {}
     merged_metadata: dict[str, object] = {}
     for state in states:
-        merged_services.update(state.services)
-        merged_requirements.update(state.requirements)
+        for storage_name, service in state.services.items():
+            existing = merged_services.get(storage_name)
+            existing_project = str(getattr(existing, "project", "") or "").strip().casefold()
+            incoming_project = str(getattr(service, "project", "") or "").strip().casefold()
+            if existing is not None and existing_project and incoming_project and existing_project != incoming_project:
+                base = f"{storage_name} State Collision {service.project}"
+                collision_name = base
+                index = 2
+                occupied = set(merged_services).union(state.services)
+                while collision_name in occupied:
+                    collision_name = f"{base} {index}"
+                    index += 1
+                merged_services[collision_name] = replace(service, name=collision_name)
+            else:
+                merged_services[storage_name] = service
+        for storage_key, requirements in state.requirements.items():
+            existing = merged_requirements.get(storage_key)
+            existing_project = str(getattr(existing, "project", "") or "").strip().casefold()
+            incoming_project = str(requirements.project or "").strip().casefold()
+            if existing is not None and existing_project and incoming_project and existing_project != incoming_project:
+                base = f"{storage_key} State Collision {requirements.project}"
+                collision_key = base
+                index = 2
+                occupied = set(merged_requirements).union(state.requirements)
+                while collision_key in occupied:
+                    collision_key = f"{base} {index}"
+                    index += 1
+                merged_requirements[collision_key] = requirements
+            else:
+                merged_requirements[storage_key] = requirements
         merged_pointers.update(state.pointers)
         merged_metadata.update(state.metadata)
     latest = states[-1]
@@ -169,6 +211,7 @@ def state_to_dict(state: RunState) -> dict[str, object]:
                 "pid": svc.pid,
                 "requested_port": svc.requested_port,
                 "actual_port": svc.actual_port,
+                "port_lock_session": svc.port_lock_session,
                 "log_path": svc.log_path,
                 "status": svc.status,
                 "synthetic": svc.synthetic,
@@ -182,11 +225,18 @@ def state_to_dict(state: RunState) -> dict[str, object]:
                 "failure_detail": svc.failure_detail,
                 "critical": svc.critical,
                 "degraded": svc.degraded,
+                "runtime_kind": svc.runtime_kind,
+                "container_id": svc.container_id,
+                "container_name": svc.container_name,
+                "container_image": svc.container_image,
+                "container_launch_token": svc.container_launch_token,
+                "container_cleanup_pending_since": svc.container_cleanup_pending_since,
             }
             for name, svc in state.services.items()
         },
         "requirements": {
             project: {
+                "project": req.project,
                 "components": {dependency_id: req.component(dependency_id) for dependency_id in dependency_ids()},
                 "db": req.db,
                 "redis": req.redis,

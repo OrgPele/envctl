@@ -44,6 +44,7 @@ class _Orchestrator:
         self.statuses: list[str] = []
         self.restored = False
         self.spinner = _Spinner()
+        self.ship_calls = 0
 
     def resolve_targets(self, _route, *, trees_only: bool) -> tuple[list[object], str | None]:
         return [SimpleNamespace(name="Main")], None
@@ -64,6 +65,10 @@ class _Orchestrator:
         return restore
 
     def run_test_action(self, _route, _targets: list[object]) -> int:
+        return 0
+
+    def run_ship_action(self, _route, _targets: list[object]) -> int:
+        self.ship_calls += 1
         return 0
 
 
@@ -135,6 +140,55 @@ class ActionCommandExecutionSupportTests(unittest.TestCase):
             {"event": "action.command.finish", "command": "test", "code": 1, "error": "No targets"},
             orchestrator.runtime.events,
         )
+
+    def test_execute_action_command_requires_confirmation_for_bulk_mutation(self) -> None:
+        orchestrator = _Orchestrator()
+        orchestrator.resolve_targets = lambda _route, trees_only: (  # type: ignore[assignment]
+            [SimpleNamespace(name="one"), SimpleNamespace(name="two")],
+            None,
+        )
+        route = SimpleNamespace(command="ship", mode="trees", flags={"all": True})
+
+        code = execute_action_command(
+            orchestrator,
+            route,
+            spinner_factory=lambda *_args, **_kwargs: _policy_context(orchestrator.spinner),
+            resolve_spinner_policy_fn=lambda _env: SimpleNamespace(enabled=False),
+            emit_spinner_policy_fn=lambda *_args, **_kwargs: None,
+            use_spinner_policy_fn=_policy_context,
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(orchestrator.ship_calls, 0)
+        self.assertIn(
+            {
+                "event": "action.command.finish",
+                "command": "ship",
+                "code": 1,
+                "error": "ship --all targets 2 projects and requires --yes or --force",
+            },
+            orchestrator.runtime.events,
+        )
+
+    def test_execute_action_command_allows_confirmed_bulk_mutation(self) -> None:
+        orchestrator = _Orchestrator()
+        orchestrator.resolve_targets = lambda _route, trees_only: (  # type: ignore[assignment]
+            [SimpleNamespace(name="one"), SimpleNamespace(name="two")],
+            None,
+        )
+        route = SimpleNamespace(command="ship", mode="trees", flags={"all": True, "yes": True})
+
+        code = execute_action_command(
+            orchestrator,
+            route,
+            spinner_factory=lambda *_args, **_kwargs: _policy_context(orchestrator.spinner),
+            resolve_spinner_policy_fn=lambda _env: SimpleNamespace(enabled=False),
+            emit_spinner_policy_fn=lambda *_args, **_kwargs: None,
+            use_spinner_policy_fn=_policy_context,
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(orchestrator.ship_calls, 1)
 
     def test_execute_action_command_flushes_deferred_output_before_finish(self) -> None:
         orchestrator = _DeferredOutputOrchestrator()
