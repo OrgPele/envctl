@@ -1967,8 +1967,12 @@ class PreviewController:
 
         started_at = utc_now()
         expires_at = label_added_at + timedelta(minutes=self.config.ttl_minutes)
+        repository_preview_env: dict[str, str] = {}
+        self.apply_repository_preview_env(repository_preview_env, pr_number=pr.number)
 
         def run_import() -> CommandResult:
+            import_env = self.envctl_command_env(keep_github_tokens=True)
+            import_env.update(repository_preview_env)
             return self.runner.run(
                 [
                     self.config.envctl_bin,
@@ -1981,7 +1985,7 @@ class PreviewController:
                 ],
                 cwd=self.config.control_repo,
                 check=False,
-                env=self.envctl_command_env(keep_github_tokens=True),
+                env=import_env,
             )
 
         import_result = run_import()
@@ -2081,6 +2085,7 @@ class PreviewController:
 
         start_env = self.envctl_command_env()
         start_env.update(pr_preview_start_env_overrides())
+        start_env.update(repository_preview_env)
         start_env.update(self.external_dependency_start_env(external_dependencies))
         python_setup_error = ""
         try:
@@ -2105,8 +2110,6 @@ class PreviewController:
             start_env["ENVCTL_FRONTEND_ENV__VITE_BACKEND_URL"] = public_urls["backend"]
             if public_urls.get("supabase"):
                 start_env["ENVCTL_FRONTEND_ENV__VITE_SUPABASE_URL"] = public_urls["supabase"]
-        self.apply_repository_preview_env(start_env, pr_number=pr.number)
-
         start_argv = [
             self.config.envctl_bin,
             "start",
