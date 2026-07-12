@@ -167,7 +167,7 @@ class LifecycleRestoreStartupParityTests(unittest.TestCase):
                     "ENVCTL_DEBUG_RESTORE_TIMING": "true",
                 },
             )
-            restore_runner = _ResumeRestoreRunner()
+            restore_runner = _ResumeRestoreRunner(listeners_ready=True)
             engine.process_runner = restore_runner  # type: ignore[assignment]
 
             def fake_reconcile(project: str, requirements: RequirementsResult, *, project_root: Path | None = None):  # noqa: ANN001

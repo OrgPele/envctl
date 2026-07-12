@@ -1,15 +1,56 @@
 from __future__ import annotations
 
+import concurrent.futures
+import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
-from envctl_engine.runtime.service_manager import ServiceManager, ServiceStartDescriptor
+from envctl_engine.runtime.service_manager import (
+    ServiceCleanupError,
+    ServiceManager,
+    ServiceStartDescriptor,
+    ServiceStartError,
+)
 
 
 class ServiceManagerTests(unittest.TestCase):
+    @staticmethod
+    def _tracking_manager(live_pids: set[int], terminated: list[int]) -> ServiceManager:
+        return ServiceManager(
+            process_runner=SimpleNamespace(
+                is_pid_running=lambda pid: pid in live_pids,
+                terminate_process_group=lambda pid, **_kwargs: (
+                    terminated.append(pid),
+                    live_pids.discard(pid),
+                    True,
+                )[-1],
+            )
+        )
+
+    def test_pidless_runtime_descriptor_records_success_without_inventing_a_process(self) -> None:
+        records = ServiceManager().start_services_with_attach(
+            project="Main",
+            descriptors=(
+                ServiceStartDescriptor(
+                    service_type="backend",
+                    cwd="/tmp/main/backend",
+                    requested_port=8000,
+                    start=lambda _port: (True, None, None),
+                    detect_actual=lambda pid, requested: requested if pid is None else self.fail("unexpected PID"),
+                    pid_required=False,
+                ),
+            ),
+            reserve_next=lambda port: port,
+        )
+
+        self.assertIsNone(records["Main Backend"].pid)
+        self.assertEqual(records["Main Backend"].actual_port, 8000)
+
     def test_backend_retries_bind_conflict_and_updates_final_port(self) -> None:
         manager = ServiceManager()
         attempts: list[int] = []
@@ -149,11 +190,14 @@ class ServiceManagerTests(unittest.TestCase):
             )
 
     def test_listener_detection_failure_is_not_retried_as_port_conflict(self) -> None:
-        manager = ServiceManager()
         attempts: list[int] = []
         terminated: list[int] = []
-
-        manager.terminate_process_group = lambda pid, **kwargs: terminated.append(pid) or True  # type: ignore[attr-defined]
+        manager = ServiceManager(
+            process_runner=SimpleNamespace(
+                is_pid_running=lambda _pid: True,
+                terminate_process_group=lambda pid, **_kwargs: terminated.append(pid) or True,
+            )
+        )
 
         def start_backend(port: int) -> tuple[bool, str | None, int | None]:
             attempts.append(port)
@@ -225,7 +269,6 @@ class ServiceManagerTests(unittest.TestCase):
         self.assertFalse(service.listener_expected)
         self.assertIsNone(service.requested_port)
         self.assertIsNone(service.actual_port)
-
 
     def test_start_services_with_attach_returns_degraded_record_for_noncritical_failure(self) -> None:
         manager = ServiceManager()
@@ -330,9 +373,13 @@ class ServiceManagerTests(unittest.TestCase):
         self.assertIsNone(records["Main Worker"].actual_port)
 
     def test_start_services_with_attach_cleans_partial_records_on_failure(self) -> None:
-        manager = ServiceManager()
         terminated: list[int] = []
-        manager.terminate_process_group = lambda pid, **kwargs: terminated.append(pid) or True  # type: ignore[attr-defined]
+        manager = ServiceManager(
+            process_runner=SimpleNamespace(
+                is_pid_running=lambda _pid: True,
+                terminate_process_group=lambda pid, **_kwargs: terminated.append(pid) or True,
+            )
+        )
 
         descriptors = (
             ServiceStartDescriptor(
@@ -360,6 +407,358 @@ class ServiceManagerTests(unittest.TestCase):
             )
 
         self.assertEqual(terminated, [41001])
+
+    def test_detection_interrupt_terminates_launched_pid_and_preserves_cancellation(self) -> None:
+        live_pids: set[int] = set()
+        terminated: list[int] = []
+        manager = self._tracking_manager(live_pids, terminated)
+        cancellation = KeyboardInterrupt("listener probe interrupted")
+
+        def start(_port: int) -> tuple[bool, str | None, int | None]:
+            live_pids.add(61001)
+            return True, None, 61001
+
+        with self.assertRaises(KeyboardInterrupt) as raised:
+            manager.start_service_with_retry(
+                project="Main",
+                service_type="backend",
+                cwd="/repo/backend",
+                requested_port=8000,
+                start=start,
+                reserve_next=lambda port: port,
+                detect_actual=lambda *_args: (_ for _ in ()).throw(cancellation),
+            )
+
+        self.assertIs(raised.exception, cancellation)
+        self.assertEqual(terminated, [61001])
+        self.assertEqual(live_pids, set())
+
+    def test_sequential_interrupt_cleans_prior_service_and_preserves_cancellation(self) -> None:
+        live_pids: set[int] = set()
+        terminated: list[int] = []
+        manager = self._tracking_manager(live_pids, terminated)
+        cancellation = KeyboardInterrupt("second descriptor interrupted")
+
+        def start_backend(_port: int) -> tuple[bool, str | None, int | None]:
+            live_pids.add(62001)
+            return True, None, 62001
+
+        descriptors = (
+            ServiceStartDescriptor(
+                service_type="backend",
+                cwd="/repo/backend",
+                requested_port=8000,
+                start=start_backend,
+                detect_actual=lambda _pid, requested: requested,
+            ),
+            ServiceStartDescriptor(
+                service_type="frontend",
+                cwd="/repo/frontend",
+                requested_port=3000,
+                start=lambda _port: (_ for _ in ()).throw(cancellation),
+            ),
+        )
+
+        with self.assertRaises(KeyboardInterrupt) as raised:
+            manager.start_services_with_attach(
+                project="Main",
+                descriptors=descriptors,
+                reserve_next=lambda port: port,
+            )
+
+        self.assertIs(raised.exception, cancellation)
+        self.assertEqual(terminated, [62001])
+        self.assertEqual(live_pids, set())
+
+    def test_parallel_interrupt_drains_futures_and_cleans_every_launched_service(self) -> None:
+        live_pids: set[int] = set()
+        terminated: list[int] = []
+        manager = self._tracking_manager(live_pids, terminated)
+        cancellation = KeyboardInterrupt("parallel descriptor interrupted")
+        interrupt_started = threading.Event()
+
+        def start_service(pid: int) -> tuple[bool, str | None, int | None]:
+            live_pids.add(pid)
+            return True, None, pid
+
+        def interrupt_detection(_pid: int | None, _requested: int) -> int:
+            interrupt_started.set()
+            raise cancellation
+
+        def start_slow_sibling(_port: int) -> tuple[bool, str | None, int | None]:
+            self.assertTrue(interrupt_started.wait(timeout=1.0))
+            time.sleep(0.02)
+            return start_service(63003)
+
+        descriptors = (
+            ServiceStartDescriptor(
+                service_type="backend",
+                cwd="/repo/backend",
+                requested_port=8000,
+                start=lambda _port: start_service(63001),
+                detect_actual=lambda _pid, requested: requested,
+            ),
+            ServiceStartDescriptor(
+                service_type="voice-runtime",
+                cwd="/repo/voice-runtime",
+                requested_port=8010,
+                start=lambda _port: start_service(63002),
+                detect_actual=interrupt_detection,
+            ),
+            ServiceStartDescriptor(
+                service_type="frontend",
+                cwd="/repo/frontend",
+                requested_port=3000,
+                start=start_slow_sibling,
+                detect_actual=lambda _pid, requested: requested,
+            ),
+        )
+
+        with self.assertRaises(KeyboardInterrupt) as raised:
+            manager.start_services_with_attach(
+                project="Main",
+                descriptors=descriptors,
+                reserve_next=lambda port: port,
+                parallel_start=True,
+                max_workers=3,
+            )
+
+        self.assertIs(raised.exception, cancellation)
+        self.assertEqual(set(terminated), {63001, 63002, 63003})
+        self.assertEqual(live_pids, set())
+
+    def test_main_thread_parallel_interrupt_drains_late_success_before_cleanup(self) -> None:
+        live_pids: set[int] = set()
+        terminated: list[int] = []
+        manager = self._tracking_manager(live_pids, terminated)
+        cancellation = KeyboardInterrupt("main thread interrupted")
+        launch_barrier = threading.Barrier(2)
+
+        def start_service(pid: int, *, delay: float = 0.0) -> tuple[bool, str | None, int | None]:
+            live_pids.add(pid)
+            launch_barrier.wait(timeout=1.0)
+            if delay:
+                time.sleep(delay)
+            return True, None, pid
+
+        descriptors = (
+            ServiceStartDescriptor(
+                service_type="backend",
+                cwd="/repo/backend",
+                requested_port=8000,
+                start=lambda _port: start_service(64001),
+                detect_actual=lambda _pid, requested: requested,
+            ),
+            ServiceStartDescriptor(
+                service_type="frontend",
+                cwd="/repo/frontend",
+                requested_port=3000,
+                start=lambda _port: start_service(64002, delay=0.03),
+                detect_actual=lambda _pid, requested: requested,
+            ),
+        )
+        real_as_completed = concurrent.futures.as_completed
+
+        def interrupted_as_completed(futures):  # noqa: ANN001, ANN202
+            completed = iter(real_as_completed(futures))
+            yield next(completed)
+            raise cancellation
+
+        with (
+            patch("envctl_engine.runtime.service_manager.concurrent.futures.as_completed", interrupted_as_completed),
+            self.assertRaises(KeyboardInterrupt) as raised,
+        ):
+            manager.start_services_with_attach(
+                project="Main",
+                descriptors=descriptors,
+                reserve_next=lambda port: port,
+                parallel_start=True,
+                max_workers=2,
+            )
+
+        self.assertIs(raised.exception, cancellation)
+        self.assertEqual(set(terminated), {64001, 64002})
+        self.assertEqual(live_pids, set())
+
+    def test_listener_failure_fails_closed_when_group_and_raw_cleanup_cannot_prove_exit(self) -> None:
+        runner = SimpleNamespace(
+            is_pid_running=lambda _pid: True,
+            terminate_process_group=lambda *_args, **_kwargs: False,
+            terminate=lambda *_args, **_kwargs: False,
+        )
+        manager = ServiceManager(process_runner=runner)
+
+        with (
+            patch("envctl_engine.shared.process_termination._send_signal", return_value=True),
+            patch("envctl_engine.shared.process_termination.wait_for_pid_exit", side_effect=[False, False]),
+            self.assertRaises(ServiceCleanupError) as raised,
+        ):
+            manager.start_service_with_retry(
+                project="Main",
+                service_type="backend",
+                cwd="/repo/backend",
+                requested_port=8000,
+                start=lambda _port: (True, None, 51001),
+                reserve_next=lambda port: port,
+                detect_actual=lambda *_args: (_ for _ in ()).throw(RuntimeError("backend listener not detected")),
+            )
+
+        record = raised.exception.unterminated_services["Main Backend"]
+        self.assertEqual(record.pid, 51001)
+        self.assertEqual(record.status, "termination_failed")
+
+    def test_non_runtime_detection_exception_still_terminates_started_pid(self) -> None:
+        live_pids = {51501}
+        terminated: list[int] = []
+        manager = ServiceManager(
+            process_runner=SimpleNamespace(
+                is_pid_running=lambda pid: pid in live_pids,
+                terminate_process_group=lambda pid, **_kwargs: (terminated.append(pid), live_pids.discard(pid), True)[
+                    -1
+                ],
+            )
+        )
+
+        with self.assertRaisesRegex(ServiceStartError, "listener probe crashed"):
+            manager.start_service_with_retry(
+                project="Main",
+                service_type="backend",
+                cwd="/repo/backend",
+                requested_port=8000,
+                start=lambda _port: (True, None, 51501),
+                reserve_next=lambda port: port,
+                detect_actual=lambda *_args: (_ for _ in ()).throw(OSError("listener probe crashed")),
+            )
+
+        self.assertEqual(terminated, [51501])
+
+    def test_failed_launcher_pid_is_terminated_before_bind_retry(self) -> None:
+        attempts: list[int] = []
+        terminated: list[int] = []
+        live_pids = {52001}
+        manager = ServiceManager(
+            process_runner=SimpleNamespace(
+                is_pid_running=lambda pid: pid in live_pids,
+                terminate_process_group=lambda pid, **_kwargs: (terminated.append(pid), live_pids.discard(pid), True)[
+                    -1
+                ],
+            )
+        )
+
+        def start(port: int) -> tuple[bool, str | None, int | None]:
+            attempts.append(port)
+            if len(attempts) == 1:
+                return False, "address already in use", 52001
+            return True, None, 52002
+
+        record = manager.start_service_with_retry(
+            project="Main",
+            service_type="backend",
+            cwd="/repo/backend",
+            requested_port=8000,
+            start=start,
+            reserve_next=lambda port: port,
+            detect_actual=lambda _pid, requested: requested,
+        )
+
+        self.assertEqual(attempts, [8000, 8001])
+        self.assertEqual(terminated, [52001])
+        self.assertEqual(record.pid, 52002)
+
+    def test_parallel_rollback_reports_every_service_whose_exit_is_unconfirmed(self) -> None:
+        manager = ServiceManager(
+            process_runner=SimpleNamespace(
+                is_pid_running=lambda _pid: True,
+                terminate_process_group=lambda *_args, **_kwargs: False,
+                terminate=lambda *_args, **_kwargs: False,
+            )
+        )
+        descriptors = (
+            ServiceStartDescriptor(
+                service_type="backend",
+                cwd="/repo/backend",
+                requested_port=8000,
+                start=lambda _port: (True, None, 53001),
+                detect_actual=lambda _pid, requested: requested,
+            ),
+            ServiceStartDescriptor(
+                service_type="frontend",
+                cwd="/repo/frontend",
+                requested_port=3000,
+                start=lambda _port: (False, "boot failed", None),
+                max_retries=0,
+            ),
+        )
+
+        with (
+            patch("envctl_engine.shared.process_termination._send_signal", return_value=True),
+            patch("envctl_engine.shared.process_termination.wait_for_pid_exit", side_effect=[False, False]),
+            self.assertRaises(ServiceCleanupError) as raised,
+        ):
+            manager.start_services_with_attach(
+                project="Main",
+                descriptors=descriptors,
+                reserve_next=lambda port: port,
+                parallel_start=True,
+            )
+
+        self.assertEqual(set(raised.exception.unterminated_services), {"Main Backend"})
+
+    def test_noncritical_listener_cleanup_failure_is_never_downgraded_to_pidless_record(self) -> None:
+        manager = ServiceManager(
+            process_runner=SimpleNamespace(
+                is_pid_running=lambda _pid: True,
+                terminate_process_group=lambda *_args, **_kwargs: False,
+                terminate=lambda *_args, **_kwargs: False,
+            )
+        )
+        descriptor = ServiceStartDescriptor(
+            service_type="worker",
+            cwd="/repo/worker",
+            requested_port=0,
+            start=lambda _port: (True, None, 54001),
+            detect_actual=lambda *_args: (_ for _ in ()).throw(RuntimeError("worker attach failed")),
+            listener_expected=False,
+            critical=False,
+        )
+
+        with (
+            patch("envctl_engine.shared.process_termination._send_signal", return_value=True),
+            patch("envctl_engine.shared.process_termination.wait_for_pid_exit", side_effect=[False, False]),
+            self.assertRaises(ServiceCleanupError) as raised,
+        ):
+            manager.start_services_with_attach(
+                project="Main",
+                descriptors=(descriptor,),
+                reserve_next=lambda port: port,
+            )
+
+        record = raised.exception.unterminated_services["Main Worker"]
+        self.assertEqual(record.pid, 54001)
+        self.assertEqual(record.status, "termination_failed")
+
+    def test_success_without_valid_pid_is_tracked_as_unconfirmed_launch_even_for_non_listener(self) -> None:
+        manager = ServiceManager()
+        descriptor = ServiceStartDescriptor(
+            service_type="worker",
+            cwd="/repo/worker",
+            requested_port=0,
+            start=lambda _port: (True, None, None),
+            listener_expected=False,
+            critical=False,
+        )
+
+        with self.assertRaises(ServiceCleanupError) as raised:
+            manager.start_services_with_attach(
+                project="Main",
+                descriptors=(descriptor,),
+                reserve_next=lambda port: port,
+            )
+
+        record = raised.exception.unterminated_services["Main Worker"]
+        self.assertIsNone(record.pid)
+        self.assertEqual(record.status, "termination_failed")
+        self.assertFalse(record.listener_expected)
 
 
 if __name__ == "__main__":

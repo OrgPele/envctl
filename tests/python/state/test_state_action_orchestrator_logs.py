@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import redirect_stdout
 from io import StringIO
 import json
+import signal
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_runtime_support import normalize_log_line
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
+from envctl_engine.state.action_command_support import _interrupt_log_follow_on_termination
 from envctl_engine.state.action_orchestrator import StateActionOrchestrator
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.ui.target_selector import TargetSelection
@@ -75,6 +77,17 @@ class _RuntimeStub:
 
 
 class StateActionOrchestratorLogsTests(unittest.TestCase):
+    def test_log_follow_termination_signal_interrupts_for_finally_cleanup(self) -> None:
+        previous = signal.getsignal(signal.SIGTERM)
+
+        with self.assertRaises(KeyboardInterrupt):
+            with _interrupt_log_follow_on_termination(True):
+                handler = signal.getsignal(signal.SIGTERM)
+                self.assertTrue(callable(handler))
+                handler(signal.SIGTERM, None)  # type: ignore[operator]
+
+        self.assertIs(signal.getsignal(signal.SIGTERM), previous)
+
     def test_runtime_facade_routes_state_dependencies(self) -> None:
         state = RunState(run_id="run-0", mode="main")
         runtime = _RuntimeStub(state)
@@ -145,6 +158,68 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
                 self.assertIsNotNone(runtime.seen_logs_state)
                 assert runtime.seen_logs_state is not None
                 self.assertEqual(set(runtime.seen_logs_state.services), {"Main Voice Runtime"})
+
+    def test_logs_combined_project_and_service_filters_intersect(self) -> None:
+        state = RunState(
+            run_id="run-combined-filter",
+            mode="trees",
+            services={
+                "Alpha Backend": ServiceRecord(
+                    name="Alpha Backend", type="backend", cwd="/tmp/alpha", project="Alpha"
+                ),
+                "Alpha Frontend": ServiceRecord(
+                    name="Alpha Frontend", type="frontend", cwd="/tmp/alpha", project="Alpha"
+                ),
+                "Beta Backend": ServiceRecord(
+                    name="Beta Backend", type="backend", cwd="/tmp/beta", project="Beta"
+                ),
+            },
+        )
+        runtime = _RuntimeStub(state)
+        orchestrator = StateActionOrchestrator(runtime)
+        route = Route(
+            command="logs",
+            mode="trees",
+            projects=["Alpha"],
+            flags={"services": ["backend"], "json": True},
+        )
+
+        output = StringIO()
+        with redirect_stdout(output):
+            code = orchestrator.execute(route)
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual([service["name"] for service in payload["services"]], ["Alpha Backend"])
+
+    def test_logs_project_filter_uses_additional_service_project_metadata(self) -> None:
+        service = ServiceRecord(
+            name="Opaque Runtime Process",
+            type="voice-runtime",
+            cwd="/tmp/customer-platform/voice",
+            project="Customer Platform",
+            service_slug="voice-runtime",
+        )
+        requirements = RequirementsResult(project="Customer Platform")
+        state = RunState(
+            run_id="run-metadata-project",
+            mode="trees",
+            services={service.name: service},
+            requirements={"Customer Platform": requirements},
+        )
+        runtime = _RuntimeStub(state)
+        runtime._project_name_from_service = lambda _name: "Opaque Runtime"  # type: ignore[method-assign]
+        orchestrator = StateActionOrchestrator(runtime)
+
+        code = orchestrator.execute(
+            Route(command="logs", mode="trees", projects=["Customer Platform"])
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIsNotNone(runtime.seen_logs_state)
+        assert runtime.seen_logs_state is not None
+        self.assertEqual(set(runtime.seen_logs_state.services), {service.name})
+        self.assertEqual(runtime.seen_logs_state.requirements, {"Customer Platform": requirements})
 
     def test_health_prints_enabled_dependency_statuses(self) -> None:
         state = RunState(

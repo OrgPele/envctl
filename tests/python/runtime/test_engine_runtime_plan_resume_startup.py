@@ -100,12 +100,14 @@ class EngineRuntimePlanResumeStartupTests(_EngineRuntimeRealStartupTestCase):
             with (
                 patch.object(engine, "_try_load_existing_state", return_value=state),
                 patch.object(engine, "_resume", return_value=1) as resume_mock,
+                patch.object(engine, "_terminate_services_from_state", return_value=set()) as terminate_mock,
                 patch.object(engine, "_start_project_context", side_effect=fake_start_project_context),
             ):
                 code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
             self.assertEqual(resume_mock.call_count, 1)
+            self.assertEqual(terminate_mock.call_count, 1)
             self.assertEqual(started_projects, ["feature-a-1"])
 
     def test_plan_auto_resumes_existing_run_when_selected_projects_are_subset_of_state(self) -> None:
@@ -282,6 +284,7 @@ class EngineRuntimePlanResumeStartupTests(_EngineRuntimeRealStartupTestCase):
             with (
                 patch.object(engine, "_try_load_existing_state", return_value=state),
                 patch.object(engine, "_resume", return_value=0) as resume_mock,
+                patch.object(engine, "_terminate_services_from_state", return_value=set()) as terminate_mock,
                 patch.object(engine, "_start_project_context", side_effect=RuntimeError("expected startup path")),
             ):
                 out = StringIO()
@@ -290,6 +293,7 @@ class EngineRuntimePlanResumeStartupTests(_EngineRuntimeRealStartupTestCase):
 
             self.assertEqual(code, 1)
             self.assertEqual(resume_mock.call_count, 0)
+            self.assertEqual(terminate_mock.call_count, 1)
             self.assertIn("expected startup path", out.getvalue())
 
     def test_exact_tree_plan_match_reuses_prior_run_id(self) -> None:
@@ -339,4 +343,3 @@ class EngineRuntimePlanResumeStartupTests(_EngineRuntimeRealStartupTestCase):
             assert second_state is not None
             self.assertEqual(second_state.run_id, first_state.run_id)
             self.assertNotEqual(first_engine._current_session_id(), second_session_id)
-

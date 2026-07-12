@@ -160,7 +160,6 @@ OWNERSHIP_RULES = {
         ENGINE_ROOT / "planning" / "plan_agent" / "terminal_screen.py",
     },
     "_build_plan_agent_workflow": {
-        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
         ENGINE_ROOT / "planning" / "plan_agent" / "workflow_build.py",
     },
     "_spawn_omx_session_for_worktree": {
@@ -179,11 +178,9 @@ OWNERSHIP_RULES = {
         ENGINE_ROOT / "planning" / "plan_agent" / "config.py",
     },
     "_workflow_step_prompt_text": {
-        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
         ENGINE_ROOT / "planning" / "plan_agent" / "workflow_prompt_support.py",
     },
     "_resolve_preset_submission_text": {
-        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
         ENGINE_ROOT / "planning" / "plan_agent" / "workflow_prompt_support.py",
     },
     "_codex_queue_screen_looks_ready": {
@@ -214,13 +211,13 @@ OWNERSHIP_RULES = {
         ENGINE_ROOT / "planning" / "plan_agent" / "recovery.py",
     },
     "_codex_goal_text_for_worktree": {
-        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow_runtime_support.py",
     },
     "_emit_codex_goal_event": {
-        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow_runtime_support.py",
     },
     "_wrap_omx_initial_prompt_for_workflow": {
-        ENGINE_ROOT / "planning" / "plan_agent" / "workflow.py",
+        ENGINE_ROOT / "planning" / "plan_agent" / "workflow_runtime_support.py",
     },
     "_queue_failure_event_context": {
         ENGINE_ROOT / "planning" / "plan_agent" / "recovery.py",

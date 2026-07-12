@@ -8,6 +8,7 @@ from envctl_engine.state.project_runtime import (
     active_project_names,
     cwd_runtime_warnings,
     dependency_mode_summary,
+    filter_project_scoped_metadata,
     infer_cwd_project,
     requested_project_not_running_payload,
     resolve_requested_project_state,
@@ -28,6 +29,21 @@ class ProjectRuntimeResolutionTests(unittest.TestCase):
         )
 
         self.assertEqual(active_project_names(state), ["alpha", "beta", "delta", "gamma"])
+
+    def test_requirement_collision_storage_key_is_not_exposed_as_an_active_project(self) -> None:
+        state = RunState(
+            run_id="run-collision",
+            mode="main",
+            requirements={
+                "Main": RequirementsResult(project="Main"),
+                "Main Restart Collision": RequirementsResult(project="Main"),
+            },
+        )
+
+        self.assertEqual(active_project_names(state), ["Main"])
+        resolution = resolve_requested_project_state(state, [], command="endpoints")
+        self.assertTrue(resolution.ok)
+        self.assertEqual(resolution.selected_projects, ["Main"])
 
     def test_exact_requested_project_match_filters_state_to_canonical_project(self) -> None:
         state = RunState(
@@ -55,6 +71,80 @@ class ProjectRuntimeResolutionTests(unittest.TestCase):
         self.assertEqual(set(resolution.state.requirements), {"Alpha"})
         self.assertEqual(resolution.state.metadata["project_roots"], {"Alpha": "/tmp/a"})
 
+    def test_project_selection_filters_every_project_scoped_metadata_surface(self) -> None:
+        state = RunState(
+            run_id="run-metadata",
+            mode="trees",
+            services={
+                "Alpha Backend": ServiceRecord(name="Alpha Backend", type="backend", cwd="/tmp/a", project="Alpha"),
+                "Beta Voice": ServiceRecord(name="Beta Voice", type="voice", cwd="/tmp/b", project="Beta"),
+            },
+            metadata={
+                "project_roots": {"Alpha": "/tmp/a", "Beta": "/tmp/b"},
+                "project_pr_links": {"Alpha": "pr-a", "Beta": "pr-b"},
+                "project_test_summaries": {"Alpha": {"failed": 0}, "Beta": {"failed": 1}},
+                "project_test_results_root": "/tmp/results",
+                "project_test_results_updated_at": "now",
+                "project_action_reports": {"Alpha": {"test": {}}, "Beta": {"test": {}}},
+                "dashboard_project_configured_services": {
+                    "Alpha": ["backend"],
+                    "Beta": ["voice"],
+                },
+                "dashboard_configured_service_types": ["backend", "voice"],
+                "dashboard_stopped_services": [
+                    {"name": "Alpha Backend", "project": "Alpha", "type": "backend"},
+                    {"name": "Beta Voice", "project": "Beta", "type": "voice"},
+                    {"project": "Alpha", "type": "frontend"},
+                ],
+                "startup_identity": {
+                    "mode": "trees",
+                    "projects": [
+                        {"name": "Alpha", "root": "/tmp/a"},
+                        {"name": "Beta", "root": "/tmp/b"},
+                    ],
+                    "fingerprint": "stale",
+                },
+                "unrelated": "preserved",
+            },
+        )
+
+        resolution = resolve_requested_project_state(state, ["Alpha"], command="health")
+
+        self.assertTrue(resolution.ok)
+        assert resolution.state is not None
+        metadata = resolution.state.metadata
+        for key in (
+            "project_roots",
+            "project_pr_links",
+            "project_test_summaries",
+            "project_action_reports",
+            "dashboard_project_configured_services",
+        ):
+            self.assertEqual(set(metadata[key]), {"Alpha"})
+        self.assertEqual(
+            metadata["dashboard_stopped_services"],
+            [{"name": "Alpha Backend", "project": "Alpha", "type": "backend"}],
+        )
+        self.assertEqual(metadata["dashboard_configured_service_types"], ["backend"])
+        self.assertEqual(metadata["startup_identity"]["projects"], [{"name": "Alpha", "root": "/tmp/a"}])
+        self.assertNotEqual(metadata["startup_identity"]["fingerprint"], "stale")
+        self.assertNotIn("project_test_results_root", metadata)
+        self.assertNotIn("project_test_results_updated_at", metadata)
+        self.assertEqual(metadata["unrelated"], "preserved")
+
+    def test_filter_removes_test_companion_fields_when_no_selected_summary_remains(self) -> None:
+        metadata = filter_project_scoped_metadata(
+            {
+                "project_test_summaries": {"Beta": {"failed": 1}},
+                "project_test_results_root": "/tmp/results",
+                "project_test_results_updated_at": "now",
+            },
+            {"Alpha"},
+        )
+
+        self.assertNotIn("project_test_summaries", metadata)
+        self.assertNotIn("project_test_results_root", metadata)
+        self.assertNotIn("project_test_results_updated_at", metadata)
 
     def test_case_mismatched_project_selector_fails_closed(self) -> None:
         state = RunState(
@@ -148,14 +238,18 @@ class ProjectRuntimeResolutionTests(unittest.TestCase):
             mode="trees",
             metadata={"dependency_mode": "isolated", "shared_dependencies": False},
         )
-        self.assertEqual(dependency_mode_summary(explicit), {"dependency_mode": "isolated", "shared_dependencies": False})
+        self.assertEqual(
+            dependency_mode_summary(explicit), {"dependency_mode": "isolated", "shared_dependencies": False}
+        )
 
         legacy_shared = RunState(
             run_id="run-legacy",
             mode="trees",
             metadata={"dashboard_dependency_scope": "shared"},
         )
-        self.assertEqual(dependency_mode_summary(legacy_shared), {"dependency_mode": "shared", "shared_dependencies": True})
+        self.assertEqual(
+            dependency_mode_summary(legacy_shared), {"dependency_mode": "shared", "shared_dependencies": True}
+        )
 
         unknown = RunState(run_id="run-unknown", mode="trees")
         self.assertEqual(dependency_mode_summary(unknown), {"dependency_mode": "unknown", "shared_dependencies": None})

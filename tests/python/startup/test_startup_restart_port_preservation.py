@@ -98,7 +98,9 @@ class StartupRestartPortPreservationTests(StartupSpinnerIntegrationTestCase):
                 },
             )
             engine._terminate_services_from_state = (  # type: ignore[method-assign]
-                lambda state, selected_services, aggressive, verify_ownership: terminated.append(state.run_id)
+                lambda state, selected_services, aggressive, verify_ownership: (
+                    terminated.append(state.run_id) or set()
+                )
             )
 
             spinner_calls: list[tuple[str, bool]] = []
@@ -217,7 +219,7 @@ class StartupRestartPortPreservationTests(StartupSpinnerIntegrationTestCase):
             captured_env: dict[str, str] = {}
 
             engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
-            engine._terminate_services_from_state = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            engine._terminate_services_from_state = lambda *_args, **_kwargs: set()  # type: ignore[method-assign]
             engine._listener_pids_for_port = lambda _port: []  # type: ignore[method-assign]
             engine._start_project_context = (  # type: ignore[method-assign]
                 lambda context, mode, route, run_id: (
@@ -358,7 +360,7 @@ class StartupRestartPortPreservationTests(StartupSpinnerIntegrationTestCase):
             captured_env: dict[str, str] = {}
 
             engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
-            engine._terminate_services_from_state = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            engine._terminate_services_from_state = lambda *_args, **_kwargs: set()  # type: ignore[method-assign]
             engine._listener_pids_for_port = lambda _port: []  # type: ignore[method-assign]
             engine._start_project_context = (  # type: ignore[method-assign]
                 lambda context, mode, route, run_id: (
@@ -493,7 +495,7 @@ class StartupRestartPortPreservationTests(StartupSpinnerIntegrationTestCase):
             captured_state: dict[str, RunState] = {}
 
             engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
-            engine._terminate_services_from_state = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            engine._terminate_services_from_state = lambda *_args, **_kwargs: set()  # type: ignore[method-assign]
             engine._listener_pids_for_port = lambda _port: []  # type: ignore[method-assign]
             engine._start_project_context = (  # type: ignore[method-assign]
                 lambda context, mode, route, run_id: (
@@ -592,7 +594,7 @@ class StartupRestartPortPreservationTests(StartupSpinnerIntegrationTestCase):
             captured_state: dict[str, RunState] = {}
 
             engine._try_load_existing_state = lambda mode=None, strict_mode_match=False: previous_state  # type: ignore[method-assign]
-            engine._terminate_services_from_state = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            engine._terminate_services_from_state = lambda *_args, **_kwargs: set()  # type: ignore[method-assign]
             engine._listener_pids_for_port = lambda _port: []  # type: ignore[method-assign]
             engine._start_project_context = (  # type: ignore[method-assign]
                 lambda context, mode, route, run_id: (

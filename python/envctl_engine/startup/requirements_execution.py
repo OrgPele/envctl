@@ -17,7 +17,9 @@ from envctl_engine.startup.requirements_project_startup import (
 )
 from envctl_engine.startup.startup_progress import suppress_timing_output
 from envctl_engine.startup.startup_selection_support import restart_include_requirements
+from envctl_engine.state.lookup import call_state_loader
 from envctl_engine.state.models import RequirementsResult
+from envctl_engine.state.project_runtime import requirements_for_project
 
 _DOCKER_SOCKET_PATTERNS = (
     re.compile(r"unix://(?P<path>[^\s;]+docker\.sock)"),
@@ -61,9 +63,14 @@ def requirements_for_restart_context(
     if restart_include_requirements(route):
         return orchestrator.start_requirements_for_project(context, mode=mode, route=route)
 
-    previous = rt._try_load_existing_state(mode=mode, strict_mode_match=True)
+    previous = call_state_loader(
+        rt._try_load_existing_state,
+        mode=mode,
+        strict_mode_match=True,
+        project_names=[context.name],
+    )
     if previous is not None:
-        existing = previous.requirements.get(context.name)
+        existing = requirements_for_project(previous, context.name)
         if isinstance(existing, RequirementsResult):
             rt._emit(
                 "requirements.restart.reuse",

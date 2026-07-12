@@ -7,7 +7,7 @@ from typing import Any, Mapping
 from envctl_engine.shared.dependency_compose_assets import materialize_dependency_compose, supabase_managed_env
 from envctl_engine.shared.hooks import HookInvocationResult, legacy_shell_hook_issue, run_envctl_hook
 from envctl_engine.state.models import RequirementsResult, ServiceRecord
-from envctl_engine.shared.parsing import parse_bool, parse_int
+from envctl_engine.shared.parsing import parse_bool, parse_float_or_none, parse_int
 from envctl_engine.requirements.supabase import build_supabase_project_name
 from envctl_engine.requirements.core import dependency_definitions
 
@@ -148,6 +148,16 @@ def services_from_hook_payload(
             actual_port=(actual_port if actual_port > 0 else None),
             log_path=(str(log_path) if log_path else None),
             status=status,
+            project=str(context.name),
+            service_slug=service_type.strip().lower(),
+            runtime_kind=str(raw.get("runtime_kind") or "process"),
+            container_id=str(raw.get("container_id") or "") or None,
+            container_name=str(raw.get("container_name") or "") or None,
+            container_image=str(raw.get("container_image") or "") or None,
+            container_launch_token=str(raw.get("container_launch_token") or "") or None,
+            container_cleanup_pending_since=parse_float_or_none(
+                raw.get("container_cleanup_pending_since")
+            ),
         )
         records[name] = record
         if service_type == "backend" and actual_port > 0:

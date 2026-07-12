@@ -15,7 +15,7 @@ from envctl_engine.requirements.external import (
     external_dependency_resources,
     external_dependency_url,
 )
-from envctl_engine.requirements.orchestrator import RequirementOutcome
+from envctl_engine.requirements.orchestrator import FailureClass, RequirementOutcome
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.runtime_context import resolve_port_allocator
 from envctl_engine.shared.parsing import parse_bool, parse_int
@@ -25,6 +25,12 @@ from envctl_engine.startup.startup_progress import suppress_timing_output
 from envctl_engine.state.models import RequirementsResult
 
 REQUIREMENTS_PROGRESS_PROJECT_FLAG = "_requirements_progress_project"
+
+
+def _has_reserved_ports(final_port: object, resources: dict[str, int]) -> bool:
+    return (isinstance(final_port, int) and not isinstance(final_port, bool) and final_port > 0) or any(
+        isinstance(port, int) and not isinstance(port, bool) and port > 0 for port in resources.values()
+    )
 
 
 def requirements_parallel_platform_default() -> bool:
@@ -248,31 +254,62 @@ class RequirementProjectStarter:
                 future_map[future] = definition.id
             for future in concurrent.futures.as_completed(future_map):
                 definition_id = future_map[future]
-                self.outcomes[definition_id] = future.result()
+                try:
+                    self.outcomes[definition_id] = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    self.outcomes[definition_id] = self._failed_outcome(
+                        definition_id,
+                        self._plan_for_dependency(definition_id),
+                        exc,
+                    )
 
     def _run_component(self, component: str, plan: object, *, strict: bool = False) -> RequirementOutcome:
         started = time.monotonic()
         with self.progress_state_lock:
             self.pending_requirements.discard(component)
             self.active_requirements.add(component)
-            self._emit_progress()
+            self._emit_progress_safely()
         try:
-            outcome = self.orchestrator.runtime._start_requirement_component(
-                self.context,
-                component,
-                plan,
-                self._reserve_next,
-                strict=strict,
-                route=self.route,
-            )
+            try:
+                outcome = self.orchestrator.runtime._start_requirement_component(
+                    self.context,
+                    component,
+                    plan,
+                    self._reserve_next,
+                    strict=strict,
+                    route=self.route,
+                )
+            except Exception as exc:  # noqa: BLE001
+                outcome = self._failed_outcome(component, plan, exc)
             duration_ms = round((time.monotonic() - started) * 1000.0, 2)
             self.component_timings_ms[component] = duration_ms
-            self._emit_component_timing(component, outcome=outcome, enabled=True, duration_ms=duration_ms)
+            try:
+                self._emit_component_timing(component, outcome=outcome, enabled=True, duration_ms=duration_ms)
+            except Exception:  # noqa: BLE001
+                pass
             return outcome
         finally:
             with self.progress_state_lock:
                 self.active_requirements.discard(component)
-                self._emit_progress()
+                self._emit_progress_safely()
+
+    @staticmethod
+    def _failed_outcome(component: str, plan: object, error: BaseException) -> RequirementOutcome:
+        return RequirementOutcome(
+            service_name=component,
+            success=False,
+            requested_port=int(getattr(plan, "requested", 0) or 0),
+            final_port=int(getattr(plan, "final", 0) or 0),
+            retries=0,
+            failure_class=FailureClass.HARD_START_FAILURE,
+            error=str(error),
+        )
+
+    def _emit_progress_safely(self) -> None:
+        try:
+            self._emit_progress()
+        except Exception:  # noqa: BLE001
+            return
 
     def _build_components(
         self,
@@ -301,6 +338,18 @@ class RequirementProjectStarter:
                 "error": outcome.error,
                 "container_name": outcome.container_name,
             }
+            if (
+                enabled_lookup[definition.id]
+                and not external_lookup[definition.id]
+                and _has_reserved_ports(
+                    outcome.final_port,
+                    resources,
+                )
+            ):
+                raw_session_id = getattr(resolve_port_allocator(rt), "session_id", None)
+                session_id = raw_session_id.strip() if isinstance(raw_session_id, str) else ""
+                if session_id:
+                    components[definition.id]["port_lock_session"] = session_id
             if external_lookup[definition.id]:
                 components[definition.id].update(
                     {
@@ -318,9 +367,7 @@ class RequirementProjectStarter:
             return
         progress_project_flag = self.route.flags.get(REQUIREMENTS_PROGRESS_PROJECT_FLAG)
         progress_project = (
-            str(progress_project_flag).strip()
-            if progress_project_flag is not None
-            else self.context.name
+            str(progress_project_flag).strip() if progress_project_flag is not None else self.context.name
         )
         progress_message = format_requirements_progress_message(
             active=self.active_requirements,

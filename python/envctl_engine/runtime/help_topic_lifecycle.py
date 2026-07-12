@@ -26,6 +26,7 @@ LIFECYCLE_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "--deps-sequential|--sequential-deps  force managed dependencies to start one at a time",
             "--project <name>        limit startup to selected project/worktree when supported",
             "--no-resume             skip automatic resume of a compatible saved run",
+            "--docker                build/use images and run app services in managed containers",
         ),
         examples=(
             "envctl",
@@ -33,15 +34,14 @@ LIFECYCLE_HELP_TOPICS: dict[str, CommandHelpTopic] = {
             "envctl start --trees --entire-system --headless",
             "envctl start --project feature-a-1 --backend --headless",
             "envctl --trees --only-backend --headless",
+            "envctl start --trees --entire-system --docker --headless",
         ),
         related=("restart", "resume", "dashboard", "stop", "health"),
     ),
     "restart": CommandHelpTopic(
         command="restart",
         summary="restart selected envctl-managed services",
-        usage=(
-            "envctl restart [--project <name>|--service <name>|--all] [runtime scope] [--headless]",
-        ),
+        usage=("envctl restart [--project <name>|--service <name>|--all] [runtime scope] [--headless]",),
         what_it_does=(
             "loads saved runtime state, stops the selected services, and starts them again",
             "keeps the same target model as startup while using existing envctl state as the source of truth",
@@ -95,12 +95,17 @@ LIFECYCLE_HELP_TOPICS: dict[str, CommandHelpTopic] = {
     "stop": CommandHelpTopic(
         command="stop",
         summary="stop selected envctl-managed services and update runtime state",
-        usage=("envctl stop [--project <name>|--service <name>|--all] [runtime scope]",),
+        usage=("envctl stop [--main|--trees] [--project <name>|--service <name>|--all] [runtime scope]",),
         what_it_does=(
             "loads saved runtime state and terminates selected services",
-            "supports service-scope flags so you can stop backend, frontend, dependencies, or the entire system",
+            (
+                "dependency scope releases saved dependency records and port locks; "
+                "managed Docker stacks and storage remain reusable"
+            ),
+            "use stop-all --remove-volumes or blast-all when managed Docker containers must be removed",
         ),
         flags=(
+            "--main | --trees        choose the saved runtime mode; an explicit mode leaves the other mode active",
             "--project <name>        stop services for selected project/worktree",
             "--service <name>        stop one saved service",
             "--all                   stop all matching saved services",
@@ -117,14 +122,19 @@ LIFECYCLE_HELP_TOPICS: dict[str, CommandHelpTopic] = {
     "stop-all": CommandHelpTopic(
         command="stop-all",
         summary="stop every saved envctl-managed service in the selected scope",
-        usage=("envctl stop-all [runtime scope]", "envctl kill-all [runtime scope]"),
+        usage=(
+            "envctl stop-all [--main|--trees] [runtime scope]",
+            "envctl kill-all [--main|--trees] [runtime scope]",
+        ),
         what_it_does=(
-            "terminates all saved services for the selected runtime state",
-            "can optionally remove volumes when supported by the selected cleanup flags",
+            "terminates all saved app services and releases dependency records and port locks",
+            "keeps managed Docker dependency stacks and storage reusable unless explicit removal cleanup is requested",
+            "use --remove-volumes for supported Docker removal, or blast-all for aggressive cleanup",
         ),
         flags=(
+            "--main | --trees        choose the saved runtime mode; an explicit mode leaves the other mode active",
             "--backend|--frontend|--fullstack|--dependencies|--entire-system  choose cleanup scope",
-            "--stop-all-remove-volumes / --remove-volumes  remove supported volumes too",
+            "--stop-all-remove-volumes / --remove-volumes  remove supported managed containers and volumes",
         ),
         examples=("envctl stop-all", "envctl kill-all", "envctl stop-all --entire-system --remove-volumes"),
         aliases=("kill-all", "killall", "stopall", "--stop-all", "--kill-all"),

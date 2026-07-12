@@ -8,6 +8,7 @@ from typing import Any, Callable
 from envctl_engine.planning.worktree_code_intelligence_files import ensure_worktree_git_excludes
 from envctl_engine.runtime.codex_tmux_support import _tmux_session_exists
 from envctl_engine.runtime.runtime_context import resolve_process_runtime
+from envctl_engine.shared.git_branch_support import detect_preferred_default_branch
 from envctl_engine.shared.parsing import parse_bool
 
 
@@ -165,13 +166,10 @@ def resolve_branch_ref(self: Any, *, source_branch: str) -> str:
 
 
 def detect_default_branch(self: Any) -> str:
-    ref = git_command_output(self, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
-    if ref.startswith("origin/"):
-        return ref.split("origin/", 1)[1]
-    for candidate in ("main", "master"):
-        if git_command_output(self, ["rev-parse", "--verify", candidate]).strip():
-            return candidate
-    return "main"
+    return detect_preferred_default_branch(
+        lambda args: git_command_output(self, list(args)),
+        probe_remote_heads=True,
+    )
 
 
 def git_command_output(self: Any, args: list[str]) -> str:
@@ -179,11 +177,16 @@ def git_command_output(self: Any, args: list[str]) -> str:
 
 
 def git_command_output_at(self: Any, cwd: Path, args: list[str]) -> str:
+    command_env = dict(self._command_env(port=0))
+    timeout = 30.0
+    if args[:1] == ["ls-remote"]:
+        command_env["GIT_TERMINAL_PROMPT"] = "0"
+        timeout = 10.0
     result = resolve_process_runtime(self).run(
         ["git", "-C", str(cwd), *args],
         cwd=cwd,
-        env=self._command_env(port=0),
-        timeout=30.0,
+        env=command_env,
+        timeout=timeout,
     )
     if getattr(result, "returncode", 1) != 0:
         return ""

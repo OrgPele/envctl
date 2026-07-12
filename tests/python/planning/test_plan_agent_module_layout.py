@@ -67,13 +67,13 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             "tmux_worktree_launch_support.py",
             "tmux_launch_support.py",
             "tmux_transport.py",
-            "workflow.py",
             "workflow_build.py",
             "workflow_e2e_prompt_context.py",
             "workflow_prompt_support.py",
             "workflow_runtime_addresses.py",
             "workflow_queue_support.py",
             "workflow_review_support.py",
+            "workflow_runtime_support.py",
         }
         actual = {path.name for path in PLAN_AGENT_ROOT.glob("*.py")}
         self.assertTrue(expected.issubset(actual))
@@ -198,9 +198,11 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
     def test_core_helpers_live_in_owner_modules(self) -> None:
         expected = {
             "config.py": {
-                "_parse_codex_cycles",
                 "resolve_plan_agent_launch_config",
                 "plan_agent_launch_prereq_commands",
+            },
+            "launch_policy.py": {
+                "parse_codex_cycles",
             },
             "launch_evaluation.py": {
                 "PlanAgentLaunchEvaluation",
@@ -233,9 +235,10 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
                 "_state_project_matches_worktree",
                 "_state_service_matches_worktree",
             },
-            "workflow.py": {
+            "workflow_runtime_support.py": {
                 "_codex_goal_text_for_worktree",
                 "_emit_codex_goal_event",
+                "_surface_respawn_command",
                 "_wrap_omx_initial_prompt_for_workflow",
             },
             "workflow_queue_support.py": {
@@ -464,7 +467,7 @@ class PlanAgentModuleLayoutTests(unittest.TestCase):
             self.assertNotIn("Constants stay in launch", text)
 
     def test_plan_agent_facades_use_explicit_compatibility_imports(self) -> None:
-        for filename in ("config.py", "launch.py", "workflow.py", "recovery.py"):
+        for filename in ("config.py", "launch.py", "recovery.py"):
             path = PLAN_AGENT_ROOT / filename
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             wildcard_imports = [

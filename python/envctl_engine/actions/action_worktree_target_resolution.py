@@ -33,9 +33,16 @@ class CurrentWorktreeTargetResolver:
             return None
 
         matches = self._matching_candidates(cwd, repo_root=repo_root, trees_dir_name=trees_dir_name)
-        if len(matches) != 1:
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
             return None
-        return matches[0]
+        return self._linked_worktree_candidate(
+            cwd,
+            repo_root=repo_root,
+            configured_root_path=configured_root_path,
+            raw_runtime=raw_runtime,
+        )
 
     def _current_working_directory(self) -> Path:
         invocation_cwd = str(getattr(self.runtime, "env", {}).get("ENVCTL_INVOCATION_CWD") or "").strip()
@@ -57,6 +64,9 @@ class CurrentWorktreeTargetResolver:
             repo_root = repo_root_from_worktree_layout(cwd, trees_dir_name)
             if repo_root is None:
                 repo_root = self.main_repo_root_for_linked_worktree(cwd)
+            if repo_root is None:
+                resolver = self.git_main_repo_root_for_worktree or main_repo_root_for_worktree
+                repo_root = resolver(worktree_root=cwd, runtime=self.runtime, trees_dir_name=trees_dir_name)
             if repo_root is None or repo_root.resolve() != configured_root_path:
                 return None
             return repo_root
@@ -83,6 +93,40 @@ class CurrentWorktreeTargetResolver:
             for candidate in candidates
             if _path_is_at_or_under(cwd, Path(str(getattr(candidate, "root"))).resolve())
         ]
+
+    @staticmethod
+    def _linked_worktree_candidate(
+        cwd: Path,
+        *,
+        repo_root: Path,
+        configured_root_path: Path | None,
+        raw_runtime: Any,
+    ) -> object | None:
+        """Represent a linked checkout even when it is outside the configured trees directory.
+
+        Source-checkout workflows commonly create sibling worktrees. Git proves
+        that such a checkout belongs to the configured repository, while the
+        top-level and configured-root comparisons prevent a tree-mode action
+        from silently targeting the main checkout.
+        """
+
+        top_level_raw = _git_output(raw_runtime, cwd, ["rev-parse", "--show-toplevel"])
+        if not top_level_raw:
+            return None
+        try:
+            top_level = Path(top_level_raw).expanduser().resolve()
+        except OSError:
+            return None
+        if not _path_is_at_or_under(cwd, top_level):
+            return None
+        normalized_repo_root = repo_root.resolve()
+        if top_level == normalized_repo_root:
+            return None
+        if configured_root_path is not None and top_level == configured_root_path:
+            return None
+
+        branch = _git_output(raw_runtime, top_level, ["branch", "--show-current"])
+        return SimpleNamespace(name=branch or top_level.name, root=top_level)
 
 
 def resolve_current_worktree_target(
@@ -140,9 +184,7 @@ def main_repo_root_for_worktree(*, worktree_root: Path, runtime: Any, trees_dir_
         return top_level
     common_dir_path = Path(common_dir_raw)
     common_dir = (
-        (worktree_root / common_dir_path).resolve()
-        if not common_dir_path.is_absolute()
-        else common_dir_path.resolve()
+        (worktree_root / common_dir_path).resolve() if not common_dir_path.is_absolute() else common_dir_path.resolve()
     )
     if common_dir.name == ".git":
         return common_dir.parent
@@ -179,3 +221,18 @@ def repo_root_from_worktree_layout(worktree_root: Path, trees_dir_name: str) -> 
 
 def _path_is_at_or_under(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
+
+
+def _git_output(runtime: object, cwd: Path, args: list[str]) -> str:
+    try:
+        process_runtime = resolve_process_runtime(runtime)
+        completed = process_runtime.run(
+            ["git", *args],
+            cwd=cwd,
+            timeout=10.0,
+        )
+    except Exception:  # noqa: BLE001 - target inference must fail closed
+        return ""
+    if getattr(completed, "returncode", 1) != 0:
+        return ""
+    return str(getattr(completed, "stdout", "") or "").strip()

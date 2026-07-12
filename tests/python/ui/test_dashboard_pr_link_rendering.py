@@ -59,6 +59,19 @@ class DashboardPrLinkRenderingTests(unittest.TestCase):
                     )
                 },
             )
+            opaque_service_state = RunState(
+                run_id="run-opaque",
+                mode="main",
+                services={
+                    "Opaque API Process": ServiceRecord(
+                        name="Opaque API Process",
+                        type="backend",
+                        cwd=str(backend),
+                        project="Main",
+                        service_slug="backend",
+                    )
+                },
+            )
 
             self.assertEqual(
                 pr_link_rendering.dashboard_project_root(SimpleNamespace(), state=metadata_state, project="Main"),
@@ -66,6 +79,14 @@ class DashboardPrLinkRenderingTests(unittest.TestCase):
             )
             self.assertEqual(
                 pr_link_rendering.dashboard_project_root(SimpleNamespace(), state=service_state, project="Main"),
+                repo,
+            )
+            self.assertEqual(
+                pr_link_rendering.dashboard_project_root(
+                    SimpleNamespace(),
+                    state=opaque_service_state,
+                    project="Main",
+                ),
                 repo,
             )
 

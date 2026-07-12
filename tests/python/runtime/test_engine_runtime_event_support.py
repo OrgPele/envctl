@@ -53,6 +53,32 @@ class EngineRuntimeEventSupportTests(unittest.TestCase):
         self.assertEqual(received[0][0], "ui.input.submit")
         self.assertIn("command_hash", received[0][1])
 
+    def test_emit_disables_failed_debug_recorder_without_interrupting_lifecycle(self) -> None:
+        received: list[str] = []
+
+        class FailedRecorder:
+            def record(self, *_args: object, **_kwargs: object) -> None:
+                raise OSError("debug disk unavailable")
+
+        runtime = SimpleNamespace(
+            _active_command_id="cmd-1",
+            _debug_hash_salt="salt",
+            _emit_lock=threading.Lock(),
+            events=[],
+            _debug_recorder=FailedRecorder(),
+            _debug_recorder_failure=None,
+            _emit_listeners=[lambda event, _payload: received.append(event)],
+            env={},
+            config=SimpleNamespace(raw={}),
+        )
+
+        emit(runtime, "service.start", project="Main")
+
+        self.assertEqual(runtime.events[0]["event"], "service.start")
+        self.assertEqual(received, ["service.start"])
+        self.assertIsNone(runtime._debug_recorder)
+        self.assertEqual(runtime._debug_recorder_failure, "debug disk unavailable")
+
     def test_debug_should_auto_pack_policies(self) -> None:
         runtime = SimpleNamespace(env={"ENVCTL_DEBUG_AUTO_PACK": "anomaly"}, config=SimpleNamespace(raw={}))
 

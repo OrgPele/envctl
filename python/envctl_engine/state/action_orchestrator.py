@@ -20,7 +20,7 @@ from envctl_engine.ui.selection_support import (
     services_from_selection,
 )
 from envctl_engine.ui.selection_types import TargetSelection
-from envctl_engine.shared.services import service_matches_selector
+from envctl_engine.shared.services import resolve_service_project_name, service_matches_selector
 
 
 class StateActionRuntimeFacade:
@@ -216,24 +216,35 @@ class StateActionOrchestrator(StateActionLogSupport, StateActionHealthSupport):
         services_flag = route.flags.get("services")
         project_filters = {name.lower() for name in route.projects}
         project_filters.update(self.runtime.selectors_from_passthrough(route.passthrough_args))
-        selected: set[str] = set()
+        service_selected: set[str] | None = None
+        project_selected: set[str] | None = None
 
         if isinstance(services_flag, list):
+            service_selected = set()
             for raw in services_flag:
                 target = str(raw).strip()
                 if not target:
                     continue
                 for name, service in state.services.items():
                     if service_matches_selector(service, target):
-                        selected.add(name)
+                        service_selected.add(name)
         if project_filters:
-            for name in state.services:
-                project = self.runtime.project_name_from_service(name).lower()
+            project_selected = set()
+            for name, service in state.services.items():
+                project = resolve_service_project_name(
+                    name,
+                    service,
+                    project_name_from_service=self.runtime.project_name_from_service,
+                ).lower()
                 if project and project in project_filters:
-                    selected.add(name)
+                    project_selected.add(name)
 
-        if selected:
-            return selected
+        if service_selected is not None and project_selected is not None:
+            return service_selected.intersection(project_selected)
+        if service_selected is not None:
+            return service_selected
+        if project_selected is not None:
+            return project_selected
         if project_filters or (isinstance(services_flag, list) and services_flag):
             return set()
         return None
@@ -248,8 +259,20 @@ class StateActionOrchestrator(StateActionLogSupport, StateActionHealthSupport):
         if not selected_services:
             return RunState(run_id=state.run_id, mode=state.mode)
         services = {name: svc for name, svc in state.services.items() if name in selected_services}
-        project_names = {self.runtime.project_name_from_service(name) for name in services}
-        requirements = {project: req for project, req in state.requirements.items() if project in project_names}
+        project_names = {
+            resolve_service_project_name(
+                name,
+                service,
+                project_name_from_service=self.runtime.project_name_from_service,
+            )
+            for name, service in services.items()
+        }
+        project_keys = {str(project).strip().casefold() for project in project_names if str(project).strip()}
+        requirements = {
+            storage_key: req
+            for storage_key, req in state.requirements.items()
+            if str(getattr(req, "project", "") or storage_key).strip().casefold() in project_keys
+        }
         return RunState(
             run_id=state.run_id,
             mode=state.mode,

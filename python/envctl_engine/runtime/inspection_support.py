@@ -10,6 +10,12 @@ from envctl_engine.config import discover_local_config_state
 from envctl_engine.config.persistence import managed_values_from_local_state, managed_values_to_payload
 from envctl_engine.planning import PlanProjectPrediction
 from envctl_engine.runtime.command_router import Route, list_supported_commands
+from envctl_engine.shared.services import resolve_service_project_name
+from envctl_engine.runtime.state_inspection_support import (
+    emit_cwd_runtime_mismatch_warnings as _emit_cwd_runtime_mismatch_warnings_impl,
+    print_state as _print_state_impl,
+    try_load_existing_state as _try_load_existing_state_impl,
+)
 from envctl_engine.startup.startup_selection_support import (
     _state_project_names as _state_project_names_impl,
     _tree_preselected_projects_from_state as _tree_preselected_projects_from_state_impl,
@@ -20,15 +26,7 @@ from envctl_engine.runtime.session_management import (
     print_attach_command,
     kill_session,
 )
-from envctl_engine.state import state_to_dict
 from envctl_engine.state.models import RunState
-from envctl_engine.state.project_runtime import (
-    cwd_runtime_warnings,
-    dependency_mode_summary,
-    project_resolution_event_payload,
-    resolve_requested_project_state,
-)
-from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.runtime.endpoints_command_support import run_endpoints_command
 from envctl_engine.runtime.startup_inspection_support import (
     additional_service_contexts as _additional_service_contexts_impl,
@@ -87,14 +85,35 @@ def _print_targets(runtime: Any, route: Route, *, trees_only: bool) -> int:
     preselected: set[str] = set()
     state_present: set[str] = set()
     services_running: set[str] = set()
+    state_error: dict[str, str] | None = None
     if mode == "trees":
-        startup = getattr(runtime, "startup_orchestrator", None)
-        if startup is not None:
-            preselected = set(_tree_preselected_projects_from_state_impl(runtime=runtime, project_contexts=projects))
-        state = _try_load_existing_state(runtime, mode="trees", strict_mode_match=True)
-        if state is not None:
-            state_present = set(_state_project_names_impl(runtime=runtime, state=state))
-            services_running = _running_tree_project_names(runtime=runtime, state=state)
+        states, load_error = _load_all_existing_states(runtime, mode="trees")
+        if load_error is not None:
+            state_error = {
+                "code": "runtime_state_integrity_error",
+                "message": load_error,
+            }
+        else:
+            startup = getattr(runtime, "startup_orchestrator", None)
+            if startup is not None:
+                try:
+                    preselected = set(
+                        _tree_preselected_projects_from_state_impl(runtime=runtime, project_contexts=projects)
+                    )
+                except RuntimeError as exc:
+                    # The selection helper performs its own strict state load. If
+                    # the repository changes between the two reads, keep this
+                    # inspection command useful without presenting partial state
+                    # as trustworthy.
+                    states = []
+                    preselected.clear()
+                    state_error = {
+                        "code": "runtime_state_integrity_error",
+                        "message": str(exc),
+                    }
+            for state in states:
+                state_present.update(_state_project_names_impl(runtime=runtime, state=state))
+                services_running.update(_running_tree_project_names(runtime=runtime, state=state))
 
     payload = {
         "mode": mode,
@@ -112,6 +131,8 @@ def _print_targets(runtime: Any, route: Route, *, trees_only: bool) -> int:
                 "running": project.name in services_running,
             },
         ),
+        "state_error": state_error,
+        "warnings": [state_error] if state_error is not None else [],
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
@@ -134,7 +155,11 @@ def _running_tree_project_names(*, runtime: Any, state: RunState) -> set[str]:
     if not isinstance(services, dict):
         return running
     for service_name, record in services.items():
-        project_name = runtime._project_name_from_service(str(service_name))
+        project_name = resolve_service_project_name(
+            str(service_name),
+            record,
+            project_name_from_service=runtime._project_name_from_service,
+        )
         normalized = str(project_name).strip()
         if not normalized:
             continue
@@ -317,87 +342,42 @@ def _apply_runtime_effective_config_values(values: Any, config: Any) -> None:
 
 
 def _print_state(runtime: Any, route: Route, *, json_output: bool) -> int:
-    strict = runtime._state_lookup_strict_mode_match(route)
-    state = _try_load_existing_state(runtime, mode=route.mode, strict_mode_match=strict)
-    if state is None:
-        if json_output:
-            print(json.dumps({"found": False, "mode": getattr(route, "mode", None)}, indent=2, sort_keys=True))
-        else:
-            print("No previous state found.")
-        return 1
-    requested_projects = list(getattr(route, "projects", []) or [])
-    if requested_projects:
-        resolution = resolve_requested_project_state(
-            state,
-            requested_projects,
-            command="show-state",
-            runtime=runtime,
-            allow_multi=False,
-        )
-        if not resolution.ok:
-            emitter = getattr(runtime, "_emit", None)
-            if callable(emitter):
-                emitter(
-                    "state.project_resolution.failed",
-                    **project_resolution_event_payload(resolution, state, runtime=runtime),
-                )
-            if json_output:
-                print(json.dumps(resolution.payload(), indent=2, sort_keys=True))
-            else:
-                print(f"Requested project is not running: {resolution.requested_project}")
-                print("Active runtime projects: " + (", ".join(resolution.active_projects) or "none"))
-            return 1
-        emitter = getattr(runtime, "_emit", None)
-        if callable(emitter):
-            emitter(
-                "state.project_resolution.ok",
-                **project_resolution_event_payload(resolution, state, runtime=runtime),
-            )
-        if resolution.state is not None and not bool(getattr(route, "flags", {}).get("all")):
-            state = resolution.state
-
-    dependency_summary = dependency_mode_summary(state)
-    cwd_project, warnings = cwd_runtime_warnings(
-        state,
-        runtime=runtime,
-        requested_projects=list(getattr(route, "projects", []) or []),
+    return _print_state_impl(
+        runtime,
+        route,
+        json_output=json_output,
+        state_loader=_try_load_existing_state,
+        warning_emitter=_emit_cwd_runtime_mismatch_warnings,
     )
-    _emit_cwd_runtime_mismatch_warnings(runtime, command="show-state", state=state, warnings=warnings)
-    payload: dict[str, Any] = {
-        "found": True,
-        "runtime_root": str(runtime.runtime_root),
-        "run_state_path": str(runtime._run_state_path()),
-        "state": state_to_dict(state),
-        "runtime_map": build_runtime_map(state),
-        "dependency_mode": dependency_summary["dependency_mode"],
-        "shared_dependencies": dependency_summary["shared_dependencies"],
-        "cwd_project": cwd_project,
-        "warnings": warnings,
-    }
-    if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-        return 0
-
-    state_payload = payload["state"]
-    print(f"run_id: {state_payload['run_id']}")
-    print(f"mode: {state_payload['mode']}")
-    print(f"services: {len(state_payload['services'])}")
-    print(f"requirements: {len(state_payload['requirements'])}")
-    for warning in warnings:
-        print(f"Warning: {warning['message']}")
-    print("run_state_path:")
-    print(render_path_for_terminal(payload["run_state_path"], env=getattr(runtime, "env", {})))
-    return 0
 
 
+def _try_load_existing_state(
+    runtime: Any,
+    *,
+    mode: str | None,
+    strict_mode_match: bool,
+    project_names: list[str] | None = None,
+) -> RunState | None:
+    return _try_load_existing_state_impl(
+        runtime,
+        mode=mode,
+        strict_mode_match=strict_mode_match,
+        project_names=project_names,
+    )
 
 
-def _try_load_existing_state(runtime: Any, *, mode: str | None, strict_mode_match: bool) -> RunState | None:
-    loader = getattr(runtime, "_try_load_existing_state", None)
-    if not callable(loader):
-        return None
-    state = loader(mode=mode, strict_mode_match=strict_mode_match)
-    return state if isinstance(state, RunState) else None
+def _load_all_existing_states(runtime: Any, *, mode: str) -> tuple[list[RunState], str | None]:
+    repository = getattr(runtime, "state_repository", None)
+    load_all = getattr(repository, "load_all", None)
+    try:
+        if callable(load_all):
+            states = [state for state in load_all(mode=mode) if isinstance(state, RunState)]
+            if states:
+                return states, None
+        state = _try_load_existing_state(runtime, mode=mode, strict_mode_match=True)
+    except RuntimeError as exc:
+        return [], str(exc)
+    return ([state] if state is not None else []), None
 
 
 def _emit_cwd_runtime_mismatch_warnings(
@@ -407,20 +387,12 @@ def _emit_cwd_runtime_mismatch_warnings(
     state: RunState,
     warnings: list[dict[str, object]],
 ) -> None:
-    emitter = getattr(runtime, "_emit", None)
-    if not callable(emitter):
-        return
-    for warning in warnings:
-        if str(warning.get("code") or "") != "cwd_runtime_mismatch":
-            continue
-        emitter(
-            "state.cwd_runtime_mismatch",
-            run_id=getattr(state, "run_id", ""),
-            mode=getattr(state, "mode", ""),
-            command=command,
-            cwd_project=warning.get("cwd_project"),
-            active_projects=warning.get("active_projects"),
-        )
+    _emit_cwd_runtime_mismatch_warnings_impl(
+        runtime,
+        command=command,
+        state=state,
+        warnings=warnings,
+    )
 
 
 def _additional_service_enabled_for_context(runtime: Any, mode: str, service: object, context: object) -> bool:

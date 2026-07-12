@@ -24,6 +24,7 @@ class ServiceRecord:
     pid: int | None = None
     requested_port: int | None = None
     actual_port: int | None = None
+    port_lock_session: str | None = None
     log_path: str | None = None
     status: str = "unknown"
     synthetic: bool = False
@@ -37,6 +38,12 @@ class ServiceRecord:
     failure_detail: str | None = None
     critical: bool = True
     degraded: bool = False
+    runtime_kind: str = "process"
+    container_id: str | None = None
+    container_name: str | None = None
+    container_image: str | None = None
+    container_launch_token: str | None = None
+    container_cleanup_pending_since: float | None = None
 
 
 @dataclass(slots=True)

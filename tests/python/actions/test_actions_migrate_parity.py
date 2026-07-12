@@ -546,7 +546,7 @@ class ActionsMigrateParityTests(_ActionsParityTestCase):
             fake_runner = _FakeRunner(returncode=0)
             engine.process_runner = fake_runner  # type: ignore[assignment]
 
-            route = parse_route(["migrate", "--all"], env={"ENVCTL_DEFAULT_MODE": "trees"})
+            route = parse_route(["migrate", "--all", "--yes"], env={"ENVCTL_DEFAULT_MODE": "trees"})
             code = engine.dispatch(route)
 
             self.assertEqual(code, 0)
@@ -567,4 +567,3 @@ class ActionsMigrateParityTests(_ActionsParityTestCase):
             )
             self.assertEqual(first_env.get("SQLALCHEMY_DATABASE_URL"), first_env.get("DATABASE_URL"))
             self.assertEqual(second_env.get("SQLALCHEMY_DATABASE_URL"), second_env.get("DATABASE_URL"))
-

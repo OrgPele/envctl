@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, cast
+from contextlib import contextmanager
 import json
+import signal
+import threading
 
 from envctl_engine.runtime.browser_diagnostics import build_runtime_diagnostics
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.docker_service_runtime import (
+    refresh_container_log_snapshots,
+    stop_container_log_followers,
+)
 from envctl_engine.shared.parsing import parse_float_or_none, parse_int
 from envctl_engine.state.action_log_support import DEFAULT_LOG_ISSUE_LIMIT
 from envctl_engine.state.models import RunState
@@ -23,6 +30,26 @@ class StateActionReconciliation:
     requirement_issues: list[dict[str, object]] = field(default_factory=list)
     recent_failures: list[str] = field(default_factory=list)
     reconciled: bool = False
+
+
+@contextmanager
+def _interrupt_log_follow_on_termination(enabled: bool):
+    if not enabled or threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous: dict[signal.Signals, Any] = {}
+
+    def interrupt(_signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    for signal_name in (signal.SIGHUP, signal.SIGTERM):
+        previous[signal_name] = signal.getsignal(signal_name)
+        signal.signal(signal_name, interrupt)
+    try:
+        yield
+    finally:
+        for signal_name, handler in previous.items():
+            signal.signal(signal_name, handler)
 
 
 class StateActionCommandRunner:
@@ -200,6 +227,12 @@ class StateActionCommandRunner:
         if duration_seconds is not None and duration_seconds < 0:
             duration_seconds = 0.0
         no_color = bool(route.flags.get("logs_no_color")) or self.orchestrator._human_output_no_color(route)
+        follower_pids = refresh_container_log_snapshots(
+            self.runtime.raw_runtime,
+            self.state,
+            tail=max(tail, 0),
+            follow=follow and not bool(route.flags.get("json")),
+        )
         if bool(route.flags.get("json")):
             print(
                 json.dumps(
@@ -215,13 +248,17 @@ class StateActionCommandRunner:
                 )
             )
             return self._finish_action(0)
-        self.runtime.print_logs(
-            self.state,
-            tail=max(tail, 0),
-            follow=follow,
-            duration_seconds=duration_seconds,
-            no_color=no_color,
-        )
+        try:
+            with _interrupt_log_follow_on_termination(bool(follower_pids)):
+                self.runtime.print_logs(
+                    self.state,
+                    tail=max(tail, 0),
+                    follow=follow,
+                    duration_seconds=duration_seconds,
+                    no_color=no_color,
+                )
+        finally:
+            stop_container_log_followers(self.runtime.raw_runtime, follower_pids)
         return self._finish_action(0)
 
     def _run_clear_logs(self, route: Route) -> int:
@@ -449,6 +486,12 @@ class StateActionCommandRunner:
         log_issue_limit = max(
             parse_int(str(route.flags.get("logs_tail", DEFAULT_LOG_ISSUE_LIMIT)), DEFAULT_LOG_ISSUE_LIMIT),
             0,
+        )
+        refresh_container_log_snapshots(
+            self.runtime.raw_runtime,
+            self.state,
+            tail=log_issue_limit,
+            follow=False,
         )
         log_issues = self.orchestrator._service_log_issues(self.state, max_matches=log_issue_limit)
         has_errors = bool(failed or reconciliation.requirement_issues or reconciliation.recent_failures or log_issues)

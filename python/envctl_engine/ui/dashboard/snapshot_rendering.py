@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from envctl_engine.shared.services import service_for_project_type
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.dashboard.snapshot_support import build_dashboard_snapshot_model
 
@@ -137,8 +138,8 @@ class DashboardSnapshotPrinter:
     ) -> None:
         backend_url = project_item.get("backend_url")
         frontend_url = project_item.get("frontend_url")
-        backend_service = state.services.get(f"{project} Backend")
-        frontend_service = state.services.get(f"{project} Frontend")
+        backend_service = service_for_project_type(state, project=project, service_type="backend")
+        frontend_service = service_for_project_type(state, project=project, service_type="frontend")
         stopped_for_project = snapshot.stopped_services.get(project, {})
         configured_missing_for_project = snapshot.configured_missing_services.get(project, set())
         backend_stopped = backend_service is None and (

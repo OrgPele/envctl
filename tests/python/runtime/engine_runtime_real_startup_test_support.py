@@ -102,6 +102,7 @@ class _FakeProcessRunner:
         self._next_pid = 4000
         self.auto_track_listener_ports = False
         self._pid_listener_ports: dict[int, int] = {}
+        self._terminated_pids: set[int] = set()
         self.wait_for_port_result = False
         self.wait_for_port_calls: list[tuple[int, float]] = []
         self.wait_for_pid_port_result = False
@@ -199,6 +200,7 @@ class _FakeProcessRunner:
         _ = stderr_path
         self._next_pid += 1
         pid = self._next_pid
+        self._terminated_pids.discard(pid)
 
         if parsed_port is not None and parsed_port in self.fail_start_ports:
             if stdout_path:
@@ -269,6 +271,8 @@ class _FakeProcessRunner:
         return self.find_pid_listener_port_result
 
     def is_pid_running(self, _pid: int) -> bool:
+        if _pid in self._terminated_pids:
+            return False
         if self.auto_track_listener_ports and _pid in self._pid_listener_ports:
             return True
         return self.pid_running_result
@@ -281,6 +285,7 @@ class _FakeProcessRunner:
 
     def terminate(self, _pid: int, *, term_timeout: float = 2.0, kill_timeout: float = 1.0) -> bool:
         _ = term_timeout, kill_timeout
+        self._terminated_pids.add(_pid)
         if self.auto_track_listener_ports:
             self._pid_listener_ports.pop(_pid, None)
         return True

@@ -168,7 +168,7 @@ class PlanAgentLaunchCmuxReviewTests(PlanAgentLaunchSupportTestCase):
                 json.dumps({"schema_version": 1, "plan_file": "implementations/feature-a.md"}) + "\n",
                 encoding="utf-8",
             )
-            original_plan_path = workflow._review_original_plan_path(
+            original_plan_path = workflow_review_support._review_original_plan_path(
                 "feature-a-1",
                 project_root,
                 repo_root=repo,
@@ -182,7 +182,7 @@ class PlanAgentLaunchCmuxReviewTests(PlanAgentLaunchSupportTestCase):
             project_root = repo / "trees" / "feature-a" / "1"
             project_root.mkdir(parents=True, exist_ok=True)
 
-            original_plan_path = workflow._review_original_plan_path(
+            original_plan_path = workflow_review_support._review_original_plan_path(
                 "feature-a-1",
                 project_root,
                 repo_root=repo,
@@ -204,7 +204,7 @@ class PlanAgentLaunchCmuxReviewTests(PlanAgentLaunchSupportTestCase):
                 encoding="utf-8",
             )
 
-            original_plan_path = workflow._review_original_plan_path(
+            original_plan_path = workflow_review_support._review_original_plan_path(
                 "implementations_task-1",
                 project_root,
                 repo_root=repo,
@@ -221,7 +221,7 @@ class PlanAgentLaunchCmuxReviewTests(PlanAgentLaunchSupportTestCase):
             original_plan.parent.mkdir(parents=True, exist_ok=True)
             original_plan.write_text("# done plan\n", encoding="utf-8")
 
-            original_plan_path = workflow._review_original_plan_path(
+            original_plan_path = workflow_review_support._review_original_plan_path(
                 "implementations_task-1",
                 project_root,
                 repo_root=repo,
@@ -241,7 +241,7 @@ class PlanAgentLaunchCmuxReviewTests(PlanAgentLaunchSupportTestCase):
             active_plan.write_text("# active plan\n", encoding="utf-8")
             archived_plan.write_text("# archived plan\n", encoding="utf-8")
 
-            original_plan_path = workflow._review_original_plan_path(
+            original_plan_path = workflow_review_support._review_original_plan_path(
                 "features_task",
                 project_root,
                 repo_root=repo,

@@ -5,13 +5,19 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.config import _default_port_value
 from envctl_engine.shared.node_tooling import detect_package_manager, detect_python_bin, load_package_json
-from envctl_engine.shared.services import project_name_from_service_name, service_display_name
+from envctl_engine.shared.services import (
+    project_name_from_service_name,
+    resolve_service_project_name,
+    service_display_name,
+    service_project_name,
+)
 from envctl_engine.shared.parsing import parse_bool, parse_float, parse_int, strip_quotes
 from envctl_engine.test_output.parser_base import strip_ansi
 from envctl_engine.ui.capabilities import (
@@ -86,6 +92,46 @@ class UtilityConsolidationContractTests(unittest.TestCase):
         self.assertEqual(strip_ansi("\x1b[31mhello\x1b[0m"), "hello")
         self.assertEqual(strip_ansi("\x1b]22;default\x07hello\x1b[15;72H"), "hello")
         self.assertEqual(strip_ansi("\\x1b[48;2;39;39;39m hello \\x1b[0m"), " hello ")
+
+    def test_service_project_resolution_prefers_record_metadata_then_legacy_parser(self) -> None:
+        legacy_calls: list[str] = []
+        service = SimpleNamespace(name="Opaque Runtime Process", project="Customer Platform")
+
+        self.assertEqual(
+            resolve_service_project_name(
+                service.name,
+                service,
+                project_name_from_service=lambda name: legacy_calls.append(name) or "Wrong Project",
+            ),
+            "Customer Platform",
+        )
+        self.assertEqual(legacy_calls, [])
+
+        legacy_additional = SimpleNamespace(
+            name="Customer Platform Voice Runtime",
+            project=None,
+            type="voice-runtime",
+            service_slug="voice-runtime",
+        )
+        self.assertEqual(service_project_name(legacy_additional), "Customer Platform")
+        self.assertEqual(
+            resolve_service_project_name(
+                legacy_additional.name,
+                legacy_additional,
+                project_name_from_service=lambda _name: "Customer Platform Voice",
+            ),
+            "Customer Platform",
+        )
+
+        legacy = SimpleNamespace(name="Legacy Voice Runtime", project=None)
+        self.assertEqual(
+            resolve_service_project_name(
+                legacy.name,
+                legacy,
+                project_name_from_service=lambda _name: "Legacy",
+            ),
+            "Legacy",
+        )
 
     def test_service_display_name_has_one_shared_owner(self) -> None:
         for relative_path in (

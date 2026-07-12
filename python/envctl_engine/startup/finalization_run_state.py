@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import shlex
+from pathlib import Path
 from typing import cast
 
 from envctl_engine.dashboard_metadata import (
     APP_SERVICE_TYPES,
     DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY,
+    dashboard_project_configured_services_from_metadata,
     serialize_dashboard_project_configured_services,
 )
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
+from envctl_engine.shared.services import service_slug_from_record
 from envctl_engine.startup.protocols import ProjectContextLike, StartupRuntime
+from envctl_engine.startup.run_reuse_dashboard_restore import metadata_without_dashboard_stopped_services
 from envctl_engine.startup.run_reuse_support import build_startup_identity_metadata
+from envctl_engine.startup.service_execution_policy import additional_service_enabled_for_context
 from envctl_engine.startup.session import StartupSession
 from envctl_engine.state.models import RunState
 
@@ -54,6 +59,9 @@ def build_planning_dashboard_state(
             ),
         }
     )
+    metadata["application_runtime"] = (
+        "docker" if bool(route.flags.get("docker")) else "process"
+    )
     run_state = RunState(
         run_id=run_id,
         mode=runtime_mode,
@@ -80,6 +88,9 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
         {
             "command": session.effective_route.command,
             "repo_scope_id": runtime.config.runtime_scope_id,
+            "application_runtime": (
+                "docker" if bool(session.effective_route.flags.get("docker")) else "process"
+            ),
         }
     )
     dependency_mode = effective_dependency_scope(session.effective_route, session.runtime_mode)
@@ -93,14 +104,33 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
     if requested_dependency_scope is not None:
         metadata["dependency_scope_requested"] = str(requested_dependency_scope)
     project_configured_services = _project_configured_services_metadata(runtime, session)
-    if project_configured_services:
-        metadata[DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY] = project_configured_services
+    existing_configured_services = dashboard_project_configured_services_from_metadata(metadata)
+    selected_project_keys = {
+        str(context.name).strip().casefold()
+        for context in session.selected_contexts
+        if str(getattr(context, "name", "")).strip()
+    }
+    merged_configured_services = {
+        project: service_types
+        for project, service_types in existing_configured_services.items()
+        if project.casefold() not in selected_project_keys
+    }
+    merged_configured_services.update(project_configured_services)
+    serialized_configured_services = serialize_dashboard_project_configured_services(
+        merged_configured_services
+    )
+    if serialized_configured_services:
+        metadata[DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY] = serialized_configured_services
+    else:
+        metadata.pop(DASHBOARD_PROJECT_CONFIGURED_SERVICES_KEY, None)
     shared_dependency_project = _shared_dependency_dashboard_project(session)
     if shared_dependency_project:
         metadata["dashboard_dependency_scope"] = "shared"
         metadata["dashboard_shared_dependency_project"] = shared_dependency_project
     if session.warnings:
         metadata["warnings"] = list(session.warnings)
+    if session.unterminated_services:
+        metadata["termination_failed_services"] = sorted(session.unterminated_services)
     if session.plan_agent_launch_result is not None:
         launch_result = session.plan_agent_launch_result
         metadata["plan_agent_launch_status"] = str(getattr(launch_result, "status", "")).strip()
@@ -183,6 +213,18 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
             metadata["plan_agent_session_name"] = session_name
         if attach_command:
             metadata["plan_agent_attach_command"] = attach_command
+    if not failed:
+        restored_types: dict[str, set[str]] = {}
+        for project_name, services in session.services_by_project.items():
+            for service in services.values():
+                project = str(getattr(service, "project", "") or project_name).strip()
+                service_type = service_slug_from_record(service)
+                if project and service_type:
+                    restored_types.setdefault(project, set()).add(service_type)
+        metadata = metadata_without_dashboard_stopped_services(
+            metadata,
+            restored_service_types_by_project=restored_types,
+        )
     run_state = RunState(
         run_id=session.run_id,
         mode=session.runtime_mode,
@@ -197,9 +239,7 @@ def _build_run_state(runtime: StartupRuntime, session: StartupSession, *, failed
     return run_state
 
 
-def _project_configured_services_metadata(
-    runtime: StartupRuntime, session: StartupSession
-) -> dict[str, list[str]]:
+def _project_configured_services_metadata(runtime: StartupRuntime, session: StartupSession) -> dict[str, list[str]]:
     configured: dict[str, list[str]] = {}
     for context in session.selected_contexts:
         service_types = [
@@ -207,6 +247,16 @@ def _project_configured_services_metadata(
             for service_type in APP_SERVICE_TYPES
             if runtime._service_enabled_for_mode(session.runtime_mode, service_type)
         ]
+        service_types.extend(
+            str(getattr(service, "name", "") or "").strip().lower()
+            for service in tuple(getattr(runtime.config, "additional_services", ()) or ())
+            if str(getattr(service, "name", "") or "").strip()
+            and additional_service_enabled_for_context(
+                service,
+                mode=session.runtime_mode,
+                project_root=Path(context.root),
+            )
+        )
         if service_types:
             configured[str(context.name)] = service_types
     return serialize_dashboard_project_configured_services(configured)

@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
+import math
 import os
 import shutil
 import socket
 import subprocess
+import threading
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 from typing import Callable
 
 from envctl_engine.state.models import PortPlan
+from envctl_engine.state.persistence import advisory_file_lock, fsync_directory
 
 
 _CORE_SERVICE_NAMES: Final[frozenset[str]] = frozenset(
@@ -25,6 +31,12 @@ _CORE_SERVICE_NAMES: Final[frozenset[str]] = frozenset(
         "supabase_api",
     }
 )
+
+_PORT_GUARD_SHARDS: Final[int] = 64
+# ``flock`` behavior for separate descriptors in one process differs across
+# platforms. A bounded in-process stripe set makes the contract explicit while
+# the on-disk guard shards serialize independent processes.
+_PORT_THREAD_GUARDS: Final[tuple[threading.RLock, ...]] = tuple(threading.RLock() for _ in range(_PORT_GUARD_SHARDS))
 
 
 class PortPlanner:
@@ -41,6 +53,7 @@ class PortPlanner:
         lock_dir: str | None = None,
         session_id: str | None = None,
         stale_lock_seconds: int = 3600,
+        corrupt_lock_grace_seconds: float = 1.0,
         availability_checker: Callable[[int], bool] | None = None,
         pid_checker: Callable[[int], bool] | None = None,
         time_provider: Callable[[], float] | None = None,
@@ -59,10 +72,11 @@ class PortPlanner:
         self.supabase_api_base = supabase_api_base
         self.additional_service_bases = self._normalized_additional_service_bases(additional_service_bases or {})
         self.lock_dir = Path(lock_dir or "/tmp/envctl-python-locks")
-        self.lock_dir.mkdir(parents=True, exist_ok=True)
+        self._ensure_real_directory(self.lock_dir)
         self.session_id = session_id or f"session-{uuid.uuid4().hex[:8]}"
         self.session_pid = os.getpid()
         self.stale_lock_seconds = max(stale_lock_seconds, 0)
+        self.corrupt_lock_grace_seconds = max(float(corrupt_lock_grace_seconds), 0.0)
         self.availability_checker = availability_checker
         self.pid_checker = pid_checker
         self.time_provider = time_provider or time.time
@@ -75,6 +89,8 @@ class PortPlanner:
         self.scope_key = str(scope_key or "global").strip() or "global"
         self.dynamic_main_dependency_ports = bool(dynamic_main_dependency_ports)
         self.max_port: Final[int] = 65000
+        self._guard_dir = self.lock_dir / ".port-guards"
+        self._thread_guard_namespace = str(self.lock_dir.resolve(strict=False))
 
     def plan_project(
         self,
@@ -196,56 +212,82 @@ class PortPlanner:
 
     def release(self, port: int, owner: str | None = None) -> None:
         lock_path = self._lock_path(port)
-        if not lock_path.exists():
-            return
-        if owner is None:
-            lock_path.unlink(missing_ok=True)
-            self._emit("port.lock.release", port=port, owner=None, session=self.session_id)
-            return
-        try:
-            payload = json.loads(lock_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        with self._port_guard(port):
+            payload = self._read_lock_payload(lock_path)
+            if payload is None or payload.get("session") != self.session_id:
+                return
+            if owner is not None and payload.get("owner") != owner:
+                return
             lock_path.unlink(missing_ok=True)
             self._emit("port.lock.release", port=port, owner=owner, session=self.session_id)
-            return
-        if payload.get("owner") == owner:
+
+    def release_owned(self, port: int, owner: str, *, expected_session: str) -> bool:
+        """Release an exact logical owner from one persisted planner session."""
+
+        normalized_session = expected_session.strip() if isinstance(expected_session, str) else ""
+        if not normalized_session:
+            return False
+
+        lock_path = self._lock_path(port)
+        with self._port_guard(port):
+            payload = self._read_lock_payload(lock_path)
+            if payload is None or payload.get("owner") != owner or payload.get("session") != normalized_session:
+                return False
             lock_path.unlink(missing_ok=True)
-            self._emit("port.lock.release", port=port, owner=owner, session=self.session_id)
+            self._emit("port.lock.release", port=port, owner=owner, session=normalized_session)
+            return True
+
+    def reap_stale(self, port: int, owner: str | None = None) -> bool:
+        """Remove one proven-stale reservation without touching a live foreign session."""
+
+        lock_path = self._lock_path(port)
+        with self._port_guard(port):
+            if not lock_path.exists() or not self._lock_is_stale(lock_path):
+                return False
+            payload = self._read_lock_payload(lock_path)
+            if owner is not None and payload is not None and payload.get("owner") != owner:
+                return False
+            lock_path.unlink(missing_ok=True)
+            self._emit_reclaim(port=port, owner=owner, payload=payload)
+            return True
+
+    def reap_stale_locks(self) -> int:
+        """Reap every proven-stale numeric reservation in this repository scope."""
+
+        reaped = 0
+        for lock_path in tuple(self.lock_dir.glob("*.lock")):
+            port = self._port_from_lock_path(lock_path)
+            if port is not None and self.reap_stale(port):
+                reaped += 1
+        return reaped
 
     def release_session(self) -> None:
         for lock_path in self.lock_dir.glob("*.lock"):
-            try:
-                payload = json.loads(lock_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                lock_path.unlink(missing_ok=True)
-                self._emit(
-                    "port.lock.release", port=self._port_from_lock_path(lock_path), owner=None, session=self.session_id
-                )
+            port = self._port_from_lock_path(lock_path)
+            if port is None:
                 continue
-            if payload.get("session") == self.session_id:
+            with self._port_guard(port):
+                payload = self._read_lock_payload(lock_path)
+                if payload is None or payload.get("session") != self.session_id:
+                    continue
                 lock_path.unlink(missing_ok=True)
-                self._emit(
-                    "port.lock.release",
-                    port=self._port_from_lock_path(lock_path),
-                    owner=payload.get("owner"),
-                    session=self.session_id,
-                )
+                self._emit("port.lock.release", port=port, owner=payload.get("owner"), session=self.session_id)
 
     def release_all(self) -> None:
         for lock_path in self.lock_dir.glob("*.lock"):
-            owner = None
-            try:
-                payload = json.loads(lock_path.read_text(encoding="utf-8"))
-                owner = payload.get("owner")
-            except (OSError, json.JSONDecodeError):
-                owner = None
-            lock_path.unlink(missing_ok=True)
-            self._emit(
-                "port.lock.release",
-                port=self._port_from_lock_path(lock_path),
-                owner=owner,
-                session=self.session_id,
-            )
+            port = self._port_from_lock_path(lock_path)
+            if port is None:
+                lock_path.unlink(missing_ok=True)
+                continue
+            with self._port_guard(port):
+                payload = self._read_lock_payload(lock_path)
+                lock_path.unlink(missing_ok=True)
+                self._emit(
+                    "port.lock.release",
+                    port=port,
+                    owner=payload.get("owner") if payload is not None else None,
+                    session=self.session_id,
+                )
 
     def _lock_path(self, port: int) -> Path:
         return self.lock_dir / f"{port}.lock"
@@ -370,87 +412,161 @@ class PortPlanner:
 
     def _reserve_port(self, port: int, owner: str) -> bool:
         lock_path = self._lock_path(port)
-        if lock_path.exists() and self._lock_is_stale(lock_path):
-            stale_owner = None
-            stale_session = None
-            stale_pid = None
-            try:
-                stale_payload = json.loads(lock_path.read_text(encoding="utf-8"))
-                if isinstance(stale_payload, dict):
-                    stale_owner = stale_payload.get("owner")
-                    stale_session = stale_payload.get("session")
-                    stale_pid = stale_payload.get("pid")
-            except (OSError, json.JSONDecodeError):
-                stale_owner = None
-                stale_session = None
-                stale_pid = None
-            lock_path.unlink(missing_ok=True)
-            self._emit(
-                "port.lock.reclaim",
-                port=port,
-                owner=owner,
-                session=self.session_id,
-                reclaimed_owner=stale_owner,
-                reclaimed_session=stale_session,
-                reclaimed_pid=stale_pid,
-            )
-        if lock_path.exists():
-            return False
+        with self._port_guard(port):
+            availability_confirmed = False
+            if lock_path.exists():
+                if not self._lock_is_stale(lock_path):
+                    return False
+                stale_payload = self._read_lock_payload(lock_path)
+                if stale_payload is None or stale_payload.get("owner") != owner:
+                    # A targeted startup may reclaim a dead allocator session
+                    # only for the same logical project/service. A dead or
+                    # corrupt foreign lock is still durable ownership evidence
+                    # and requires an explicit all-scope cleanup operation.
+                    return False
+                # The allocator process recorded in an otherwise stale lock
+                # can exit while its launched service is still listening. Do
+                # not erase that last ownership record merely because the
+                # allocator PID is gone.
+                if not self._is_port_available(port):
+                    return False
+                availability_confirmed = True
+                lock_path.unlink(missing_ok=True)
+                self._emit_reclaim(port=port, owner=owner, payload=stale_payload)
 
-        if not self._is_port_available(port):
-            return False
+            if not availability_confirmed and not self._is_port_available(port):
+                return False
 
-        payload = {
-            "owner": owner,
-            "session": self.session_id,
-            "pid": self.session_pid,
-            "created_at": self.time_provider(),
-        }
-        try:
-            fd = lock_path.open("x", encoding="utf-8")
-        except FileExistsError:
-            return False
-        with fd:
-            fd.write(json.dumps(payload, sort_keys=True))
-        self._emit("port.lock.acquire", port=port, owner=owner, session=self.session_id)
-        return True
-
-    def _lock_is_stale(self, lock_path: Path) -> bool:
-        try:
-            payload = json.loads(lock_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            payload = {
+                "owner": owner,
+                "session": self.session_id,
+                "pid": self.session_pid,
+                "created_at": self.time_provider(),
+            }
+            if not self._publish_lock(lock_path, payload, port=port):
+                return False
+            self._emit("port.lock.acquire", port=port, owner=owner, session=self.session_id)
             return True
 
+    def _lock_is_stale(self, lock_path: Path) -> bool:
+        payload = self._read_lock_payload(lock_path)
+        if payload is None:
+            return self._corrupt_lock_is_stale(lock_path)
+
         pid = payload.get("pid")
-        if isinstance(pid, int) and pid > 0:
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
             if self._pid_is_running(pid):
                 return False
             return True
 
         created_at_raw = payload.get("created_at")
         if created_at_raw is None:
-            return False
+            return self._corrupt_lock_is_stale(lock_path)
         created_at = self._parse_created_at(created_at_raw)
         if created_at is None:
-            return True
+            return self._corrupt_lock_is_stale(lock_path)
         return (self.time_provider() - created_at) > self.stale_lock_seconds
 
     def _pid_is_running(self, pid: int) -> bool:
         if self.pid_checker is not None:
-            return self.pid_checker(pid)
+            try:
+                return bool(self.pid_checker(pid))
+            except Exception:  # noqa: BLE001 - an inconclusive probe must preserve a foreign lock
+                return True
         try:
             os.kill(pid, 0)
-        except OSError:
+        except ProcessLookupError:
             return False
+        except PermissionError:
+            return True
+        except OSError as exc:
+            return exc.errno != errno.ESRCH
         return True
 
+    def _corrupt_lock_is_stale(self, lock_path: Path) -> bool:
+        try:
+            modified_at = lock_path.stat().st_mtime
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
+        return (self.time_provider() - modified_at) >= self.corrupt_lock_grace_seconds
+
+    @staticmethod
+    def _read_lock_payload(lock_path: Path) -> dict[str, object] | None:
+        try:
+            payload = json.loads(lock_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _publish_lock(self, lock_path: Path, payload: dict[str, object], *, port: int) -> bool:
+        """Publish a complete payload without ever exposing an empty lock path."""
+
+        self._ensure_real_directory(self._guard_dir)
+        pending_path = self._guard_dir / f"{self._guard_shard(port):02x}.pending"
+        pending_path.unlink(missing_ok=True)
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(pending_path, flags, 0o600)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as pending_file:
+                pending_file.write(json.dumps(payload, sort_keys=True))
+                pending_file.flush()
+                os.fsync(pending_file.fileno())
+            try:
+                os.link(pending_path, lock_path)
+            except FileExistsError:
+                return False
+            fsync_directory(self.lock_dir)
+            return True
+        finally:
+            pending_path.unlink(missing_ok=True)
+
+    def _emit_reclaim(self, *, port: int, owner: str | None, payload: dict[str, object] | None) -> None:
+        payload = payload or {}
+        self._emit(
+            "port.lock.reclaim",
+            port=port,
+            owner=owner,
+            session=self.session_id,
+            reclaimed_owner=payload.get("owner"),
+            reclaimed_session=payload.get("session"),
+            reclaimed_pid=payload.get("pid"),
+        )
+
+    @contextmanager
+    def _port_guard(self, port: int) -> Iterator[None]:
+        shard = self._guard_shard(port)
+        self._ensure_real_directory(self._guard_dir)
+        guard_path = self._guard_dir / f"{shard:02x}.guard"
+        thread_key = f"{self._thread_guard_namespace}:{shard}".encode("utf-8")
+        thread_index = int(hashlib.sha1(thread_key).hexdigest()[:8], 16) % len(_PORT_THREAD_GUARDS)
+        with _PORT_THREAD_GUARDS[thread_index]:
+            with advisory_file_lock(guard_path, exclusive=True):
+                yield
+
+    @staticmethod
+    def _guard_shard(port: int) -> int:
+        return int(port) % _PORT_GUARD_SHARDS
+
+    @staticmethod
+    def _ensure_real_directory(path: Path) -> None:
+        try:
+            path.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            pass
+        if path.is_symlink() or not path.is_dir():
+            raise OSError(f"Port reservation directory is not a real directory: {path}")
+
     def _parse_created_at(self, value: object) -> float | None:
-        if isinstance(value, (int, float)):
-            return float(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            parsed = float(value)
+            return parsed if math.isfinite(parsed) else None
         if not isinstance(value, str):
             return None
         try:
-            return float(value)
+            parsed = float(value)
+            return parsed if math.isfinite(parsed) else None
         except ValueError:
             pass
         iso = value
@@ -459,8 +575,9 @@ class PortPlanner:
         try:
             from datetime import datetime
 
-            return datetime.fromisoformat(iso).timestamp()
-        except ValueError:
+            parsed = datetime.fromisoformat(iso).timestamp()
+            return parsed if math.isfinite(parsed) else None
+        except (OverflowError, ValueError):
             return None
 
     def _is_port_available(self, port: int) -> bool:
@@ -545,7 +662,10 @@ class PortPlanner:
     def _emit(self, event_name: str, **payload: object) -> None:
         if self.event_handler is None:
             return
-        self.event_handler(event_name, payload)
+        try:
+            self.event_handler(event_name, payload)
+        except Exception:  # noqa: BLE001 - telemetry must never change lock ownership
+            return
 
     @staticmethod
     def _port_from_lock_path(lock_path: Path) -> int | None:

@@ -189,6 +189,10 @@ def _service_project_name(service_name: str, service: ServiceRecord, *, runtime:
 def _requirements_for_project(state: RunState, project: str) -> RequirementsResult | None:
     if project in state.requirements:
         return state.requirements[project]
+    target = str(project).strip().casefold()
+    for storage_key, requirements in state.requirements.items():
+        if str(requirements.project or storage_key).strip().casefold() == target:
+            return requirements
     if len(state.requirements) == 1:
         return next(iter(state.requirements.values()))
     return None

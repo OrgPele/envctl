@@ -25,19 +25,23 @@ def print_dashboard_dependency_rows(
     severity_color_fn: SeverityColorFn,
 ) -> None:
     _ = label_color
-    requirements = state.requirements.get(project)
-    if requirements is None:
-        return
-    print_dashboard_requirement_component_rows(
-        self,
-        requirements=requirements,
-        ok_color=ok_color,
-        warn_color=warn_color,
-        bad_color=bad_color,
-        reset=reset,
-        visual_url_fn=visual_url_fn,
-        severity_color_fn=severity_color_fn,
-    )
+    project_key = str(project).strip().casefold()
+    matching_requirements = [
+        requirements
+        for storage_key, requirements in state.requirements.items()
+        if str(getattr(requirements, "project", "") or storage_key).strip().casefold() == project_key
+    ]
+    for requirements in matching_requirements:
+        print_dashboard_requirement_component_rows(
+            self,
+            requirements=requirements,
+            ok_color=ok_color,
+            warn_color=warn_color,
+            bad_color=bad_color,
+            reset=reset,
+            visual_url_fn=visual_url_fn,
+            severity_color_fn=severity_color_fn,
+        )
 
 
 def print_dashboard_shared_dependency_rows(

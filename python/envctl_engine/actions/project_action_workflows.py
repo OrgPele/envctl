@@ -7,6 +7,7 @@ import subprocess
 from typing import Any
 
 import envctl_engine.actions.action_commit_support as commit_support
+from envctl_engine.actions.action_git_state_support import ExistingPullRequest
 import envctl_engine.actions.action_pr_workflow_support as pr_workflow_support
 import envctl_engine.actions.action_review_workflow_support as review_workflow_support
 import envctl_engine.actions.action_ship_support as ship_support
@@ -45,6 +46,8 @@ class ProjectActionCommitWorkflowDependencies:
 class ProjectActionPullRequestWorkflowDependencies:
     resolve_base_branch_fn: Callable[[Any, Path], str]
     existing_pr_url_fn: Callable[[Path, str], str]
+    existing_pull_request_fn: Callable[[Path, str], ExistingPullRequest | None]
+    update_pull_request_base_fn: Callable[[Path, ExistingPullRequest, str], subprocess.CompletedProcess[str]]
     probe_dirty_worktree_fn: Callable[[Path, Path, str], DirtyWorktreeReport]
     run_commit_action_fn: Callable[[Any], int]
     pr_title_fn: Callable[[Any, Path, str], str]
@@ -126,7 +129,8 @@ class ProjectActionWorkflowRunner:
             git_available=self.git_available,
             git_output_fn=self.git.git_output_fn,
             resolve_base_branch_fn=self.pull_request.resolve_base_branch_fn,
-            existing_pr_url_fn=self.pull_request.existing_pr_url_fn,
+            existing_pull_request_fn=self.pull_request.existing_pull_request_fn,
+            update_pull_request_base_fn=self.pull_request.update_pull_request_base_fn,
             probe_dirty_worktree_fn=self.pull_request.probe_dirty_worktree_fn,
             run_commit_action_fn=self.pull_request.run_commit_action_fn,
             pr_title_fn=self.pull_request.pr_title_fn,
@@ -151,6 +155,7 @@ class ProjectActionWorkflowRunner:
             add_ship_pr_label=self.pull_request.add_ship_pr_label_fn,
             probe_dirty_worktree=self._probe_dirty_worktree_for_ship,
             existing_pr_url=self.pull_request.existing_pr_url_fn,
+            existing_pull_request=self.pull_request.existing_pull_request_fn,
             partition_envctl_protected_paths=self.commit.partition_envctl_protected_paths_fn,
             ordered_unique_paths=self.commit.ordered_unique_paths_fn,
             github_pr_checks=self.pull_request.github_pr_checks_fn,

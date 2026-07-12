@@ -7,6 +7,8 @@ import time
 from typing import Callable, Mapping
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.docker_service_runtime import state_uses_docker_services
+from envctl_engine.shared.services import resolve_service_project_name
 from envctl_engine.state.models import RunState
 from envctl_engine.startup.resume_restore_project import ResumeProjectRestoreRunner, _round_ms
 from envctl_engine.startup.resume_restore_results import apply_restore_result
@@ -113,6 +115,7 @@ def _execute_restore_missing(
     use_single_spinner = use_spinner and not use_project_spinner_group
     suppress_timing_output = use_project_spinner_group or use_single_spinner
     route_for_startup = _route_for_resume_restore(route, state=state, suppress_timing_output=suppress_timing_output)
+    _apply_restore_runtime_mode(rt, route_for_startup)
     if use_single_spinner:
         rt._emit(  # type: ignore[attr-defined]
             "ui.spinner.lifecycle",
@@ -211,15 +214,24 @@ def _execute_restore_missing(
 
 
 def _projects_to_restore(rt: object, *, state: RunState, missing_services: list[str]) -> list[str]:
-    projects_to_restore: set[str] = set()
-    for service_name in missing_services:
-        project = rt._project_name_from_service(service_name)  # type: ignore[attr-defined]
+    projects_to_restore: dict[str, str] = {}
+
+    def add_project(raw_project: object) -> None:
+        project = str(raw_project or "").strip()
         if project:
-            projects_to_restore.add(project)
+            projects_to_restore.setdefault(project.casefold(), project)
+
+    for service_name in missing_services:
+        project = resolve_service_project_name(
+            service_name,
+            state.services.get(service_name),
+            project_name_from_service=rt._project_name_from_service,  # type: ignore[attr-defined]
+        )
+        add_project(project)
     for project, requirements in state.requirements.items():
         if not rt._requirements_ready(requirements):  # type: ignore[attr-defined]
-            projects_to_restore.add(project)
-    return sorted(projects_to_restore)
+            add_project(getattr(requirements, "project", "") or project)
+    return sorted(projects_to_restore.values(), key=lambda project: (project.casefold(), project))
 
 
 def _route_for_resume_restore(
@@ -240,6 +252,8 @@ def _route_for_resume_restore(
         **route_for_startup.flags,
         "_resume_restore": True,
     }
+    if state_uses_docker_services(state):
+        flags["docker"] = True
     if suppress_timing_output:
         flags["_suppress_timing_print"] = True
     return Route(
@@ -250,6 +264,11 @@ def _route_for_resume_restore(
         projects=route_for_startup.projects,
         flags=flags,
     )
+
+
+def _apply_restore_runtime_mode(runtime: object, route: Route) -> None:
+    if bool(route.flags.get("docker")):
+        getattr(runtime, "env")["DOCKER_MODE"] = "true"
 
 
 def _run_restore_jobs(

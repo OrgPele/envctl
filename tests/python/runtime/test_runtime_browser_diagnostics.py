@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from envctl_engine.config import DependencyEnvTemplateEntry, load_config
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.runtime.endpoints_command_support import build_endpoints_payload
+from envctl_engine.runtime.browser_runtime_diagnostics import project_names
 from envctl_engine.runtime.engine_runtime import PythonEngineRuntime
 from envctl_engine.startup.finalization import build_success_run_state
 from envctl_engine.startup.session import StartupSession
@@ -43,6 +44,18 @@ class _HealthyRunner:
 
 
 class RuntimeBrowserDiagnosticsTests(unittest.TestCase):
+    def test_requirement_collision_storage_alias_is_not_exposed_as_browser_project(self) -> None:
+        state = RunState(
+            run_id="run-collision",
+            mode="main",
+            requirements={
+                "Main": RequirementsResult(project="Main"),
+                "Main Restart Collision": RequirementsResult(project="Main"),
+            },
+        )
+
+        self.assertEqual(project_names(state, runtime=None), ["Main"])
+
     def _runtime_with_state(self, state: RunState, *, env: dict[str, str] | None = None) -> PythonEngineRuntime:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)

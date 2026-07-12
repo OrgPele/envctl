@@ -9,7 +9,7 @@ from typing import Any
 
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanAgentLaunchConfig, PlanAgentLaunchOutcome
 from envctl_engine.planning.plan_agent.recovery import _print_launch_summary
-from envctl_engine.planning.plan_agent.workflow import _tab_title_for_worktree
+from envctl_engine.planning.plan_agent.workflow_build import _tab_title_for_worktree
 from envctl_engine.runtime.runtime_context import resolve_process_runtime
 
 

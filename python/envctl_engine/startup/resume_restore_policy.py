@@ -8,7 +8,33 @@ from envctl_engine.runtime.runtime_context import resolve_port_allocator, resolv
 from envctl_engine.requirements.core import dependency_definitions
 from envctl_engine.shared.parsing import parse_bool
 from envctl_engine.shared.protocols import PortAllocator, StateRepository
+from envctl_engine.shared.services import resolve_service_project_name
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
+from envctl_engine.state.project_runtime import (
+    requirement_key_for_project as _requirement_key_for_project,
+    requirements_for_project as _requirements_for_project,
+)
+
+
+def _store_requirements_for_project(
+    state: RunState,
+    *,
+    project: str,
+    requirements: RequirementsResult,
+) -> str:
+    """Update one project without creating case-only duplicate keys."""
+
+    target = str(project).strip().casefold()
+    key = _requirement_key_for_project(state, project) or str(project).strip()
+    if not key:
+        raise ValueError("project is required when storing restored requirements")
+    state.requirements[key] = requirements
+    for alias in list(state.requirements):
+        if alias == key:
+            continue
+        if str(alias).strip().casefold() == target:
+            state.requirements.pop(alias, None)
+    return key
 
 
 def _restore_parallel_config(
@@ -204,7 +230,7 @@ def context_for_project(orchestrator, state: RunState, project: str) -> object |
     rt = orchestrator.runtime
     discovered = rt._discover_projects(mode=state.mode)  # type: ignore[attr-defined]
     for context in discovered:
-        if context.name.lower() == project.lower():
+        if context.name.casefold() == project.casefold():
             orchestrator.apply_ports_to_context(context, state)
             return context
 
@@ -235,7 +261,12 @@ def project_root(orchestrator, state: RunState, project: str) -> Path | None:
         return rt.config.base_dir  # type: ignore[attr-defined]
 
     for service_name, service in state.services.items():
-        if rt._project_name_from_service(service_name).lower() != project.lower():  # type: ignore[attr-defined]
+        service_project = resolve_service_project_name(
+            service_name,
+            service,
+            project_name_from_service=rt._project_name_from_service,  # type: ignore[attr-defined]
+        )
+        if service_project.casefold() != project.casefold():
             continue
         cwd_raw = getattr(service, "cwd", None)
         if not isinstance(cwd_raw, str) or not cwd_raw.strip():
@@ -258,7 +289,7 @@ def apply_ports_to_context(orchestrator, context: object, state: RunState) -> No
     if not isinstance(context_ports, dict):
         return
 
-    requirements = state.requirements.get(project)
+    requirements = _requirements_for_project(state, project)
     if requirements is not None:
         for definition in dependency_definitions():
             plan = context_ports.get(definition.resources[0].legacy_port_key)
@@ -267,7 +298,12 @@ def apply_ports_to_context(orchestrator, context: object, state: RunState) -> No
             rt._set_plan_port_from_component(plan, requirements.component(definition.id))  # type: ignore[attr-defined]
 
     for service_name, service in state.services.items():
-        if rt._project_name_from_service(service_name).lower() != project.lower():  # type: ignore[attr-defined]
+        service_project = resolve_service_project_name(
+            service_name,
+            service,
+            project_name_from_service=rt._project_name_from_service,  # type: ignore[attr-defined]
+        )
+        if service_project.casefold() != project.casefold():
             continue
         service_type = (getattr(service, "type", "") or "").strip().lower()
         port = getattr(service, "actual_port", None)

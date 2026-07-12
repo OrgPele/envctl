@@ -1,6 +1,8 @@
 # ruff: noqa: F403,F405
 from __future__ import annotations
 
+from envctl_engine.actions.action_git_state_support import ExistingPullRequest
+from envctl_engine.actions.action_protected_artifacts import unstaged_stageable_paths
 from tests.python.actions.actions_cli_test_support import *  # noqa: F403,F405
 
 
@@ -33,6 +35,21 @@ class ActionsCliShipTests(unittest.TestCase):
             ],
         )
         self.assertEqual(partition.stageable_paths, ["app.py", "docs/reference/commands.md", "new_name.py"])
+
+    def test_unstaged_stageable_paths_excludes_staged_only_changes_and_keeps_rename_source(self) -> None:
+        self.assertEqual(
+            unstaged_stageable_paths(
+                "D  already-deleted.py\n"
+                "M  already-modified.py\n"
+                " D deleted.py\n"
+                " M modified.py\n"
+                "MM both.py\n"
+                " R old_name.py -> new_name.py\n"
+                "?? new.py\n"
+                " M MAIN_TASK.md\n"
+            ),
+            ["deleted.py", "modified.py", "both.py", "old_name.py", "new_name.py", "new.py"],
+        )
 
     def test_ship_action_reuses_commit_and_pr_then_reports_passed_checks_json(self) -> None:
         domain = importlib.import_module("envctl_engine.actions.project_action_domain")
@@ -80,7 +97,14 @@ class ActionsCliShipTests(unittest.TestCase):
                 patch("envctl_engine.actions.project_action_domain.add_ship_pr_label", return_value=0) as label_pr,
                 patch(
                     "envctl_engine.actions.project_action_domain.existing_pr_url",
-                    side_effect=["", "https://github.com/acme/repo/pull/7"],
+                    return_value="https://github.com/acme/repo/pull/7",
+                ),
+                patch(
+                    "envctl_engine.actions.project_action_domain.existing_pull_request",
+                    side_effect=[
+                        None,
+                        ExistingPullRequest("https://github.com/acme/repo/pull/7", "main"),
+                    ],
                 ),
                 patch(
                     "envctl_engine.actions.project_action_domain._github_pr_checks",
@@ -170,6 +194,10 @@ class ActionsCliShipTests(unittest.TestCase):
                     return_value="https://github.com/acme/repo/pull/7",
                 ),
                 patch(
+                    "envctl_engine.actions.project_action_domain.existing_pull_request",
+                    return_value=ExistingPullRequest("https://github.com/acme/repo/pull/7", "main"),
+                ),
+                patch(
                     "envctl_engine.actions.project_action_domain._github_pr_checks",
                     return_value={
                         "state": "checks_failed",
@@ -236,7 +264,7 @@ class ActionsCliShipTests(unittest.TestCase):
 
             with (
                 patch("envctl_engine.actions.project_action_domain.shutil.which", return_value="/usr/bin/git"),
-                patch("envctl_engine.actions.project_action_domain.detect_default_branch", return_value="main"),
+                patch("envctl_engine.actions.project_action_domain.git_state_support.detect_pr_base_branch", return_value="main"),
                 patch("envctl_engine.actions.project_action_domain._git_output", side_effect=fake_git_output),
                 patch("envctl_engine.actions.project_action_domain._run_git", side_effect=fake_run),
                 patch("envctl_engine.actions.project_action_domain.run_commit_action", return_value=0) as commit_action,
@@ -244,6 +272,10 @@ class ActionsCliShipTests(unittest.TestCase):
                 patch(
                     "envctl_engine.actions.project_action_domain.existing_pr_url",
                     return_value="https://github.com/acme/repo/pull/7",
+                ),
+                patch(
+                    "envctl_engine.actions.project_action_domain.existing_pull_request",
+                    return_value=ExistingPullRequest("https://github.com/acme/repo/pull/7", "main"),
                 ),
                 redirect_stdout(StringIO()) as stdout,
             ):
@@ -284,11 +316,7 @@ class ActionsCliShipTests(unittest.TestCase):
                 if args == ["diff", "--name-only", "--diff-filter=U"]:
                     return "src/service.py\n"
                 if args == ["ls-files", "-u"]:
-                    return (
-                        "100644 aaa 1\tsrc/service.py\n"
-                        "100644 bbb 2\tsrc/service.py\n"
-                        "100644 ccc 3\tsrc/service.py\n"
-                    )
+                    return "100644 aaa 1\tsrc/service.py\n100644 bbb 2\tsrc/service.py\n100644 ccc 3\tsrc/service.py\n"
                 return ""
 
             with (

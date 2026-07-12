@@ -2,9 +2,29 @@
 from __future__ import annotations
 
 from tests.python.runtime.engine_runtime_command_parity_test_support import *
+from envctl_engine.runtime.inspection_support import _running_tree_project_names
+from envctl_engine.state.run_index import StateSelector
 
 
 class EngineRuntimeCommandParityStateConfigTests(EngineRuntimeCommandParityTestCase):
+    def test_running_tree_projects_prefers_additional_service_project_metadata(self) -> None:
+        state = RunState(
+            run_id="run-1",
+            mode="trees",
+            services={
+                "Customer Platform Voice Runtime": ServiceRecord(
+                    name="Customer Platform Voice Runtime",
+                    type="voice-runtime",
+                    cwd=".",
+                    status="running",
+                    project="Customer Platform",
+                    service_slug="voice-runtime",
+                )
+            },
+        )
+        runtime = SimpleNamespace(_project_name_from_service=lambda _name: "")
+
+        self.assertEqual(_running_tree_project_names(runtime=runtime, state=state), {"Customer Platform"})
 
     def test_list_targets_discovers_projects_in_main_mode(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
@@ -82,7 +102,11 @@ class EngineRuntimeCommandParityStateConfigTests(EngineRuntimeCommandParityTestC
             state=RunState(
                 run_id="run-prev",
                 mode="trees",
-                services={"feature-1 Backend": ServiceRecord(name="feature-1 Backend", type="backend", cwd=".", status="unknown")},
+                services={
+                    "feature-1 Backend": ServiceRecord(
+                        name="feature-1 Backend", type="backend", cwd=".", status="unknown"
+                    )
+                },
                 requirements={},
                 metadata={"repo_scope_id": config.runtime_scope_id, "project_roots": {"feature-1": str(feature_dir)}},
             ),
@@ -103,6 +127,66 @@ class EngineRuntimeCommandParityStateConfigTests(EngineRuntimeCommandParityTestC
         self.assertTrue(feature["state_present"])
         self.assertFalse(feature["services_running"])
         self.assertFalse(feature["running"])
+
+    def test_tree_list_json_reports_discovery_and_integrity_warning_for_tampered_active_run(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        repo = Path(tmpdir.name) / "repo"
+        runtime_root = Path(tmpdir.name) / "runtime"
+        (repo / ".git").mkdir(parents=True, exist_ok=True)
+        feature_dirs = {
+            name: repo / "trees" / "feature" / suffix for name, suffix in (("feature-1", "1"), ("feature-2", "2"))
+        }
+        for feature_dir in feature_dirs.values():
+            feature_dir.mkdir(parents=True, exist_ok=True)
+            (feature_dir / ".envctl").write_text("ENVCTL_DEFAULT_MODE=trees\n")
+        config = load_config({"RUN_REPO_ROOT": str(repo), "RUN_SH_RUNTIME_DIR": str(runtime_root)})
+        runtime = PythonEngineRuntime(config, env={})
+
+        for run_id, project_name in (("run-valid", "feature-1"), ("run-tampered", "feature-2")):
+            runtime.state_repository.save_resume_state(
+                state=RunState(
+                    run_id=run_id,
+                    mode="trees",
+                    services={
+                        f"{project_name} Backend": ServiceRecord(
+                            name=f"{project_name} Backend",
+                            type="backend",
+                            cwd=str(feature_dirs[project_name]),
+                            project=project_name,
+                        )
+                    },
+                    requirements={},
+                    metadata={
+                        "repo_scope_id": config.runtime_scope_id,
+                        "project_roots": {project_name: str(feature_dirs[project_name])},
+                    },
+                ),
+                emit=lambda *args, **kwargs: None,
+                runtime_map_builder=lambda _state: {},
+            )
+        tampered = next(
+            candidate
+            for candidate in runtime.state_repository.run_index.candidates(
+                StateSelector(mode="trees", project_names=())
+            )
+            if candidate.run_id == "run-tampered"
+        )
+        tampered.state_path.write_text('{"broken":', encoding="utf-8")
+
+        for args in (("--list-trees", "--json"), ("--list-targets", "--trees", "--json")):
+            with self.subTest(args=args):
+                buffer = StringIO()
+                with redirect_stdout(buffer):
+                    code = runtime.dispatch(parse_route(list(args), env={}))
+
+                self.assertEqual(code, 0)
+                payload = json.loads(buffer.getvalue())
+                self.assertEqual({project["name"] for project in payload["projects"]}, set(feature_dirs))
+                self.assertEqual(payload["state_error"]["code"], "runtime_state_integrity_error")
+                self.assertIn("run-tampered", payload["state_error"]["message"])
+                self.assertEqual(payload["warnings"], [payload["state_error"]])
+                self.assertFalse(any(project["state_present"] for project in payload["projects"]))
 
     def test_list_trees_json_reports_imported_branch_worktrees_individually(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
@@ -289,7 +373,10 @@ class EngineRuntimeCommandParityStateConfigTests(EngineRuntimeCommandParityTestC
             code = runtime.dispatch(parse_route(["--show-config", "--json"], env={}))
         self.assertEqual(code, 0)
         payload = json.loads(buffer.getvalue())
-        self.assertIn("additional service dependency cycle: voice-runtime -> worker -> voice-runtime", payload["additional_service_errors"])
+        self.assertIn(
+            "additional service dependency cycle: voice-runtime -> worker -> voice-runtime",
+            payload["additional_service_errors"],
+        )
         self.assertTrue(payload["service_dependency_env_section_present"]["voice-runtime"])
         self.assertEqual(payload["service_dependency_env_templates"]["voice-runtime"][0]["name"], "VOICE_PUBLIC")
 

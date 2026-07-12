@@ -32,3 +32,9 @@ def test_tests_workflow_keeps_pr_checks_split_by_signal_type() -> None:
     assert "uv run --extra dev pytest -q" in workflow
     assert "uv run --extra dev python -m build" in workflow
     assert "uv tool run ruff check python tests scripts" in workflow
+
+
+def test_tests_workflow_runs_for_dev_and_main_pull_requests() -> None:
+    workflow = _tests_workflow()
+
+    assert "pull_request:\n    branches:\n      - dev\n      - main" in workflow

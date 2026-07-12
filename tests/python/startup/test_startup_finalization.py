@@ -4,10 +4,12 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from envctl_engine.config import load_config
 from envctl_engine.runtime.command_router import parse_route
 from envctl_engine.startup.finalization import (
+    _write_artifacts_at_commit_boundary,
     emit_preserved_service_merge,
     failure_context_label,
     finalize_failed_startup,
@@ -33,8 +35,10 @@ from envctl_engine.startup.finalization import (
 )
 from envctl_engine.planning.plan_agent.models import CreatedPlanWorktree, PlanAgentLaunchOutcome, PlanAgentLaunchResult
 from envctl_engine.startup.finalization_failure import StartupFailureFinalizer
-from envctl_engine.startup.session import LocalStartupFailure, StartupSession
-from envctl_engine.state.models import RunState
+from envctl_engine.startup.selected_context_startup import record_project_startup
+from envctl_engine.startup.session import LocalStartupFailure, ProjectStartupResult, StartupSession
+from envctl_engine.startup.lifecycle import _finalize_startup_exception, execute_startup_lifecycle
+from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord
 
 
 def _session(*, contexts: list[object], contexts_to_start: list[object] | None = None) -> StartupSession:
@@ -72,6 +76,412 @@ def _runtime_stub(**overrides: object) -> SimpleNamespace:
 
 
 class StartupFinalizationTests(unittest.TestCase):
+    def test_direct_collision_is_disambiguated_before_cleanup_without_prior_merge_access(self) -> None:
+        session = _session(contexts=[SimpleNamespace(name="Main")])
+        preserved = ServiceRecord(name="Main Backend", type="backend", cwd="/old", pid=41, project="Main")
+        replacement = ServiceRecord(name="Main Backend", type="backend", cwd="/new", pid=42, project="Main")
+        occupied = ServiceRecord(
+            name="Main Backend Restart Collision 42",
+            type="worker",
+            cwd="/other",
+            pid=43,
+            project="Aux",
+            service_slug="worker",
+        )
+        session.preserved_services[preserved.name] = preserved
+        session.services_by_project["Main"] = {replacement.name: replacement}
+        session.unterminated_services[occupied.name] = occupied
+        writes: list[RunState] = []
+        cleanup_requests: list[dict[str, ServiceRecord]] = []
+        runtime = _runtime_stub(
+            _emit=lambda *_args, **_kwargs: None,
+            _terminate_started_services=lambda services: (
+                cleanup_requests.append(dict(services)),
+                set(services),
+            )[1],
+            _write_artifacts=lambda state, *_args, **_kwargs: writes.append(state),
+        )
+
+        finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error="collision",
+            ensure_run_id=lambda _session: None,
+            port_allocator=lambda _runtime: SimpleNamespace(release_session=lambda: None),
+            emit_phase=lambda *_args, **_kwargs: None,
+            render_final_failure_status=lambda _runtime, _session, error, **_kwargs: error,
+        )
+
+        self.assertEqual(len(cleanup_requests), 1)
+        self.assertEqual({service.pid for service in cleanup_requests[0].values()}, {42, 43})
+        self.assertEqual({service.pid for service in writes[0].services.values()}, {41, 42, 43})
+        replacement_names = [name for name, service in writes[0].services.items() if service.pid == 42]
+        self.assertEqual(replacement_names, ["Main Backend Restart Collision 42 2"])
+        self.assertTrue(
+            any(
+                row.get("replacement_name") == replacement_names[0]
+                and row.get("replacement_exit_unconfirmed") is True
+                for row in writes[0].metadata["startup_state_collisions"]
+            )
+        )
+
+    def test_duplicate_new_service_names_both_survive_unconfirmed_cleanup(self) -> None:
+        session = _session(contexts=[SimpleNamespace(name="Alpha"), SimpleNamespace(name="Beta")])
+        alpha = ServiceRecord(name="Shared Runtime", type="worker", cwd="/alpha", pid=101, project="Alpha")
+        beta = ServiceRecord(name="Shared Runtime", type="worker", cwd="/beta", pid=202, project="Beta")
+        record_project_startup(
+            session,
+            SimpleNamespace(name="Alpha"),
+            ProjectStartupResult(requirements=RequirementsResult(project="Alpha"), services={alpha.name: alpha}),
+        )
+        with self.assertRaisesRegex(RuntimeError, "tracked startup state"):
+            record_project_startup(
+                session,
+                SimpleNamespace(name="Beta"),
+                ProjectStartupResult(requirements=RequirementsResult(project="Beta"), services={beta.name: beta}),
+            )
+        writes: list[RunState] = []
+        runtime = _runtime_stub(
+            _emit=lambda *_args, **_kwargs: None,
+            _terminate_started_services=lambda services: set(services),
+            _write_artifacts=lambda state, *_args, **_kwargs: writes.append(state),
+        )
+
+        finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error="duplicate hook identity",
+            ensure_run_id=lambda _session: None,
+            port_allocator=lambda _runtime: SimpleNamespace(release_session=lambda: None),
+            emit_phase=lambda *_args, **_kwargs: None,
+            render_final_failure_status=lambda _runtime, _session, error, **_kwargs: error,
+        )
+
+        self.assertEqual({service.pid for service in writes[0].services.values()}, {101, 202})
+        self.assertEqual(len(writes[0].services), 2)
+        self.assertTrue(any("Restart Collision" in name for name in writes[0].services))
+
+    def test_collision_failure_persists_unconfirmed_replacement_without_overwriting_authority(self) -> None:
+        context = SimpleNamespace(name="Main")
+        session = _session(contexts=[context])
+        preserved = ServiceRecord(name="Main Backend", type="backend", cwd="/repo/old", pid=64000)
+        replacement = ServiceRecord(name="Main Backend", type="backend", cwd="/repo/new", pid=64001)
+        session.preserved_services[preserved.name] = preserved
+        preserved_requirements = RequirementsResult(
+            project="Main",
+            db={"enabled": True, "success": True, "final": 5432},
+        )
+        replacement_requirements = RequirementsResult(
+            project="Main",
+            db={"enabled": True, "success": True, "final": 5544},
+        )
+        session.preserved_requirements["Main"] = preserved_requirements
+        with self.assertRaisesRegex(RuntimeError, "Refusing to overwrite preserved service state") as raised:
+            record_project_startup(
+                session,
+                context,
+                ProjectStartupResult(
+                    requirements=replacement_requirements,
+                    services={replacement.name: replacement},
+                ),
+            )
+
+        terminated: list[dict[str, ServiceRecord]] = []
+        writes: list[RunState] = []
+        runtime = _runtime_stub(
+            _emit=lambda *_args, **_kwargs: None,
+            _terminate_started_services=lambda services: (
+                terminated.append(dict(services)),
+                {replacement.name},
+            )[1],
+            _write_artifacts=lambda state, *_args, **_kwargs: writes.append(state),
+        )
+
+        result = finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error=str(raised.exception),
+            ensure_run_id=lambda _session: None,
+            port_allocator=lambda _runtime: SimpleNamespace(release_session=lambda: None),
+            emit_phase=lambda *_args, **_kwargs: None,
+            render_final_failure_status=lambda _runtime, _session, error, **_kwargs: error,
+        )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(len(terminated), 1)
+        terminated_names = list(terminated[0])
+        self.assertEqual(len(terminated_names), 1)
+        self.assertTrue(terminated_names[0].startswith("Main Backend Restart Collision"))
+        self.assertEqual(terminated[0][terminated_names[0]].pid, replacement.pid)
+        self.assertEqual(len(writes), 1)
+        collision_names = [name for name in writes[0].services if "Restart Collision" in name]
+        self.assertEqual(len(collision_names), 1)
+        self.assertEqual(writes[0].services[preserved.name].pid, preserved.pid)
+        self.assertEqual(writes[0].services[collision_names[0]].pid, replacement.pid)
+        collision_projects = [project for project in writes[0].requirements if "Restart Collision" in project]
+        self.assertEqual(len(collision_projects), 1)
+        self.assertEqual(writes[0].requirements["Main"].db["final"], 5432)
+        self.assertEqual(writes[0].requirements[collision_projects[0]].db["final"], 5544)
+        self.assertEqual(writes[0].requirements[collision_projects[0]].project, "Main")
+        self.assertEqual(
+            writes[0].metadata["startup_state_collisions"][0]["replacement_name"],
+            collision_names[0],
+        )
+        self.assertIs(session.preserved_services[preserved.name], preserved)
+        self.assertEqual(set(session.unterminated_services), set(collision_names))
+
+    def test_failure_finalization_persists_service_when_exit_remains_unconfirmed(self) -> None:
+        session = _session(contexts=[SimpleNamespace(name="Main")])
+        service = ServiceRecord(
+            name="Main Backend",
+            type="backend",
+            cwd="/repo/backend",
+            pid=64001,
+            actual_port=8000,
+        )
+        session.unterminated_services[service.name] = service
+        writes: list[RunState] = []
+        released = {"value": False}
+        runtime = _runtime_stub(
+            _emit=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("event sink failed")),
+            _terminate_started_services=lambda _services: {service.name},
+            _write_artifacts=lambda state, *_args, **_kwargs: writes.append(state),
+        )
+
+        result = finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error="listener truth failed",
+            ensure_run_id=lambda _session: None,
+            port_allocator=lambda _runtime: SimpleNamespace(
+                release_session=lambda: released.__setitem__("value", True)
+            ),
+            emit_phase=lambda *_args, **_kwargs: None,
+            render_final_failure_status=lambda _runtime, _session, error, **_kwargs: error,
+        )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(writes[0].metadata["termination_failed_services"], [service.name])
+        self.assertIs(writes[0].services[service.name], service)
+        self.assertEqual(service.status, "termination_failed")
+        self.assertFalse(released["value"])
+
+    def test_unknown_termination_identity_fails_closed_for_every_started_service(self) -> None:
+        session = _session(contexts=[SimpleNamespace(name="Main")])
+        backend = ServiceRecord(name="Main Backend", type="backend", cwd="/repo", pid=1)
+        frontend = ServiceRecord(name="Main Frontend", type="frontend", cwd="/repo", pid=2)
+        session.services_by_project["Main"] = {backend.name: backend, frontend.name: frontend}
+        writes: list[RunState] = []
+        runtime = _runtime_stub(
+            _emit=lambda *_args, **_kwargs: None,
+            _terminate_started_services=lambda _services: {"main backend"},
+            _write_artifacts=lambda state, *_args, **_kwargs: writes.append(state),
+        )
+
+        finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error="cleanup adapter identity mismatch",
+            ensure_run_id=lambda _session: None,
+            port_allocator=lambda _runtime: SimpleNamespace(release_session=lambda: None),
+            emit_phase=lambda *_args, **_kwargs: None,
+            render_final_failure_status=lambda _runtime, _session, error, **_kwargs: error,
+        )
+
+        self.assertEqual(set(writes[0].services), {backend.name, frontend.name})
+        self.assertEqual({service.status for service in writes[0].services.values()}, {"termination_failed"})
+
+    def test_failure_finalization_preserves_port_session_for_started_requirements(self) -> None:
+        session = _session(contexts=[SimpleNamespace(name="Main")])
+        requirements = RequirementsResult(
+            project="Main",
+            redis={"enabled": True, "success": True, "final": 6379},
+        )
+        session.requirements_by_project["Main"] = requirements
+        writes: list[RunState] = []
+        released = {"value": False}
+        runtime = _runtime_stub(
+            _emit=lambda *_args, **_kwargs: None,
+            _terminate_started_services=lambda _services: set(),
+            _write_artifacts=lambda state, *_args, **_kwargs: writes.append(state),
+        )
+
+        finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error="backend launch failed",
+            ensure_run_id=lambda _session: None,
+            port_allocator=lambda _runtime: SimpleNamespace(
+                release_session=lambda: released.__setitem__("value", True)
+            ),
+            emit_phase=lambda *_args, **_kwargs: None,
+            render_final_failure_status=lambda _runtime, _session, error, **_kwargs: error,
+        )
+
+        self.assertIs(writes[0].requirements["Main"], requirements)
+        self.assertFalse(released["value"])
+
+    def test_successful_rollback_is_removed_from_failure_state_when_requirements_remain(self) -> None:
+        session = _session(contexts=[SimpleNamespace(name="Main")])
+        service = ServiceRecord(
+            name="Main Backend",
+            type="backend",
+            cwd="/repo/backend",
+            pid=64002,
+            requested_port=8000,
+            actual_port=8000,
+        )
+        session.started_context_names.append("Main")
+        session.services_by_project["Main"] = {service.name: service}
+        session.requirements_by_project["Main"] = RequirementsResult(
+            project="Main",
+            redis={"enabled": True, "success": True, "final": 6379},
+        )
+        writes: list[RunState] = []
+        runtime = _runtime_stub(
+            _emit=lambda *_args, **_kwargs: None,
+            _terminate_started_services=lambda _services: set(),
+            _write_artifacts=lambda state, *_args, **_kwargs: writes.append(state),
+        )
+
+        finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error="frontend launch failed",
+            ensure_run_id=lambda _session: None,
+            port_allocator=lambda _runtime: SimpleNamespace(release_session=lambda: None),
+            emit_phase=lambda *_args, **_kwargs: None,
+            render_final_failure_status=lambda _runtime, _session, error, **_kwargs: error,
+        )
+
+        self.assertEqual(writes[0].services, {})
+        self.assertEqual(session.services_by_project, {})
+        self.assertEqual(session.unterminated_services, {})
+
+    def test_missing_termination_result_retains_service_and_port_session(self) -> None:
+        session = _session(contexts=[SimpleNamespace(name="Main")])
+        service = ServiceRecord(
+            name="Main Backend",
+            type="backend",
+            cwd="/repo/backend",
+            pid=64003,
+            requested_port=8000,
+            actual_port=8000,
+        )
+        session.started_context_names.append("Main")
+        session.services_by_project["Main"] = {service.name: service}
+        writes: list[RunState] = []
+        released = {"value": False}
+        runtime = _runtime_stub(
+            _emit=lambda *_args, **_kwargs: None,
+            _terminate_started_services=lambda _services: None,
+            _write_artifacts=lambda state, *_args, **_kwargs: writes.append(state),
+        )
+
+        finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error="frontend launch failed",
+            ensure_run_id=lambda _session: None,
+            port_allocator=lambda _runtime: SimpleNamespace(
+                release_session=lambda: released.__setitem__("value", True)
+            ),
+            emit_phase=lambda *_args, **_kwargs: None,
+            render_final_failure_status=lambda _runtime, _session, error, **_kwargs: error,
+        )
+
+        self.assertIs(writes[0].services[service.name], service)
+        self.assertEqual(writes[0].metadata["termination_failed_services"], [service.name])
+        self.assertEqual(service.status, "termination_failed")
+        self.assertFalse(released["value"])
+
+    def test_failure_finalization_releases_port_session_for_external_only_requirements(self) -> None:
+        session = _session(contexts=[SimpleNamespace(name="Main")])
+        requirements = RequirementsResult(
+            project="Main",
+            redis={
+                "enabled": True,
+                "success": True,
+                "external": True,
+                "final": 6379,
+            },
+        )
+        session.requirements_by_project["Main"] = requirements
+        released = {"value": False}
+        runtime = _runtime_stub(
+            _emit=lambda *_args, **_kwargs: None,
+            _terminate_started_services=lambda _services: set(),
+            _write_artifacts=lambda *_args, **_kwargs: None,
+        )
+
+        finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error="backend launch failed",
+            ensure_run_id=lambda _session: None,
+            port_allocator=lambda _runtime: SimpleNamespace(
+                release_session=lambda: released.__setitem__("value", True)
+            ),
+            emit_phase=lambda *_args, **_kwargs: None,
+            render_final_failure_status=lambda _runtime, _session, error, **_kwargs: error,
+        )
+
+        self.assertTrue(released["value"])
+
+    def test_failure_finalization_releases_port_session_for_clean_internal_start_failure(self) -> None:
+        session = _session(contexts=[SimpleNamespace(name="Main")])
+        session.requirements_by_project["Main"] = RequirementsResult(
+            project="Main",
+            redis={"enabled": True, "success": False, "final": 6379, "error": "command missing"},
+        )
+        released = {"value": False}
+        runtime = _runtime_stub(
+            _emit=lambda *_args, **_kwargs: None,
+            _terminate_started_services=lambda _services: set(),
+            _write_artifacts=lambda *_args, **_kwargs: None,
+        )
+
+        finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error="requirements failed",
+            ensure_run_id=lambda _session: None,
+            port_allocator=lambda _runtime: SimpleNamespace(
+                release_session=lambda: released.__setitem__("value", True)
+            ),
+            emit_phase=lambda *_args, **_kwargs: None,
+            render_final_failure_status=lambda _runtime, _session, error, **_kwargs: error,
+        )
+
+        self.assertTrue(released["value"])
+
+    def test_failure_event_exception_does_not_skip_cleanup_or_failure_state_write(self) -> None:
+        session = _session(contexts=[SimpleNamespace(name="Main")])
+        service = ServiceRecord(name="Main Backend", type="backend", cwd="/repo", pid=65001)
+        session.started_context_names.append("Main")
+        session.services_by_project["Main"] = {service.name: service}
+        terminated: list[dict[str, ServiceRecord]] = []
+        writes: list[RunState] = []
+        runtime = _runtime_stub(
+            _emit=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("event sink failed")),
+            _terminate_started_services=lambda services: terminated.append(dict(services)) or set(),
+            _write_artifacts=lambda state, *_args, **_kwargs: writes.append(state),
+        )
+
+        result = finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error="backend failed",
+            ensure_run_id=lambda _session: None,
+            port_allocator=lambda _runtime: SimpleNamespace(release_session=lambda: None),
+            emit_phase=lambda *_args, **_kwargs: None,
+            render_final_failure_status=lambda _runtime, _session, error, **_kwargs: error,
+        )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(terminated, [{service.name: service}])
+        self.assertEqual(len(writes), 1)
+
     def test_failure_finalization_uses_named_owner(self) -> None:
         self.assertTrue(callable(StartupFailureFinalizer.finalize))
 
@@ -91,7 +501,7 @@ class StartupFinalizationTests(unittest.TestCase):
             env={},
             _emit=lambda event, **payload: events.append((event, payload)),
             _write_artifacts=lambda state, contexts, *, errors: writes.append((state, list(contexts), list(errors))),
-            _terminate_started_services=lambda services: terminated.append(dict(services)),
+            _terminate_started_services=lambda services: terminated.append(dict(services)) or set(),
         )
 
         result = finalize_failed_startup(
@@ -101,8 +511,9 @@ class StartupFinalizationTests(unittest.TestCase):
             ensure_run_id=lambda session: None,
             port_allocator=lambda runtime: SimpleNamespace(release_session=lambda: released.__setitem__("value", True)),
             emit_phase=lambda session, phase, started_at, **extra: events.append((f"phase:{phase}", dict(extra))),
-            render_final_failure_status=lambda runtime, session, error, *, interactive_tty: rendered_statuses.append(error)
-            or error,
+            render_final_failure_status=lambda runtime, session, error, *, interactive_tty: (
+                rendered_statuses.append(error) or error
+            ),
         )
 
         self.assertEqual(result, 1)
@@ -170,6 +581,39 @@ class StartupFinalizationTests(unittest.TestCase):
             events,
         )
 
+    def test_finalize_failed_startup_does_not_shadow_existing_state_after_failed_replacement(self) -> None:
+        session = _session(contexts=[SimpleNamespace(name="feature-a")])
+        session.preserve_existing_state_on_failure = True
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime = _runtime_stub(
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _write_artifacts=lambda *_args, **_kwargs: self.fail("existing state must remain authoritative"),
+            _terminate_started_services=lambda _services: None,
+        )
+
+        result = finalize_failed_startup(
+            runtime=runtime,
+            session=session,
+            error="existing service did not terminate",
+            ensure_run_id=lambda _session: None,
+            port_allocator=lambda _runtime: SimpleNamespace(release_session=lambda: None),
+            emit_phase=lambda _session, phase, _started_at, **extra: events.append((f"phase:{phase}", extra)),
+            render_final_failure_status=lambda _runtime, _session, error, *, interactive_tty: error,
+        )
+
+        self.assertEqual(result, 1)
+        self.assertIn(
+            (
+                "state.failure_write.skipped",
+                {
+                    "reason": "existing_runtime_state_remains_authoritative",
+                    "run_id": "run-finalization",
+                },
+            ),
+            events,
+        )
+        self.assertIn(("phase:artifacts_write", {"status": "skipped"}), events)
+
     def test_finalize_successful_startup_writes_artifacts_summary_snapshot_and_returns_zero(self) -> None:
         context = SimpleNamespace(name="Main")
         session = _session(contexts=[context])
@@ -215,6 +659,158 @@ class StartupFinalizationTests(unittest.TestCase):
         self.assertEqual(summaries, [(run_state, [context])])
         self.assertEqual(snapshots[0][0], "before_dashboard_entry")
         self.assertEqual(snapshots[0][1]["service_count"], 0)
+
+    def test_post_commit_finalization_error_marks_authority_committed_before_propagating(self) -> None:
+        session = _session(contexts=[SimpleNamespace(name="Main")])
+        run_state = RunState(run_id="run-finalization", mode="trees")
+        writes: list[RunState] = []
+        runtime = SimpleNamespace(
+            _write_artifacts=lambda state, *_args, **_kwargs: writes.append(state),
+            _emit=lambda *_args, **_kwargs: None,
+        )
+
+        with self.assertRaisesRegex(OSError, "phase sink unavailable"):
+            finalize_successful_startup(
+                runtime=runtime,
+                session=session,
+                ensure_run_id=lambda _session: None,
+                validate_plan_agent_handoff=lambda _session, *, phase: None,
+                build_success_run_state=lambda _runtime, _session: run_state,
+                emit_preserved_service_merge=lambda _session: None,
+                emit_phase=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    OSError("phase sink unavailable")
+                ),
+                requirements_timing_enabled=lambda _route: False,
+                suppress_timing_output=lambda _route: False,
+                print_startup_summary=lambda **_kwargs: None,
+                startup_breakdown_enabled=lambda _route: False,
+                suppress_progress_output=lambda _route: False,
+                print_restart_port_rebound_summary=lambda _session: None,
+                emit_snapshot=lambda *_args, **_kwargs: None,
+                headless_plan_output_only=lambda _session: False,
+                print_headless_plan_session_summary=lambda _session: None,
+                maybe_attach_plan_agent_terminal=lambda _session: None,
+                finalize_plan_agent_degraded_handoff=lambda _session: 1,
+            )
+
+        self.assertEqual(writes, [run_state])
+        self.assertTrue(session.authority_committed)
+
+    def test_artifact_writer_post_index_error_marks_authority_before_propagating(self) -> None:
+        session = _session(contexts=[SimpleNamespace(name="Main")])
+        run_state = RunState(run_id="run-post-index", mode="main")
+
+        def write_artifacts(_state, _contexts, *, errors, on_commit):  # noqa: ANN001
+            self.assertEqual(errors, [])
+            on_commit()
+            raise RuntimeError("alias promotion failed after index commit")
+
+        runtime = SimpleNamespace(
+            _write_artifacts=write_artifacts,
+            _emit=lambda *_args, **_kwargs: None,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "alias promotion failed after index commit"):
+            finalize_successful_startup(
+                runtime=runtime,
+                session=session,
+                ensure_run_id=lambda _session: None,
+                validate_plan_agent_handoff=lambda _session, *, phase: None,
+                build_success_run_state=lambda _runtime, _session: run_state,
+                emit_preserved_service_merge=lambda _session: None,
+                emit_phase=lambda *_args, **_kwargs: None,
+                requirements_timing_enabled=lambda _route: False,
+                suppress_timing_output=lambda _route: False,
+                print_startup_summary=lambda **_kwargs: None,
+                startup_breakdown_enabled=lambda _route: False,
+                suppress_progress_output=lambda _route: False,
+                print_restart_port_rebound_summary=lambda _session: None,
+                emit_snapshot=lambda *_args, **_kwargs: None,
+                headless_plan_output_only=lambda _session: False,
+                print_headless_plan_session_summary=lambda _session: None,
+                maybe_attach_plan_agent_terminal=lambda _session: None,
+                finalize_plan_agent_degraded_handoff=lambda _session: 1,
+            )
+
+        self.assertTrue(session.authority_committed)
+
+    def test_generic_kwargs_writer_is_never_probed_or_invoked_twice(self) -> None:
+        session = _session(contexts=[])
+        run_state = RunState(run_id="run-proxy", mode="main")
+        calls: list[dict[str, object]] = []
+
+        def proxy_writer(*_args, **kwargs):  # noqa: ANN003
+            calls.append(dict(kwargs))
+
+        runtime = SimpleNamespace(_write_artifacts=proxy_writer)
+
+        _write_artifacts_at_commit_boundary(runtime, session, run_state)
+
+        self.assertEqual(calls, [{"errors": []}])
+        self.assertTrue(session.authority_committed)
+
+    def test_generic_kwargs_writer_type_error_is_not_retried(self) -> None:
+        session = _session(contexts=[])
+        run_state = RunState(run_id="run-proxy-error", mode="main")
+        calls: list[dict[str, object]] = []
+
+        def proxy_writer(*_args, **kwargs):  # noqa: ANN003
+            calls.append(dict(kwargs))
+            raise TypeError("unexpected keyword argument 'on_commit'")
+
+        runtime = SimpleNamespace(_write_artifacts=proxy_writer)
+
+        with self.assertRaisesRegex(TypeError, "unexpected keyword argument"):
+            _write_artifacts_at_commit_boundary(runtime, session, run_state)
+
+        self.assertEqual(calls, [{"errors": []}])
+        self.assertFalse(session.authority_committed)
+
+    def test_committed_authority_exception_never_invokes_failure_finalizer(self) -> None:
+        session = _session(contexts=[])
+        session.authority_committed = True
+        events: list[tuple[str, dict[str, object]]] = []
+        runtime = SimpleNamespace(_emit=lambda event, **payload: events.append((event, payload)))
+
+        result = _finalize_startup_exception(
+            runtime=runtime,
+            session=session,
+            error=OSError("terminal attach failed"),
+            finalize_failure=lambda **_kwargs: self.fail("committed authority must not be rewritten"),
+        )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(events[-1][0], "startup.post_commit_error")
+
+    def test_execute_startup_lifecycle_finalizes_then_reraises_keyboard_interrupt(self) -> None:
+        session = _session(contexts=[])
+        runtime = SimpleNamespace()
+        orchestrator = SimpleNamespace(runtime=runtime)
+        cancellation = KeyboardInterrupt("cancel startup")
+
+        def interrupt_phase(_session: StartupSession) -> None:
+            raise cancellation
+
+        with (
+            patch(
+                "envctl_engine.startup.lifecycle.create_startup_session",
+                return_value=session,
+            ),
+            patch(
+                "envctl_engine.startup.lifecycle._pre_start_phases",
+                return_value=(interrupt_phase,),
+            ),
+            patch(
+                "envctl_engine.startup.lifecycle.finalize_failed_startup",
+                return_value=1,
+            ) as finalize_failure,
+            self.assertRaises(KeyboardInterrupt) as raised,
+        ):
+            execute_startup_lifecycle(orchestrator, session.requested_route)
+
+        self.assertIs(raised.exception, cancellation)
+        finalize_failure.assert_called_once()
+        self.assertEqual(finalize_failure.call_args.kwargs["error"], str(cancellation))
 
     def test_finalize_successful_startup_delegates_degraded_plan_agent_handoff(self) -> None:
         session = _session(contexts=[])
@@ -275,7 +871,10 @@ class StartupFinalizationTests(unittest.TestCase):
         self.assertEqual(writes[0][1], [context])
         self.assertEqual(summaries[0][1], [context])
         self.assertIn(("validate", {"phase": "success_finalization"}), events)
-        self.assertIn("before_dashboard_entry", [payload.get("checkpoint") for event, payload in events if event == "ui.plan_handoff.snapshot"])
+        self.assertIn(
+            "before_dashboard_entry",
+            [payload.get("checkpoint") for event, payload in events if event == "ui.plan_handoff.snapshot"],
+        )
 
     def test_finalize_plan_agent_degraded_handoff_writes_artifacts_and_attach_result(self) -> None:
         session = _session(contexts=[])
@@ -319,9 +918,7 @@ class StartupFinalizationTests(unittest.TestCase):
 
         result = finalize_plan_agent_degraded_handoff_artifacts(
             runtime=SimpleNamespace(
-                _write_artifacts=lambda state, contexts, *, errors: writes.append(
-                    (state, list(contexts), list(errors))
-                )
+                _write_artifacts=lambda state, contexts, *, errors: writes.append((state, list(contexts), list(errors)))
             ),
             session=session,
             ensure_run_id=lambda session: events.append(("ensure", {})),
@@ -583,7 +1180,9 @@ class StartupFinalizationTests(unittest.TestCase):
         print_headless_plan_session_summary(
             session,
             attach_target=attach_target,
-            validate_plan_agent_handoff=lambda session, *, phase: self.fail("override attach target should skip validation"),
+            validate_plan_agent_handoff=lambda session, *, phase: self.fail(
+                "override attach target should skip validation"
+            ),
             print_fn=lines.append,
         )
 
@@ -771,7 +1370,13 @@ class StartupFinalizationTests(unittest.TestCase):
             startup_event_index=1,
         )
         events = [
-            {"event": "port.rebound", "project": "ignored", "service": "backend", "restart_preferred_port": 1, "port": 2},
+            {
+                "event": "port.rebound",
+                "project": "ignored",
+                "service": "backend",
+                "restart_preferred_port": 1,
+                "port": 2,
+            },
             {
                 "event": "port.rebound",
                 "project": "feature-a-1",

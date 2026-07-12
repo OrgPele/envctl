@@ -6,6 +6,7 @@ from typing import Any
 from envctl_engine.planning.plan_agent.launch import launch_plan_agent_terminals
 from envctl_engine.planning.plan_agent.omx_transport import validate_plan_agent_attach_target
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
+from envctl_engine.runtime.lifecycle_operation_lease import release_lifecycle_operation
 from envctl_engine.startup.context_selection import select_startup_contexts
 from envctl_engine.startup.dependency_bootstrap import prepare_project_dependencies
 from envctl_engine.startup.disabled_startup_resolution import resolve_disabled_startup_mode_with_runtime
@@ -95,9 +96,59 @@ def execute_startup_lifecycle(orchestrator: Any, route: Any) -> int:
             ),
         )
     except RuntimeError as exc:
-        return finalize_failure(error=str(exc))
+        return _finalize_startup_exception(
+            runtime=runtime,
+            session=session,
+            error=exc,
+            finalize_failure=finalize_failure,
+        )
     except Exception as exc:
-        return finalize_failure(error=str(exc))
+        return _finalize_startup_exception(
+            runtime=runtime,
+            session=session,
+            error=exc,
+            finalize_failure=finalize_failure,
+        )
+    except BaseException as exc:  # noqa: BLE001 - cancellation still requires failure finalization
+        try:
+            _finalize_startup_exception(
+                runtime=runtime,
+                session=session,
+                error=exc,
+                finalize_failure=finalize_failure,
+            )
+        except BaseException as finalization_error:  # noqa: BLE001
+            if finalization_error is not exc:
+                try:
+                    exc.add_note(f"startup cancellation finalization also failed: {finalization_error}")
+                except Exception:  # noqa: BLE001
+                    pass
+        raise
+
+
+def _finalize_startup_exception(
+    *,
+    runtime: Any,
+    session: StartupSession,
+    error: BaseException,
+    finalize_failure: Any,
+) -> int:
+    if not session.authority_committed:
+        return int(finalize_failure(error=str(error)))
+    # The durable active revision is already committed. Presentation, terminal
+    # attachment, or dashboard failures after this boundary must not terminate
+    # its services or rewrite it as a failed startup.
+    release_lifecycle_operation(runtime)
+    try:
+        runtime._emit(
+            "startup.post_commit_error",
+            run_id=session.run_id,
+            error=str(error),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    print(f"Startup state is active, but post-start handling failed: {error}")
+    return 1
 
 
 def _pre_start_phases(

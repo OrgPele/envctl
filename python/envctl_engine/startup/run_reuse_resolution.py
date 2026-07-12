@@ -21,7 +21,7 @@ from envctl_engine.startup.run_reuse_decision import (
 )
 from envctl_engine.startup.run_reuse_fresh_start import replace_existing_project_services_for_fresh_start_with_defaults
 from envctl_engine.startup.run_reuse_resume import StartupRunReuseResumeHandler
-from envctl_engine.startup.session import StartupSession
+from envctl_engine.startup.session import StartupSession, metadata_with_state_sources
 from envctl_engine.startup.session_lifecycle import announce_session_identifiers, emit_startup_phase
 from envctl_engine.startup.service_bootstrap_domain import configured_service_types_for_mode
 from envctl_engine.startup.startup_progress import report_progress
@@ -108,17 +108,19 @@ class StartupRunReuseResolver:
 
     def _emit_reuse_evaluation(self, decision: RunReuseDecision) -> None:
         candidate_state = decision.candidate_state
-        self.runtime._emit(
-            "state.run_reuse.evaluate",
-            run_id=candidate_state.run_id if candidate_state is not None else None,
-            mode=self.runtime_mode,
-            command=self.route.command,
-            decision_kind=decision.decision_kind,
-            reason=decision.reason,
-            selected_projects=decision.selected_projects,
-            state_projects=decision.state_projects,
-            weak_identity=decision.weak_identity,
-            mismatch_details=decision.mismatch_details,
+        self._best_effort_diagnostic(
+            lambda: self.runtime._emit(
+                "state.run_reuse.evaluate",
+                run_id=candidate_state.run_id if candidate_state is not None else None,
+                mode=self.runtime_mode,
+                command=self.route.command,
+                decision_kind=decision.decision_kind,
+                reason=decision.reason,
+                selected_projects=decision.selected_projects,
+                state_projects=decision.state_projects,
+                weak_identity=decision.weak_identity,
+                mismatch_details=decision.mismatch_details,
+            )
         )
 
     def _prepare_dashboard_stopped_restore(self, *, decision: RunReuseDecision, reuse_started: float) -> bool:
@@ -137,7 +139,10 @@ class StartupRunReuseResolver:
         self.session.run_id = None
         self.session.preserved_services = dict(candidate_state.services)
         self.session.preserved_requirements = dict(candidate_state.requirements)
-        self.session.base_metadata = mark_run_reused(candidate_state.metadata, reason="reuse_expand")
+        self.session.base_metadata = metadata_with_state_sources(
+            mark_run_reused(candidate_state.metadata, reason="reuse_expand"),
+            candidate_state,
+        )
         state_project_names = {
             str(project.get("name", "")).strip().casefold()
             for project in decision.state_projects
@@ -149,53 +154,63 @@ class StartupRunReuseResolver:
                 for context in self.session.selected_contexts
                 if str(getattr(context, "name", "")).strip().casefold() not in state_project_names
             ]
-        self.emit_phase(
-            self.session,
-            "auto_resume_evaluate",
-            reuse_started,
-            status="expand",
-            match_mode="expand",
-            state_project_count=len(decision.state_projects),
-            selected_project_count=len(self.session.selected_contexts),
+        self._best_effort_diagnostic(
+            lambda: self.emit_phase(
+                self.session,
+                "auto_resume_evaluate",
+                reuse_started,
+                status="expand",
+                match_mode="expand",
+                state_project_count=len(decision.state_projects),
+                selected_project_count=len(self.session.selected_contexts),
+            )
         )
-        self.runtime._emit(
-            "state.run_reuse.applied",
-            run_id=candidate_state.run_id,
-            mode=self.runtime_mode,
-            command=self.route.command,
-            decision_kind=decision.decision_kind,
-            reason=decision.reason,
-            preserved_services=sorted(self.session.preserved_services),
+        self._best_effort_diagnostic(
+            lambda: self.runtime._emit(
+                "state.run_reuse.applied",
+                run_id=candidate_state.run_id,
+                mode=self.runtime_mode,
+                command=self.route.command,
+                decision_kind=decision.decision_kind,
+                reason=decision.reason,
+                preserved_services=sorted(self.session.preserved_services),
+            )
         )
 
     def _handle_no_reuse(self, *, decision: RunReuseDecision, reuse_started: float) -> None:
         candidate_state = decision.candidate_state
-        self.emit_phase(
-            self.session,
-            "auto_resume_evaluate",
-            reuse_started,
-            status="skipped" if candidate_state is not None else "none",
-            reason=decision.reason if candidate_state is not None else None,
-            state_project_count=len(decision.state_projects),
-            selected_project_count=len(self.session.selected_contexts),
+        self._best_effort_diagnostic(
+            lambda: self.emit_phase(
+                self.session,
+                "auto_resume_evaluate",
+                reuse_started,
+                status="skipped" if candidate_state is not None else "none",
+                reason=decision.reason if candidate_state is not None else None,
+                state_project_count=len(decision.state_projects),
+                selected_project_count=len(self.session.selected_contexts),
+            )
         )
         if candidate_state is None:
             return
-        self.runtime._emit(
-            "state.auto_resume.skipped",
-            reason=decision.reason,
-            state_projects=[project["name"] for project in decision.state_projects],
-            selected_projects=[project["name"] for project in decision.selected_projects],
-            mode=self.runtime_mode,
-            command=self.route.command,
+        self._best_effort_diagnostic(
+            lambda: self.runtime._emit(
+                "state.auto_resume.skipped",
+                reason=decision.reason,
+                state_projects=[project["name"] for project in decision.state_projects],
+                selected_projects=[project["name"] for project in decision.selected_projects],
+                mode=self.runtime_mode,
+                command=self.route.command,
+            )
         )
-        self.runtime._emit(
-            "state.run_reuse.skipped",
-            run_id=candidate_state.run_id,
-            reason=decision.reason,
-            mode=self.runtime_mode,
-            command=self.route.command,
-            mismatch_details=decision.mismatch_details,
+        self._best_effort_diagnostic(
+            lambda: self.runtime._emit(
+                "state.run_reuse.skipped",
+                run_id=candidate_state.run_id,
+                reason=decision.reason,
+                mode=self.runtime_mode,
+                command=self.route.command,
+                mismatch_details=decision.mismatch_details,
+            )
         )
         self.replace_existing_project_services_for_fresh_start(
             self.session,
@@ -221,13 +236,22 @@ class StartupRunReuseResolver:
         return code
 
     def _emit_startup_branch_snapshot(self, debug_orch_groups: set[str]) -> None:
-        self.emit_snapshot(
-            self.session,
-            "startup_branch_enter",
-            command=self.requested_command,
-            mode=self.runtime_mode,
-            orch_group=sorted(debug_orch_groups) or None,
+        self._best_effort_diagnostic(
+            lambda: self.emit_snapshot(
+                self.session,
+                "startup_branch_enter",
+                command=self.requested_command,
+                mode=self.runtime_mode,
+                orch_group=sorted(debug_orch_groups) or None,
+            )
         )
+
+    @staticmethod
+    def _best_effort_diagnostic(callback: Callable[[], object]) -> None:
+        try:
+            callback()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _resume_matching_run(
         self,
@@ -321,7 +345,7 @@ def resolve_startup_run_reuse_with_runtime(
     runtime: Any,
     session: StartupSession,
     *,
-    terminate_restart_orphan_listeners: Callable[..., None],
+    terminate_restart_orphan_listeners: Callable[..., set[int]],
     validate_attach_target_fn: Callable[..., Any],
     attach_plan_agent_terminal: Callable[..., Any],
     progress_lock: Any,
@@ -362,13 +386,11 @@ def resolve_startup_run_reuse_with_runtime(
             session=session,
             validate_plan_agent_handoff=validate_plan_agent_handoff,
             attach_plan_agent_terminal=attach_plan_agent_terminal,
-            print_headless_plan_session_summary=lambda session, *, attach_target: (
-                print_headless_plan_session_summary(
-                    session,
-                    validate_plan_agent_handoff=validate_plan_agent_handoff,
-                    print_fn=print_fn,
-                    attach_target=attach_target,
-                )
+            print_headless_plan_session_summary=lambda session, *, attach_target: print_headless_plan_session_summary(
+                session,
+                validate_plan_agent_handoff=validate_plan_agent_handoff,
+                print_fn=print_fn,
+                attach_target=attach_target,
             ),
         ),
         print_headless_plan_session_summary=lambda session: print_headless_plan_session_summary(
@@ -391,8 +413,6 @@ def resolve_startup_run_reuse_with_runtime(
                 session=session,
                 candidate_state=candidate_state,
                 reason=reason,
-                configured_service_types=set(configured_service_types_for_mode(runtime.config, session.runtime_mode)),
-                additional_services=tuple(getattr(runtime.config, "additional_services", ()) or ()),
                 announce_session_identifiers=lambda session: announce_session_identifiers(
                     runtime,
                     session,

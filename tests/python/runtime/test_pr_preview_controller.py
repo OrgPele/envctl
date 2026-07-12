@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 import json
 from pathlib import Path
@@ -9,6 +10,9 @@ import sys
 import pytest
 
 import envctl_engine.pr_preview_controller as preview_controller
+
+
+REAL_PROBE_PUBLIC_ROUTE_URL = preview_controller.probe_public_route_url
 
 
 def load_controller():
@@ -1308,6 +1312,113 @@ def test_manual_start_refreshes_preview_ttl_when_label_is_old(tmp_path):
     assert "2000-01-01" not in runner.comments[-1]
 
 
+def test_manual_start_reconciles_same_head_instead_of_reusing_stale_runtime(
+    tmp_path,
+    monkeypatch,
+):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        projects={"projects": [{"name": "feature/demo", "root": str(root), "running": True}]},
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+    )
+    instance = controller.PreviewController(make_config(controller, tmp_path), runner)
+    pr = controller.pr_from_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=pr.number,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(root),
+            head_ref=pr.head_ref,
+            head_sha=pr.head_sha,
+            status="running",
+            label_added_at="2026-06-14T00:00:00Z",
+            started_at="2026-06-14T00:00:00Z",
+            expires_at="2026-06-14T00:45:00Z",
+            updated_at="2026-06-14T00:00:00Z",
+            endpoints={"frontend": {"public_url": "https://preview.example"}},
+            deployment_id="12345",
+        )
+    )
+    monkeypatch.setattr(instance, "get_pr", lambda _number: pr)
+
+    exit_code = instance.run_command("start", pr.number)
+
+    assert exit_code == 0
+    sequence = [
+        call["argv"][:2]
+        for call in runner.calls
+        if call["argv"][:2] in (["envctl", "stop"], ["envctl", "import"], ["envctl", "start"])
+    ]
+    assert sequence == [
+        ["envctl", "stop"],
+        ["envctl", "import"],
+        ["envctl", "stop"],
+        ["envctl", "start"],
+    ]
+    state = instance.load_state(pr.number)
+    assert state is not None
+    assert state.status == "running"
+    assert state.head_sha == pr.head_sha
+    assert state.started_at != "2026-06-14T00:00:00Z"
+    assert "already running for this head" not in runner.comments[-1]
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"ready": True}, None),
+        (
+            {"ready": False, "reason": "missing_provider_credentials"},
+            "reported ready=false (reason=missing_provider_credentials)",
+        ),
+        (
+            {"ready": "true", "reason": "invalid/value with spaces"},
+            "returned a non-boolean readiness value (reason=invalid_value_with_spaces)",
+        ),
+    ],
+)
+def test_public_route_probe_honors_json_readiness_semantics(
+    monkeypatch,
+    payload,
+    expected,
+):
+    controller = load_controller()
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, limit):
+            body = json.dumps(payload).encode("utf-8")
+            assert len(body) <= limit
+            return body
+
+    monkeypatch.setattr(controller.urllib.request, "urlopen", lambda *_args, **_kwargs: Response())
+
+    result = REAL_PROBE_PUBLIC_ROUTE_URL("https://preview.example/readyz")
+
+    if expected is None:
+        assert result is None
+    else:
+        assert expected in str(result)
+
+
 def test_push_event_refreshes_preview_ttl_for_labeled_branch(tmp_path):
     controller = load_controller()
     root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
@@ -1335,6 +1446,27 @@ def test_push_event_refreshes_preview_ttl_for_labeled_branch(tmp_path):
     assert (expires_at - started_at).total_seconds() > 44 * 60
     assert "2000-01-01" not in runner.comments[-1]
     assert "- Reason: push to labeled PR branch feature/demo" in runner.comments[-1]
+
+
+def test_controller_run_dispatches_github_push_payload(tmp_path, monkeypatch):
+    controller = load_controller()
+    event_path = tmp_path / "push.json"
+    event_path.write_text(json.dumps(push_payload(after="newsha")), encoding="utf-8")
+    config = make_config(controller, tmp_path)
+    instance = controller.PreviewController(config, FakeRunner(controller))
+    received = []
+
+    monkeypatch.setattr(
+        instance,
+        "run_push_event",
+        lambda event: received.append(event) or 7,
+    )
+    args = controller.build_parser().parse_args(
+        ["--event-name", "push", "--event-path", str(event_path)]
+    )
+
+    assert instance.run(args) == 7
+    assert received == [push_payload(after="newsha")]
 
 
 def test_push_event_uses_pushed_sha_before_same_head_skip(tmp_path):
@@ -2027,6 +2159,117 @@ def test_start_keeps_backend_venv_created_with_same_python(tmp_path):
     )
 
     assert venv.exists()
+
+
+def test_preview_python_command_shim_supports_legacy_python_token(tmp_path):
+    controller = load_controller()
+    env = {
+        "PYTHON_BIN": sys.executable,
+        "PATH": "/usr/bin:/bin",
+    }
+
+    shim = controller.prepare_python_command_shim(
+        env,
+        runtime_root=tmp_path / "runtime",
+    )
+    first_target = shim.resolve(strict=True)
+    second = controller.prepare_python_command_shim(
+        env,
+        runtime_root=tmp_path / "runtime",
+    )
+    result = subprocess.run(
+        ["python", "-c", "print('legacy-python-ok')"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert shim == second
+    assert first_target == Path(sys.executable).resolve()
+    assert second.resolve(strict=True) == Path(sys.executable).resolve()
+    assert Path(env["PATH"].split(controller.os.pathsep, 1)[0]) == shim.parent
+    assert env["ENVCTL_PYTHON_EXECUTABLE"] == str(Path(sys.executable).resolve())
+    assert result.returncode == 0
+    assert result.stdout.strip() == "legacy-python-ok"
+
+
+def test_preview_python_command_shims_are_isolated_by_interpreter(tmp_path):
+    controller = load_controller()
+
+    def make_interpreter(index: int) -> Path:
+        executable = tmp_path / f"python-{index}"
+        executable.write_text(
+            "#!/bin/sh\n"
+            "case \"$2\" in\n"
+            "  *sys.version_info*) printf '3.13\\n' ;;\n"
+            f"  *) printf 'interpreter-{index}\\n' ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+        return executable
+
+    interpreters = [make_interpreter(index) for index in range(16)]
+
+    def prepare_and_run(interpreter: Path) -> tuple[Path, str]:
+        env = {"PYTHON_BIN": str(interpreter), "PATH": "/usr/bin:/bin"}
+        shim = controller.prepare_python_command_shim(
+            env,
+            runtime_root=tmp_path / "runtime",
+        )
+        result = subprocess.run(
+            ["python", "-c", "print('selected')"],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0
+        return shim, result.stdout.strip()
+
+    with ThreadPoolExecutor(max_workers=len(interpreters)) as executor:
+        results = list(executor.map(prepare_and_run, interpreters))
+
+    assert len({shim.parent for shim, _output in results}) == len(interpreters)
+    assert {output for _shim, output in results} == {
+        f"interpreter-{index}" for index in range(len(interpreters))
+    }
+    assert list((tmp_path / "runtime").rglob(".python-*")) == []
+
+    reused_env = {"PYTHON_BIN": str(interpreters[0]), "PATH": "/usr/bin:/bin"}
+    controller.prepare_python_command_shim(reused_env, runtime_root=tmp_path / "runtime")
+    reused_env["PYTHON_BIN"] = str(interpreters[1])
+    latest = controller.prepare_python_command_shim(reused_env, runtime_root=tmp_path / "runtime")
+    managed_path_entries = [
+        Path(part)
+        for part in reused_env["PATH"].split(controller.os.pathsep)
+        if Path(part).parent == tmp_path / "runtime" / "python-command-shims"
+    ]
+    assert managed_path_entries == [latest.parent]
+
+
+def test_preview_python_command_shim_rejects_symlinked_runtime_directory(tmp_path):
+    controller = load_controller()
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+    (runtime_root / "python-command-shims").symlink_to(external, target_is_directory=True)
+    env = {"PYTHON_BIN": sys.executable, "PATH": "/usr/bin:/bin"}
+
+    with pytest.raises(RuntimeError, match="not a real directory"):
+        controller.prepare_python_command_shim(env, runtime_root=runtime_root)
+
+    assert list(external.iterdir()) == []
+
+
+def test_preview_python_command_shim_rejects_non_python_executable(tmp_path):
+    controller = load_controller()
+    env = {"PYTHON_BIN": "/bin/sh", "PATH": "/usr/bin:/bin"}
+
+    with pytest.raises(RuntimeError, match="not Python 3"):
+        controller.prepare_python_command_shim(env, runtime_root=tmp_path / "runtime")
 
 
 def test_unlabeled_event_stops_tracked_preview(tmp_path):

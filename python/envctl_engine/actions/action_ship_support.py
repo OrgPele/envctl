@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from envctl_engine.actions.action_ship_check_results import normalize_github_pr_checks  # noqa: F401
 from envctl_engine.actions.action_ship_checks import github_pr_checks as default_github_pr_checks
+from envctl_engine.actions.action_ship_checks_phase import run_ship_checks_phase
 from envctl_engine.actions.action_ship_conflicts import (
     existing_merge_conflict_report,
     parse_merge_tree_conflicts,  # noqa: F401
@@ -17,17 +18,16 @@ from envctl_engine.actions.action_ship_conflicts import (
 )
 from envctl_engine.actions.action_ship_contract import (
     emit_ship_commit_progress,
-    emit_ship_progress,
     parse_ship_json_output,
     print_ship_result,  # noqa: F401
     ship_payload,  # noqa: F401
     ship_protected_paths,
 )
 from envctl_engine.actions.action_ship_finish import finish_ship_workflow
-from envctl_engine.actions.action_ship_phase_status import (
-    callable_accepts_keyword,
-    check_phase_status,
-    ship_status_is_success,
+from envctl_engine.actions.action_ship_pr_context import (
+    ExistingPullRequestLookup,
+    conflict_base_branch_override,
+    refresh_existing_pull_request,
 )
 from envctl_engine.actions.action_ship_pr_phase import run_ship_pr_label_phase, run_ship_pr_phase
 from envctl_engine.actions.action_ship_push import run_ship_push_phase
@@ -38,6 +38,7 @@ ResolveBaseBranch = Callable[[Any, Path], str]
 ResolveBaseRef = Callable[[Path, str], str]
 GithubPrChecks = Callable[..., dict[str, object]]
 github_pr_checks = default_github_pr_checks
+
 
 @dataclass(slots=True)
 class ShipWorkflowState:
@@ -51,6 +52,7 @@ class ShipWorkflowState:
     committed: bool = False
     pushed: bool = False
     pr_url: str = ""
+    pr_base_branch: str = ""
     pr_created: bool = False
     step_statuses: list[str] = field(default_factory=list)
     merge_conflicts: dict[str, object] = field(default_factory=dict)
@@ -72,6 +74,7 @@ class ShipWorkflowDependencies:
     partition_envctl_protected_paths: Callable[[str], Any]
     ordered_unique_paths: Callable[..., list[str]]
     github_pr_checks: GithubPrChecks | None = None
+    existing_pull_request: ExistingPullRequestLookup | None = None
 
 
 @dataclass(slots=True)
@@ -144,7 +147,10 @@ class ShipWorkflowRunner:
             self.context.repo_root,
             project_name=self.context.project_name,
         )
-        state.pr_url = self.dependencies.existing_pr_url(state.git_root, state.branch)
+        if self.dependencies.existing_pull_request is None:
+            state.pr_url = self.dependencies.existing_pr_url(state.git_root, state.branch)
+        else:
+            refresh_existing_pull_request(state, self.dependencies.existing_pull_request)
 
         commit_code = self.dependencies.run_commit_action(self.context)
         state.after_sha = self.dependencies.git_output(state.git_root, ["rev-parse", "HEAD"]).strip()
@@ -159,13 +165,16 @@ class ShipWorkflowRunner:
         return self._finish(state, status="commit_failed", ok=False, commit_sha=state.after_sha)
 
     def _run_pr_phase(self, state: ShipWorkflowState) -> int | None:
-        return run_ship_pr_phase(
+        result = run_ship_pr_phase(
             state=state,
             context=self.context,
             run_pr_action=self.dependencies.run_pr_action,
             existing_pr_url=self.dependencies.existing_pr_url,
             finish=self._finish,
         )
+        if result is None:
+            refresh_existing_pull_request(state, self.dependencies.existing_pull_request)
+        return result
 
     def _run_pr_label_phase(self, state: ShipWorkflowState) -> int | None:
         return run_ship_pr_label_phase(
@@ -184,6 +193,7 @@ class ShipWorkflowRunner:
             resolve_base_ref=self.dependencies.resolve_base_ref,
             run_git=self.dependencies.run_git,
             git_output=self.dependencies.git_output,
+            base_branch_override=conflict_base_branch_override(self.context, state),
         )
         if state.merge_conflicts.get("state") != "conflicts":
             return None
@@ -228,27 +238,10 @@ class ShipWorkflowRunner:
         return None
 
     def _run_checks_phase(self, state: ShipWorkflowState) -> int:
-        checks_fn = self.dependencies.github_pr_checks or default_github_pr_checks
-        check_kwargs: dict[str, object] = {
-            "branch": state.branch,
-            "pr_url": state.pr_url,
-            "expected_head_sha": state.after_sha,
-        }
-        if callable_accepts_keyword(checks_fn, "progress_callback"):
-            check_kwargs["progress_callback"] = emit_ship_progress
-        checks = checks_fn(state.git_root, **check_kwargs)
-        status = check_phase_status(checks)
-        state.step_statuses.append(status)
-        return self._finish(
-            state,
-            status=status,
-            ok=ship_status_is_success(status),
-            commit_sha=state.after_sha,
-            pushed=state.pushed,
-            pr_url=state.pr_url,
-            pr_created=state.pr_created,
-            checks=checks,
-            merge_conflicts=state.merge_conflicts,
+        return run_ship_checks_phase(
+            state=state,
+            checks_fn=self.dependencies.github_pr_checks or default_github_pr_checks,
+            finish=self._finish,
         )
 
     def _finish(
@@ -277,8 +270,10 @@ class ShipWorkflowRunner:
             merge_conflicts=merge_conflicts,
         )
 
+
 def run_ship_workflow(
-    context: Any, *,
+    context: Any,
+    *,
     resolve_git_root: Callable[[Path, Path], Path],
     git_available: bool,
     git_output: GitOutput,
@@ -292,7 +287,9 @@ def run_ship_workflow(
     existing_pr_url: Callable[[Path, str], str],
     partition_envctl_protected_paths: Callable[[str], Any],
     ordered_unique_paths: Callable[..., list[str]],
-    github_pr_checks: GithubPrChecks | None = None) -> int:
+    github_pr_checks: GithubPrChecks | None = None,
+    existing_pull_request: ExistingPullRequestLookup | None = None,
+) -> int:
     return ShipWorkflowRunner(
         context=context,
         dependencies=ShipWorkflowDependencies(
@@ -310,5 +307,6 @@ def run_ship_workflow(
             partition_envctl_protected_paths=partition_envctl_protected_paths,
             ordered_unique_paths=ordered_unique_paths,
             github_pr_checks=github_pr_checks,
+            existing_pull_request=existing_pull_request,
         ),
     ).run()
