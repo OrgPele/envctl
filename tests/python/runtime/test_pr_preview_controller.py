@@ -679,6 +679,14 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
         "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN",
         "test-client-token",
     )
+    monkeypatch.setenv(
+        "ENVCTL_VOICE_RUNTIME_ENV__DEEPGRAM_API_KEY",
+        "deepgram-preview-key",
+    )
+    monkeypatch.setenv(
+        "ENVCTL_VOICE_RUNTIME_ENV__CARTESIA_API_KEY",
+        "cartesia-preview-key",
+    )
 
     exit_code = instance.run_pull_request_event(
         pr_payload(
@@ -743,6 +751,8 @@ def test_labeled_event_imports_branch_with_isolated_deps_and_saves_state(
     assert start_call["env"]["ENVCTL_SOURCE_PADDLE_GROWTH_MONTHLY_PRICE_ID"] == "pri_growth_monthly"
     assert start_call["env"]["ENVCTL_BACKEND_ENV__PADDLE_BILLING_ENABLED"] == "true"
     assert start_call["env"]["ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN"] == "test-client-token"
+    assert start_call["env"]["ENVCTL_VOICE_RUNTIME_ENV__DEEPGRAM_API_KEY"] == "deepgram-preview-key"
+    assert start_call["env"]["ENVCTL_VOICE_RUNTIME_ENV__CARTESIA_API_KEY"] == "cartesia-preview-key"
     assert start_call["env"]["ENVCTL_BACKEND_ENV__FRONTEND_BASE_URL"] == "https://pele-monorepo-pr-789.srv.example.test"
     assert (
         start_call["env"]["ENVCTL_BACKEND_ENV__BACKEND_PUBLIC_URL"]
