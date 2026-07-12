@@ -401,14 +401,19 @@ class EngineRuntimeEnvTemplatesTests(EngineRuntimeEnvTestCase):
             {
                 "ENVCTL_FRONTEND_ENV__VITE_PADDLE_CLIENT_TOKEN": "client-token",
                 "ENVCTL_FRONTEND_ENV__VITE_PADDLE_ENVIRONMENT": "sandbox",
+                "ENVCTL_VOICE_RUNTIME_ENV__DEEPGRAM_API_KEY": "deepgram-key",
+                "ENVCTL_VOICE_RUNTIME_ENV__CARTESIA_API_KEY": "cartesia-key",
                 "UNRELATED_SECRET": "must-not-project",
             },
         ):
             overlays = service_env_overlays(runtime, service_name="frontend", base_env={})
+            voice_overlays = service_env_overlays(runtime, service_name="voice-runtime", base_env={})
 
         self.assertEqual(overlays["VITE_PADDLE_CLIENT_TOKEN"], "client-token")
         self.assertEqual(overlays["VITE_PADDLE_ENVIRONMENT"], "sandbox")
         self.assertNotIn("UNRELATED_SECRET", overlays)
+        self.assertEqual(voice_overlays["DEEPGRAM_API_KEY"], "deepgram-key")
+        self.assertEqual(voice_overlays["CARTESIA_API_KEY"], "cartesia-key")
 
     def test_frontend_launch_env_rejects_supabase_service_role_source_template(self) -> None:
         runtime = SimpleNamespace(

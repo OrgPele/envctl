@@ -17,6 +17,9 @@ _SERVICE_OVERLAY_SOURCE_PREFIXES = (
     "ENVCTL_BACKEND_ENV__",
     "ENVCTL_FRONTEND_ENV__",
 )
+_SERVICE_ENV_OVERLAY_NAME_RE = re.compile(
+    r"^ENVCTL_[A-Za-z][A-Za-z0-9_]*_ENV__[A-Za-z_][A-Za-z0-9_]*$"
+)
 
 
 def service_env_overlays(
@@ -62,7 +65,13 @@ def service_env_overlays(
 
 def _process_service_overlay_source() -> dict[str, str]:
     return {
-        key: value for key, value in os.environ.items() if value and key.startswith(_SERVICE_OVERLAY_SOURCE_PREFIXES)
+        key: value
+        for key, value in os.environ.items()
+        if value
+        and (
+            key.startswith(_SERVICE_OVERLAY_SOURCE_PREFIXES)
+            or _SERVICE_ENV_OVERLAY_NAME_RE.fullmatch(key)
+        )
     }
 
 
