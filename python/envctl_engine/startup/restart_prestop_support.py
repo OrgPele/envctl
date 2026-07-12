@@ -6,17 +6,24 @@ from typing import Any, Callable, Iterable
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.docker_service_runtime import state_uses_docker_services
 from envctl_engine.runtime.lifecycle_requirement_ports import release_port_reservation
+from envctl_engine.runtime.lifecycle_service_termination import failed_listener_pids, unconfirmed_service_names
 from envctl_engine.state.lookup import call_state_loader
 from envctl_engine.runtime.runtime_context import resolve_port_allocator, resolve_process_runtime
 from envctl_engine.shared.process_cwd import process_cwd
-from envctl_engine.shared.services import service_project_name, service_slug_from_record
+from envctl_engine.shared.services import (
+    service_project_name,
+    service_slug_from_record,
+)
 from envctl_engine.startup.startup_selection_support import (
-    _restart_selected_services,
+    _configured_service_projects_for_selector,
+    _observed_service_types_for_selector,
     restart_include_requirements,
+    restart_selected_services_for_type_map,
+    restart_service_types_by_project,
+    state_project_names,
     restart_target_projects,
     restart_target_projects_for_selected_services,
 )
-from envctl_engine.startup.run_reuse_dashboard_restore import metadata_without_dashboard_stopped_services
 from envctl_engine.startup.session import metadata_with_state_sources
 
 
@@ -39,6 +46,7 @@ class RestartPrestopSelection:
     selected_services: set[str]
     target_projects: set[str]
     include_requirements: bool
+    service_types_by_project: dict[str, set[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,37 +111,58 @@ def restart_start_route(
     selected_services: set[str],
     target_projects: set[str],
     include_requirements: bool,
+    service_types_by_project: dict[str, set[str]] | None = None,
 ) -> Route:
+    type_map = (
+        {
+            project: sorted(service_types)
+            for project, service_types in sorted(service_types_by_project.items(), key=lambda item: item[0].casefold())
+        }
+        if service_types_by_project is not None
+        else None
+    )
     return Route(
         command="start",
         mode=restart_lookup_mode,
         raw_args=route.raw_args,
         passthrough_args=route.passthrough_args,
-        projects=route.projects,
+        projects=sorted(target_projects, key=str.casefold) if target_projects else route.projects,
         flags={
             **route.flags,
             "_restart_request": True,
             "_restart_selected_services": sorted(selected_services),
             "_restart_target_projects": sorted(target_projects),
             "_restart_include_requirements": include_requirements,
+            **({"_restart_service_types_by_project": type_map} if type_map is not None else {}),
         },
     )
 
 
 def restart_prestop_selection(*, state: Any, route: Route, runtime: Any) -> RestartPrestopSelection:
-    selected_services = _restart_selected_services(state=state, route=route)
     target_projects = restart_target_projects(state=state, route=route, runtime=runtime)
     include_requirements = restart_include_requirements(route)
-    if include_requirements and not target_projects:
+    if include_requirements and not target_projects and not isinstance(route.flags.get("services"), list):
         target_projects = restart_target_projects_for_selected_services(
-            selected_services=selected_services,
+            selected_services=set(),
             state=state,
             runtime=runtime,
         )
+    service_types_by_project = restart_service_types_by_project(
+        state=state,
+        route=route,
+        runtime=runtime,
+        target_projects=target_projects,
+    )
+    selected_services = restart_selected_services_for_type_map(
+        state=state,
+        runtime=runtime,
+        service_types_by_project=service_types_by_project,
+    )
     return RestartPrestopSelection(
         selected_services=selected_services,
         target_projects=target_projects,
         include_requirements=include_requirements,
+        service_types_by_project=service_types_by_project,
     )
 
 
@@ -159,11 +188,35 @@ def handle_restart_prestop(
         session.runtime_mode = restart_lookup_mode
         return None
     session.restart_state = resumed
+    previous_preserve_flag = bool(getattr(session, "preserve_existing_state_on_failure", False))
+    source_services = {
+        **dict(getattr(resumed, "services", {})),
+        **dict(session.preserved_services),
+    }
+    source_requirements = {
+        **dict(getattr(resumed, "requirements", {})),
+        **dict(session.preserved_requirements),
+    }
+    source_metadata = metadata_with_state_sources(
+        {**dict(getattr(resumed, "metadata", {})), **dict(session.base_metadata)},
+        resumed,
+    )
+    session.preserved_services = source_services
+    session.preserved_requirements = source_requirements
+    session.base_metadata = source_metadata
+    session.preserve_existing_state_on_failure = True
 
     selection = restart_prestop_selection(state=resumed, route=route, runtime=runtime)
     selected_services = selection.selected_services
     target_projects = selection.target_projects
     include_requirements = selection.include_requirements
+    _validate_restart_selection(
+        state=resumed,
+        route=route,
+        runtime=runtime,
+        target_projects=target_projects,
+        service_types_by_project=selection.service_types_by_project,
+    )
     runtime._emit(
         "restart.selection",
         include_requirements=include_requirements,
@@ -176,6 +229,12 @@ def handle_restart_prestop(
         runtime._emit,
         prestop_policy,
         context={"component": "startup_orchestrator", "op_id": "restart.prestop"},
+    )
+    preservation = restart_prestop_preservation(
+        resumed,
+        selected_services=selected_services,
+        include_requirements=include_requirements,
+        target_projects=target_projects,
     )
     with (
         use_spinner_policy_fn(prestop_policy),
@@ -196,43 +255,34 @@ def handle_restart_prestop(
                 aggressive=False,
                 verify_ownership=True,
             )
-            failed_services = _failed_service_names(termination_result)
+            failed_services = unconfirmed_service_names(termination_result, selected_services)
             if failed_services:
                 session.preserve_existing_state_on_failure = True
                 raise RuntimeError(
                     "Restart aborted because existing services could not be stopped: "
                     + ", ".join(sorted(failed_services))
                 )
-            failed_orphan_pids = terminate_restart_orphan_listeners(
+            orphan_result = terminate_restart_orphan_listeners(
                 state=resumed,
                 selected_services=selected_services,
                 aggressive=True,
             )
+            failed_orphan_pids = failed_listener_pids(orphan_result)
+            if failed_orphan_pids is None:
+                session.preserve_existing_state_on_failure = True
+                raise RuntimeError("Restart aborted because orphan listener cleanup was not confirmed")
             if failed_orphan_pids:
                 session.preserve_existing_state_on_failure = True
                 raise RuntimeError(
                     "Restart aborted because orphan listeners could not be stopped: "
                     + ", ".join(str(pid) for pid in sorted(failed_orphan_pids))
                 )
-            preservation = restart_prestop_preservation(
-                resumed,
-                selected_services=selected_services,
-                include_requirements=include_requirements,
-                target_projects=target_projects,
-            )
             for requirements in preservation.requirements_to_release.values():
                 runtime._release_requirement_ports(requirements)
             session.preserved_requirements = dict(preservation.preserved_requirements)
             session.preserved_services = dict(preservation.preserved_services)
-            requested_service_names = {
-                str(name).strip() for name in route.flags.get("services", []) if str(name).strip()
-            }
-            inherited_metadata = metadata_without_dashboard_stopped_services(
-                {**dict(resumed.metadata), **dict(session.base_metadata)},
-                restored_service_names=requested_service_names,
-            )
             session.base_metadata = metadata_with_state_sources(
-                inherited_metadata,
+                {**dict(resumed.metadata), **dict(session.base_metadata)},
                 resumed,
             )
             if use_prestop_spinner:
@@ -245,6 +295,10 @@ def handle_restart_prestop(
                     message="Restart pre-stop complete",
                 )
         except Exception:
+            session.preserved_services = source_services
+            session.preserved_requirements = source_requirements
+            session.base_metadata = source_metadata
+            session.preserve_existing_state_on_failure = True
             if use_prestop_spinner:
                 prestop_spinner.fail("Restart pre-stop failed")
                 runtime._emit(
@@ -269,15 +323,104 @@ def handle_restart_prestop(
         selected_services=selected_services,
         target_projects=target_projects,
         include_requirements=include_requirements,
+        service_types_by_project=selection.service_types_by_project,
     )
     session.runtime_mode = restart_lookup_mode
+    session.preserve_existing_state_on_failure = previous_preserve_flag
     return None
 
 
-def _failed_service_names(result: object) -> set[str]:
-    if not isinstance(result, (set, frozenset)):
-        return set()
-    return {str(name).strip() for name in result if str(name).strip()}
+def _validate_restart_selection(
+    *,
+    state: Any,
+    route: Route,
+    runtime: Any,
+    target_projects: set[str],
+    service_types_by_project: dict[str, set[str]] | None = None,
+) -> None:
+    requested_projects = {str(project).strip() for project in route.projects if str(project).strip()}
+    if requested_projects:
+        known_projects = {name.casefold() for name in state_project_names(runtime=runtime, state=state)}
+        unknown_projects = sorted(
+            project for project in requested_projects if project.casefold() not in known_projects
+        )
+        if unknown_projects:
+            raise RuntimeError("No active restart target found for project(s): " + ", ".join(unknown_projects))
+
+    service_selectors = route.flags.get("services")
+    requested_services = [
+        str(selector).strip()
+        for selector in (service_selectors if isinstance(service_selectors, list) else [])
+        if str(selector).strip()
+    ]
+    requested_project_keys = {project.casefold() for project in requested_projects}
+    selector_matches: dict[str, dict[str, set[str]]] = {}
+    unmatched_services: list[str] = []
+    for selector in requested_services:
+        matches: dict[str, set[str]] = {}
+        for source in (
+            _observed_service_types_for_selector(
+                state=state,
+                runtime=runtime,
+                selector=selector,
+            ),
+            _configured_service_projects_for_selector(
+                state=state,
+                runtime=runtime,
+                selector=selector,
+            ),
+        ):
+            for project, service_types in source.items():
+                matches.setdefault(project, set()).update(service_types)
+        scoped_matches = {
+            project: service_types
+            for project, service_types in matches.items()
+            if not requested_project_keys or project.casefold() in requested_project_keys
+        }
+        selector_matches[selector] = scoped_matches
+        if not scoped_matches:
+            unmatched_services.append(selector)
+    if unmatched_services:
+        raise RuntimeError("No matching services found for restart: " + ", ".join(unmatched_services))
+    if requested_services and not target_projects:
+        possible_projects = {
+            project.casefold()
+            for matches in selector_matches.values()
+            for project in matches
+        }
+        if len(possible_projects) > 1:
+            raise RuntimeError(
+                "Restart service selector is ambiguous across active projects; add --project: "
+                + ", ".join(requested_services)
+            )
+        raise RuntimeError("No active restart target found for service(s): " + ", ".join(requested_services))
+
+    if service_types_by_project is None:
+        service_types_by_project = restart_service_types_by_project(
+            state=state,
+            route=route,
+            runtime=runtime,
+            target_projects=target_projects,
+        )
+    target_keys = {project.casefold() for project in target_projects}
+    final_by_key = {
+        project.casefold(): set(service_types)
+        for project, service_types in service_types_by_project.items()
+    }
+    filtered_services = [
+        selector
+        for selector, matches in selector_matches.items()
+        if not any(
+            project.casefold() in target_keys
+            and bool(service_types.intersection(final_by_key.get(project.casefold(), set())))
+            for project, service_types in matches.items()
+        )
+    ]
+    if filtered_services:
+        raise RuntimeError(
+            "Restart service selector conflicts with the requested launch scope: "
+            + ", ".join(filtered_services)
+        )
 
 
 def restart_prestop_preservation(
@@ -289,11 +432,15 @@ def restart_prestop_preservation(
 ) -> RestartPrestopPreservation:
     requirements_to_release: dict[str, object] = {}
     preserved_requirements: dict[str, object] = {}
-    for project_name, requirements in getattr(state, "requirements", {}).items():
-        if include_requirements and (not target_projects or project_name in target_projects):
-            requirements_to_release[project_name] = requirements
+    target_project_keys = {str(project).strip().casefold() for project in target_projects if str(project).strip()}
+    for storage_name, requirements in getattr(state, "requirements", {}).items():
+        project_name = str(getattr(requirements, "project", "") or storage_name).strip()
+        if include_requirements and (
+            not target_project_keys or project_name.casefold() in target_project_keys
+        ):
+            requirements_to_release[storage_name] = requirements
         else:
-            preserved_requirements[project_name] = requirements
+            preserved_requirements[storage_name] = requirements
     preserved_services = {
         name: service for name, service in getattr(state, "services", {}).items() if name not in selected_services
     }

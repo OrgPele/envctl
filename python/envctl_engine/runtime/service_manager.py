@@ -101,9 +101,12 @@ class ServiceManager:
                         started_at=time.time(),
                         listener_expected=listener_expected,
                     )
-                except Exception as exc:  # noqa: BLE001
-                    error = str(exc)
-                    if not _terminate_pid(pid, process_runner=self.process_runner):
+                except BaseException as exc:  # noqa: BLE001 - cancellation must not leak the launched PID
+                    cleanup_confirmed = _terminate_pid_safely(
+                        pid,
+                        process_runner=self.process_runner,
+                    )
+                    if not cleanup_confirmed:
                         record = _failed_start_record(
                             project=project,
                             service_type=service_type,
@@ -111,12 +114,19 @@ class ServiceManager:
                             pid=pid,
                             requested_port=current_port if listener_expected else None,
                             listener_expected=listener_expected,
-                            failure_detail=error,
+                            failure_detail=str(exc),
                         )
+                        unterminated = {record.name: record}
+                        if not isinstance(exc, Exception):
+                            _retain_unterminated_services(exc, unterminated)
+                            raise
                         raise ServiceCleanupError(
-                            f"{error}; cleanup could not confirm exit of PID {pid}",
-                            {record.name: record},
+                            f"{exc}; cleanup could not confirm exit of PID {pid}",
+                            unterminated,
                         ) from exc
+                    if not isinstance(exc, Exception):
+                        raise
+                    error = str(exc)
             elif isinstance(pid, int) and pid > 0:
                 if not _terminate_pid(pid, process_runner=self.process_runner):
                     record = _failed_start_record(
@@ -245,36 +255,39 @@ class ServiceManager:
         partial_records: list[ServiceRecord] = []
         try:
             if parallel_start and len(descriptors) > 1:
-                worker_count = max_workers or len(descriptors)
-                with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(descriptors), worker_count)) as executor:
-                    future_map = {
-                        executor.submit(start_record, descriptor): index for index, descriptor in enumerate(descriptors)
-                    }
-                    records_by_index: dict[int, ServiceRecord] = {}
-                    failures_by_index: dict[int, Exception] = {}
-                    for future in concurrent.futures.as_completed(future_map):
-                        index = future_map[future]
-                        try:
-                            records_by_index[index] = future.result()
-                        except Exception as exc:  # noqa: BLE001
-                            failures_by_index[index] = exc
-
-                    partial_records.extend(records_by_index[index] for index in sorted(records_by_index))
-                    if failures_by_index:
-                        primary_failure = failures_by_index[min(failures_by_index)]
-                        unterminated = _unterminated_services_from_failures(failures_by_index.values())
-                        if unterminated:
-                            raise ServiceCleanupError(str(primary_failure), unterminated) from primary_failure
-                        raise primary_failure
+                records_by_index, failures_by_index, interruption = _start_parallel_records(
+                    descriptors=descriptors,
+                    start_record=start_record,
+                    max_workers=max_workers,
+                )
+                partial_records.extend(records_by_index[index] for index in sorted(records_by_index))
+                primary_failure = _primary_parallel_failure(
+                    failures_by_index,
+                    interruption=interruption,
+                )
+                if primary_failure is not None:
+                    unterminated = _unterminated_services_from_failures(failures_by_index.values())
+                    if unterminated:
+                        if not isinstance(primary_failure, Exception):
+                            _retain_unterminated_services(primary_failure, unterminated)
+                            raise primary_failure
+                        raise ServiceCleanupError(str(primary_failure), unterminated) from primary_failure
+                    raise primary_failure
             else:
                 for descriptor in descriptors:
                     partial_records.append(start_record(descriptor))
-        except Exception as exc:
+        except BaseException as exc:  # noqa: BLE001 - cancellation still requires transactional rollback
             unterminated = _unterminated_services_from_failures((exc,))
-            for record in partial_records:
-                if not _terminate_pid(record.pid, process_runner=self.process_runner):
-                    unterminated[record.name] = record
+            unterminated.update(
+                _cleanup_service_records(
+                    partial_records,
+                    process_runner=self.process_runner,
+                )
+            )
             if unterminated:
+                if not isinstance(exc, Exception):
+                    _retain_unterminated_services(exc, unterminated)
+                    raise
                 names = ", ".join(sorted(unterminated))
                 raise ServiceCleanupError(
                     f"{exc}; cleanup could not confirm exit for: {names}",
@@ -300,6 +313,110 @@ def _terminate_pid(pid: int | None, *, process_runner: object | None = None) -> 
         term_timeout=2.0,
         kill_timeout=1.0,
     )
+
+
+def _terminate_pid_safely(pid: int | None, *, process_runner: object | None = None) -> bool:
+    try:
+        return _terminate_pid(pid, process_runner=process_runner)
+    except BaseException:  # noqa: BLE001 - cleanup must not mask the triggering cancellation
+        return False
+
+
+def _cleanup_service_records(
+    records: Iterable[ServiceRecord],
+    *,
+    process_runner: object | None,
+) -> dict[str, ServiceRecord]:
+    unterminated: dict[str, ServiceRecord] = {}
+    for record in records:
+        if not _terminate_pid_safely(record.pid, process_runner=process_runner):
+            unterminated[record.name] = record
+    return unterminated
+
+
+def _retain_unterminated_services(
+    failure: BaseException,
+    services: dict[str, ServiceRecord],
+) -> None:
+    retained = _unterminated_services_from_failures((failure,))
+    retained.update(services)
+    try:
+        failure.unterminated_services = retained  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - built-in cancellation types normally allow metadata
+        failure.add_note("cleanup could not confirm exit for: " + ", ".join(sorted(retained)))
+
+
+def _start_parallel_records(
+    *,
+    descriptors: tuple[ServiceStartDescriptor, ...],
+    start_record: Callable[[ServiceStartDescriptor], ServiceRecord],
+    max_workers: int | None,
+) -> tuple[dict[int, ServiceRecord], dict[int, BaseException], BaseException | None]:
+    records_by_index: dict[int, ServiceRecord] = {}
+    failures_by_index: dict[int, BaseException] = {}
+    future_map: dict[concurrent.futures.Future[ServiceRecord], int] = {}
+    collected: set[concurrent.futures.Future[ServiceRecord]] = set()
+    interruption: BaseException | None = None
+    worker_count = max_workers or len(descriptors)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(len(descriptors), worker_count))
+
+    def collect(future: concurrent.futures.Future[ServiceRecord]) -> None:
+        collected.add(future)
+        index = future_map[future]
+        try:
+            records_by_index[index] = future.result()
+        except BaseException as exc:  # noqa: BLE001 - a worker cancellation is transaction data
+            failures_by_index[index] = exc
+
+    try:
+        try:
+            for index, descriptor in enumerate(descriptors):
+                future = executor.submit(start_record, descriptor)
+                future_map[future] = index
+            for future in concurrent.futures.as_completed(future_map):
+                collect(future)
+        except BaseException as exc:  # noqa: BLE001 - main-thread cancellation must drain submitted launches
+            interruption = exc
+            for future in future_map:
+                if future not in collected:
+                    future.cancel()
+    finally:
+        try:
+            executor.shutdown(wait=True, cancel_futures=interruption is not None)
+        except BaseException as exc:  # noqa: BLE001 - preserve the first cancellation and retry teardown
+            if interruption is None:
+                interruption = exc
+            for future in future_map:
+                future.cancel()
+            try:
+                executor.shutdown(wait=True, cancel_futures=True)
+            except BaseException as shutdown_exc:  # noqa: BLE001 - retain diagnostics on the original failure
+                assert interruption is not None
+                interruption.add_note(f"parallel executor shutdown failed: {shutdown_exc}")
+
+    for future in future_map:
+        if future in collected or future.cancelled():
+            continue
+        if future.done():
+            collect(future)
+    return records_by_index, failures_by_index, interruption
+
+
+def _primary_parallel_failure(
+    failures_by_index: dict[int, BaseException],
+    *,
+    interruption: BaseException | None,
+) -> BaseException | None:
+    if interruption is not None:
+        return interruption
+    cancellation_indexes = [
+        index for index, failure in failures_by_index.items() if not isinstance(failure, Exception)
+    ]
+    if cancellation_indexes:
+        return failures_by_index[min(cancellation_indexes)]
+    if failures_by_index:
+        return failures_by_index[min(failures_by_index)]
+    return None
 
 
 def _failed_start_record(

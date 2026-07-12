@@ -10,6 +10,7 @@ from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.runtime.engine_runtime_env import requirement_enabled_for_mode
 from envctl_engine.startup.finalization import build_success_run_state
+from envctl_engine.startup.finalization_run_state import _build_run_state
 from envctl_engine.startup.session import StartupSession
 from envctl_engine.state.models import RequirementsResult
 from envctl_engine.startup.startup_selection_support import (
@@ -102,6 +103,84 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
             state.metadata.get("dashboard_project_configured_services"),
             {"Alpha": ["frontend"], "Zeta": ["frontend"]},
         )
+
+    def test_build_run_state_includes_enabled_additional_services_per_project(self) -> None:
+        additional_services = (
+            SimpleNamespace(
+                name="voice-runtime",
+                enabled_for_project_root=lambda _mode, _root: True,
+            ),
+            SimpleNamespace(
+                name="worker",
+                enabled_for_project_root=lambda _mode, root: Path(root).name == "Alpha",
+            ),
+        )
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(runtime_scope_id="scope-1", additional_services=additional_services),
+            _run_dir_path=lambda run_id: Path("/tmp/runtime") / run_id,
+            _service_enabled_for_mode=lambda _mode, service_name: service_name == "backend",
+        )
+        contexts = [
+            SimpleNamespace(name=name, root=Path(f"/tmp/repo/{name}"), ports={})
+            for name in ("Alpha", "Beta")
+        ]
+        route = Route(command="up", mode="trees", flags={})
+        session = StartupSession(
+            requested_route=route,
+            effective_route=route,
+            requested_command="up",
+            runtime_mode="trees",
+            run_id="run-1",
+            selected_contexts=contexts,
+        )
+
+        state = build_success_run_state(runtime, session)  # type: ignore[arg-type]
+
+        self.assertEqual(
+            state.metadata["dashboard_project_configured_services"],
+            {
+                "Alpha": ["backend", "voice-runtime", "worker"],
+                "Beta": ["backend", "voice-runtime"],
+            },
+        )
+
+    def test_stopped_service_metadata_is_removed_only_after_project_success(self) -> None:
+        entries = [
+            {"project": project, "type": "voice-runtime", "name": f"{project} Agent"}
+            for project in ("Main", "Other")
+        ]
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(runtime_scope_id="scope-1", additional_services=()),
+            _run_dir_path=lambda run_id: Path("/tmp/runtime") / run_id,
+            _service_enabled_for_mode=lambda _mode, _service_name: True,
+        )
+
+        def session() -> StartupSession:
+            route = Route(command="start", mode="main", flags={"_restart_request": True})
+            value = StartupSession(
+                requested_route=route,
+                effective_route=route,
+                requested_command="restart",
+                runtime_mode="main",
+                run_id="run-1",
+                selected_contexts=[SimpleNamespace(name="Main", root=Path("/repo"), ports={})],
+                base_metadata={"dashboard_stopped_services": entries},
+            )
+            replacement = ServiceRecord(
+                name="opaque-main-agent",
+                type="voice-runtime",
+                service_slug="voice-runtime",
+                project="Main",
+                cwd="/repo",
+            )
+            value.services_by_project["Main"] = {replacement.name: replacement}
+            return value
+
+        successful = build_success_run_state(runtime, session())  # type: ignore[arg-type]
+        failed = _build_run_state(runtime, session(), failed=True)  # type: ignore[arg-type]
+
+        self.assertEqual(successful.metadata["dashboard_stopped_services"], [entries[1]])
+        self.assertEqual(failed.metadata["dashboard_stopped_services"], entries)
 
     def test_build_run_state_marks_tree_shared_dependency_dashboard_scope(self) -> None:
         runtime = SimpleNamespace(
@@ -317,6 +396,34 @@ class StartupOrchestratorProfileTests(unittest.TestCase):
         )
 
         self.assertEqual(selected, {"voice-runtime"})
+
+    def test_restart_start_route_honors_normalized_prestop_selection(self) -> None:
+        route = Route(
+            command="start",
+            mode="main",
+            flags={
+                "_restart_request": True,
+                "_restart_selected_services": ["Main Backend", "Main Frontend"],
+            },
+        )
+
+        selected = _restart_service_types_for_project(
+            route=route,
+            project_name="Main",
+            default_service_types={"backend", "frontend", "optional-bad"},
+        )
+
+        self.assertEqual(selected, {"backend", "frontend"})
+
+        route.flags["_restart_selected_services"] = []
+        self.assertEqual(
+            _restart_service_types_for_project(
+                route=route,
+                project_name="Main",
+                default_service_types={"backend", "frontend", "optional-bad"},
+            ),
+            set(),
+        )
 
     def test_runtime_scope_flags_select_startup_service_types(self) -> None:
         backend_route = parse_route(["--backend"], env={})

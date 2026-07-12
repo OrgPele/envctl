@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 from envctl_engine.dashboard_metadata import DASHBOARD_STOPPED_SERVICES_KEY
 from envctl_engine.state.fingerprints import text_fingerprint
@@ -57,10 +58,16 @@ def select_indexed_owners(
         owned_projects = frozenset(
             project_name for project_name, owner_run_id in owner_by_project.items() if owner_run_id == run_id
         )
+        candidate_projects = normalized_project_names(indexed_state.candidate.project_names)
         filtered = filter_state_to_owned_projects(
             indexed_state.state,
             owned_projects,
             service_project_name=service_project_name,
+            fallback_project=(
+                next(iter(owned_projects))
+                if len(owned_projects) == 1 and len(candidate_projects) == 1
+                else None
+            ),
         )
         chosen_states.append(IndexedState(candidate=indexed_state.candidate, state=filtered))
     return chosen_states
@@ -92,22 +99,49 @@ def filter_state_to_owned_projects(
     indexed_projects: frozenset[str],
     *,
     service_project_name: ServiceProjectResolver,
+    fallback_project: str | None = None,
 ) -> RunState:
     if not indexed_projects:
         return state
 
-    services = {
-        name: service
-        for name, service in state.services.items()
-        if service_project_name(name, service).casefold() in indexed_projects
-    }
+    fallback_key = str(fallback_project or "").strip().casefold()
+    fallback_display = _owned_project_display_name(state, fallback_key) if fallback_key else ""
+    known_project_keys = _known_state_project_keys(state).union(indexed_projects)
+    services: dict[str, ServiceRecord] = {}
+    ambiguous_services: list[str] = []
+    for name, service in state.services.items():
+        resolved_project = service_project_name(name, service).strip()
+        if resolved_project and resolved_project.casefold() not in known_project_keys:
+            resolved_project = ""
+        if not resolved_project:
+            resolved_project = _service_project_from_cwd_roots(
+                state,
+                service,
+            )
+        if not resolved_project and fallback_key:
+            resolved_project = fallback_display or fallback_key
+            service = replace(service, project=resolved_project)
+        elif resolved_project and not str(getattr(service, "project", "") or "").strip():
+            service = replace(service, project=resolved_project)
+        if not resolved_project:
+            ambiguous_services.append(name)
+            continue
+        if resolved_project.casefold() in indexed_projects:
+            services[name] = service
+    if ambiguous_services:
+        raise RuntimeError(
+            "Cannot safely determine project ownership for service(s): "
+            + ", ".join(sorted(ambiguous_services))
+            + "; candidate projects: "
+            + ", ".join(sorted(indexed_projects))
+        )
     requirements = {
         name: requirement
         for name, requirement in state.requirements.items()
-        if str(name).strip().casefold() in indexed_projects
+        if str(getattr(requirement, "project", "") or name).strip().casefold() in indexed_projects
         or (
             state.mode == "trees"
-            and str(name).strip().casefold() == "main"
+            and str(getattr(requirement, "project", "") or name).strip().casefold() == "main"
             and bool(state.metadata.get("shared_dependencies"))
         )
     }
@@ -132,6 +166,64 @@ def filter_state_to_owned_projects(
         pointers=dict(state.pointers),
         metadata=metadata,
     )
+
+
+def _owned_project_display_name(state: RunState, project_key: str) -> str:
+    if not project_key:
+        return ""
+    metadata_names = state.metadata.get("project_names")
+    if isinstance(metadata_names, Sequence) and not isinstance(metadata_names, (str, bytes)):
+        for name in metadata_names:
+            rendered = str(name).strip()
+            if rendered.casefold() == project_key:
+                return rendered
+    for storage_key, requirements in state.requirements.items():
+        rendered = str(getattr(requirements, "project", "") or storage_key).strip()
+        if rendered.casefold() == project_key:
+            return rendered
+    return project_key
+
+
+def _known_state_project_keys(state: RunState) -> set[str]:
+    projects: set[str] = set()
+    metadata_names = state.metadata.get("project_names")
+    if isinstance(metadata_names, Sequence) and not isinstance(metadata_names, (str, bytes)):
+        projects.update(str(name).strip().casefold() for name in metadata_names if str(name).strip())
+    metadata_roots = state.metadata.get("project_roots")
+    if isinstance(metadata_roots, Mapping):
+        projects.update(str(name).strip().casefold() for name in metadata_roots if str(name).strip())
+    projects.update(
+        str(getattr(requirements, "project", "") or storage_key).strip().casefold()
+        for storage_key, requirements in state.requirements.items()
+        if str(getattr(requirements, "project", "") or storage_key).strip()
+    )
+    return projects
+
+
+def _service_project_from_cwd_roots(
+    state: RunState,
+    service: ServiceRecord,
+) -> str:
+    cwd = str(getattr(service, "cwd", "") or "").strip()
+    roots = state.metadata.get("project_roots")
+    if not cwd or not isinstance(roots, Mapping):
+        return ""
+    try:
+        cwd_path = Path(cwd).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return ""
+    matches: list[str] = []
+    for project, root in roots.items():
+        project_name = str(project).strip()
+        if not project_name:
+            continue
+        try:
+            root_path = Path(str(root)).expanduser().resolve(strict=False)
+            cwd_path.relative_to(root_path)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        matches.append(project_name)
+    return matches[0] if len(matches) == 1 else ""
 
 
 def _display_project_names(
@@ -185,10 +277,30 @@ def merge_indexed_states(
     project_names: dict[str, str] = {}
     for indexed_state in ordered:
         state = indexed_state.state
-        services.update(state.services)
-        requirements.update(state.requirements)
+        state_project_names = [str(name).strip() for name in project_names_from_state(state) if str(name).strip()]
+        if not state_project_names:
+            state_project_names = [
+                str(name).strip()
+                for name in indexed_state.candidate.project_names
+                if str(name).strip()
+            ]
+        fallback_project = state_project_names[0] if len(state_project_names) == 1 else ""
+        incoming_services = {
+            name: (
+                service
+                if str(getattr(service, "project", "") or "").strip() or not fallback_project
+                else replace(service, project=fallback_project)
+            )
+            for name, service in state.services.items()
+        }
+        _merge_indexed_services(
+            services,
+            incoming_services,
+            service_project_name=_service_project_from_record,
+        )
+        _merge_indexed_requirements(requirements, state.requirements)
         pointers.update(state.pointers)
-        for name in project_names_from_state(state):
+        for name in state_project_names:
             project_names.setdefault(name.casefold(), name)
         roots = state.metadata.get("project_roots")
         if isinstance(roots, Mapping):
@@ -223,6 +335,82 @@ def merge_indexed_states(
         pointers=pointers,
         metadata=metadata,
     )
+
+
+def _service_project_from_record(name: str, service: ServiceRecord) -> str:
+    project = str(getattr(service, "project", "") or "").strip()
+    if project:
+        return project
+    rendered = str(name).strip()
+    service_type = str(getattr(service, "type", "") or "").strip()
+    suffix = f" {service_type}".casefold()
+    return rendered[: -len(suffix)].strip() if suffix and rendered.casefold().endswith(suffix) else ""
+
+
+def _merge_indexed_services(
+    merged: dict[str, ServiceRecord],
+    incoming: Mapping[str, ServiceRecord],
+    *,
+    service_project_name: ServiceProjectResolver,
+) -> None:
+    for storage_name, service in incoming.items():
+        existing = merged.get(storage_name)
+        if existing is None:
+            merged[storage_name] = service
+            continue
+        existing_project = service_project_name(storage_name, existing).strip().casefold()
+        incoming_project = service_project_name(storage_name, service).strip().casefold()
+        if not existing_project or not incoming_project or existing_project == incoming_project:
+            merged[storage_name] = service
+            continue
+        replacement_name = _unique_aggregate_storage_name(
+            storage_name,
+            owner=str(getattr(service, "project", "") or incoming_project),
+            pid=getattr(service, "pid", None),
+            occupied=set(merged).union(incoming),
+        )
+        merged[replacement_name] = replace(service, name=replacement_name)
+
+
+def _merge_indexed_requirements(
+    merged: dict[str, RequirementsResult],
+    incoming: Mapping[str, RequirementsResult],
+) -> None:
+    for storage_key, requirements in incoming.items():
+        existing = merged.get(storage_key)
+        if existing is None:
+            merged[storage_key] = requirements
+            continue
+        existing_project = str(existing.project or storage_key).strip().casefold()
+        incoming_project = str(requirements.project or storage_key).strip().casefold()
+        if not existing_project or not incoming_project or existing_project == incoming_project:
+            merged[storage_key] = requirements
+            continue
+        replacement_key = _unique_aggregate_storage_name(
+            storage_key,
+            owner=str(requirements.project or incoming_project),
+            pid=None,
+            occupied=set(merged).union(incoming),
+        )
+        merged[replacement_key] = requirements
+
+
+def _unique_aggregate_storage_name(
+    original: str,
+    *,
+    owner: str,
+    pid: object,
+    occupied: set[str],
+) -> str:
+    owner_label = str(owner).strip() or "unknown"
+    pid_label = f" {pid}" if isinstance(pid, int) and pid > 0 else ""
+    base = f"{original} State Collision {owner_label}{pid_label}"
+    candidate = base
+    index = 2
+    while candidate in occupied:
+        candidate = f"{base} {index}"
+        index += 1
+    return candidate
 
 
 def merge_project_scoped_metadata(

@@ -163,11 +163,19 @@ class PlanAgentWorkflowRuntimeAddressTests(unittest.TestCase):
             cwd="/tmp/repo/trees/feature-a-2/apps/api",
             requested_port=8000,
         )
+        metadata_service = ServiceRecord(
+            name="Opaque API Process",
+            type="backend",
+            cwd="/tmp/outside-project-root",
+            requested_port=8100,
+            project="feature-a",
+        )
         stale_service = ServiceRecord(name="feature-b backend", type="backend", cwd="", actual_port=9000)
 
         self.assertTrue(_state_project_matches_worktree("feature-a", worktree))
         self.assertFalse(_state_project_matches_worktree("feature-b", worktree))
         self.assertTrue(_state_service_matches_worktree(matching_service, worktree))
+        self.assertTrue(_state_service_matches_worktree(metadata_service, worktree))
         self.assertFalse(_state_service_matches_worktree(stale_service, worktree))
         self.assertEqual(_component_port({"requested": "0", "resources": {"primary": "49152"}}), 49152)
         self.assertEqual(

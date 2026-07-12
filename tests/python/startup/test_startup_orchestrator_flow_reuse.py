@@ -36,6 +36,7 @@ class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
                 )
 
             engine.state_repository.run_index.replace_all(historical_candidates)
+            preserved_stale_locks: dict[str, str] = {}
             for offset, candidate in enumerate(historical_candidates):
                 stale_lock = engine.port_planner.lock_dir / f"{44000 + offset}.lock"
                 stale_lock.write_text(
@@ -49,6 +50,7 @@ class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
                     ),
                     encoding="utf-8",
                 )
+                preserved_stale_locks[stale_lock.name] = stale_lock.read_text(encoding="utf-8")
             third_engine = self._engine(repo, runtime)
             with (
                 patch.object(third_engine, "_should_enter_post_start_interactive", return_value=False),
@@ -65,7 +67,13 @@ class StartupOrchestratorFlowReuseTests(StartupOrchestratorFlowTestCase):
                 set(index_payload["retired_run_ids"]),
                 {candidate.run_id for candidate in historical_candidates},
             )
-            self.assertEqual(list(third_engine.port_planner.lock_dir.glob("*.lock")), [])
+            self.assertEqual(
+                {
+                    path.name: path.read_text(encoding="utf-8")
+                    for path in third_engine.port_planner.lock_dir.glob("*.lock")
+                },
+                preserved_stale_locks,
+            )
 
     def test_repeated_no_infra_start_supersedes_old_authority_without_port_locks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

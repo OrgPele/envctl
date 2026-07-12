@@ -2,10 +2,30 @@
 from __future__ import annotations
 
 from tests.python.runtime.engine_runtime_command_parity_test_support import *
+from envctl_engine.runtime.inspection_support import _running_tree_project_names
 from envctl_engine.state.run_index import StateSelector
 
 
 class EngineRuntimeCommandParityStateConfigTests(EngineRuntimeCommandParityTestCase):
+    def test_running_tree_projects_prefers_additional_service_project_metadata(self) -> None:
+        state = RunState(
+            run_id="run-1",
+            mode="trees",
+            services={
+                "Customer Platform Voice Runtime": ServiceRecord(
+                    name="Customer Platform Voice Runtime",
+                    type="voice-runtime",
+                    cwd=".",
+                    status="running",
+                    project="Customer Platform",
+                    service_slug="voice-runtime",
+                )
+            },
+        )
+        runtime = SimpleNamespace(_project_name_from_service=lambda _name: "")
+
+        self.assertEqual(_running_tree_project_names(runtime=runtime, state=state), {"Customer Platform"})
+
     def test_list_targets_discovers_projects_in_main_mode(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)

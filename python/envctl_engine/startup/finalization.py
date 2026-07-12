@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import sys
 from collections.abc import Callable
+import inspect
 
 from envctl_engine.planning.plan_agent.tmux_transport import attach_plan_agent_terminal
 from envctl_engine.runtime.command_router import Route
@@ -105,7 +106,7 @@ def finalize_successful_startup(
     run_state = build_success_run_state(runtime, session)
     emit_preserved_service_merge(session)
     artifacts_started = time.monotonic()
-    runtime._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
+    _write_artifacts_at_commit_boundary(runtime, session, run_state)
     emit_phase(session, "artifacts_write", artifacts_started, status="ok")
     release_lifecycle_operation(runtime)
     if requirements_timing_enabled(session.effective_route) and not suppress_timing_output(session.effective_route):
@@ -310,9 +311,42 @@ def finalize_plan_agent_degraded_handoff_artifacts(
     validate_plan_agent_handoff(session, phase="degraded_finalization")
     run_state = build_success_run_state(runtime, session)
     artifacts_started = time.monotonic()
-    runtime._write_artifacts(run_state, session.selected_contexts, errors=session.errors)
+    _write_artifacts_at_commit_boundary(runtime, session, run_state)
     emit_phase(session, "artifacts_write", artifacts_started, status="degraded")
     return run_state
+
+
+def _write_artifacts_at_commit_boundary(
+    runtime: StartupRuntime,
+    session: StartupSession,
+    run_state: RunState,
+) -> None:
+    writer = runtime._write_artifacts
+
+    def mark_committed() -> None:
+        session.authority_committed = True
+
+    try:
+        parameters = inspect.signature(writer).parameters.values()
+    except (TypeError, ValueError):
+        parameters = ()
+    # Treat the callback as an explicit protocol capability. A generic
+    # ``**kwargs`` proxy can forward into a legacy writer or raise after doing
+    # durable work; probing it and retrying would risk executing a commit twice.
+    supports_callback = any(parameter.name == "on_commit" for parameter in parameters)
+    if supports_callback:
+        writer(
+            run_state,
+            session.selected_contexts,
+            errors=session.errors,
+            on_commit=mark_committed,
+        )
+    else:
+        writer(run_state, session.selected_contexts, errors=session.errors)
+    # Legacy adapters cannot expose their internal commit point. Preserve the
+    # historical contract by marking successful returns as committed too.
+    if not session.authority_committed:
+        mark_committed()
 
 
 def render_project_startup_warnings(

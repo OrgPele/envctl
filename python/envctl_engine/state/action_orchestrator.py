@@ -20,7 +20,7 @@ from envctl_engine.ui.selection_support import (
     services_from_selection,
 )
 from envctl_engine.ui.selection_types import TargetSelection
-from envctl_engine.shared.services import service_matches_selector
+from envctl_engine.shared.services import resolve_service_project_name, service_matches_selector
 
 
 class StateActionRuntimeFacade:
@@ -230,8 +230,12 @@ class StateActionOrchestrator(StateActionLogSupport, StateActionHealthSupport):
                         service_selected.add(name)
         if project_filters:
             project_selected = set()
-            for name in state.services:
-                project = self.runtime.project_name_from_service(name).lower()
+            for name, service in state.services.items():
+                project = resolve_service_project_name(
+                    name,
+                    service,
+                    project_name_from_service=self.runtime.project_name_from_service,
+                ).lower()
                 if project and project in project_filters:
                     project_selected.add(name)
 
@@ -255,8 +259,20 @@ class StateActionOrchestrator(StateActionLogSupport, StateActionHealthSupport):
         if not selected_services:
             return RunState(run_id=state.run_id, mode=state.mode)
         services = {name: svc for name, svc in state.services.items() if name in selected_services}
-        project_names = {self.runtime.project_name_from_service(name) for name in services}
-        requirements = {project: req for project, req in state.requirements.items() if project in project_names}
+        project_names = {
+            resolve_service_project_name(
+                name,
+                service,
+                project_name_from_service=self.runtime.project_name_from_service,
+            )
+            for name, service in services.items()
+        }
+        project_keys = {str(project).strip().casefold() for project in project_names if str(project).strip()}
+        requirements = {
+            storage_key: req
+            for storage_key, req in state.requirements.items()
+            if str(getattr(req, "project", "") or storage_key).strip().casefold() in project_keys
+        }
         return RunState(
             run_id=state.run_id,
             mode=state.mode,

@@ -79,15 +79,25 @@ def build_runtime_diagnostics(
 
 
 def project_names(state: RunState, *, runtime: Any | None) -> list[str]:
-    names: set[str] = set(state.requirements)
+    names: dict[str, str] = {}
+
+    def add(raw_name: object) -> None:
+        name = str(raw_name or "").strip()
+        if name:
+            names.setdefault(name.casefold(), name)
+
+    for storage_key, requirements in state.requirements.items():
+        add(getattr(requirements, "project", "") or storage_key)
     roots = state.metadata.get("project_roots")
     if isinstance(roots, dict):
-        names.update(str(name) for name in roots)
+        for name in roots:
+            add(name)
     for service_name, service in state.services.items():
-        names.add(service_project_name(service_name, service, runtime=runtime))
+        add(service_project_name(service_name, service, runtime=runtime))
     launch = launch_metadata(state)
-    names.update(launch)
-    return sorted(name for name in names if name)
+    for name in launch:
+        add(name)
+    return sorted(names.values(), key=lambda name: (name.casefold(), name))
 
 
 def service_payload(service: ServiceRecord | None) -> dict[str, object]:
@@ -159,6 +169,10 @@ def safe_launch_env(raw_launch: object, *, service_name: str) -> dict[str, str]:
 def requirements_for_project(state: RunState, project: str) -> RequirementsResult | None:
     if project in state.requirements:
         return state.requirements[project]
+    target = str(project).strip().casefold()
+    for storage_key, requirements in state.requirements.items():
+        if str(requirements.project or storage_key).strip().casefold() == target:
+            return requirements
     if len(state.requirements) == 1:
         return next(iter(state.requirements.values()))
     return None

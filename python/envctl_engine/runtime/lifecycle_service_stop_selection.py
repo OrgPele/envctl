@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable
 
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.lifecycle_dependency_stop import select_dependency_components_for_stop
-from envctl_engine.shared.services import service_matches_selector
+from envctl_engine.shared.services import service_matches_selector, service_project_name
 from envctl_engine.state.models import RunState
 
 
@@ -79,7 +79,10 @@ def _selected_services_from_route(
         has_selectors = has_selectors or bool(services_flag)
         selected.update(_services_matching_service_selectors(state, services_flag))
 
-    project_names = _project_selectors(route, selectors_from_passthrough_fn=selectors_from_passthrough_fn)
+    project_names = project_selectors_from_route(
+        route,
+        selectors_from_passthrough_fn=selectors_from_passthrough_fn,
+    )
     has_selectors = has_selectors or bool(project_names)
     if project_names:
         selected.update(
@@ -105,7 +108,7 @@ def _services_matching_service_selectors(state: RunState, services_flag: list[ob
     return selected
 
 
-def _project_selectors(
+def project_selectors_from_route(
     route: Route,
     *,
     selectors_from_passthrough_fn: Callable[[list[str]], Iterable[str]],
@@ -123,8 +126,8 @@ def _services_matching_project_selectors(
     project_name_from_service_fn: Callable[[str], str],
 ) -> set[str]:
     selected: set[str] = set()
-    for name in state.services:
-        project = project_name_from_service_fn(name).lower()
+    for name, service in state.services.items():
+        project = (service_project_name(service) or project_name_from_service_fn(name)).lower()
         if project and project in project_names:
             selected.add(name)
     return selected

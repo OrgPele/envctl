@@ -94,6 +94,7 @@ class StateRepository(Protocol):
         emit: Callable[..., None],
         runtime_map_builder: Callable[[object], dict[str, object]],
         write_runtime_readiness_report: Callable[[Path], None] | None = None,
+        on_commit: Callable[[], None] | None = None,
     ) -> object: ...
 
     def save_resume_state(

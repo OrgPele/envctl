@@ -97,6 +97,30 @@ class SelectionSupportTests(unittest.TestCase):
             {"Main Backend", "Main Frontend"},
         )
 
+    def test_multiword_additional_service_selection_uses_record_project_metadata(self) -> None:
+        service = ServiceRecord(
+            name="Opaque Runtime Process",
+            type="voice-runtime",
+            cwd="/tmp/customer-platform/voice",
+            project="Customer Platform",
+            service_slug="voice-runtime",
+        )
+        state = RunState(run_id="run-extra", mode="trees", services={service.name: service})
+        runtime = SimpleNamespace(_project_name_from_service=lambda _name: "Opaque Runtime")
+
+        self.assertEqual(
+            [project.name for project in project_names_from_state(runtime, state)],
+            ["Customer Platform"],
+        )
+        self.assertEqual(
+            services_from_selection(
+                runtime,
+                TargetSelection(project_names=["customer platform"]),
+                state,
+            ),
+            {service.name},
+        )
+
     def test_no_target_selected_message_and_explicit_target_detection_match_route_context(self) -> None:
         runtime = SimpleNamespace(_selectors_from_passthrough=lambda args: {"svc"} if args else set())
 

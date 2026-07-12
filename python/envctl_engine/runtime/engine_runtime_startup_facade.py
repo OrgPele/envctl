@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, Callable, Mapping, cast
 
 from envctl_engine.runtime.engine_runtime_artifacts import (
     print_summary as runtime_print_summary,
@@ -198,8 +198,15 @@ class RuntimeStartupFacadeMixin:
             route=route,
         )
 
-    def _write_artifacts(self, state: RunState, contexts: list[Any], *, errors: list[str]) -> None:
-        runtime_write_artifacts(self, state, contexts, errors=errors)
+    def _write_artifacts(
+        self,
+        state: RunState,
+        contexts: list[Any],
+        *,
+        errors: list[str],
+        on_commit: Callable[[], None] | None = None,
+    ) -> None:
+        runtime_write_artifacts(self, state, contexts, errors=errors, on_commit=on_commit)
 
     def _write_runtime_readiness_report(
         self,

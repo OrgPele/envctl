@@ -102,6 +102,27 @@ class ActionTargetSupportTests(unittest.TestCase):
         self.assertEqual(resolved, ["feature-a-1", "feature-b-1"])
         self.assertEqual(mapped, ["feature-a-1 Worker", "feature-b-1 Worker"])
 
+    def test_projects_for_services_prefers_additional_service_project_metadata(self) -> None:
+        state = SimpleNamespace(
+            services={
+                "My Project Voice Runtime": SimpleNamespace(
+                    name="My Project Voice Runtime",
+                    type="voice-runtime",
+                    project="My Project",
+                )
+            }
+        )
+        mapped: list[str] = []
+        runtime = SimpleNamespace(
+            load_existing_state=lambda mode: state if mode == "trees" else None,
+            project_name_from_service=lambda name: mapped.append(name) or "",
+        )
+
+        resolved = projects_for_services(runtime, ["voice-runtime"])
+
+        self.assertEqual(resolved, ["My Project"])
+        self.assertEqual(mapped, [])
+
     def test_resolve_action_targets_uses_single_candidate_without_prompt(self) -> None:
         target = _Target(name="feature-a-1", root="/tmp/repo/trees/feature-a/1")
         runtime = SimpleNamespace(

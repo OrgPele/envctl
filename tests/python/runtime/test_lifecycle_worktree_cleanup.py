@@ -155,7 +155,7 @@ class LifecycleWorktreeCleanupTests(unittest.TestCase):
             _emit=lambda event, **payload: events.append((event, payload)),
             _try_load_existing_state=lambda **kwargs: state if kwargs["mode"] == "trees" else None,
             _project_name_from_service=lambda name: "Feature" if "Feature" in name else "",
-            _terminate_services_from_state=lambda *args, **kwargs: None,
+            _terminate_services_from_state=lambda *args, **kwargs: set(),
             port_planner=SimpleNamespace(release=lambda port: released.append(port)),
             state_repository=SimpleNamespace(
                 save_selected_stop_state=lambda **kwargs: saved_states.append(kwargs["state"])
@@ -176,6 +176,143 @@ class LifecycleWorktreeCleanupTests(unittest.TestCase):
         self.assertEqual(saved_states[0].services, {})
         self.assertEqual(saved_states[0].requirements, {})
         self.assertEqual(events[-1][0], "cleanup.worktree.finish")
+
+    def test_worktree_cleanup_releases_every_requirement_storage_row_for_project(self) -> None:
+        saved_states: list[RunState] = []
+        released: list[int] = []
+        state = RunState(
+            run_id="run-collision",
+            mode="trees",
+            requirements={
+                "Feature": RequirementsResult(project="Feature", redis={"enabled": True, "final": 6379}),
+                "Feature Restart Collision": RequirementsResult(
+                    project="Feature",
+                    redis={"enabled": True, "final": 6381},
+                ),
+                "Sibling": RequirementsResult(project="Sibling", redis={"enabled": True, "final": 6391}),
+            },
+            metadata={"project_names": ["Feature", "Sibling"]},
+        )
+        runtime = SimpleNamespace(
+            _emit=lambda *_args, **_kwargs: None,
+            _try_load_existing_state=lambda **kwargs: state if kwargs["mode"] == "trees" else None,
+            _project_name_from_service=lambda _name: "",
+            _terminate_services_from_state=lambda *_args, **_kwargs: set(),
+            port_planner=SimpleNamespace(release=lambda port: released.append(port)),
+            state_repository=SimpleNamespace(
+                save_selected_stop_state=lambda **kwargs: saved_states.append(kwargs["state"])
+            ),
+            process_runner=SimpleNamespace(),
+            env={},
+        )
+
+        warnings = blast_worktree_before_delete(
+            runtime,
+            project_name="Feature",
+            project_root=Path("/repo/feature"),
+            source_command="delete-worktree",
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(released, [6379, 6381])
+        self.assertEqual(set(saved_states[0].requirements), {"Sibling"})
+
+    def test_worktree_cleanup_stops_saved_custom_requirement_container_before_dropping_state(self) -> None:
+        calls: list[list[str]] = []
+
+        class Runner:
+            def run(self, command: list[str], **_kwargs: object) -> SimpleNamespace:
+                calls.append(command)
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        state = RunState(
+            run_id="run-container-collision",
+            mode="trees",
+            requirements={
+                "Feature Restart Collision": RequirementsResult(
+                    project="Feature",
+                    redis={
+                        "enabled": True,
+                        "success": True,
+                        "final": 6381,
+                        "container_name": "custom-collision-redis",
+                    },
+                )
+            },
+        )
+        saved_states: list[RunState] = []
+        runtime = SimpleNamespace(
+            _emit=lambda *_args, **_kwargs: None,
+            _try_load_existing_state=lambda **kwargs: state if kwargs["mode"] == "trees" else None,
+            _project_name_from_service=lambda _name: "",
+            _terminate_services_from_state=lambda *_args, **_kwargs: set(),
+            port_planner=SimpleNamespace(release=lambda _port: None),
+            state_repository=SimpleNamespace(
+                save_selected_stop_state=lambda **kwargs: saved_states.append(kwargs["state"])
+            ),
+            process_runner=Runner(),
+            config=SimpleNamespace(additional_services=()),
+            env={},
+        )
+
+        warnings = blast_worktree_before_delete(
+            runtime,
+            project_name="Feature",
+            project_root=Path("/repo/feature"),
+            source_command="delete-worktree",
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertIn(["docker", "rm", "--force", "custom-collision-redis"], calls)
+        self.assertEqual(saved_states[0].requirements, {})
+
+    def test_worktree_cleanup_uses_multiword_additional_service_project_metadata(self) -> None:
+        terminated: list[set[str]] = []
+        saved_states: list[RunState] = []
+        service = ServiceRecord(
+            name="Opaque Runtime Process",
+            type="voice-runtime",
+            cwd="/repo/customer-platform/voice",
+            project="Customer Platform",
+            actual_port=8010,
+        )
+        legacy_service = ServiceRecord(
+            name="Customer Platform Voice Runtime",
+            type="voice-runtime",
+            cwd="/repo/customer-platform/voice-legacy",
+            project=None,
+            service_slug="voice-runtime",
+            actual_port=8011,
+        )
+        state = RunState(
+            run_id="run-metadata-project",
+            mode="trees",
+            services={service.name: service, legacy_service.name: legacy_service},
+        )
+        runtime = SimpleNamespace(
+            _emit=lambda *_args, **_kwargs: None,
+            _try_load_existing_state=lambda **kwargs: state if kwargs["mode"] == "trees" else None,
+            _project_name_from_service=lambda _name: "Opaque Runtime",
+            _terminate_services_from_state=lambda _state, *, selected_services, **_kwargs: (
+                terminated.append(set(selected_services)) or set()
+            ),
+            state_repository=SimpleNamespace(
+                save_selected_stop_state=lambda **kwargs: saved_states.append(kwargs["state"])
+            ),
+            process_runner=SimpleNamespace(),
+            env={},
+        )
+
+        warnings = blast_worktree_before_delete(
+            runtime,
+            project_name="Customer Platform",
+            project_root=Path("/repo/customer-platform"),
+            source_command="delete-worktree",
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(terminated, [{service.name, legacy_service.name}])
+        self.assertEqual(saved_states[0].services, {})
 
     def test_blast_worktree_before_delete_uses_injected_cleanup_dependencies(self) -> None:
         calls: list[str] = []

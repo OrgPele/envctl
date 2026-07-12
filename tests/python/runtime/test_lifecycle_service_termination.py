@@ -12,16 +12,69 @@ from unittest.mock import Mock, patch
 
 from envctl_engine.runtime.lifecycle_service_termination import (
     _wait_for_pid_exit,
+    failed_listener_pids,
     service_port,
     terminate_service_record,
     terminate_services_from_state,
     terminate_started_services,
+    unconfirmed_service_names,
 )
 from envctl_engine.state.models import RunState, ServiceRecord
 from envctl_engine.shared.ports import PortPlanner
 
 
 class LifecycleServiceTerminationTests(unittest.TestCase):
+    def test_pending_docker_cleanup_timestamp_reaches_tokenized_stop(self) -> None:
+        runtime = SimpleNamespace(
+            process_runner=SimpleNamespace(),
+            _emit=lambda *_args, **_kwargs: None,
+        )
+        service = ServiceRecord(
+            name="Main Backend",
+            type="backend",
+            cwd=".",
+            runtime_kind="docker",
+            container_id="envctl-app-main-backend",
+            container_name="envctl-app-main-backend",
+            container_launch_token="pending-token",
+            container_cleanup_pending_since=1_700_000_000.25,
+        )
+
+        with patch(
+            "envctl_engine.runtime.docker_service_runtime.DockerServiceRuntime.stop",
+            return_value=False,
+        ) as stop:
+            self.assertFalse(
+                terminate_service_record(
+                    runtime,
+                    service,
+                    aggressive=False,
+                    verify_ownership=True,
+                )
+            )
+
+        stop.assert_called_once_with(
+            "envctl-app-main-backend",
+            verify_ownership=True,
+            expected_launch_token="pending-token",
+            pending_cleanup_since=1_700_000_000.25,
+        )
+
+    def test_termination_result_normalization_fails_closed_for_missing_or_unknown_identities(self) -> None:
+        requested = {"Main Backend", "Main Frontend"}
+
+        self.assertEqual(unconfirmed_service_names(None, requested), requested)
+        self.assertEqual(unconfirmed_service_names("Main Backend", requested), requested)
+        self.assertEqual(unconfirmed_service_names({"unknown"}, requested), requested)
+        self.assertEqual(unconfirmed_service_names(["   "], requested), requested)
+        self.assertEqual(unconfirmed_service_names(["", "Main Backend"], requested), requested)
+        self.assertEqual(unconfirmed_service_names({"Main Backend"}, requested), {"Main Backend"})
+        self.assertEqual(unconfirmed_service_names([], requested), set())
+        self.assertEqual(failed_listener_pids(set()), set())
+        self.assertEqual(failed_listener_pids({4242}), {4242})
+        self.assertIsNone(failed_listener_pids(None))
+        self.assertIsNone(failed_listener_pids({"4242"}))
+
     def test_terminate_started_services_uses_non_aggressive_unverified_shutdown(self) -> None:
         calls: list[tuple[int, bool, bool]] = []
         runtime = SimpleNamespace(
@@ -145,6 +198,52 @@ class LifecycleServiceTerminationTests(unittest.TestCase):
                         port_lock_session="prior-session",
                     )
                 },
+            )
+
+            failed = terminate_services_from_state(
+                runtime,
+                state,
+                selected_services=None,
+                aggressive=False,
+                verify_ownership=True,
+            )
+
+            self.assertEqual(failed, set())
+            self.assertEqual(list(Path(tmpdir).glob("*.lock")), [])
+
+    def test_legacy_collision_name_releases_original_project_owner_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prior = PortPlanner(
+                lock_dir=tmpdir,
+                session_id="prior-session",
+                availability_checker=lambda _port: True,
+            )
+            current = PortPlanner(
+                lock_dir=tmpdir,
+                session_id="current-session",
+                availability_checker=lambda _port: True,
+            )
+            prior.reserve_next(8001, owner="Main:backend")
+            collision_name = "Main Backend Restart Collision 2"
+            state = RunState(
+                run_id="run-collision",
+                mode="main",
+                services={
+                    collision_name: ServiceRecord(
+                        name=collision_name,
+                        type="backend",
+                        cwd=".",
+                        pid=2,
+                        actual_port=8001,
+                        port_lock_session="prior-session",
+                        project=None,
+                    )
+                },
+            )
+            runtime = SimpleNamespace(
+                port_planner=current,
+                _terminate_service_record=lambda _service, **_kwargs: True,
+                _project_name_from_service=lambda _name: "Main Backend Restart Collision",
             )
 
             failed = terminate_services_from_state(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, cast
 
+from envctl_engine.shared.services import resolve_service_project_name
 from envctl_engine.state.models import RequirementsResult, RunState
 from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.state.state_aggregation import filter_state_to_owned_projects
@@ -14,10 +15,11 @@ class LifecycleTargetedStateSupport:
     runtime: Any = cast(Any, None)
 
     def _project_name_for_service(self, name: str, service: object) -> str:
-        explicit_project = str(getattr(service, "project", "") or "").strip()
-        if explicit_project:
-            return explicit_project.casefold()
-        return str(self.runtime._project_name_from_service(name) or "").strip().casefold()
+        return resolve_service_project_name(
+            name,
+            service,
+            project_name_from_service=self.runtime._project_name_from_service,
+        ).casefold()
 
     def _save_selected_stop_state(
         self,

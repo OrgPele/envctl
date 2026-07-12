@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from envctl_engine.runtime.docker_service_runtime import (
     DockerServiceLaunch,
+    DockerServiceLaunchCleanupError,
     DockerServiceRuntime,
     docker_service_container_command_source,
     docker_service_mode_enabled,
@@ -15,6 +16,8 @@ from envctl_engine.runtime.docker_service_runtime import (
 from envctl_engine.runtime.service_manager import ServiceCleanupError, ServiceStartDescriptor
 from envctl_engine.runtime.service_truth_diagnostics import service_listener_failure_class
 from envctl_engine.shared.reason_codes import ServiceFailureReason
+from envctl_engine.shared.process_runner import ProcessHandoffCleanupError
+from envctl_engine.shared.services import service_display_name
 from envctl_engine.startup.service_execution_policy import ordered_service_layers
 from envctl_engine.startup.service_execution_records import PreparedServiceLaunch
 from envctl_engine.startup.session import unconfirmed_service_names
@@ -95,15 +98,26 @@ class ServiceAttachRunner:
             self._annotate_container_records(records)
             self._record_port_lock_session(records.values())
             return records
-        except Exception as exc:
-            container_cleanup_error: Exception | None = None
+        except BaseException as exc:
+            container_cleanup_error: BaseException | None = None
             try:
                 self._cleanup_container_launches()
-            except Exception as cleanup_exc:  # noqa: BLE001
+            except BaseException as cleanup_exc:  # noqa: BLE001 - cancellation must not skip cleanup
                 container_cleanup_error = cleanup_exc
-            self._record_port_lock_session(dict(getattr(exc, "unterminated_services", {}) or {}).values())
-            self._release_failed_start_reservations(exc)
+            unterminated = dict(getattr(exc, "unterminated_services", {}) or {})
+            if isinstance(container_cleanup_error, ServiceCleanupError):
+                unterminated.update(container_cleanup_error.unterminated_services)
+            tracked_error: BaseException = (
+                ServiceCleanupError(str(exc), unterminated) if unterminated else exc
+            )
+            self._record_port_lock_session(unterminated.values())
+            self._release_failed_start_reservations(tracked_error)
             if container_cleanup_error is not None:
+                if unterminated:
+                    raise ServiceCleanupError(
+                        f"{exc}; Docker cleanup error: {container_cleanup_error}",
+                        unterminated,
+                    ) from exc
                 raise RuntimeError(f"{exc}; Docker cleanup error: {container_cleanup_error}") from exc
             raise
 
@@ -142,7 +156,7 @@ class ServiceAttachRunner:
         preserved_service_types = {
             str(getattr(service, "type", "") or "").strip().lower()
             for service in dict(getattr(error, "unterminated_services", {}) or {}).values()
-            if _service_has_recorded_pid(service)
+            if _service_has_recorded_runtime_identity(service)
         }
         for service_type, port in tuple(self._active_service_ports.items()):
             if service_type in preserved_service_types:
@@ -174,7 +188,7 @@ class ServiceAttachRunner:
                     parallel_start=attach_parallel and len(layer) > 1,
                 )
                 records.update(layer_records)
-        except Exception as exc:
+        except BaseException as exc:
             unterminated = dict(getattr(exc, "unterminated_services", {}) or {})
             terminator = getattr(self.runtime, "_terminate_started_services", None)
             if records:
@@ -184,7 +198,7 @@ class ServiceAttachRunner:
                             terminator(records),
                             records,
                         )
-                    except Exception as cleanup_exc:  # noqa: BLE001
+                    except BaseException as cleanup_exc:  # noqa: BLE001 - cancellation must not skip cleanup
                         failed_names = set(records)
                         exc = RuntimeError(f"{exc}; cleanup error: {cleanup_exc}")
                 else:
@@ -334,7 +348,24 @@ class ServiceAttachRunner:
                     container_port=launch_port,
                     listener_expected=launch.listener_expected,
                     log_path=launch.log_path,
+                    on_confirmed=lambda confirmed: self._container_launches.__setitem__(
+                        service_name,
+                        confirmed,
+                    ),
                 )
+            except DockerServiceLaunchCleanupError as exc:
+                self._container_launches[service_name] = exc.launch
+                self._emit_attach_phase(service_name, "container_launch", launch_started)
+                detail = str(exc)
+                self.runtime._emit(
+                    "service.failure",
+                    project=self.project_name,
+                    service=service_name,
+                    failure_class="container_cleanup_unconfirmed",
+                    requested_port=event_port,
+                    detail=detail,
+                )
+                return False, detail, None
             except (OSError, RuntimeError) as exc:
                 self._emit_attach_phase(service_name, "container_launch", launch_started)
                 detail = str(exc)
@@ -358,6 +389,17 @@ class ServiceAttachRunner:
                     env=service_env,
                     log_path=launch.log_path,
                 )
+            except ProcessHandoffCleanupError as exc:
+                detail = str(exc)
+                self.runtime._emit(
+                    "service.failure",
+                    project=self.project_name,
+                    service=service_name,
+                    failure_class="process_cleanup_unconfirmed",
+                    requested_port=event_port,
+                    detail=detail,
+                )
+                return False, detail, exc.pid
             except OSError as exc:
                 executable = command[0] if command else "<empty command>"
                 detail = f"process spawn failed for {executable}: {exc}"
@@ -423,8 +465,16 @@ class ServiceAttachRunner:
         launch: DockerServiceLaunch,
     ) -> str | None:
         try:
-            removed = DockerServiceRuntime(self.runtime, self.process_runtime).stop(launch.container_id)
-        except Exception as exc:  # noqa: BLE001 - preserve the launch in state for a later stop retry
+            stop_kwargs = (
+                {"expected_launch_token": launch.launch_token} if launch.launch_token else {}
+            )
+            if launch.cleanup_pending_since is not None:
+                stop_kwargs["pending_cleanup_since"] = launch.cleanup_pending_since
+            removed = DockerServiceRuntime(self.runtime, self.process_runtime).stop(
+                launch.container_id,
+                **stop_kwargs,
+            )
+        except BaseException as exc:  # noqa: BLE001 - preserve the launch in state for a later stop retry
             return f"failed to remove container: {exc}"
         if not removed:
             return "failed to remove container"
@@ -445,12 +495,65 @@ class ServiceAttachRunner:
             record.container_id = launch.container_id
             record.container_name = launch.container_name
             record.container_image = launch.image
+            record.container_launch_token = launch.launch_token or None
+            record.container_cleanup_pending_since = launch.cleanup_pending_since
 
     def _cleanup_container_launches(self) -> None:
         docker_runtime = DockerServiceRuntime(self.runtime, self.process_runtime)
-        for launch in tuple(self._container_launches.values()):
-            docker_runtime.stop(launch.container_id)
-        self._container_launches.clear()
+        unconfirmed: dict[str, ServiceRecord] = {}
+        details: list[str] = []
+        for service_name, launch in tuple(self._container_launches.items()):
+            try:
+                stop_kwargs = (
+                    {"expected_launch_token": launch.launch_token} if launch.launch_token else {}
+                )
+                if launch.cleanup_pending_since is not None:
+                    stop_kwargs["pending_cleanup_since"] = launch.cleanup_pending_since
+                stopped = docker_runtime.stop(launch.container_id, **stop_kwargs)
+            except BaseException as exc:  # noqa: BLE001 - cancellation must not abandon authority
+                stopped = False
+                details.append(f"{service_name}: {exc}")
+            if stopped:
+                self._container_launches.pop(service_name, None)
+                continue
+            details.append(f"{service_name}: removal unconfirmed")
+            record = self._container_service_record(service_name, launch)
+            unconfirmed[record.name] = record
+        if unconfirmed:
+            raise ServiceCleanupError(
+                "Docker cleanup could not confirm container removal: " + "; ".join(dict.fromkeys(details)),
+                unconfirmed,
+            )
+
+    def _container_service_record(
+        self,
+        service_name: str,
+        launch: DockerServiceLaunch,
+    ) -> ServiceRecord:
+        prepared = self.prepared_launches.get(service_name)
+        listener_expected = bool(getattr(prepared, "listener_expected", True))
+        port = self._active_service_ports.get(service_name)
+        record = ServiceRecord(
+            name=f"{self.project_name} {service_display_name(service_name)}",
+            type=service_name,
+            cwd=str(getattr(prepared, "cwd", self.project_root)),
+            requested_port=port if listener_expected else None,
+            actual_port=port if listener_expected else None,
+            log_path=launch.log_path,
+            status="termination_failed",
+            listener_expected=listener_expected,
+            project=self.project_name,
+            service_slug=service_name,
+            failure_detail="Docker container removal was not confirmed",
+            degraded=True,
+            runtime_kind="docker",
+            container_id=launch.container_id,
+            container_name=launch.container_name,
+            container_image=launch.image,
+            container_launch_token=launch.launch_token or None,
+            container_cleanup_pending_since=launch.cleanup_pending_since,
+        )
+        return record
 
     def start_backend(self, port: int) -> tuple[bool, str | None, int | None]:
         conflict_result = self._conflicting_start_result("backend", port)
@@ -491,7 +594,7 @@ class ServiceAttachRunner:
                 event_port=port,
                 env_extra=self.frontend_env_extra,
             )
-        except Exception:
+        except BaseException:
             self._release_rebound_launch_port("frontend")
             raise
         if not isinstance(result[2], int) or isinstance(result[2], bool) or result[2] <= 0:
@@ -743,7 +846,10 @@ class ServiceAttachRunner:
         )
 
 
-def _service_has_recorded_pid(service: object) -> bool:
+def _service_has_recorded_runtime_identity(service: object) -> bool:
+    if str(getattr(service, "runtime_kind", "process") or "process").strip().lower() == "docker":
+        if str(getattr(service, "container_id", "") or getattr(service, "container_name", "")).strip():
+            return True
     listener_pids = getattr(service, "listener_pids", None)
     listeners = listener_pids if isinstance(listener_pids, (list, tuple, set, frozenset)) else ()
     candidates = [getattr(service, "pid", None), *listeners]

@@ -72,7 +72,7 @@ class EngineRuntimeRealStartupTests(_EngineRuntimeRealStartupTestCase):
             lock_path.write_text(
                 json.dumps(
                     {
-                        "owner": "old-worker",
+                        "owner": "feature-a-1:backend",
                         "session": "old-session",
                         "pid": 999999,
                         "created_at": "2000-01-01T00:00:00+00:00",
@@ -95,7 +95,7 @@ class EngineRuntimeRealStartupTests(_EngineRuntimeRealStartupTestCase):
             self.assertTrue(reclaim_events)
             latest = reclaim_events[-1]
             self.assertEqual(latest.get("port"), planned_backend_port)
-            self.assertEqual(latest.get("reclaimed_owner"), "old-worker")
+            self.assertEqual(latest.get("reclaimed_owner"), "feature-a-1:backend")
             self.assertEqual(latest.get("reclaimed_session"), "old-session")
             self.assertEqual(latest.get("reclaimed_pid"), 999999)
 

@@ -118,9 +118,9 @@ def requirement_truth_identity(
     state_key: str,
     requirements: RequirementsResult,
 ) -> tuple[str, Path | None]:
-    truth_project = state_key
-    shared_scope = str(state.metadata.get("dashboard_dependency_scope", "")).strip().lower() == "shared"
     requirement_project = str(getattr(requirements, "project", "") or "").strip()
+    truth_project = requirement_project or state_key
+    shared_scope = str(state.metadata.get("dashboard_dependency_scope", "")).strip().lower() == "shared"
     shared_project = str(state.metadata.get("dashboard_shared_dependency_project", "") or "").strip()
     if shared_scope and requirement_project:
         truth_project = requirement_project
@@ -134,7 +134,8 @@ def requirement_truth_identity(
 
 def requirement_truth_issues(runtime: Any, state: RunState) -> list[dict[str, object]]:
     issues: list[dict[str, object]] = []
-    for project, requirements in state.requirements.items():
+    for storage_key, requirements in state.requirements.items():
+        project = str(getattr(requirements, "project", "") or storage_key).strip()
         for definition in dependency_definitions():
             component_name = definition.id
             component_data = requirements.component(component_name)

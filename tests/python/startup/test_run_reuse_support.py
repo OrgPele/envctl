@@ -28,7 +28,7 @@ class RunReuseSupportTests(unittest.TestCase):
         self.assertEqual(run_reuse_debug_orch_groups(runtime, requested_command="plan"), {"alpha", "beta", "gamma"})
         self.assertEqual(run_reuse_debug_orch_groups(runtime, requested_command="start"), set())
 
-    def test_dashboard_stopped_service_entries_normalizes_valid_backend_frontend_entries(self) -> None:
+    def test_dashboard_stopped_service_entries_normalizes_all_valid_service_types(self) -> None:
         state = SimpleNamespace(
             metadata={
                 "dashboard_stopped_services": [
@@ -46,6 +46,7 @@ class RunReuseSupportTests(unittest.TestCase):
             [
                 {"project": "Main", "type": "frontend", "name": "Main Frontend"},
                 {"project": "Main", "type": "backend", "name": "Main Backend"},
+                {"project": "Main", "type": "worker", "name": "Main Worker"},
             ],
         )
 
@@ -95,6 +96,24 @@ class RunReuseSupportTests(unittest.TestCase):
             {"keep": True},
         )
 
+    def test_metadata_without_dashboard_stopped_services_is_project_scoped(self) -> None:
+        entries = [
+            {
+                "name": f"{project} Voice Runtime",
+                "project": project,
+                "type": "voice-runtime",
+            }
+            for project in ("Customer Platform", "Other")
+        ]
+
+        updated = metadata_without_dashboard_stopped_services(
+            {"dashboard_stopped_services": entries, "keep": True},
+            restored_service_types_by_project={"Customer Platform": {"voice-runtime"}},
+        )
+
+        self.assertEqual(updated["dashboard_stopped_services"], [entries[1]])
+        self.assertTrue(updated["keep"])
+
     def test_prepare_dashboard_stopped_service_restore_rewrites_route_and_preserves_active_state(self) -> None:
         route = Route(command="start", mode="trees", raw_args=["start"], flags={})
         session = SimpleNamespace(
@@ -113,6 +132,7 @@ class RunReuseSupportTests(unittest.TestCase):
             metadata={
                 "dashboard_stopped_services": [
                     {"project": "Main", "type": "frontend", "name": "Main Frontend"},
+                    {"project": "Main", "type": "voice-runtime", "name": "Main Voice Runtime"},
                     {"project": "Other", "type": "backend", "name": "Other Backend"},
                 ],
                 "keep": True,
@@ -136,12 +156,28 @@ class RunReuseSupportTests(unittest.TestCase):
         self.assertEqual(session.preserved_services, candidate_state.services)
         self.assertEqual(session.preserved_requirements, candidate_state.requirements)
         self.assertEqual(session.base_metadata["keep"], True)
-        self.assertNotIn("dashboard_stopped_services", session.base_metadata)
+        self.assertEqual(
+            session.base_metadata["dashboard_stopped_services"],
+            candidate_state.metadata["dashboard_stopped_services"],
+        )
         self.assertEqual(session.effective_route.projects, ["Main", "Other"])
         self.assertEqual(session.effective_route.flags["_restart_request"], True)
         self.assertEqual(session.effective_route.flags["_restore_dashboard_stopped_services"], True)
-        self.assertEqual(session.effective_route.flags["services"], ["Main Frontend", "Other Backend"])
-        self.assertEqual(session.effective_route.flags["restart_service_types"], ["backend", "frontend"])
+        self.assertEqual(
+            session.effective_route.flags["services"],
+            ["Main Frontend", "Main Voice Runtime", "Other Backend"],
+        )
+        self.assertEqual(
+            session.effective_route.flags["restart_service_types"],
+            ["backend", "frontend", "voice-runtime"],
+        )
+        self.assertEqual(
+            session.effective_route.flags["_restart_service_types_by_project"],
+            {
+                "Main": ["frontend", "voice-runtime"],
+                "Other": ["backend"],
+            },
+        )
         self.assertEqual(phases[0][0], "auto_resume_evaluate")
         self.assertEqual(phases[0][1]["status"], "restore_stopped_services")
         self.assertEqual(phases[0][1]["match_mode"], "subset")
@@ -298,7 +334,7 @@ class RunReuseSupportTests(unittest.TestCase):
         runtime = SimpleNamespace(
             _emit=lambda event, **payload: events.append((event, payload)),
             _terminate_services_from_state=lambda state, *, selected_services, aggressive, verify_ownership: (
-                terminated.append((state, set(selected_services), aggressive, verify_ownership))
+                terminated.append((state, set(selected_services), aggressive, verify_ownership)) or set()
             ),
             _project_name_from_service=lambda name: str(name).removesuffix(" Backend").removesuffix(" Frontend"),
             _release_requirement_ports=lambda requirements: released.append(requirements),
@@ -314,7 +350,7 @@ class RunReuseSupportTests(unittest.TestCase):
             report_progress=lambda route, message: progress.append((route, message)),
             terminate_restart_orphan_listeners=lambda *, state, selected_services, aggressive: orphaned.append(
                 (state, set(selected_services), aggressive)
-            ),
+            ) or set(),
         )
 
         self.assertEqual(announced, [session])
@@ -363,7 +399,7 @@ class RunReuseSupportTests(unittest.TestCase):
             _emit=lambda *_args, **_kwargs: None,
             _terminate_services_from_state=lambda _state, *, selected_services, **_kwargs: terminated.append(
                 set(selected_services)
-            ),
+            ) or set(),
             _project_name_from_service=lambda name: str(name).removesuffix(" Backend"),
             _release_requirement_ports=lambda _requirements: None,
         )
@@ -375,7 +411,7 @@ class RunReuseSupportTests(unittest.TestCase):
             reason="explicit_no_resume",
             announce_session_identifiers=lambda _session: None,
             report_progress=lambda _route, message: progress.append(message),
-            terminate_restart_orphan_listeners=lambda **_kwargs: None,
+            terminate_restart_orphan_listeners=lambda **_kwargs: set(),
         )
 
         self.assertEqual(terminated, [{"feature-a Backend"}])
@@ -415,7 +451,7 @@ class RunReuseSupportTests(unittest.TestCase):
             ),
             _emit=lambda *_args, **_kwargs: None,
             _project_name_from_service=lambda _name: "Main",
-            _terminate_services_from_state=lambda *_args, **_kwargs: None,
+            _terminate_services_from_state=lambda *_args, **_kwargs: set(),
             _release_requirement_ports=lambda _requirements: None,
         )
 
@@ -426,7 +462,7 @@ class RunReuseSupportTests(unittest.TestCase):
             reason="explicit_no_resume",
             announce_session_identifiers=lambda _session: None,
             report_progress=lambda _route, _message: None,
-            terminate_restart_orphan_listeners=lambda **_kwargs: None,
+            terminate_restart_orphan_listeners=lambda **_kwargs: set(),
         )
 
         self.assertEqual(calls, [("release", 8001, "Main:backend")])
@@ -519,10 +555,138 @@ class RunReuseSupportTests(unittest.TestCase):
                 terminate_restart_orphan_listeners=lambda **_kwargs: self.fail("must not reap after failure"),
             )
 
-        self.assertEqual(set(session.preserved_services), {"sentinel"})
-        self.assertEqual(set(session.preserved_requirements), {"sentinel"})
-        self.assertEqual(session.base_metadata, {"sentinel": True})
+        self.assertEqual(set(session.preserved_services), {"sentinel", "feature-a Backend"})
+        self.assertEqual(set(session.preserved_requirements), {"sentinel", "feature-a"})
+        self.assertTrue(session.base_metadata["sentinel"])
+        self.assertTrue(session.base_metadata["keep"])
+        self.assertEqual(session.base_metadata["state_source_run_ids"], ["run-existing"])
         self.assertTrue(session.preserve_existing_state_on_failure)
+
+    def test_explicit_no_resume_missing_termination_result_keeps_previous_state_authoritative(self) -> None:
+        route = Route(command="start", mode="trees", flags={"no_resume": True})
+        service = SimpleNamespace(project="feature-a")
+        candidate_state = SimpleNamespace(
+            run_id="run-existing",
+            services={"feature-a Backend": service},
+            requirements={"feature-a": SimpleNamespace(project="feature-a")},
+            metadata={},
+        )
+        session = SimpleNamespace(
+            effective_route=route,
+            runtime_mode="trees",
+            selected_contexts=[SimpleNamespace(name="feature-a")],
+            preserved_services={},
+            preserved_requirements={},
+            base_metadata={},
+        )
+        runtime = SimpleNamespace(
+            _emit=lambda *_args, **_kwargs: None,
+            _project_name_from_service=lambda _name: "feature-a",
+            _terminate_services_from_state=lambda *_args, **_kwargs: None,
+            _release_requirement_ports=lambda _requirements: self.fail("ports must remain reserved"),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "feature-a Backend"):
+            replace_existing_project_services_for_fresh_start(
+                runtime=runtime,
+                session=session,
+                candidate_state=candidate_state,
+                reason="explicit_no_resume",
+                announce_session_identifiers=lambda _session: None,
+                report_progress=lambda *_args: None,
+                terminate_restart_orphan_listeners=lambda **_kwargs: self.fail("orphans must not be reaped"),
+            )
+
+        self.assertTrue(session.preserve_existing_state_on_failure)
+        self.assertEqual(session.preserved_services, candidate_state.services)
+        self.assertEqual(session.preserved_requirements, candidate_state.requirements)
+
+    def test_fresh_start_preserves_source_authority_when_termination_raises(self) -> None:
+        service = SimpleNamespace(project="feature-a")
+        requirements = SimpleNamespace(project="feature-a")
+        candidate_state = SimpleNamespace(
+            run_id="run-existing",
+            services={"feature-a Backend": service},
+            requirements={"feature-a": requirements},
+            metadata={"authority": "old"},
+        )
+        session = SimpleNamespace(
+            effective_route=Route(command="start", mode="trees", flags={"no_resume": True}),
+            runtime_mode="trees",
+            selected_contexts=[SimpleNamespace(name="feature-a")],
+            preserved_services={},
+            preserved_requirements={},
+            base_metadata={},
+        )
+
+        def fail_termination(*_args, **_kwargs):  # noqa: ANN202
+            raise OSError("service lock unlink failed")
+
+        runtime = SimpleNamespace(
+            _emit=lambda *_args, **_kwargs: None,
+            _project_name_from_service=lambda _name: "feature-a",
+            _terminate_services_from_state=fail_termination,
+            _release_requirement_ports=lambda _requirements: self.fail("ports must remain reserved"),
+        )
+
+        with self.assertRaisesRegex(OSError, "service lock unlink failed"):
+            replace_existing_project_services_for_fresh_start(
+                runtime=runtime,
+                session=session,
+                candidate_state=candidate_state,
+                reason="explicit_no_resume",
+                announce_session_identifiers=lambda _session: None,
+                report_progress=lambda *_args: None,
+                terminate_restart_orphan_listeners=lambda **_kwargs: self.fail("orphans must not be reaped"),
+            )
+
+        self.assertTrue(session.preserve_existing_state_on_failure)
+        self.assertEqual(session.preserved_services, candidate_state.services)
+        self.assertEqual(session.preserved_requirements, candidate_state.requirements)
+        self.assertEqual(session.base_metadata["authority"], "old")
+        self.assertEqual(session.base_metadata["state_source_run_ids"], ["run-existing"])
+
+    def test_fresh_start_preserves_source_authority_when_requirement_release_raises(self) -> None:
+        requirements = SimpleNamespace(project="feature-a")
+        candidate_state = SimpleNamespace(
+            run_id="run-existing",
+            services={},
+            requirements={"feature-a": requirements},
+            metadata={"authority": "old"},
+        )
+        session = SimpleNamespace(
+            effective_route=Route(command="start", mode="trees", flags={"no_resume": True}),
+            runtime_mode="trees",
+            selected_contexts=[SimpleNamespace(name="feature-a")],
+            preserved_services={},
+            preserved_requirements={},
+            base_metadata={},
+        )
+
+        def fail_release(_requirements):  # noqa: ANN001, ANN202
+            raise OSError("requirement lock unlink failed")
+
+        runtime = SimpleNamespace(
+            _emit=lambda *_args, **_kwargs: None,
+            _project_name_from_service=lambda _name: "",
+            _terminate_services_from_state=lambda *_args, **_kwargs: self.fail("no services to terminate"),
+            _release_requirement_ports=fail_release,
+        )
+
+        with self.assertRaisesRegex(OSError, "requirement lock unlink failed"):
+            replace_existing_project_services_for_fresh_start(
+                runtime=runtime,
+                session=session,
+                candidate_state=candidate_state,
+                reason="explicit_no_resume",
+                announce_session_identifiers=lambda _session: self.fail("no announcement expected"),
+                report_progress=lambda *_args: self.fail("no progress expected"),
+                terminate_restart_orphan_listeners=lambda **_kwargs: self.fail("no orphan scan expected"),
+            )
+
+        self.assertTrue(session.preserve_existing_state_on_failure)
+        self.assertEqual(session.preserved_requirements, candidate_state.requirements)
+        self.assertEqual(session.base_metadata["state_source_run_ids"], ["run-existing"])
 
     def test_fresh_start_aborts_when_orphan_exit_is_unconfirmed(self) -> None:
         route = Route(command="start", mode="trees", flags={"no_resume": True})
@@ -559,8 +723,8 @@ class RunReuseSupportTests(unittest.TestCase):
             )
 
         self.assertTrue(session.preserve_existing_state_on_failure)
-        self.assertEqual(session.preserved_services, {})
-        self.assertEqual(session.preserved_requirements, {})
+        self.assertEqual(session.preserved_services, candidate_state.services)
+        self.assertEqual(session.preserved_requirements, candidate_state.requirements)
 
     def test_explicit_no_resume_supersedes_requirement_only_state(self) -> None:
         route = Route(

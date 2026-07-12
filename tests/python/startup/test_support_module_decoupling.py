@@ -18,6 +18,7 @@ from envctl_engine.startup.resume_restore_project import ResumeProjectRestoreRun
 import envctl_engine.startup.requirements_project_startup as requirements_project_startup_module  # noqa: E402
 from envctl_engine.startup.protocols import StartupOrchestratorLike  # noqa: E402
 from envctl_engine.startup.requirements_execution import (  # noqa: E402
+    requirements_for_restart_context,
     requirements_parallel_enabled,
     start_requirements_for_project as requirements_start_impl,
 )
@@ -36,6 +37,7 @@ from envctl_engine.startup.startup_orchestrator import StartupOrchestrator  # no
 from envctl_engine.startup.startup_selection_support import _tree_preselected_projects_from_state  # noqa: E402
 from envctl_engine.config import AppServiceConfig  # noqa: E402
 from envctl_engine.runtime.command_router import Route, parse_route  # noqa: E402
+from envctl_engine.runtime.service_manager import ServiceCleanupError  # noqa: E402
 from envctl_engine.state.models import RequirementsResult, RunState, ServiceRecord  # noqa: E402
 
 
@@ -483,6 +485,104 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         self.assertEqual(reused.component("supabase")["resources"]["db"], 5574)
         self.assertEqual(reused.component("supabase")["resources"]["api"], 54463)
 
+    def test_restart_reuses_authoritative_requirements_under_collision_storage_key(self) -> None:
+        requirements = RequirementsResult(
+            project="Main",
+            redis={"enabled": True, "success": True, "final": 6381, "runtime_status": "healthy"},
+        )
+        events: list[str] = []
+        runtime = SimpleNamespace(
+            _try_load_existing_state=lambda **_kwargs: RunState(
+                run_id="run-alias",
+                mode="main",
+                requirements={"Main Restart Collision": requirements},
+            ),
+            _emit=lambda event, **_payload: events.append(event),
+        )
+        orchestrator = SimpleNamespace(
+            runtime=runtime,
+            start_requirements_for_project=lambda *_args, **_kwargs: self.fail(
+                "authoritative requirements must be reused"
+            ),
+        )
+        context = SimpleNamespace(name="Main")
+        route = Route(
+            command="restart",
+            mode="main",
+            projects=["Main"],
+            flags={"_restart_request": True, "restart_include_requirements": False},
+        )
+
+        reused = requirements_for_restart_context(
+            cast(StartupOrchestratorLike, orchestrator),
+            context=context,
+            mode="main",
+            route=route,
+        )
+
+        self.assertIs(reused, requirements)
+        self.assertEqual(events, ["requirements.restart.reuse"])
+
+    def test_shared_main_reuses_authoritative_requirements_under_collision_storage_key(self) -> None:
+        requirements = RequirementsResult(
+            project="Main",
+            redis={"enabled": True, "success": True, "final": 6381, "runtime_status": "healthy"},
+        )
+        events: list[str] = []
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(execution_root=Path("/tmp/repo")),
+            _try_load_existing_state=lambda **_kwargs: RunState(
+                run_id="run-alias",
+                mode="main",
+                requirements={"Main Restart Collision": requirements},
+            ),
+            _requirements_ready=lambda candidate: candidate is requirements,
+            _emit=lambda event, **_payload: events.append(event),
+        )
+        orchestrator = cast(StartupOrchestratorLike, SimpleNamespace(runtime=runtime))
+
+        with mock.patch(
+            "envctl_engine.startup.startup_execution_support.requirements_for_restart_context",
+            side_effect=AssertionError("authoritative shared requirements must be reused"),
+        ):
+            reused = _shared_main_requirements(orchestrator, route=parse_route(["start"], env={}))
+
+        self.assertEqual(reused.component("redis")["final"], 6381)
+        self.assertIn("requirements.shared.reuse", events)
+
+    def test_ambiguous_requirement_aliases_fail_closed_instead_of_starting_duplicate_stack(self) -> None:
+        state = RunState(
+            run_id="run-ambiguous",
+            mode="main",
+            requirements={
+                "Main Restart Collision": RequirementsResult(project="Main"),
+                "Main Restart Collision 2": RequirementsResult(project="Main"),
+            },
+        )
+        runtime = SimpleNamespace(
+            _try_load_existing_state=lambda **_kwargs: state,
+            _emit=lambda *_args, **_kwargs: None,
+        )
+        orchestrator = SimpleNamespace(
+            runtime=runtime,
+            start_requirements_for_project=lambda *_args, **_kwargs: self.fail(
+                "ambiguous requirements must not start a duplicate stack"
+            ),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous requirements authority for Main"):
+            requirements_for_restart_context(
+                cast(StartupOrchestratorLike, orchestrator),
+                context=SimpleNamespace(name="Main"),
+                mode="main",
+                route=Route(
+                    command="restart",
+                    mode="main",
+                    projects=["Main"],
+                    flags={"_restart_request": True, "restart_include_requirements": False},
+                ),
+            )
+
     def test_shared_main_requirements_starts_fresh_when_existing_state_reconciles_unreachable(self) -> None:
         stale = RequirementsResult(
             project="Main",
@@ -798,6 +898,50 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         self.assertEqual(events[0][0], "resume.restore.execution")
         self.assertEqual(events[-1][0], "resume.restore.timing")
 
+    def test_resume_project_restore_converts_requirement_release_oserror_to_retryable_result(self) -> None:
+        requirements = RequirementsResult(project="Main", health="degraded")
+        state = RunState(
+            run_id="run-release-error",
+            mode="main",
+            requirements={"Main Restart Collision": requirements},
+        )
+        context = SimpleNamespace(name="Main", root=Path("/tmp/repo"), ports={})
+        events: list[str] = []
+
+        def fail_release(_requirements):  # noqa: ANN001, ANN202
+            raise OSError("requirement lock unlink failed")
+
+        runtime = SimpleNamespace(
+            env={},
+            config=SimpleNamespace(raw={}, additional_services=()),
+            _emit=lambda event, **_payload: events.append(event),
+            _resume_context_for_project=lambda _state, _project: context,
+            _project_name_from_service=lambda _name: "Main",
+            _requirements_ready=lambda _requirements: False,
+            _release_requirement_ports=fail_release,
+        )
+        runner = ResumeProjectRestoreRunner(
+            orchestrator=SimpleNamespace(runtime=runtime),
+            rt=runtime,
+            state=state,
+            missing_services=[],
+            route_for_startup=Route(command="resume", mode="main"),
+            total_projects=1,
+            use_project_spinner_group=False,
+            project_spinner_group=SimpleNamespace(),
+            use_single_spinner=False,
+            active_spinner=SimpleNamespace(),
+            port_allocator=_PortAllocatorStub(),
+        )
+
+        result = runner.restore_project(1, "Main")
+
+        self.assertEqual(result["error"], "requirement lock unlink failed")
+        self.assertEqual(result["remove_service_names"], [])
+        self.assertIsNone(result["requirements"])
+        self.assertIn("resume.restore.project_timing", events)
+        self.assertIs(state.requirements["Main Restart Collision"], requirements)
+
     def test_restore_missing_restarts_only_stale_services_when_requirements_are_healthy(self) -> None:
         released_ports: list[int] = []
         terminated_services: list[str] = []
@@ -828,6 +972,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             name="Main Backend",
             type="backend",
             cwd="/tmp/repo/backend",
+            project="Main",
             pid=1111,
             requested_port=8000,
             actual_port=8000,
@@ -837,6 +982,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             name="Main Frontend",
             type="frontend",
             cwd="/tmp/repo/frontend",
+            project="Main",
             pid=2222,
             requested_port=9000,
             actual_port=9000,
@@ -851,6 +997,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
                     name="Main Frontend",
                     type="frontend",
                     cwd="/tmp/repo/frontend",
+                    project="Main",
                     pid=3333,
                     requested_port=9000,
                     actual_port=9000,
@@ -862,7 +1009,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             port_planner=RecordingPortAllocator(),
             env={},
             config=SimpleNamespace(raw={}, base_dir=Path("/tmp/repo")),
-            _project_name_from_service=lambda name: "Main",
+            _project_name_from_service=lambda _name: "Incorrect Legacy Parse",
             _requirements_ready=lambda value: value is requirements and value.health == "healthy",
             _reconcile_project_requirement_truth=lambda project, req, project_root=None: [],
             _emit=lambda event, **payload: None,
@@ -881,7 +1028,7 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
             run_id="run-1",
             mode="main",
             services={"Main Backend": backend, "Main Frontend": frontend},
-            requirements={"Main": requirements},
+            requirements={"main": requirements},
         )
 
         errors = restore_missing(
@@ -901,9 +1048,177 @@ class StartupSupportModuleDecouplingTests(unittest.TestCase):
         self.assertEqual(released_ports, [9000])
         self.assertIs(state.services["Main Backend"], backend)
         self.assertEqual(state.services["Main Frontend"].pid, 3333)
+        self.assertEqual(state.requirements, {"main": requirements})
         self.assertEqual(len(startup_routes), 1)
         self.assertTrue(startup_routes[0].flags.get("_restart_request"))
         self.assertEqual(startup_routes[0].flags.get("restart_service_types"), ["frontend"])
+
+    def test_restore_missing_fails_closed_when_stale_service_exit_is_unconfirmed(self) -> None:
+        release_calls: list[str] = []
+        requirements_start_calls: list[str] = []
+        service_start_calls: list[str] = []
+        context = SimpleNamespace(
+            name="Main",
+            root=Path("/tmp/repo"),
+            ports={
+                "backend": SimpleNamespace(assigned=8000, final=8000),
+                "frontend": SimpleNamespace(assigned=9000, final=9000),
+            },
+        )
+        requirements = RequirementsResult(
+            project="main",
+            health="degraded",
+            failures=["redis unavailable"],
+        )
+        stale = ServiceRecord(
+            name="Main Frontend",
+            type="frontend",
+            cwd="/tmp/repo/frontend",
+            project="Main",
+            pid=2222,
+            requested_port=9000,
+            actual_port=9000,
+            status="stale",
+        )
+        runtime = SimpleNamespace(
+            port_planner=_PortAllocatorStub(),
+            env={},
+            config=SimpleNamespace(raw={}, base_dir=Path("/tmp/repo")),
+            _project_name_from_service=lambda _name: "Main",
+            _requirements_ready=lambda _value: False,
+            _emit=lambda _event, **_payload: None,
+            _tree_parallel_startup_config=lambda **_kwargs: (False, 1),
+            _resume_context_for_project=lambda _state, _project: context,
+            _terminate_service_record=lambda _service, **_kwargs: False,
+            _release_requirement_ports=lambda _requirements: release_calls.append("released"),
+            _reserve_project_ports=lambda _context: self.fail("ports must not be reserved after failed cleanup"),
+            _start_requirements_for_project=lambda *_args, **_kwargs: (
+                requirements_start_calls.append("started") or RequirementsResult(project="Main")
+            ),
+            _start_project_services=lambda *_args, **_kwargs: service_start_calls.append("started") or {},
+        )
+        state = RunState(
+            run_id="run-unconfirmed",
+            mode="main",
+            services={stale.name: stale},
+            requirements={"main": requirements},
+        )
+
+        errors = restore_missing(
+            SimpleNamespace(runtime=runtime),
+            state,
+            [stale.name],
+            route=parse_route(["resume", "--main"], env={}),
+            spinner_factory=lambda *args, **kwargs: _SpinnerStub(),
+            spinner_enabled_fn=lambda env: False,
+            use_spinner_policy_fn=lambda policy: nullcontext(),
+            emit_spinner_policy_fn=lambda emit, policy, context: None,
+            resolve_spinner_policy_fn=lambda env: SimpleNamespace(enabled=False, backend="rich", style="dots"),
+        )
+
+        self.assertEqual(
+            errors,
+            ["Main: stale service termination could not be confirmed: Main Frontend"],
+        )
+        self.assertEqual(release_calls, [])
+        self.assertEqual(requirements_start_calls, [])
+        self.assertEqual(service_start_calls, [])
+        self.assertIs(state.services[stale.name], stale)
+        self.assertEqual(state.requirements, {"main": requirements})
+        self.assertEqual(requirements.health, "degraded")
+
+    def test_restore_missing_retains_unterminated_replacement_after_confirmed_stale_stop(self) -> None:
+        context = SimpleNamespace(
+            name="Main",
+            root=Path("/tmp/repo"),
+            ports={
+                "backend": SimpleNamespace(assigned=8000, final=8000),
+                "frontend": SimpleNamespace(assigned=9000, final=9000),
+            },
+        )
+        original_requirements = RequirementsResult(
+            project="main",
+            health="degraded",
+            failures=["redis stale"],
+        )
+        replacement_requirements = RequirementsResult(project="Main", health="healthy")
+        released_requirements: list[RequirementsResult] = []
+        stale = ServiceRecord(
+            name="Main Frontend",
+            type="frontend",
+            cwd="/tmp/repo/frontend",
+            project="Main",
+            pid=2222,
+            requested_port=9000,
+            actual_port=9000,
+            status="stale",
+        )
+        replacement = ServiceRecord(
+            name="Main Frontend",
+            type="frontend",
+            cwd="/tmp/repo/frontend",
+            project="Main",
+            pid=3333,
+            requested_port=9000,
+            actual_port=9000,
+            status="starting",
+        )
+
+        def fail_service_start(*_args, **_kwargs):  # noqa: ANN002, ANN003
+            raise ServiceCleanupError(
+                "frontend listener startup failed; cleanup could not confirm exit",
+                {replacement.name: replacement},
+            )
+
+        runtime = SimpleNamespace(
+            port_planner=_PortAllocatorStub(),
+            env={},
+            config=SimpleNamespace(raw={}, base_dir=Path("/tmp/repo")),
+            _project_name_from_service=lambda _name: "Main",
+            _requirements_ready=lambda value: value is replacement_requirements,
+            _emit=lambda _event, **_payload: None,
+            _tree_parallel_startup_config=lambda **_kwargs: (False, 1),
+            _resume_context_for_project=lambda _state, _project: context,
+            _terminate_service_record=lambda _service, **_kwargs: True,
+            _release_requirement_ports=lambda value: released_requirements.append(value),
+            _reserve_project_ports=lambda _context: self.fail(
+                "partial restore should reserve only selected service ports"
+            ),
+            _start_requirements_for_project=lambda *_args, **_kwargs: replacement_requirements,
+            _start_project_services=fail_service_start,
+        )
+        state = RunState(
+            run_id="run-service-cleanup",
+            mode="main",
+            services={stale.name: stale},
+            requirements={"main": original_requirements},
+        )
+
+        errors = restore_missing(
+            SimpleNamespace(runtime=runtime),
+            state,
+            [stale.name],
+            route=parse_route(["resume", "--main"], env={}),
+            spinner_factory=lambda *args, **kwargs: _SpinnerStub(),
+            spinner_enabled_fn=lambda env: False,
+            use_spinner_policy_fn=lambda policy: nullcontext(),
+            emit_spinner_policy_fn=lambda emit, policy, context: None,
+            resolve_spinner_policy_fn=lambda env: SimpleNamespace(enabled=False, backend="rich", style="dots"),
+        )
+
+        self.assertEqual(
+            errors,
+            ["Main: frontend listener startup failed; cleanup could not confirm exit"],
+        )
+        self.assertEqual(set(state.services), {"Main Frontend"})
+        retained = state.services["Main Frontend"]
+        self.assertEqual(retained.pid, 3333)
+        self.assertEqual(retained.status, "termination_failed")
+        self.assertTrue(retained.degraded)
+        self.assertEqual(state.metadata["termination_failed_services"], ["Main Frontend"])
+        self.assertEqual(released_requirements, [original_requirements])
+        self.assertEqual(state.requirements, {"main": replacement_requirements})
+        self.assertEqual(replacement_requirements.health, "degraded")
 
     def test_requirements_failure_message_summarizes_docker_daemon_outage(self) -> None:
         requirements = RequirementsResult(

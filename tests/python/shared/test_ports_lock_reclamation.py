@@ -39,7 +39,7 @@ class PortsLockReclamationTests(unittest.TestCase):
             lock_path.write_text(
                 json.dumps(
                     {
-                        "owner": "old-worker",
+                        "owner": "worker",
                         "session": "old-session",
                         "pid": 999999,
                         "created_at": "2000-01-01T00:00:00+00:00",
@@ -54,11 +54,11 @@ class PortsLockReclamationTests(unittest.TestCase):
                 session_id="new-session",
                 availability_checker=lambda _port: True,
             )
-            reserved = planner.reserve_next(5432, owner="new-worker")
+            reserved = planner.reserve_next(5432, owner="worker")
 
             self.assertEqual(reserved, 5432)
             payload = json.loads(lock_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["owner"], "new-worker")
+            self.assertEqual(payload["owner"], "worker")
             self.assertEqual(payload["session"], "new-session")
 
     def test_stale_lock_reclaim_event_includes_previous_owner_metadata(self) -> None:
@@ -67,7 +67,7 @@ class PortsLockReclamationTests(unittest.TestCase):
             lock_path.write_text(
                 json.dumps(
                     {
-                        "owner": "old-worker",
+                        "owner": "worker",
                         "session": "old-session",
                         "pid": 999999,
                         "created_at": "2000-01-01T00:00:00+00:00",
@@ -88,17 +88,65 @@ class PortsLockReclamationTests(unittest.TestCase):
                 availability_checker=lambda _port: True,
                 event_handler=on_event,
             )
-            reserved = planner.reserve_next(5432, owner="new-worker")
+            reserved = planner.reserve_next(5432, owner="worker")
 
             self.assertEqual(reserved, 5432)
             reclaim_events = [payload for name, payload in events if name == "port.lock.reclaim"]
             self.assertTrue(reclaim_events)
             latest = reclaim_events[-1]
             self.assertEqual(latest.get("port"), 5432)
-            self.assertEqual(latest.get("owner"), "new-worker")
-            self.assertEqual(latest.get("reclaimed_owner"), "old-worker")
+            self.assertEqual(latest.get("owner"), "worker")
+            self.assertEqual(latest.get("reclaimed_owner"), "worker")
             self.assertEqual(latest.get("reclaimed_session"), "old-session")
             self.assertEqual(latest.get("reclaimed_pid"), 999999)
+
+    def test_dead_foreign_owner_lock_is_preserved_and_reservation_rebounds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_path = Path(tmpdir) / "5432.lock"
+            original = json.dumps(
+                {
+                    "owner": "Other:backend",
+                    "session": "historical-session",
+                    "pid": 99999999,
+                    "created_at": 0,
+                },
+                sort_keys=True,
+            )
+            lock_path.write_text(original, encoding="utf-8")
+            planner = PortPlanner(
+                lock_dir=tmpdir,
+                session_id="selected-session",
+                availability_checker=lambda _port: True,
+            )
+
+            reserved = planner.reserve_next(5432, owner="Selected:backend")
+
+            self.assertEqual(reserved, 5433)
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), original)
+
+    def test_dead_allocator_lock_is_preserved_when_same_owner_service_still_listens(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_path = Path(tmpdir) / "5432.lock"
+            original = json.dumps(
+                {
+                    "owner": "Main:backend",
+                    "session": "historical-session",
+                    "pid": 99999999,
+                    "created_at": 0,
+                },
+                sort_keys=True,
+            )
+            lock_path.write_text(original, encoding="utf-8")
+            planner = PortPlanner(
+                lock_dir=tmpdir,
+                session_id="replacement-session",
+                availability_checker=lambda port: port != 5432,
+            )
+
+            reserved = planner.reserve_next(5432, owner="Main:backend")
+
+            self.assertEqual(reserved, 5433)
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), original)
 
     def test_active_pid_lock_is_not_reclaimed_by_age_alone(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -206,7 +254,7 @@ class PortsLockReclamationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_path = Path(tmpdir) / "13000.lock"
             lock_path.write_text(
-                json.dumps({"owner": "dead", "session": "dead", "pid": 99999999, "created_at": 0}),
+                json.dumps({"owner": "worker-0", "session": "dead", "pid": 99999999, "created_at": 0}),
                 encoding="utf-8",
             )
             worker_count = 32
@@ -257,7 +305,7 @@ class PortsLockReclamationTests(unittest.TestCase):
             self.assertEqual(list((Path(tmpdir) / ".port-guards").glob("*.pending")), [])
             fsync_directory.assert_called_once_with(Path(tmpdir))
 
-    def test_corrupt_lock_gets_a_grace_period_then_becomes_stale(self) -> None:
+    def test_corrupt_ownerless_lock_requires_explicit_reap_after_grace_period(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             now = [1000.0]
             lock_path = Path(tmpdir) / "15000.lock"
@@ -274,6 +322,9 @@ class PortsLockReclamationTests(unittest.TestCase):
             self.assertEqual(planner.reserve_next(15000, owner="new"), 15001)
             planner.release_session()
             now[0] += 3.0
+            self.assertEqual(planner.reserve_next(15000, owner="new"), 15001)
+            planner.release_session()
+            self.assertTrue(planner.reap_stale(15000))
             self.assertEqual(planner.reserve_next(15000, owner="new"), 15000)
 
     def test_permission_error_means_lock_owner_is_still_live(self) -> None:
@@ -308,7 +359,7 @@ class PortsLockReclamationTests(unittest.TestCase):
                 corrupt_lock_grace_seconds=0.0,
             )
 
-            self.assertEqual(planner.reserve_next(16010, owner="new"), 16010)
+            self.assertEqual(planner.reserve_next(16010, owner="broken"), 16010)
 
     def test_failed_pid_probe_preserves_a_foreign_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -342,7 +393,7 @@ class PortsLockReclamationTests(unittest.TestCase):
                 corrupt_lock_grace_seconds=0.0,
             )
 
-            self.assertEqual(planner.reserve_next(16030, owner="new"), 16030)
+            self.assertEqual(planner.reserve_next(16030, owner="broken"), 16030)
 
     def test_normal_release_is_session_qualified_but_release_all_is_explicitly_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

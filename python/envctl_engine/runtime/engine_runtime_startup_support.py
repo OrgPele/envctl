@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -19,9 +18,6 @@ from envctl_engine.startup.startup_selection_support import _restart_service_typ
 from envctl_engine.state.models import PortPlan, RunState
 from envctl_engine.shared.parsing import parse_bool, parse_int
 from envctl_engine.planning import discover_tree_projects
-
-
-_PORT_REAP_LOCK = threading.Lock()
 
 
 def effective_start_mode(runtime: Any, route: Route) -> str:
@@ -210,7 +206,6 @@ def discover_projects(
 
 
 def reserve_project_ports(runtime: Any, context: ProjectContextLike, route: Route | None = None) -> None:
-    _reap_stale_port_locks_once(runtime)
     selected_app_services = _selected_app_services_for_port_reservation(runtime, context=context, route=route)
     for service_name, plan in context.ports.items():
         if not _port_reservation_enabled(
@@ -271,18 +266,6 @@ def reserve_project_ports(runtime: Any, context: ProjectContextLike, route: Rout
             plan.assigned = reserved
             plan.final = reserved
         runtime._emit("port.reserved", project=context.name, service=service_name, port=reserved)
-
-
-def _reap_stale_port_locks_once(runtime: Any) -> None:
-    reaper = getattr(runtime.port_planner, "reap_stale_locks", None)
-    if not callable(reaper) or bool(getattr(runtime, "_startup_stale_port_locks_reaped", False)):
-        return
-    with _PORT_REAP_LOCK:
-        if bool(getattr(runtime, "_startup_stale_port_locks_reaped", False)):
-            return
-        reaped = int(reaper() or 0)
-        setattr(runtime, "_startup_stale_port_locks_reaped", True)
-        runtime._emit("port.lock.reap_stale", count=reaped)
 
 
 def _port_reservation_enabled(

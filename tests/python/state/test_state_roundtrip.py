@@ -33,6 +33,8 @@ class StateRoundtripTests(unittest.TestCase):
                         container_id="sha256:abc",
                         container_name="envctl-app-tree-alpha-backend",
                         container_image="envctl/example-backend:dev",
+                        container_launch_token="launch-token-123",
+                        container_cleanup_pending_since=1_700_000_000.25,
                     )
                 },
                 requirements={
@@ -73,7 +75,35 @@ class StateRoundtripTests(unittest.TestCase):
                 loaded.services["Tree Alpha Backend"].container_image,
                 "envctl/example-backend:dev",
             )
+            self.assertEqual(
+                loaded.services["Tree Alpha Backend"].container_launch_token,
+                "launch-token-123",
+            )
+            self.assertEqual(
+                loaded.services["Tree Alpha Backend"].container_cleanup_pending_since,
+                1_700_000_000.25,
+            )
             self.assertEqual(loaded.metadata["source"], "python")
+
+    def test_requirement_storage_key_roundtrip_preserves_authoritative_owner_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "run_state.json"
+            state = RunState(
+                run_id="run-collision",
+                mode="main",
+                requirements={
+                    "Main Restart Collision": RequirementsResult(
+                        project="Main",
+                        redis={"enabled": True, "success": True, "final": 6381},
+                    )
+                },
+            )
+
+            dump_state(state, str(path))
+            loaded = load_state(str(path), allowed_root=tmpdir)
+
+            self.assertEqual(loaded.requirements["Main Restart Collision"].project, "Main")
+            self.assertEqual(loaded.requirements["Main Restart Collision"].redis["final"], 6381)
 
     def test_legacy_shell_state_is_loaded_without_source_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -127,6 +157,32 @@ class StateRoundtripTests(unittest.TestCase):
         merged = merge_states([a, b])
         self.assertEqual(merged.run_id, "run-b")
         self.assertEqual(merged.services["Tree Alpha Frontend"].actual_port, 9002)
+
+    def test_merge_states_preserves_same_storage_name_owned_by_distinct_projects(self) -> None:
+        alpha = ServiceRecord(
+            name="Opaque Shared Runtime",
+            type="worker",
+            cwd="/alpha",
+            pid=101,
+            project="Alpha",
+        )
+        beta = ServiceRecord(
+            name="Opaque Shared Runtime",
+            type="worker",
+            cwd="/beta",
+            pid=202,
+            project="Beta",
+        )
+
+        merged = merge_states(
+            [
+                RunState(run_id="alpha", mode="trees", services={alpha.name: alpha}),
+                RunState(run_id="beta", mode="trees", services={beta.name: beta}),
+            ]
+        )
+
+        self.assertEqual({service.pid for service in merged.services.values()}, {101, 202})
+        self.assertEqual(len(merged.services), 2)
 
 
 if __name__ == "__main__":

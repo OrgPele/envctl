@@ -190,7 +190,7 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
             _emit=lambda event, **payload: events.append((event, payload)),
             _try_load_existing_state=lambda **kwargs: state if kwargs["mode"] == "trees" else None,
             _project_name_from_service=lambda name: "Feature" if "Feature" in name else "",
-            _terminate_services_from_state=lambda *args, **kwargs: None,
+            _terminate_services_from_state=lambda *args, **kwargs: set(),
             port_planner=SimpleNamespace(release=lambda port: released.append(port)),
             state_repository=SimpleNamespace(
                 save_selected_stop_state=lambda **kwargs: saved_states.append(kwargs["state"])
@@ -299,7 +299,7 @@ class EngineRuntimeLifecycleSupportTests(unittest.TestCase):
                 _emit=lambda event, **payload: events.append((event, payload)),
                 _try_load_existing_state=lambda **kwargs: state if kwargs["mode"] == "trees" else None,
                 _project_name_from_service=lambda name: "Feature" if "Feature" in name else "",
-                _terminate_services_from_state=lambda *args, **kwargs: None,
+                _terminate_services_from_state=lambda *args, **kwargs: set(),
                 _blast_all_process_command=lambda pid: f"python service {pid}",
                 _blast_all_kill_pid_tree=lambda pid: killed_pids.append(pid),
                 _collect_container_volume_candidates=lambda cid, volumes: volumes.append(f"vol-{cid}"),

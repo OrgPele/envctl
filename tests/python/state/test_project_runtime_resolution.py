@@ -30,6 +30,21 @@ class ProjectRuntimeResolutionTests(unittest.TestCase):
 
         self.assertEqual(active_project_names(state), ["alpha", "beta", "delta", "gamma"])
 
+    def test_requirement_collision_storage_key_is_not_exposed_as_an_active_project(self) -> None:
+        state = RunState(
+            run_id="run-collision",
+            mode="main",
+            requirements={
+                "Main": RequirementsResult(project="Main"),
+                "Main Restart Collision": RequirementsResult(project="Main"),
+            },
+        )
+
+        self.assertEqual(active_project_names(state), ["Main"])
+        resolution = resolve_requested_project_state(state, [], command="endpoints")
+        self.assertTrue(resolution.ok)
+        self.assertEqual(resolution.selected_projects, ["Main"])
+
     def test_exact_requested_project_match_filters_state_to_canonical_project(self) -> None:
         state = RunState(
             run_id="run-active",

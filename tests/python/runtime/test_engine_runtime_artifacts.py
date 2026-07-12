@@ -94,6 +94,7 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
 
     def test_write_artifacts_forwards_expected_state_repository_payload(self) -> None:
         captured: dict[str, object] = {}
+        committed: list[bool] = []
 
         def save_run(**kwargs):  # noqa: ANN003
             captured.update(kwargs)
@@ -109,13 +110,22 @@ class EngineRuntimeArtifactsTests(unittest.TestCase):
         )
         state = RunState(run_id="run-1", mode="main")
 
-        write_artifacts(runtime, state, [SimpleNamespace(name="Main")], errors=["boom"])
+        write_artifacts(
+            runtime,
+            state,
+            [SimpleNamespace(name="Main")],
+            errors=["boom"],
+            on_commit=lambda: committed.append(True),
+        )
 
         self.assertIs(captured["state"], state)
         self.assertEqual(captured["errors"], ["boom"])
         self.assertEqual(captured["events"], [{"event": "x"}])
         self.assertTrue(callable(captured["runtime_map_builder"]))
         self.assertTrue(callable(captured["write_runtime_readiness_report"]))
+        self.assertTrue(callable(captured["on_commit"]))
+        captured["on_commit"]()
+        self.assertEqual(committed, [True])
 
     def test_persist_events_snapshot_updates_bound_run_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from envctl_engine.state.models import RunState
+from collections.abc import Callable
+
+from envctl_engine.state.models import RunState, ServiceRecord
 
 
 def frontend_env_for_project(state: RunState, project: str, *, host: str = "localhost") -> dict[str, str]:
+    backend = service_for_project_type(state, project=project, service_type="backend")
     backend_port = None
-    for service in state.services.values():
-        if project_name_from_service_name(service.name) != project:
-            continue
-        if service.type != "backend":
-            continue
-        backend_port = service.actual_port if service.actual_port is not None else service.requested_port
+    if backend is not None:
+        backend_port = backend.actual_port if backend.actual_port is not None else backend.requested_port
     if backend_port is None:
         return {}
     backend_url = f"http://{host}:{backend_port}"
@@ -47,7 +46,61 @@ def service_project_name(service: object) -> str:
     explicit = str(getattr(service, "project", "") or "").strip()
     if explicit:
         return explicit
+    typed_project = _typed_service_project_name(service)
+    if typed_project:
+        return typed_project
     return project_name_from_service_name(str(getattr(service, "name", "") or ""))
+
+
+def _typed_service_project_name(service: object) -> str:
+    name = str(getattr(service, "name", "") or "").strip()
+    display = service_display_name(service_slug_from_record(service))
+    suffix = f" {display}" if display else ""
+    if suffix and name.casefold().endswith(suffix.casefold()):
+        return name[: -len(suffix)].strip()
+    collision_marker = f" {display} " if display else ""
+    if collision_marker:
+        marker_index = name.casefold().rfind(collision_marker.casefold())
+        if marker_index > 0:
+            collision_suffix = name[marker_index + len(collision_marker) :].strip().casefold()
+            if collision_suffix.startswith(("restart collision", "resume collision", "state collision")):
+                return name[:marker_index].strip()
+    return ""
+
+
+def service_for_project_type(state: RunState, *, project: str, service_type: str) -> ServiceRecord | None:
+    project_key = str(project).strip().casefold()
+    type_key = str(service_type).strip().lower()
+    for service in state.services.values():
+        if service_project_name(service).casefold() != project_key:
+            continue
+        if service_slug_from_record(service) == type_key:
+            return service
+    return None
+
+
+def resolve_service_project_name(
+    service_name: str,
+    service: object | None,
+    *,
+    project_name_from_service: Callable[[str], object] | None = None,
+) -> str:
+    """Resolve project ownership without discarding authoritative record metadata."""
+    explicit = str(getattr(service, "project", "") or "").strip()
+    if explicit:
+        return explicit
+    typed_project = _typed_service_project_name(service) if service is not None else ""
+    if typed_project:
+        return typed_project
+    if project_name_from_service is not None:
+        legacy = str(project_name_from_service(service_name) or "").strip()
+        if legacy:
+            return legacy
+    if service is not None:
+        record_project = service_project_name(service)
+        if record_project:
+            return record_project
+    return project_name_from_service_name(str(service_name))
 
 
 def service_matches_selector(service: object, selector: str) -> bool:

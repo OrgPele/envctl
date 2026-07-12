@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, cast
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.shared.services import resolve_service_project_name
 from envctl_engine.ui.selection_types import TargetSelection
 
 
@@ -114,7 +115,11 @@ def _projects_by_service_selector(runtime: Any, state: object | None) -> dict[st
     projects_by_selector: dict[str, list[str]] = {}
     services = getattr(state, "services", {}) if state is not None else {}
     for service_name, service in services.items():
-        project = runtime.project_name_from_service(service_name)
+        project = resolve_service_project_name(
+            service_name,
+            service,
+            project_name_from_service=runtime.project_name_from_service,
+        )
         if not project:
             continue
         service_type = str(getattr(service, "type", "") or "").strip().lower()

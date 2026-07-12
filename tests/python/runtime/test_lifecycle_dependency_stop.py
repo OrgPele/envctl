@@ -32,6 +32,26 @@ class LifecycleDependencyStopTests(unittest.TestCase):
 
         self.assertEqual(select_dependency_components_for_stop(state, route), {"Alpha": {"redis", "n8n"}})
 
+    def test_entire_system_selects_every_storage_record_by_authoritative_project(self) -> None:
+        state = RunState(
+            run_id="run-collision",
+            mode="main",
+            requirements={
+                "Main": RequirementsResult(project="Main", redis={"enabled": True}),
+                "Main Restart Collision": RequirementsResult(project="Main", redis={"enabled": True}),
+                "Other": RequirementsResult(project="Other", redis={"enabled": True}),
+            },
+        )
+        route = Route(command="stop", mode="main", projects=["Main"], flags={"runtime_scope": "entire-system"})
+
+        selected = select_dependency_components_for_stop(state, route)
+
+        self.assertEqual(selected, {"Main": {"redis"}, "Main Restart Collision": {"redis"}})
+        self.assertEqual(
+            requirement_component_port_owners(state.requirements["Main Restart Collision"], "redis"),
+            ("Main:redis", "Main:requirements"),
+        )
+
     def test_stop_requirement_component_removes_direct_and_compose_containers(self) -> None:
         calls: list[list[str]] = []
 

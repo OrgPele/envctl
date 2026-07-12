@@ -64,8 +64,6 @@ def handle_special_flag(flags: dict[str, object], token: str) -> None:
         "--no-requirements-parallel",
     }:
         flags["requirements_parallel"] = False
-    elif token == "--ignore-service-deps":
-        flags["ignore_service_deps"] = True
     elif token == "--only-backend":
         flags["launch_backend"] = True
         flags["launch_frontend"] = False

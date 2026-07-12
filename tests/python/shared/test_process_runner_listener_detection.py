@@ -13,6 +13,11 @@ PYTHON_ROOT = REPO_ROOT / "python"
 from envctl_engine.shared.process_runner import ProcessRunner
 
 
+def _signal_then_report_process_group_gone(_pid: int, sig: int) -> None:
+    if sig == 0:
+        raise ProcessLookupError
+
+
 class ProcessRunnerListenerDetectionTests(unittest.TestCase):
     def _fake_run_for_ports(self, ports_by_pid: dict[int, list[int]]):
         def _run(cmd, **kwargs):  # noqa: ANN001
@@ -164,9 +169,15 @@ class ProcessRunnerListenerDetectionTests(unittest.TestCase):
             def communicate(self, timeout=None):  # noqa: ANN001
                 raise subprocess.TimeoutExpired(cmd=["docker", "run"], timeout=120.0)
 
+            def wait(self, timeout=None):  # noqa: ANN001
+                return 0
+
         with (
             patch("envctl_engine.shared.process_runner.subprocess.Popen", return_value=_FakeProcess()),
-            patch("envctl_engine.shared.process_runner.os.killpg"),
+            patch(
+                "envctl_engine.shared.process_runner.os.killpg",
+                side_effect=_signal_then_report_process_group_gone,
+            ),
         ):
             result = runner.run(["docker", "run"], timeout=120.0)
 
@@ -193,9 +204,15 @@ class ProcessRunnerListenerDetectionTests(unittest.TestCase):
                     )
                 return ("tail stdout", "tail stderr")
 
+            def wait(self, timeout=None):  # noqa: ANN001
+                return 0
+
         with (
             patch("envctl_engine.shared.process_runner.subprocess.Popen", return_value=_FakeProcess()),
-            patch("envctl_engine.shared.process_runner.os.killpg"),
+            patch(
+                "envctl_engine.shared.process_runner.os.killpg",
+                side_effect=_signal_then_report_process_group_gone,
+            ),
         ):
             result = runner.run(["docker", "run"], timeout=30.0)
 
@@ -214,9 +231,15 @@ class ProcessRunnerListenerDetectionTests(unittest.TestCase):
             def communicate(self, timeout=None):  # noqa: ANN001
                 raise subprocess.TimeoutExpired(cmd=["docker", "run"], timeout=5.0)
 
+            def wait(self, timeout=None):  # noqa: ANN001
+                return 0
+
         with (
             patch("envctl_engine.shared.process_runner.subprocess.Popen", return_value=_FakeProcess()),
-            patch("envctl_engine.shared.process_runner.os.killpg") as killpg,
+            patch(
+                "envctl_engine.shared.process_runner.os.killpg",
+                side_effect=_signal_then_report_process_group_gone,
+            ) as killpg,
         ):
             result = runner.run(["docker", "run"], timeout=5.0)
 

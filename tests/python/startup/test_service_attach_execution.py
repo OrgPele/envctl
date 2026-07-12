@@ -12,6 +12,7 @@ from unittest.mock import patch
 from envctl_engine.runtime.docker_service_runtime import DockerServiceLaunch
 from envctl_engine.runtime.service_manager import ServiceCleanupError, ServiceManager, ServiceStartDescriptor
 from envctl_engine.shared.ports import PortPlanner
+from envctl_engine.shared.process_runner import ProcessHandoffCleanupError
 from envctl_engine.startup.service_attach_execution import ServiceAttachRunner
 from envctl_engine.startup.service_execution_records import PreparedServiceLaunch
 from envctl_engine.state.models import PortPlan, ServiceRecord
@@ -270,6 +271,60 @@ class ServiceAttachExecutionTests(unittest.TestCase):
         failure_events = [payload for event, payload in events if event == "service.failure"]
         self.assertEqual(failure_events[0]["failure_class"], "process_spawn_failed")
 
+    def test_unconfirmed_process_handoff_returns_pid_authority_to_service_manager(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        process = SimpleNamespace(pid=62002)
+        runtime = SimpleNamespace(
+            _conflict_remaining={},
+            _emit=lambda event, **payload: events.append((event, payload)),
+            _service_start_command_resolved=lambda **_kwargs: (["backend"], "configured"),
+        )
+        runner = ServiceAttachRunner(
+            runtime=runtime,
+            process_runtime=SimpleNamespace(
+                start_background=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    ProcessHandoffCleanupError(
+                        process=process,
+                        launch_intent="background_service",
+                    )
+                )
+            ),
+            port_allocator=SimpleNamespace(reserve_next=lambda port, owner: port),
+            project_name="Main",
+            project_root=Path("/repo"),
+            backend_plan=port_plan(8000),
+            frontend_plan=port_plan(5173),
+            backend_cwd=Path("/repo/backend"),
+            frontend_cwd=Path("/repo/frontend"),
+            backend_log_path="/logs/backend.txt",
+            frontend_log_path="/logs/frontend.txt",
+            backend_env_extra={},
+            frontend_env_extra={},
+            command_env_builder=lambda port, extra: dict(extra),
+            prepared_launches={
+                "backend": PreparedServiceLaunch(
+                    service_name="backend",
+                    cwd=Path("/repo/backend"),
+                    log_path="/logs/backend.txt",
+                    requested_port=8000,
+                    env={},
+                    command_source="configured",
+                )
+            },
+            selected_service_types={"backend"},
+            additional_services=(),
+            backend_listener_expected=True,
+            rebound_delta=0,
+        )
+
+        success, error, pid = runner.start_backend(8000)
+
+        self.assertFalse(success)
+        self.assertIn("cleanup could not confirm exit", error)
+        self.assertEqual(pid, 62002)
+        failure_events = [payload for event, payload in events if event == "service.failure"]
+        self.assertEqual(failure_events[0]["failure_class"], "process_cleanup_unconfirmed")
+
     def test_explicit_docker_mode_launches_and_annotates_container_service(self) -> None:
         project_root = Path("/tmp/envctl-project")
         runtime = SimpleNamespace(
@@ -449,6 +504,97 @@ class ServiceAttachExecutionTests(unittest.TestCase):
                 "failed to remove container",
             )
         self.assertEqual(runner._container_launches, {"voice-runtime": launch})
+
+    def test_failed_critical_docker_cleanup_retains_container_identity_and_port_lock(self) -> None:
+        project_root = Path("/tmp/envctl-project")
+        releases: list[tuple[int, str]] = []
+        runtime = SimpleNamespace(
+            env={"ENVCTL_BACKEND_DOCKER_IMAGE": "example/backend:dev"},
+            config=SimpleNamespace(raw={}),
+            services=ServiceManager(),
+            _conflict_remaining={},
+            _emit=lambda *_args, **_kwargs: None,
+            _service_start_command_resolved=lambda **_kwargs: [],
+        )
+        runner = ServiceAttachRunner(
+            runtime=runtime,
+            process_runtime=SimpleNamespace(),
+            port_allocator=SimpleNamespace(
+                session_id="planner-session-docker",
+                reserve_next=lambda port, owner: port,
+                release=lambda port, *, owner: releases.append((port, owner)),
+            ),
+            project_name="Main",
+            project_root=project_root,
+            backend_plan=port_plan(8000),
+            frontend_plan=port_plan(5173),
+            backend_cwd=project_root / "backend",
+            frontend_cwd=project_root / "frontend",
+            backend_log_path="/logs/backend.txt",
+            frontend_log_path="/logs/frontend.txt",
+            backend_env_extra={},
+            frontend_env_extra={},
+            command_env_builder=lambda port, extra: {**extra, "PORT": str(port)},
+            prepared_launches={
+                "backend": PreparedServiceLaunch(
+                    service_name="backend",
+                    cwd=project_root / "backend",
+                    log_path="/logs/backend.txt",
+                    requested_port=8000,
+                    env={"PORT": "8000"},
+                    command_source="configured",
+                )
+            },
+            selected_service_types={"backend"},
+            additional_services=(),
+            backend_listener_expected=True,
+            rebound_delta=0,
+            docker_mode=True,
+        )
+        launch = DockerServiceLaunch(
+            container_id="live-container-id",
+            container_name="envctl-app-main-backend",
+            image="example/backend:dev",
+            log_path="/logs/backend.txt",
+            launch_token="launch-token-live",
+            cleanup_pending_since=1_700_000_000.25,
+        )
+
+        with (
+            patch(
+                "envctl_engine.startup.service_attach_execution.DockerServiceRuntime.launch",
+                return_value=launch,
+            ),
+            patch(
+                "envctl_engine.startup.service_attach_execution.DockerServiceRuntime.wait_until_ready",
+                return_value=False,
+            ),
+            patch(
+                "envctl_engine.startup.service_attach_execution.DockerServiceRuntime.stop",
+                return_value=False,
+            ) as stop_container,
+            self.assertRaises(ServiceCleanupError) as raised,
+        ):
+            runner.start(attach_parallel=False, on_service_retry=lambda *_args: None)
+
+        self.assertEqual(stop_container.call_count, 2)
+        self.assertTrue(
+            all(
+                call.kwargs["pending_cleanup_since"] == 1_700_000_000.25
+                for call in stop_container.call_args_list
+            )
+        )
+        self.assertEqual(runner._container_launches, {"backend": launch})
+        self.assertEqual(releases, [])
+        record = raised.exception.unterminated_services["Main Backend"]
+        self.assertEqual(record.runtime_kind, "docker")
+        self.assertEqual(record.container_id, "live-container-id")
+        self.assertEqual(record.container_name, "envctl-app-main-backend")
+        self.assertEqual(record.container_image, "example/backend:dev")
+        self.assertEqual(record.container_launch_token, "launch-token-live")
+        self.assertEqual(record.container_cleanup_pending_since, 1_700_000_000.25)
+        self.assertEqual(record.actual_port, 8000)
+        self.assertEqual(record.port_lock_session, "planner-session-docker")
 
     def test_runner_builds_layered_descriptors_and_preserves_additional_urls(self) -> None:
         project_root = Path("/tmp/envctl-project")

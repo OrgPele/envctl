@@ -4,8 +4,8 @@ from collections.abc import Iterable
 from typing import Any, Callable, Mapping, cast
 
 from envctl_engine.requirements.core import dependency_definitions
-from envctl_engine.runtime.lifecycle_blast_support import LifecycleBlastCleanupSupport
 from envctl_engine.runtime.engine_runtime_lifecycle_support import release_requirement_ports
+from envctl_engine.runtime.lifecycle_blast_support import LifecycleBlastCleanupSupport
 from envctl_engine.runtime.lifecycle_dependency_stop import (
     release_requirement_component_ports,
     release_selected_dependency_components,
@@ -14,10 +14,13 @@ from envctl_engine.runtime.lifecycle_dependency_stop import (
     stop_requirement_component_containers,
 )
 from envctl_engine.runtime.lifecycle_requirement_ports import requirement_component_port_owners
+from envctl_engine.runtime.lifecycle_full_cleanup import clear_runtime_state as clear_full_runtime_state
 from envctl_engine.runtime.lifecycle_service_stop_selection import (
+    project_selectors_from_route,
     select_services_for_stop,
     service_matches_runtime_scope,
 )
+from envctl_engine.runtime.lifecycle_service_termination import unconfirmed_service_names
 from envctl_engine.runtime.lifecycle_stopped_metadata import (
     has_dashboard_stopped_services,
     project_name_from_stopped_service,
@@ -33,10 +36,10 @@ from envctl_engine.runtime.runtime_context import (
     resolve_state_repository,
 )
 from envctl_engine.shared.protocols import PortAllocator, ProcessRuntime, StateRepository
+from envctl_engine.shared.services import service_matches_selector
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.state.lookup import call_state_loader
 from envctl_engine.state.models import RequirementsResult, RunState
-from envctl_engine.state.runtime_map import build_runtime_map
 from envctl_engine.ui.selection_support import (
     interactive_selection_allowed,
     project_names_from_state,
@@ -48,7 +51,10 @@ from envctl_engine.ui.spinner import Spinner, spinner, use_spinner_policy
 from envctl_engine.ui.spinner_service import emit_spinner_policy, resolve_spinner_policy
 
 
-class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlastCleanupSupport):
+class LifecycleCleanupOrchestrator(
+    LifecycleTargetedStateSupport,
+    LifecycleBlastCleanupSupport,
+):
     def __init__(self, runtime: Any) -> None:
         self.runtime = runtime
 
@@ -67,7 +73,7 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
             if completed:
                 print("Stopped runtime state.")
                 return 0
-            print("Runtime cleanup is incomplete; failed services remain tracked.")
+            print("Runtime cleanup is incomplete; failed resources remain tracked.")
             return 1
 
         message = (
@@ -152,13 +158,27 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
             return self._execute_stop_dependencies(route, state)
 
         owned_projects = self._owned_project_names(state)
-        targeted_project_keys = frozenset(
-            str(project).strip().casefold()
-            for project in route.projects
-            if str(project).strip().casefold() in owned_projects
-        )
+        dependency_project_keys, has_dependency_project_scope = self._dependency_scope_project_keys(state, route)
+        if route.flags.get("runtime_scope") == "entire-system" and has_dependency_project_scope:
+            targeted_project_keys = frozenset(
+                project for project in dependency_project_keys if project in owned_projects
+            )
+        else:
+            targeted_project_keys = frozenset(
+                str(project).strip().casefold()
+                for project in route.projects
+                if str(project).strip().casefold() in owned_projects
+            )
         preserve_stopped_dashboard_state = self._should_preserve_stopped_dashboard_state(route)
-        selected_dependencies = self._select_dependency_components_for_stop(state, route)
+        selected_dependencies = self._select_dependency_components_for_stop(
+            state,
+            route,
+            requested_projects=(
+                dependency_project_keys
+                if route.flags.get("runtime_scope") == "entire-system" and has_dependency_project_scope
+                else None
+            ),
+        )
         selected = self._select_services_for_stop(state, route)
         if not selected and not selected_dependencies:
             if targeted_project_keys and self._targeted_projects_have_no_managed_resources(
@@ -197,8 +217,7 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
                     aggressive=False,
                     verify_ownership=True,
                 )
-                if isinstance(termination_result, set):
-                    failed_services = {str(name) for name in termination_result}
+                failed_services = unconfirmed_service_names(termination_result, selected)
 
             stopped_services = selected.difference(failed_services)
             if stopped_services and preserve_stopped_dashboard_state:
@@ -316,18 +335,6 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
         return project_root_from_stopped_service(service, service_type=service_type)
 
     def _select_services_for_stop(self, state: RunState, route: Route) -> set[str]:
-        selectors_from_passthrough = getattr(self.runtime, "_selectors_from_passthrough", None)
-
-        def selectors_from_passthrough_args(args: list[str]) -> Iterable[str]:
-            if not callable(selectors_from_passthrough):
-                return set()
-            result = selectors_from_passthrough(args)
-            if isinstance(result, str):
-                return {result}
-            if isinstance(result, Iterable):
-                return cast(Iterable[str], result)
-            return set()
-
         def selected_services_from_ui_selection(selection: object, selected_state: RunState) -> set[str]:
             return self._services_from_selection(cast(TargetSelection, selection), selected_state)
 
@@ -337,10 +344,43 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
             project_name_from_service_fn=lambda service_name: self.runtime._project_name_from_service(  # type: ignore[attr-defined]
                 service_name
             ),
-            selectors_from_passthrough_fn=selectors_from_passthrough_args,
+            selectors_from_passthrough_fn=self._passthrough_project_selectors,
             interactive_stop_selection_fn=self._interactive_stop_selection,
             services_from_selection_fn=selected_services_from_ui_selection,
         )
+
+    def _passthrough_project_selectors(self, args: list[str]) -> set[str]:
+        selectors_from_passthrough = getattr(self.runtime, "_selectors_from_passthrough", None)
+        if callable(selectors_from_passthrough):
+            result = selectors_from_passthrough(args)
+            if isinstance(result, str):
+                return {result}
+            if isinstance(result, Iterable):
+                return {str(item).strip().casefold() for item in result if str(item).strip()}
+        selectors: set[str] = set()
+        for token in args:
+            if str(token).startswith("-"):
+                continue
+            selectors.update(part.strip().casefold() for part in str(token).split(",") if part.strip())
+        return selectors
+
+    def _dependency_scope_project_keys(self, state: RunState, route: Route) -> tuple[frozenset[str], bool]:
+        project_keys = project_selectors_from_route(
+            route,
+            selectors_from_passthrough_fn=self._passthrough_project_selectors,
+        )
+        services_flag = route.flags.get("services")
+        has_selectors = bool(project_keys)
+        if isinstance(services_flag, list):
+            service_selectors = [str(selector).strip() for selector in services_flag if str(selector).strip()]
+            has_selectors = has_selectors or bool(service_selectors)
+            for selector in service_selectors:
+                for name, service in state.services.items():
+                    if name.casefold() == selector.casefold() or service_matches_selector(service, selector):
+                        project = self._project_name_for_service(name, service)
+                        if project:
+                            project_keys.add(project)
+        return frozenset(project_keys), has_selectors
 
     def _execute_stop_dependencies(self, route: Route, state: RunState) -> int:
         def operation() -> int:
@@ -350,21 +390,42 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
                 print("No dependencies found.")
                 return 0
 
-            for project in list(state.requirements):
-                requirements = state.requirements[project]
+            targeted_project_keys, has_targeted_scope = self._dependency_scope_project_keys(state, route)
+            owned_projects = self._owned_project_names(state)
+            matching_requirement_keys = {
+                storage_key
+                for storage_key, requirements in state.requirements.items()
+                if self._requirement_project_key(storage_key, requirements) in targeted_project_keys
+            }
+            if has_targeted_scope and not matching_requirement_keys:
+                print("No matching dependencies found.")
+                return 1
+            removed_count = 0
+            for storage_key in list(state.requirements):
+                requirements = state.requirements[storage_key]
+                requirement_project = self._requirement_project_key(storage_key, requirements)
+                if has_targeted_scope and requirement_project not in targeted_project_keys:
+                    continue
                 for definition in dependency_definitions():
                     component = requirements.component(definition.id)
                     if bool(component.get("enabled", False)):
                         self._stop_requirement_component_containers(component)
-                self._release_requirement_ports(state.requirements[project])
-                state.requirements.pop(project, None)
+                self._release_requirement_ports(requirements)
+                state.requirements.pop(storage_key, None)
+                removed_count += 1
 
-            if state.services:
+            if has_targeted_scope:
+                self._persist_targeted_project_state(
+                    state,
+                    owned_projects=owned_projects,
+                    targeted_project_keys=targeted_project_keys,
+                )
+            elif state.services or state.requirements:
                 self._save_selected_stop_state(state)
             else:
                 self._deactivate_runtime_state(state)
 
-            print("Stopped dependencies.")
+            print("Stopped dependencies." if removed_count else "No matching dependencies found.")
             return 0
 
         return self._run_spinner_operation(
@@ -374,8 +435,18 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
             operation=operation,
         )
 
-    def _select_dependency_components_for_stop(self, state: RunState, route: Route) -> dict[str, set[str]]:
-        return select_dependency_components_for_stop(state, route)
+    def _select_dependency_components_for_stop(
+        self,
+        state: RunState,
+        route: Route,
+        *,
+        requested_projects: Iterable[str] | None = None,
+    ) -> dict[str, set[str]]:
+        return select_dependency_components_for_stop(
+            state,
+            route,
+            requested_projects=requested_projects,
+        )
 
     def _release_selected_dependency_components(
         self,
@@ -392,9 +463,10 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
     def _stop_requirement_component_containers(self, component: Mapping[str, object]) -> None:
         stop_requirement_component_containers(self.runtime, component)
 
-    def _stop_requirement_component_containers_best_effort(self, component: Mapping[str, object]) -> None:
+    def _stop_requirement_component_containers_best_effort(self, component: Mapping[str, object]) -> bool:
         try:
             self._stop_requirement_component_containers(component)
+            return True
         except Exception as exc:  # noqa: BLE001
             component_id = str(component.get("id") or "dependency").strip() or "dependency"
             detail = str(exc).strip() or exc.__class__.__name__
@@ -404,20 +476,23 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
                 detail=detail,
             )
             print(f"Warning: could not stop {component_id} container during cleanup: {detail}")
+            return False
 
     def _stop_requirement_containers(
         self,
         requirements: RequirementsResult,
         *,
         best_effort: bool = False,
-    ) -> None:
+    ) -> bool:
+        stopped = True
         for definition in dependency_definitions():
             component = requirements.component(definition.id)
             if bool(component.get("enabled", False)):
                 if best_effort:
-                    self._stop_requirement_component_containers_best_effort(component)
+                    stopped = self._stop_requirement_component_containers_best_effort(component) and stopped
                 else:
                     self._stop_requirement_component_containers(component)
+        return stopped
 
     def _release_requirement_component_ports(
         self,
@@ -442,6 +517,21 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
             release(requirements)
             return
         release_requirement_ports(self.runtime, requirements)
+
+    def _release_requirement_ports_best_effort(self, requirements: RequirementsResult) -> bool:
+        try:
+            self._release_requirement_ports(requirements)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            project = str(getattr(requirements, "project", "") or "dependency").strip() or "dependency"
+            detail = str(exc).strip() or exc.__class__.__name__
+            self.runtime._emit(  # type: ignore[attr-defined]
+                "cleanup.requirement_ports.warning",
+                project=project,
+                detail=detail,
+            )
+            print(f"Warning: could not release {project} dependency ports during cleanup: {detail}")
+            return False
 
     @staticmethod
     def _service_matches_runtime_scope(name: str, service: object, runtime_scope: str) -> bool:
@@ -469,125 +559,19 @@ class LifecycleCleanupOrchestrator(LifecycleTargetedStateSupport, LifecycleBlast
     def _services_from_selection(self, selection: TargetSelection, state: RunState) -> set[str]:
         return services_from_selection(self.runtime, selection, state)
 
-    def clear_runtime_state(self, *, command: str, aggressive: bool = False, route: Route | None = None) -> bool:
-        rt = self.runtime
-        if command == "stop-all":
-            rt._emit("cleanup.stop_all", aggressive=aggressive)  # type: ignore[attr-defined]
-        elif aggressive:
-            rt._emit("cleanup.blast", aggressive=aggressive)  # type: ignore[attr-defined]
-        else:
-            rt._emit("cleanup.stop", aggressive=aggressive)  # type: ignore[attr-defined]
-        state_repository = self._state_repository(rt)
-        load_all = getattr(state_repository, "load_all", None)
-        mode_filter = None
-        if (
-            command == "stop-all"
-            and route is not None
-            and rt._state_lookup_strict_mode_match(route)  # type: ignore[attr-defined]
-        ):
-            mode_filter = route.mode
-        if callable(load_all):
-            states = [state for state in load_all(mode=mode_filter) if isinstance(state, RunState)]
-        else:
-            states = []
-        if not states:
-            state = call_state_loader(
-                rt._try_load_existing_state,  # type: ignore[attr-defined]
-                mode=mode_filter,
-                strict_mode_match=mode_filter is not None,
-            )
-            states = [state] if isinstance(state, RunState) else []
-        seen_run_ids: set[str] = set()
-        failed_by_run: dict[str, set[str]] = {}
-        for state in states:
-            if state.run_id in seen_run_ids:
-                continue
-            seen_run_ids.add(state.run_id)
-            termination_result = rt._terminate_services_from_state(  # type: ignore[attr-defined]
-                state,
-                selected_services=None,
-                aggressive=aggressive,
-                verify_ownership=not aggressive,
-            )
-            failed_services = (
-                {str(name) for name in termination_result} if isinstance(termination_result, set) else set()
-            )
-            if not failed_services:
-                requirements_to_release = list(state.requirements.values())
-                for requirements in requirements_to_release:
-                    self._stop_requirement_containers(
-                        requirements,
-                        best_effort=command in {"stop-all", "blast-all"},
-                    )
-                self._deactivate_runtime_state(state, release_session_when_empty=False)
-                for requirements in requirements_to_release:
-                    self._release_requirement_ports(requirements)
-                continue
-            failed_by_run[state.run_id] = failed_services
-            state.services = {name: service for name, service in state.services.items() if name in failed_services}
-            failed_projects = {
-                project_name
-                for name, service in state.services.items()
-                if (project_name := self._project_name_for_service(name, service))
-            }
-            requirements_to_release: list[RequirementsResult] = []
-            retained_requirements: dict[str, RequirementsResult] = {}
-            for project, requirements in state.requirements.items():
-                requirement_project = str(getattr(requirements, "project", "") or project).strip().casefold()
-                if not failed_projects or requirement_project in failed_projects:
-                    retained_requirements[project] = requirements
-                else:
-                    requirements_to_release.append(requirements)
-            for requirements in requirements_to_release:
-                self._stop_requirement_containers(
-                    requirements,
-                    best_effort=command in {"stop-all", "blast-all"},
-                )
-            state.requirements = {project: requirements for project, requirements in retained_requirements.items()}
-            state_repository.save_selected_stop_state(
-                state=state,
-                emit=rt._emit,  # type: ignore[attr-defined]
-                runtime_map_builder=lambda raw_state: build_runtime_map(cast(RunState, raw_state)),
-            )
-            for requirements in requirements_to_release:
-                self._release_requirement_ports(requirements)
-
-        if failed_by_run:
-            rt._emit(  # type: ignore[attr-defined]
-                "cleanup.incomplete",
-                failed_services={run_id: sorted(names) for run_id, names in failed_by_run.items()},
-            )
-            return False
-
-        if aggressive and self.blast_all_ecosystem_enabled():
-            self.blast_all_ecosystem_cleanup(route=route)
-        elif command == "stop-all" and route is not None and bool(route.flags.get("stop_all_remove_volumes")):
-            rt._emit("cleanup.stop_all.remove_volumes", requested=True)  # type: ignore[attr-defined]
-            volume_route = Route(
-                command=route.command,
-                mode=route.mode,
-                raw_args=route.raw_args,
-                passthrough_args=route.passthrough_args,
-                projects=route.projects,
-                flags={
-                    **route.flags,
-                    "blast_keep_worktree_volumes": False,
-                    "blast_remove_main_volumes": True,
-                },
-            )
-            removed = self.blast_all_docker_cleanup(route=volume_route)
-            rt._emit("cleanup.stop_all.remove_volumes.finish", removed=removed)  # type: ignore[attr-defined]
-
-        if aggressive or command != "stop-all" or not self._has_active_runs(state_repository):
-            self._purge_runtime_state(aggressive=aggressive)
-        repository = self._state_repository(rt)
-        if aggressive and getattr(repository, "compat_mode", None) == getattr(
-            repository,
-            "COMPAT_READ_WRITE",
-            "compat_read_write",
-        ):
-            self.blast_all_purge_legacy_state_artifacts()
-        return True
+    def clear_runtime_state(
+        self,
+        *,
+        command: str,
+        aggressive: bool = False,
+        route: Route | None = None,
+    ) -> bool:
+        return clear_full_runtime_state(
+            self,
+            command=command,
+            aggressive=aggressive,
+            route=route,
+        )
 
     @staticmethod
     def _has_active_runs(repository: object) -> bool:

@@ -91,6 +91,48 @@ class LifecycleRequirementPortsTests(unittest.TestCase):
 
             self.assertEqual(list(Path(tmpdir).glob("*.lock")), [])
 
+    def test_collision_storage_records_release_ports_with_shared_authoritative_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prior = PortPlanner(
+                lock_dir=tmpdir,
+                session_id="prior-session",
+                availability_checker=lambda _port: True,
+            )
+            cleanup = PortPlanner(
+                lock_dir=tmpdir,
+                session_id="cleanup-session",
+                availability_checker=lambda _port: True,
+            )
+            prior.reserve_next(6380, owner="Main:requirements")
+            prior.reserve_next(6381, owner="Main:requirements")
+            state = RunState(
+                run_id="run-collision",
+                mode="main",
+                requirements={
+                    "Main": RequirementsResult(
+                        project="Main",
+                        redis={
+                            "enabled": True,
+                            "final": 6380,
+                            "port_lock_session": "prior-session",
+                        },
+                    ),
+                    "Main Restart Collision": RequirementsResult(
+                        project="Main",
+                        redis={
+                            "enabled": True,
+                            "final": 6381,
+                            "port_lock_session": "prior-session",
+                        },
+                    ),
+                },
+            )
+
+            for requirements in state.requirements.values():
+                release_requirement_ports(SimpleNamespace(port_planner=cleanup), requirements)
+
+            self.assertEqual(list(Path(tmpdir).glob("*.lock")), [])
+
     def test_stale_requirement_state_cannot_release_newer_live_same_owner_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             newer = PortPlanner(

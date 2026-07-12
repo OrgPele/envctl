@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any, Mapping
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.shared.services import resolve_service_project_name
 from envctl_engine.state.lookup import call_state_loader
 from envctl_engine.state.models import RunState
 from envctl_engine.startup.run_reuse_identity import (
@@ -366,7 +367,11 @@ def evaluate_run_reuse(
 
 def state_has_resumable_services(runtime: Any, state: RunState) -> bool:
     for service_name, service in state.services.items():
-        project_name = runtime._project_name_from_service(service_name)
+        project_name = resolve_service_project_name(
+            service_name,
+            service,
+            project_name_from_service=runtime._project_name_from_service,
+        )
         if not project_name:
             continue
         service_type = str(getattr(service, "type", "")).strip().lower()

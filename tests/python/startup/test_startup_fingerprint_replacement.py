@@ -81,7 +81,8 @@ class StartupFingerprintReplacementTests(StartupSpinnerIntegrationTestCase):
                 lambda state, selected_services, aggressive, verify_ownership: (
                     call_order.append("terminate"),
                     terminate_calls.append((selected_services, verify_ownership)),
-                )
+                    set(),
+                )[-1]
             )
             engine._start_project_context = (  # type: ignore[method-assign]
                 lambda context, mode, route, run_id: (

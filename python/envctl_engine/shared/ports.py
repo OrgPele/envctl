@@ -413,14 +413,28 @@ class PortPlanner:
     def _reserve_port(self, port: int, owner: str) -> bool:
         lock_path = self._lock_path(port)
         with self._port_guard(port):
+            availability_confirmed = False
             if lock_path.exists():
                 if not self._lock_is_stale(lock_path):
                     return False
                 stale_payload = self._read_lock_payload(lock_path)
+                if stale_payload is None or stale_payload.get("owner") != owner:
+                    # A targeted startup may reclaim a dead allocator session
+                    # only for the same logical project/service. A dead or
+                    # corrupt foreign lock is still durable ownership evidence
+                    # and requires an explicit all-scope cleanup operation.
+                    return False
+                # The allocator process recorded in an otherwise stale lock
+                # can exit while its launched service is still listening. Do
+                # not erase that last ownership record merely because the
+                # allocator PID is gone.
+                if not self._is_port_available(port):
+                    return False
+                availability_confirmed = True
                 lock_path.unlink(missing_ok=True)
                 self._emit_reclaim(port=port, owner=owner, payload=stale_payload)
 
-            if not self._is_port_available(port):
+            if not availability_confirmed and not self._is_port_available(port):
                 return False
 
             payload = {

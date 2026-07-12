@@ -885,6 +885,50 @@ class StateRepositoryContractTests(unittest.TestCase):
                 },
             )
 
+    def test_load_all_uses_sole_index_owner_for_opaque_legacy_service(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir) / "runtime"
+            repo = RuntimeStateRepository(
+                runtime_root=runtime_dir / "scope",
+                runtime_legacy_root=runtime_dir / "python-engine",
+                runtime_dir=runtime_dir,
+                runtime_scope_id="repo-123",
+                compat_mode=RuntimeStateRepository.SCOPED_ONLY,
+            )
+            state = RunState(
+                run_id="run-alpha",
+                mode="trees",
+                services={
+                    "Opaque Runtime": ServiceRecord(
+                        name="Opaque Runtime",
+                        type="worker",
+                        cwd="/unmapped/path",
+                    )
+                },
+            )
+            context = SimpleNamespace(name="Alpha", root=Path(tmpdir) / "alpha", ports={})
+            repo.save_run(
+                state=state,
+                contexts=[context],
+                errors=[],
+                events=[],
+                emit=lambda *_args, **_kwargs: None,
+                runtime_map_builder=lambda _state: {},
+            )
+
+            latest = repo.load_latest(
+                mode="trees",
+                strict_mode_match=True,
+                project_names=["Alpha"],
+            )
+            active = repo.load_all(mode="trees")
+
+        self.assertIsNotNone(latest)
+        assert latest is not None
+        self.assertEqual(latest.services["Opaque Runtime"].project, "Alpha")
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0].services["Opaque Runtime"].project, "Alpha")
+
     def test_aggregate_and_subset_saves_keep_project_metadata_owned_by_live_projects(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime_dir = Path(tmpdir) / "runtime"
@@ -1274,10 +1318,15 @@ class StateRepositoryContractTests(unittest.TestCase):
         self.assertNotIn('runtime_legacy_root / "runtime_map.json"', raw)
 
     def test_lifecycle_cleanup_orchestrator_does_not_write_legacy_state_files_directly(self) -> None:
-        cleanup_path = REPO_ROOT / "python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py"
-        raw = cleanup_path.read_text(encoding="utf-8")
-        self.assertNotIn('runtime_legacy_root / "run_state.json"', raw)
-        self.assertNotIn('runtime_legacy_root / "runtime_map.json"', raw)
+        cleanup_paths = (
+            REPO_ROOT / "python/envctl_engine/runtime/lifecycle_cleanup_orchestrator.py",
+            REPO_ROOT / "python/envctl_engine/runtime/lifecycle_full_cleanup.py",
+        )
+        for cleanup_path in cleanup_paths:
+            with self.subTest(path=cleanup_path.name):
+                raw = cleanup_path.read_text(encoding="utf-8")
+                self.assertNotIn('runtime_legacy_root / "run_state.json"', raw)
+                self.assertNotIn('runtime_legacy_root / "runtime_map.json"', raw)
 
     def test_engine_runtime_legacy_compat_helper_is_removed(self) -> None:
         runtime_path = REPO_ROOT / "python/envctl_engine/runtime/engine_runtime.py"
@@ -2356,6 +2405,126 @@ class StateRepositoryContractTests(unittest.TestCase):
             self.assertIsNotNone(loaded)
             self.assertTrue(run_alias.is_file())
             self.assertEqual(load_state(str(run_alias)).run_id, "run-a")
+
+    def test_non_os_post_commit_failure_still_signals_durable_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir) / "runtime"
+            repo = RuntimeStateRepository(
+                runtime_root=runtime_dir / "scope",
+                runtime_legacy_root=runtime_dir / "python-engine",
+                runtime_dir=runtime_dir,
+                runtime_scope_id="repo-123",
+                compat_mode=RuntimeStateRepository.SCOPED_ONLY,
+            )
+            committed: list[str] = []
+            original_publish = repo._publish_revision_aliases
+            repo._publish_revision_aliases = (  # type: ignore[method-assign]
+                lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("alias logic failed"))
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "alias logic failed"):
+                repo.save_run(
+                    state=RunState(run_id="run-committed", mode="main"),
+                    contexts=[self._context(Path(tmpdir))],
+                    errors=[],
+                    events=[],
+                    emit=lambda *_args, **_kwargs: None,
+                    runtime_map_builder=lambda _state: {},
+                    on_commit=lambda: committed.append("run-committed"),
+                )
+
+            self.assertEqual(committed, ["run-committed"])
+            repo._publish_revision_aliases = original_publish  # type: ignore[method-assign]
+            loaded = repo.load_latest(mode="main", strict_mode_match=True)
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded.run_id, "run-committed")
+
+    def test_registry_publish_then_interrupt_retains_revision_and_signals_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir) / "runtime"
+            repo = RuntimeStateRepository(
+                runtime_root=runtime_dir / "scope",
+                runtime_legacy_root=runtime_dir / "python-engine",
+                runtime_dir=runtime_dir,
+                runtime_scope_id="repo-123",
+                compat_mode=RuntimeStateRepository.SCOPED_ONLY,
+            )
+            committed: list[str] = []
+            repo.run_index.initialize_empty()
+            original_atomic_write = _run_index.atomic_write_text
+            published = False
+
+            def publish_backup_then_interrupt(path: Path, text: str) -> None:
+                nonlocal published
+                original_atomic_write(path, text)
+                if path == repo.run_index.backup_path and not published:
+                    published = True
+                    raise KeyboardInterrupt
+
+            with (
+                patch(
+                    "envctl_engine.state.run_index.atomic_write_text",
+                    side_effect=publish_backup_then_interrupt,
+                ),
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                repo.save_run(
+                    state=RunState(run_id="run-interrupt", mode="main"),
+                    contexts=[self._context(Path(tmpdir))],
+                    errors=[],
+                    events=[],
+                    emit=lambda *_args, **_kwargs: None,
+                    runtime_map_builder=lambda _state: {},
+                    on_commit=lambda: committed.append("run-interrupt"),
+                )
+
+            self.assertTrue(published)
+            self.assertEqual(committed, ["run-interrupt"])
+            candidates = repo.run_index.candidates(StateSelector(mode="main", project_names=()))
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(candidates[0].run_id, "run-interrupt")
+            self.assertTrue(candidates[0].state_path.is_file())
+            loaded = repo.load_latest(mode="main", strict_mode_match=True)
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded.run_id, "run-interrupt")
+
+    def test_registry_interrupt_before_publish_removes_uncommitted_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir) / "runtime"
+            repo = RuntimeStateRepository(
+                runtime_root=runtime_dir / "scope",
+                runtime_legacy_root=runtime_dir / "python-engine",
+                runtime_dir=runtime_dir,
+                runtime_scope_id="repo-123",
+                compat_mode=RuntimeStateRepository.SCOPED_ONLY,
+            )
+            committed: list[str] = []
+            repo.run_index.initialize_empty()
+
+            with (
+                patch(
+                    "envctl_engine.state.run_index.atomic_write_text",
+                    side_effect=KeyboardInterrupt,
+                ),
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                repo.save_run(
+                    state=RunState(run_id="run-pre-publish", mode="main"),
+                    contexts=[self._context(Path(tmpdir))],
+                    errors=[],
+                    events=[],
+                    emit=lambda *_args, **_kwargs: None,
+                    runtime_map_builder=lambda _state: {},
+                    on_commit=lambda: committed.append("run-pre-publish"),
+                )
+
+            self.assertEqual(committed, [])
+            self.assertEqual(
+                repo.run_index.candidates(StateSelector(mode="main", project_names=())),
+                [],
+            )
+            revisions = repo.run_dir_path("run-pre-publish") / "revisions"
+            self.assertEqual(list(revisions.glob("*")), [])
 
 
 if __name__ == "__main__":

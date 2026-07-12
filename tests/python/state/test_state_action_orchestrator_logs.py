@@ -192,6 +192,35 @@ class StateActionOrchestratorLogsTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual([service["name"] for service in payload["services"]], ["Alpha Backend"])
 
+    def test_logs_project_filter_uses_additional_service_project_metadata(self) -> None:
+        service = ServiceRecord(
+            name="Opaque Runtime Process",
+            type="voice-runtime",
+            cwd="/tmp/customer-platform/voice",
+            project="Customer Platform",
+            service_slug="voice-runtime",
+        )
+        requirements = RequirementsResult(project="Customer Platform")
+        state = RunState(
+            run_id="run-metadata-project",
+            mode="trees",
+            services={service.name: service},
+            requirements={"Customer Platform": requirements},
+        )
+        runtime = _RuntimeStub(state)
+        runtime._project_name_from_service = lambda _name: "Opaque Runtime"  # type: ignore[method-assign]
+        orchestrator = StateActionOrchestrator(runtime)
+
+        code = orchestrator.execute(
+            Route(command="logs", mode="trees", projects=["Customer Platform"])
+        )
+
+        self.assertEqual(code, 0)
+        self.assertIsNotNone(runtime.seen_logs_state)
+        assert runtime.seen_logs_state is not None
+        self.assertEqual(set(runtime.seen_logs_state.services), {service.name})
+        self.assertEqual(runtime.seen_logs_state.requirements, {"Customer Platform": requirements})
+
     def test_health_prints_enabled_dependency_statuses(self) -> None:
         state = RunState(
             run_id="run-1",

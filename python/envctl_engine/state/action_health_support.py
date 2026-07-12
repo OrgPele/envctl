@@ -155,7 +155,8 @@ class StateActionHealthSupport:
         rows: list[dict[str, object]] = []
         definitions = tuple(self._dependency_definitions())
         component_order = {definition.id: index for index, definition in enumerate(definitions)}
-        for project, requirements in state.requirements.items():
+        for storage_key, requirements in state.requirements.items():
+            project = str(getattr(requirements, "project", "") or storage_key).strip()
             for definition in definitions:
                 component = definition.id
                 data = requirements.component(component)
@@ -172,6 +173,7 @@ class StateActionHealthSupport:
                 rows.append(
                     {
                         "project": project,
+                        "storage_key": storage_key,
                         "component": component,
                         "status": status,
                         "port": dependency_display_port(component, data),
@@ -209,6 +211,12 @@ class StateActionHealthSupport:
                 "container_id": getattr(service, "container_id", None),
                 "container_name": getattr(service, "container_name", None),
                 "container_image": getattr(service, "container_image", None),
+                "container_launch_token": getattr(service, "container_launch_token", None),
+                "container_cleanup_pending_since": getattr(
+                    service,
+                    "container_cleanup_pending_since",
+                    None,
+                ),
             }
 
         rows = self._parallel_service_map(

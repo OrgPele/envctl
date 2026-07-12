@@ -7,6 +7,7 @@ from typing import Any
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_startup_support import mark_run_reused
 from envctl_engine.runtime.lifecycle_operation_lease import release_lifecycle_operation
+from envctl_engine.shared.services import resolve_service_project_name
 from envctl_engine.state.models import RunState
 from envctl_engine.state.lookup import call_state_loader
 from envctl_engine.state.runtime_map import build_runtime_map
@@ -118,17 +119,22 @@ class ResumeOrchestrator:
             )
             restore_started = time.monotonic()
             restore_errors = self.restore_missing(state, missing_services, route=route)
+            restored_projects = {
+                project.casefold()
+                for name in missing_services
+                if (
+                    project := resolve_service_project_name(
+                        name,
+                        state.services.get(name),
+                        project_name_from_service=rt._project_name_from_service,  # type: ignore[attr-defined]
+                    )
+                )
+            }
             emit_phase(
                 "restore_missing",
                 restore_started,
                 status="error" if restore_errors else "ok",
-                project_count=len(
-                    {
-                        rt._project_name_from_service(name)
-                        for name in missing_services
-                        if rt._project_name_from_service(name)
-                    }
-                ),  # type: ignore[attr-defined]
+                project_count=len(restored_projects),
                 error_count=len(restore_errors),
             )
             if legacy_resume:

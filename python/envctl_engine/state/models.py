@@ -42,6 +42,8 @@ class ServiceRecord:
     container_id: str | None = None
     container_name: str | None = None
     container_image: str | None = None
+    container_launch_token: str | None = None
+    container_cleanup_pending_since: float | None = None
 
 
 @dataclass(slots=True)

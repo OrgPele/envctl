@@ -18,6 +18,7 @@ from envctl_engine.requirements.supabase_auth_users import (
 )
 from envctl_engine.runtime.command_router import Route
 from envctl_engine.runtime.engine_runtime_env import effective_dependency_scope
+from envctl_engine.shared.services import service_slug_from_record
 from envctl_engine.startup.protocols import ProjectContextLike, StartupOrchestratorLike
 from envctl_engine.startup.requirements_execution import (
     REQUIREMENTS_PROGRESS_PROJECT_FLAG,
@@ -31,6 +32,7 @@ from envctl_engine.startup.requirements_execution import (
 from envctl_engine.startup.service_execution import start_project_services as start_project_services_impl
 from envctl_engine.startup.session import ProjectStartupResult, unconfirmed_service_names
 from envctl_engine.state.models import PortPlan, RequirementsResult, ServiceRecord
+from envctl_engine.state.project_runtime import requirements_for_project
 
 
 @dataclass(slots=True)
@@ -99,13 +101,18 @@ def start_project_context(
             route=route,
         )
         rt._assert_project_services_post_start_truth(context=context, services=project_services)
+        services_by_type = {
+            service_slug_from_record(service): service
+            for service in project_services.values()
+            if service_slug_from_record(service)
+        }
         report_progress_fn(
             route,
             f"Services ready for {context.name}: "
             + " ".join(
-                f"{service_type}={_service_ready_label(project_services.get(f'{context.name} {service_type.title()}'))}"
+                f"{service_type}={_service_ready_label(services_by_type.get(service_type))}"
                 for service_type in ("backend", "frontend")
-                if f"{context.name} {service_type.title()}" in project_services
+                if service_type in services_by_type
             ),
             project=context.name,
         )
@@ -322,7 +329,7 @@ def _load_or_start_shared_main_requirements(
     rt = orchestrator.runtime
     existing = rt._try_load_existing_state(mode="main", strict_mode_match=True)
     if existing is not None:
-        requirements = existing.requirements.get("Main")
+        requirements = requirements_for_project(existing, "Main")
         if isinstance(requirements, RequirementsResult) and rt._requirements_ready(requirements):
             reconciled = _annotate_shared_main_requirements(orchestrator, requirements)
             if _shared_requirements_runtime_ready(reconciled):

@@ -98,7 +98,8 @@ def _state_lookup_project_attempts(project_names: list[str] | None) -> tuple[lis
 def _dependency_address_lines(state: RunState, *, worktree: CreatedPlanWorktree | None = None) -> list[str]:
     rows: list[str] = []
     seen: set[tuple[str, int]] = set()
-    for project_name, requirements in state.requirements.items():
+    for storage_key, requirements in state.requirements.items():
+        project_name = str(getattr(requirements, "project", "") or storage_key).strip()
         if not _state_project_matches_worktree(project_name, worktree):
             continue
         for dependency_id in ("postgres", "redis", "supabase", "n8n"):
@@ -145,6 +146,9 @@ def _state_project_matches_worktree(project_name: object, worktree: CreatedPlanW
 
 def _state_service_matches_worktree(service: object, worktree: CreatedPlanWorktree | None) -> bool:
     if worktree is None:
+        return True
+    project = str(getattr(service, "project", "") or "").strip()
+    if project and _state_project_matches_worktree(project, worktree):
         return True
     service_name = str(getattr(service, "name", "") or "").strip()
     worktree_name = str(worktree.name or "").strip()

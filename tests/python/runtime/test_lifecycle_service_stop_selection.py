@@ -72,6 +72,45 @@ class LifecycleServiceStopSelectionTests(unittest.TestCase):
 
         self.assertEqual(selected, {"FeatureA Backend"})
 
+    def test_entire_system_project_stop_includes_additional_services(self) -> None:
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                "Main Backend": ServiceRecord(
+                    name="Main Backend",
+                    type="backend",
+                    cwd=".",
+                    pid=1,
+                    project="Main",
+                ),
+                "Main Optional Bad": ServiceRecord(
+                    name="Main Optional Bad",
+                    type="optional-bad",
+                    cwd=".",
+                    pid=2,
+                    project="Main",
+                    service_slug="optional-bad",
+                ),
+            },
+        )
+
+        selected = select_services_for_stop(
+            state,
+            Route(
+                command="stop",
+                mode="main",
+                projects=["Main"],
+                flags={"runtime_scope": "entire-system"},
+            ),
+            project_name_from_service_fn=lambda name: name.rsplit(" ", 1)[0],
+            selectors_from_passthrough_fn=lambda _args: set(),
+            interactive_stop_selection_fn=lambda _route, _state: self.fail("interactive prompt should not run"),
+            services_from_selection_fn=lambda _selection, _state: self.fail("selection projection should not run"),
+        )
+
+        self.assertEqual(selected, {"Main Backend", "Main Optional Bad"})
+
     def test_service_and_project_selectors_match_slug_display_name_and_passthrough_project(self) -> None:
         state = RunState(
             run_id="run-1",

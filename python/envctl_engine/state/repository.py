@@ -162,6 +162,7 @@ class RuntimeStateRepository:
         emit: Callable[..., None],
         runtime_map_builder: Callable[[RunState], dict[str, object]],
         write_runtime_readiness_report: Callable[[Path], None] | None = None,
+        on_commit: Callable[[], None] | None = None,
     ) -> StateRepositoryPaths:
         project_names = sorted(
             {
@@ -199,6 +200,7 @@ class RuntimeStateRepository:
                 project_names=project_names,
                 artifacts=artifacts,
                 supersede_run_ids=self._source_run_ids(state),
+                on_commit=on_commit,
             )
         run_dir = self.run_dir_path(state.run_id)
         if write_runtime_readiness_report is not None:
@@ -272,14 +274,20 @@ class RuntimeStateRepository:
                 raise RuntimeError(
                     "Active runtime state failed integrity validation for run(s): " + ", ".join(invalid_run_ids)
                 )
-            return [
-                filter_state_to_owned_projects(
-                    indexed_state.state,
-                    frozenset(indexed_state.candidate.project_names),
-                    service_project_name=self._service_project_name,
+            active_states: list[RunState] = []
+            for indexed_state in indexed_states:
+                candidate_projects = normalized_project_names(indexed_state.candidate.project_names)
+                active_states.append(
+                    filter_state_to_owned_projects(
+                        indexed_state.state,
+                        candidate_projects,
+                        service_project_name=self._service_project_name,
+                        fallback_project=(
+                            next(iter(candidate_projects)) if len(candidate_projects) == 1 else None
+                        ),
+                    )
                 )
-                for indexed_state in indexed_states
-            ]
+            return active_states
 
     def has_active_runs(self) -> bool:
         """Return registry activity without trusting or loading mutable run payloads."""
@@ -661,6 +669,7 @@ class RuntimeStateRepository:
         project_names: Sequence[str],
         artifacts: Mapping[str, str],
         supersede_run_ids: Sequence[str] = (),
+        on_commit: Callable[[], None] | None = None,
     ) -> Path:
         superseded_run_ids = {
             require_path_component(run_id, label="superseded run_id")
@@ -677,22 +686,37 @@ class RuntimeStateRepository:
         revision_id = f"{datetime.now(tz=UTC).strftime('%Y%m%dT%H%M%S%fZ')}-{uuid.uuid4().hex[:12]}"
         revision_dir = self._contained_child(revisions_dir, revision_id, label="revision id")
         revision_state_path = revision_dir / "run_state.json"
-        committed = False
+        retain_revision = False
         try:
             durable_mkdir(revision_dir)
             for artifact_name, text in artifacts.items():
                 safe_name = require_path_component(artifact_name, label="artifact name")
                 self._write_text(revision_dir / safe_name, text)
-            self.run_index.record(
-                state_path=revision_state_path,
-                run_id=state.run_id,
-                mode=state.mode,
-                project_names=project_names,
-                supersede_run_ids=supersede_run_ids,
-            )
-            committed = True
+            try:
+                self.run_index.record(
+                    state_path=revision_state_path,
+                    run_id=state.run_id,
+                    mode=state.mode,
+                    project_names=project_names,
+                    supersede_run_ids=supersede_run_ids,
+                )
+            except BaseException:
+                indexed = self._revision_index_commit_state_unlocked(
+                    state=state,
+                    revision_state_path=revision_state_path,
+                )
+                # An unreadable registry has an uncertain commit outcome. Keep
+                # the immutable revision so a visible primary/backup can never
+                # be left pointing at artifacts this writer deleted.
+                retain_revision = indexed is not False
+                if indexed and on_commit is not None:
+                    on_commit()
+                raise
+            retain_revision = True
+            if on_commit is not None:
+                on_commit()
         finally:
-            if not committed:
+            if not retain_revision:
                 shutil.rmtree(revision_dir, ignore_errors=True)
 
         try:
@@ -712,6 +736,32 @@ class RuntimeStateRepository:
                 self._enqueue_revision_cleanup_if_needed_unlocked(candidate)
             raise
         return revision_state_path
+
+    def _revision_index_commit_state_unlocked(
+        self,
+        *,
+        state: RunState,
+        revision_state_path: Path,
+    ) -> bool | None:
+        try:
+            expected_state_path = revision_state_path.resolve()
+            expected_state_fingerprint = file_fingerprint(expected_state_path)
+            runtime_map_path = expected_state_path.parent / "runtime_map.json"
+            expected_runtime_map_fingerprint = file_fingerprint(runtime_map_path)
+            candidates = self.run_index.candidates(
+                StateSelector(mode=None, project_names=())
+            )
+        except BaseException:  # noqa: BLE001 - unreadable authority is uncertain, never negative
+            return None
+        expected_mode = str(state.mode or "").strip().casefold()
+        return any(
+            candidate.run_id == state.run_id
+            and candidate.mode == expected_mode
+            and candidate.state_path == expected_state_path
+            and candidate.state_fingerprint == expected_state_fingerprint
+            and candidate.runtime_map_fingerprint == expected_runtime_map_fingerprint
+            for candidate in candidates
+        )
 
     def _publish_revision_aliases(
         self,
@@ -1761,8 +1811,8 @@ class RuntimeStateRepository:
 
     def _runtime_project_names_from_state(self, state: RunState) -> list[str]:
         names: set[str] = set()
-        for project in state.requirements:
-            normalized = str(project).strip()
+        for storage_name, requirements in state.requirements.items():
+            normalized = str(getattr(requirements, "project", "") or storage_name).strip()
             if normalized:
                 names.add(normalized)
         for service_name, service in state.services.items():
@@ -1804,8 +1854,8 @@ class RuntimeStateRepository:
                     names.add(normalized)
         if names:
             return sorted(names, key=str.casefold)
-        for project in state.requirements:
-            normalized = str(project).strip()
+        for storage_name, requirements in state.requirements.items():
+            normalized = str(getattr(requirements, "project", "") or storage_name).strip()
             if normalized:
                 names.add(normalized)
         for service_name, service in state.services.items():

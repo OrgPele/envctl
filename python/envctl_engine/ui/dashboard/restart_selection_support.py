@@ -301,8 +301,6 @@ def restart_services_by_project(state: RunState, runtime: Any) -> dict[str, list
         if not project_name:
             project_name = str(runtime._project_name_from_service(service_name) or "").strip()
         if not project_name:
-            project_name = str(service_project_name(service_name)).strip() if callable(service_project_name) else ""
-        if not project_name:
             project_name = "Services"
         service_type = stop_service_type(service_name, service)
         if not service_type:
@@ -344,6 +342,8 @@ def restart_services_by_project(state: RunState, runtime: Any) -> dict[str, list
 
 
 def dashboard_stopped_services_by_project(state: RunState) -> dict[str, dict[str, str]]:
+    from envctl_engine.dashboard_metadata import normalize_dashboard_service_types
+
     metadata = state.metadata if isinstance(state.metadata, dict) else {}
     raw_stopped = metadata.get("dashboard_stopped_services")
     stopped: dict[str, dict[str, str]] = {}
@@ -353,11 +353,12 @@ def dashboard_stopped_services_by_project(state: RunState) -> dict[str, dict[str
         if not isinstance(item, dict):
             continue
         project = str(item.get("project", "") or "").strip()
-        service_type = str(item.get("type", "") or "").strip().lower()
+        normalized_types = normalize_dashboard_service_types([item.get("type", "")])
+        service_type = normalized_types[0] if normalized_types else ""
         name = str(item.get("name", "") or "").strip()
-        if not project or service_type not in {"backend", "frontend"}:
+        if not project or not service_type:
             continue
-        stopped.setdefault(project, {})[service_type] = name or f"{project} {service_type.title()}"
+        stopped.setdefault(project, {})[service_type] = name or f"{project} {service_display_name(service_type)}"
     return stopped
 
 

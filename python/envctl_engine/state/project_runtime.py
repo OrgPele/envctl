@@ -80,10 +80,54 @@ class ProjectRuntimeResolution:
         }
 
 
+def requirement_keys_for_project(state: RunState, project: str) -> list[str]:
+    target = str(project).strip().casefold()
+    if not target:
+        return []
+    exact = [key for key in state.requirements if str(key).strip().casefold() == target]
+    owner_aliases = [
+        key
+        for key, requirements in state.requirements.items()
+        if key not in exact
+        and str(getattr(requirements, "project", "") or "").strip().casefold() == target
+    ]
+    return [*exact, *owner_aliases]
+
+
+def requirement_key_for_project(state: RunState, project: str) -> str | None:
+    target = str(project).strip().casefold()
+    if not target:
+        return None
+    exact = [key for key in state.requirements if str(key).strip().casefold() == target]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        raise RuntimeError(
+            f"Ambiguous requirements authority for {project}: " + ", ".join(sorted(exact))
+        )
+    owner_aliases = [
+        key
+        for key, requirements in state.requirements.items()
+        if str(getattr(requirements, "project", "") or "").strip().casefold() == target
+    ]
+    if len(owner_aliases) == 1:
+        return owner_aliases[0]
+    if len(owner_aliases) > 1:
+        raise RuntimeError(
+            f"Ambiguous requirements authority for {project}: " + ", ".join(sorted(owner_aliases))
+        )
+    return None
+
+
+def requirements_for_project(state: RunState, project: str) -> RequirementsResult | None:
+    key = requirement_key_for_project(state, project)
+    return state.requirements.get(key) if key is not None else None
+
+
 def active_project_names(state: RunState, *, runtime: Any | None = None) -> list[str]:
     names: set[str] = set()
-    for name in getattr(state, "requirements", {}) or {}:
-        normalized = str(name).strip()
+    for storage_key, requirements in (getattr(state, "requirements", {}) or {}).items():
+        normalized = str(getattr(requirements, "project", "") or storage_key).strip()
         if normalized:
             names.add(normalized)
     for service_name, service in (getattr(state, "services", {}) or {}).items():
@@ -309,7 +353,12 @@ def _filtered_requirements(
     requirements: Mapping[str, RequirementsResult],
     selected: set[str],
 ) -> dict[str, RequirementsResult]:
-    direct = {project: req for project, req in requirements.items() if project in selected}
+    selected_keys = {str(project).strip().casefold() for project in selected if str(project).strip()}
+    direct = {
+        storage_key: req
+        for storage_key, req in requirements.items()
+        if str(getattr(req, "project", "") or storage_key).strip().casefold() in selected_keys
+    }
     if direct:
         return direct
     # Shared tree dependency state often stores requirements under Main. When a
@@ -425,8 +474,8 @@ def project_resolution_event_payload(
 
 def _runtime_truth_project_names(state: RunState, *, runtime: Any | None = None) -> list[str]:
     names: set[str] = set()
-    for name in getattr(state, "requirements", {}) or {}:
-        normalized = str(name).strip()
+    for storage_key, requirements in (getattr(state, "requirements", {}) or {}).items():
+        normalized = str(getattr(requirements, "project", "") or storage_key).strip()
         if normalized:
             names.add(normalized)
     for service_name, service in (getattr(state, "services", {}) or {}).items():

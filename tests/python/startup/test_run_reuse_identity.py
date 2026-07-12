@@ -18,6 +18,7 @@ from envctl_engine.startup.run_reuse_identity import (
     project_identities_from_contexts,
     project_identities_from_state,
 )
+from envctl_engine.startup.run_reuse_decision import state_has_resumable_services
 from envctl_engine.state.models import RunState, ServiceRecord
 
 
@@ -117,6 +118,32 @@ class RunReuseIdentityTests(unittest.TestCase):
                 {"name": "Main", "root": normalize_project_root("/tmp/main")},
             ],
         )
+
+    def test_state_identity_and_resumability_prefer_multiword_record_project_metadata(self) -> None:
+        service = ServiceRecord(
+            name="Opaque API Runtime",
+            type="backend",
+            cwd="/tmp/customer-platform/runtime",
+            project="Customer Platform",
+        )
+        state = RunState(
+            run_id="run-metadata",
+            mode="trees",
+            services={service.name: service},
+            metadata={"project_roots": {"Customer Platform": "/tmp/customer-platform"}},
+        )
+        runtime = SimpleNamespace(_project_name_from_service=lambda _name: "Opaque API")
+
+        self.assertEqual(
+            identities_to_payload(project_identities_from_state(runtime, state)),
+            [
+                {
+                    "name": "Customer Platform",
+                    "root": normalize_project_root("/tmp/customer-platform"),
+                }
+            ],
+        )
+        self.assertTrue(state_has_resumable_services(runtime, state))
 
     def test_context_identity_sorting_and_weak_keys_are_stable(self) -> None:
         identities = project_identities_from_contexts(

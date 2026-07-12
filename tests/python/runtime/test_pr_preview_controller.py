@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 import json
 from pathlib import Path
@@ -2158,6 +2159,117 @@ def test_start_keeps_backend_venv_created_with_same_python(tmp_path):
     )
 
     assert venv.exists()
+
+
+def test_preview_python_command_shim_supports_legacy_python_token(tmp_path):
+    controller = load_controller()
+    env = {
+        "PYTHON_BIN": sys.executable,
+        "PATH": "/usr/bin:/bin",
+    }
+
+    shim = controller.prepare_python_command_shim(
+        env,
+        runtime_root=tmp_path / "runtime",
+    )
+    first_target = shim.resolve(strict=True)
+    second = controller.prepare_python_command_shim(
+        env,
+        runtime_root=tmp_path / "runtime",
+    )
+    result = subprocess.run(
+        ["python", "-c", "print('legacy-python-ok')"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert shim == second
+    assert first_target == Path(sys.executable).resolve()
+    assert second.resolve(strict=True) == Path(sys.executable).resolve()
+    assert Path(env["PATH"].split(controller.os.pathsep, 1)[0]) == shim.parent
+    assert env["ENVCTL_PYTHON_EXECUTABLE"] == str(Path(sys.executable).resolve())
+    assert result.returncode == 0
+    assert result.stdout.strip() == "legacy-python-ok"
+
+
+def test_preview_python_command_shims_are_isolated_by_interpreter(tmp_path):
+    controller = load_controller()
+
+    def make_interpreter(index: int) -> Path:
+        executable = tmp_path / f"python-{index}"
+        executable.write_text(
+            "#!/bin/sh\n"
+            "case \"$2\" in\n"
+            "  *sys.version_info*) printf '3.13\\n' ;;\n"
+            f"  *) printf 'interpreter-{index}\\n' ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+        return executable
+
+    interpreters = [make_interpreter(index) for index in range(16)]
+
+    def prepare_and_run(interpreter: Path) -> tuple[Path, str]:
+        env = {"PYTHON_BIN": str(interpreter), "PATH": "/usr/bin:/bin"}
+        shim = controller.prepare_python_command_shim(
+            env,
+            runtime_root=tmp_path / "runtime",
+        )
+        result = subprocess.run(
+            ["python", "-c", "print('selected')"],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0
+        return shim, result.stdout.strip()
+
+    with ThreadPoolExecutor(max_workers=len(interpreters)) as executor:
+        results = list(executor.map(prepare_and_run, interpreters))
+
+    assert len({shim.parent for shim, _output in results}) == len(interpreters)
+    assert {output for _shim, output in results} == {
+        f"interpreter-{index}" for index in range(len(interpreters))
+    }
+    assert list((tmp_path / "runtime").rglob(".python-*")) == []
+
+    reused_env = {"PYTHON_BIN": str(interpreters[0]), "PATH": "/usr/bin:/bin"}
+    controller.prepare_python_command_shim(reused_env, runtime_root=tmp_path / "runtime")
+    reused_env["PYTHON_BIN"] = str(interpreters[1])
+    latest = controller.prepare_python_command_shim(reused_env, runtime_root=tmp_path / "runtime")
+    managed_path_entries = [
+        Path(part)
+        for part in reused_env["PATH"].split(controller.os.pathsep)
+        if Path(part).parent == tmp_path / "runtime" / "python-command-shims"
+    ]
+    assert managed_path_entries == [latest.parent]
+
+
+def test_preview_python_command_shim_rejects_symlinked_runtime_directory(tmp_path):
+    controller = load_controller()
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+    (runtime_root / "python-command-shims").symlink_to(external, target_is_directory=True)
+    env = {"PYTHON_BIN": sys.executable, "PATH": "/usr/bin:/bin"}
+
+    with pytest.raises(RuntimeError, match="not a real directory"):
+        controller.prepare_python_command_shim(env, runtime_root=runtime_root)
+
+    assert list(external.iterdir()) == []
+
+
+def test_preview_python_command_shim_rejects_non_python_executable(tmp_path):
+    controller = load_controller()
+    env = {"PYTHON_BIN": "/bin/sh", "PATH": "/usr/bin:/bin"}
+
+    with pytest.raises(RuntimeError, match="not Python 3"):
+        controller.prepare_python_command_shim(env, runtime_root=tmp_path / "runtime")
 
 
 def test_unlabeled_event_stops_tracked_preview(tmp_path):

@@ -88,7 +88,7 @@ class _RuntimeStub:
         return False
 
     def _terminate_services_from_state(self, *args, **kwargs):  # noqa: ANN001, ARG002
-        return None
+        return set()
 
     def _release_port_session(self) -> None:
         return None
@@ -142,11 +142,11 @@ class _RuntimeWithoutPortSessionHook:
 
 
 class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
-    def test_clear_runtime_state_purges_after_dependency_container_cleanup_failure(self) -> None:
+    def test_full_cleanup_retains_dependency_state_after_container_cleanup_failure(self) -> None:
         for command, aggressive in (("stop-all", False), ("blast-all", True)):
             with self.subTest(command=command):
                 runtime = _RuntimeStub()
-                runtime._try_load_existing_state = lambda *args, **kwargs: RunState(  # type: ignore[method-assign]
+                state = RunState(
                     run_id="run-1",
                     mode="main",
                     requirements={
@@ -160,6 +160,11 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
                         )
                     },
                 )
+                runtime.state_repository.active_states = [state]
+                released_requirements: list[str] = []
+                runtime._release_requirement_ports = (  # type: ignore[attr-defined]
+                    lambda requirements: released_requirements.append(requirements.project)
+                )
                 orchestrator = LifecycleCleanupOrchestrator(runtime)
                 orchestrator.blast_all_ecosystem_enabled = lambda: False  # type: ignore[method-assign]
                 orchestrator.blast_all_purge_legacy_state_artifacts = lambda: None  # type: ignore[method-assign]
@@ -172,9 +177,15 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
                     ),
                     redirect_stdout(output),
                 ):
-                    orchestrator.clear_runtime_state(command=command, aggressive=aggressive)
+                    code = orchestrator.execute(Route(command=command, mode="main"))
 
-                self.assertEqual(runtime.state_repository.purge_calls, [aggressive])
+                self.assertEqual(code, 1)
+                self.assertEqual(runtime.state_repository.purge_calls, [])
+                self.assertEqual(runtime.state_repository.deactivated_run_ids, [])
+                self.assertEqual(runtime.state_repository.active_states, [state])
+                self.assertEqual(runtime.state_repository.saved_states, [state])
+                self.assertEqual(set(state.requirements), {"Main"})
+                self.assertEqual(released_requirements, [])
                 self.assertIn("could not stop redis container", output.getvalue())
                 warnings = [
                     event
@@ -191,6 +202,17 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
                         }
                     ],
                 )
+                incomplete = [event for event in runtime.events if event.get("event") == "cleanup.incomplete"]
+                self.assertEqual(incomplete[-1].get("failed_services"), {})
+                self.assertEqual(incomplete[-1].get("failed_requirements"), {"run-1": ["Main"]})
+
+                retry_code = orchestrator.execute(Route(command=command, mode="main"))
+
+                self.assertEqual(retry_code, 0)
+                self.assertEqual(runtime.state_repository.deactivated_run_ids, ["run-1"])
+                self.assertEqual(runtime.state_repository.active_states, [])
+                self.assertEqual(released_requirements, ["Main"])
+                self.assertEqual(runtime.state_repository.purge_calls, [aggressive])
 
     def test_targeted_runtime_cleanup_remains_fail_closed(self) -> None:
         runtime = _RuntimeStub()
@@ -220,6 +242,48 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
             orchestrator.clear_runtime_state(command="stop", aggressive=False)
 
         self.assertEqual(runtime.state_repository.purge_calls, [])
+
+    def test_full_cleanup_retains_state_when_requirement_port_release_fails(self) -> None:
+        runtime = _RuntimeStub()
+        state = RunState(
+            run_id="run-port-release",
+            mode="main",
+            requirements={
+                "Main": RequirementsResult(
+                    project="Main",
+                    redis={"id": "redis", "enabled": True, "external": True, "final": 6379},
+                )
+            },
+        )
+        runtime.state_repository.active_states = [state]
+        release_attempts = 0
+
+        def release_ports(_requirements: RequirementsResult) -> None:
+            nonlocal release_attempts
+            release_attempts += 1
+            if release_attempts == 1:
+                raise OSError("lock unlink failed")
+
+        runtime._release_requirement_ports = release_ports  # type: ignore[attr-defined]
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+
+        first_code = orchestrator.execute(Route(command="stop-all", mode="main"))
+
+        self.assertEqual(first_code, 1)
+        self.assertEqual(runtime.state_repository.active_states, [state])
+        self.assertEqual(runtime.state_repository.deactivated_run_ids, [])
+        self.assertEqual(runtime.state_repository.purge_calls, [])
+        self.assertEqual(set(state.requirements), {"Main"})
+        warning = next(event for event in runtime.events if event.get("event") == "cleanup.requirement_ports.warning")
+        self.assertEqual(warning.get("detail"), "lock unlink failed")
+
+        retry_code = orchestrator.execute(Route(command="stop-all", mode="main"))
+
+        self.assertEqual(retry_code, 0)
+        self.assertEqual(release_attempts, 2)
+        self.assertEqual(runtime.state_repository.active_states, [])
+        self.assertEqual(runtime.state_repository.deactivated_run_ids, ["run-port-release"])
+        self.assertEqual(runtime.state_repository.purge_calls, [False])
 
     def test_stop_all_emits_spinner_policy_and_lifecycle(self) -> None:
         runtime = _RuntimeStub()
@@ -327,7 +391,7 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         ]
         terminated: list[str] = []
         runtime._terminate_services_from_state = (  # type: ignore[method-assign]
-            lambda state, **_kwargs: terminated.append(state.run_id)
+            lambda state, **_kwargs: terminated.append(state.run_id) or set()
         )
 
         code = LifecycleCleanupOrchestrator(runtime).execute(Route(command="stop-all", mode="trees"))
@@ -624,7 +688,7 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         ]
         terminated: list[str] = []
         runtime._terminate_services_from_state = (  # type: ignore[method-assign]
-            lambda state, **_kwargs: terminated.append(state.run_id)
+            lambda state, **_kwargs: terminated.append(state.run_id) or set()
         )
 
         code = LifecycleCleanupOrchestrator(runtime).execute(
@@ -678,6 +742,62 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertEqual(set(state.services), {"FeatureA Backend"})
+        self.assertEqual(runtime.state_repository.saved_states, [state])
+        self.assertEqual(runtime.state_repository.deactivated_run_ids, [])
+        self.assertEqual(runtime.state_repository.purge_calls, [])
+
+    def test_targeted_stop_missing_termination_result_preserves_service_and_requirements(self) -> None:
+        runtime = _RuntimeStub()
+        service = ServiceRecord(
+            name="Main Backend",
+            type="backend",
+            cwd="/tmp/main/backend",
+            project="Main",
+            pid=101,
+        )
+        requirements = RequirementsResult(project="Main", redis={"enabled": True, "final": 6379})
+        state = RunState(
+            run_id="run-main",
+            mode="main",
+            services={service.name: service},
+            requirements={"Main": requirements},
+        )
+        runtime._try_load_existing_state = lambda *_args, **_kwargs: state  # type: ignore[method-assign]
+        runtime._terminate_services_from_state = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+        runtime._release_requirement_ports = lambda _requirements: self.fail(  # type: ignore[attr-defined]
+            "unconfirmed service must retain requirements"
+        )
+
+        code = LifecycleCleanupOrchestrator(runtime).execute(
+            Route(
+                command="stop",
+                mode="main",
+                flags={"services": [service.name], "batch": True},
+            )
+        )
+
+        self.assertEqual(code, 1)
+        self.assertIs(state.services[service.name], service)
+        self.assertIs(state.requirements["Main"], requirements)
+
+    def test_stop_all_missing_termination_result_retains_active_run(self) -> None:
+        runtime = _RuntimeStub()
+        service = ServiceRecord(
+            name="Main Backend",
+            type="backend",
+            cwd="/tmp/main/backend",
+            project="Main",
+            pid=101,
+        )
+        state = RunState(run_id="run-main", mode="main", services={service.name: service})
+        runtime.state_repository.active_states = [state]
+        runtime._terminate_services_from_state = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+
+        code = LifecycleCleanupOrchestrator(runtime).execute(Route(command="stop-all", mode="main"))
+
+        self.assertEqual(code, 1)
+        self.assertEqual(runtime.state_repository.active_states, [state])
+        self.assertEqual(set(state.services), {service.name})
         self.assertEqual(runtime.state_repository.saved_states, [state])
         self.assertEqual(runtime.state_repository.deactivated_run_ids, [])
         self.assertEqual(runtime.state_repository.purge_calls, [])
@@ -956,7 +1076,7 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         runtime.port_planner = SimpleNamespace(release=lambda port: released.append(port))
         runtime._terminate_services_from_state = lambda _state, **kwargs: terminated.append(  # type: ignore[method-assign]
             kwargs.get("selected_services")
-        )
+        ) or set()
         state = RunState(
             run_id="run-1",
             mode="main",
@@ -980,6 +1100,184 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         self.assertEqual(state.requirements, {})
         self.assertEqual(runtime.state_repository.saved_states[0].services.keys(), {"Main Backend"})
 
+    def test_targeted_dependencies_scope_preserves_other_project_requirements_and_state(self) -> None:
+        runtime = _RuntimeStub()
+        released: list[str] = []
+        alpha = RequirementsResult(project="Alpha", redis={"enabled": True, "final": 6379})
+        beta = RequirementsResult(project="Beta", redis={"enabled": True, "final": 6389})
+        state = RunState(
+            run_id="run-multi",
+            mode="trees",
+            services={
+                "Beta Backend": ServiceRecord(
+                    name="Beta Backend",
+                    type="backend",
+                    cwd="/beta",
+                    project="Beta",
+                    pid=2,
+                )
+            },
+            requirements={"Alpha": alpha, "Beta": beta},
+            metadata={"project_names": ["Alpha", "Beta"]},
+        )
+        runtime.state_repository.active_states = [state]
+        runtime._try_load_existing_state = lambda *_args, **_kwargs: state  # type: ignore[method-assign]
+        runtime._release_requirement_ports = (  # type: ignore[attr-defined]
+            lambda requirements: released.append(requirements.project)
+        )
+        orchestrator = LifecycleCleanupOrchestrator(runtime)
+
+        code = orchestrator.execute(
+            Route(
+                command="stop",
+                mode="trees",
+                projects=["Alpha"],
+                flags={"runtime_scope": "dependencies", "batch": True},
+            )
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(released, ["Alpha"])
+        self.assertEqual(set(state.requirements), {"Beta"})
+        self.assertIn("Beta Backend", state.services)
+        self.assertEqual(runtime.state_repository.deactivated_run_ids, [])
+        self.assertEqual(runtime.state_repository.saved_states[-1].metadata["project_names"], ["Beta"])
+
+    def test_dependency_scope_normalizes_positional_and_service_selectors(self) -> None:
+        routes = (
+            Route(
+                command="stop",
+                mode="trees",
+                passthrough_args=["Alpha"],
+                flags={"runtime_scope": "dependencies", "batch": True},
+            ),
+            Route(
+                command="stop",
+                mode="trees",
+                flags={
+                    "runtime_scope": "dependencies",
+                    "services": ["Alpha Backend"],
+                    "batch": True,
+                },
+            ),
+        )
+        for route in routes:
+            with self.subTest(route=route):
+                runtime = _RuntimeStub()
+                state = RunState(
+                    run_id="run-selector",
+                    mode="trees",
+                    services={
+                        "Alpha Backend": ServiceRecord(
+                            name="Alpha Backend", type="backend", project="Alpha", cwd="/alpha", pid=1
+                        ),
+                        "Beta Backend": ServiceRecord(
+                            name="Beta Backend", type="backend", project="Beta", cwd="/beta", pid=2
+                        ),
+                    },
+                    requirements={
+                        "alpha-alias": RequirementsResult(project="Alpha", redis={"enabled": True}),
+                        "beta-alias": RequirementsResult(project="Beta", redis={"enabled": True}),
+                    },
+                    metadata={"project_names": ["Alpha", "Beta"]},
+                )
+                runtime.state_repository.active_states = [state]
+                runtime._try_load_existing_state = lambda *_args, **_kwargs: state  # type: ignore[method-assign]
+                released: list[str] = []
+                runtime._release_requirement_ports = (  # type: ignore[attr-defined]
+                    lambda requirements: released.append(requirements.project)
+                )
+
+                code = LifecycleCleanupOrchestrator(runtime).execute(route)
+
+                self.assertEqual(code, 0)
+                self.assertEqual(released, ["Alpha"])
+                self.assertEqual(set(state.requirements), {"beta-alias"})
+                self.assertEqual(set(state.services), {"Alpha Backend", "Beta Backend"})
+
+    def test_unmatched_dependency_service_selector_fails_without_broadening_scope(self) -> None:
+        runtime = _RuntimeStub()
+        state = RunState(
+            run_id="run-selector-miss",
+            mode="trees",
+            services={
+                "Alpha Backend": ServiceRecord(
+                    name="Alpha Backend", type="backend", project="Alpha", cwd="/alpha", pid=1
+                )
+            },
+            requirements={"Alpha": RequirementsResult(project="Alpha", redis={"enabled": True})},
+        )
+        runtime.state_repository.active_states = [state]
+        runtime._try_load_existing_state = lambda *_args, **_kwargs: state  # type: ignore[method-assign]
+        runtime._release_requirement_ports = lambda _requirements: self.fail("selector miss released ports")  # type: ignore[attr-defined]
+
+        code = LifecycleCleanupOrchestrator(runtime).execute(
+            Route(
+                command="stop",
+                mode="trees",
+                flags={"runtime_scope": "dependencies", "services": ["Missing Worker"], "batch": True},
+            )
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(set(state.requirements), {"Alpha"})
+        self.assertEqual(runtime.state_repository.saved_states, [])
+        self.assertEqual(runtime.state_repository.deactivated_run_ids, [])
+
+    def test_entire_system_selector_does_not_remove_sibling_project_dependencies(self) -> None:
+        routes = (
+            Route(
+                command="stop",
+                mode="trees",
+                passthrough_args=["Alpha"],
+                flags={"runtime_scope": "entire-system", "batch": True},
+            ),
+            Route(
+                command="stop",
+                mode="trees",
+                flags={
+                    "runtime_scope": "entire-system",
+                    "services": ["Alpha Backend"],
+                    "batch": True,
+                },
+            ),
+        )
+        for route in routes:
+            with self.subTest(route=route):
+                runtime = _RuntimeStub()
+                released: list[int] = []
+                runtime.port_planner = SimpleNamespace(release=lambda port: released.append(port))
+                state = RunState(
+                    run_id="run-entire-selector",
+                    mode="trees",
+                    services={
+                        "Alpha Backend": ServiceRecord(
+                            name="Alpha Backend", type="backend", project="Alpha", cwd="/alpha", pid=1
+                        ),
+                        "Beta Backend": ServiceRecord(
+                            name="Beta Backend", type="backend", project="Beta", cwd="/beta", pid=2
+                        ),
+                    },
+                    requirements={
+                        "alpha-alias": RequirementsResult(
+                            project="Alpha", redis={"id": "redis", "enabled": True, "final": 6379}
+                        ),
+                        "beta-alias": RequirementsResult(
+                            project="Beta", redis={"id": "redis", "enabled": True, "final": 6389}
+                        ),
+                    },
+                    metadata={"project_names": ["Alpha", "Beta"]},
+                )
+                runtime.state_repository.active_states = [state]
+                runtime._try_load_existing_state = lambda *_args, **_kwargs: state  # type: ignore[method-assign]
+
+                code = LifecycleCleanupOrchestrator(runtime).execute(route)
+
+                self.assertEqual(code, 0)
+                self.assertEqual(released, [6379])
+                self.assertEqual(set(state.services), {"Beta Backend"})
+                self.assertEqual(set(state.requirements), {"beta-alias"})
+
     def test_stop_selected_dependency_component_preserves_services_and_other_dependencies(self) -> None:
         runtime = _RuntimeStub()
         released: list[int] = []
@@ -987,7 +1285,7 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         runtime.port_planner = SimpleNamespace(release=lambda port: released.append(port))
         runtime._terminate_services_from_state = lambda _state, **kwargs: terminated.append(  # type: ignore[method-assign]
             kwargs.get("selected_services")
-        )
+        ) or set()
         state = RunState(
             run_id="run-1",
             mode="main",
@@ -1032,7 +1330,7 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         runtime.port_planner = SimpleNamespace(release=lambda port: released.append(port))
         runtime._terminate_services_from_state = lambda _state, **kwargs: terminated.append(  # type: ignore[method-assign]
             kwargs.get("selected_services")
-        )
+        ) or set()
         state = RunState(
             run_id="run-1",
             mode="main",
@@ -1074,7 +1372,7 @@ class LifecycleCleanupSpinnerIntegrationTests(unittest.TestCase):
         terminated: list[set[str] | None] = []
         runtime._terminate_services_from_state = lambda _state, **kwargs: terminated.append(  # type: ignore[method-assign]
             kwargs.get("selected_services")
-        )
+        ) or set()
         state = RunState(
             run_id="run-1",
             mode="main",

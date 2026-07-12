@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from envctl_engine.requirements.core import dependency_definitions
@@ -9,9 +9,19 @@ from envctl_engine.runtime.lifecycle_requirement_ports import release_requiremen
 from envctl_engine.state.models import RequirementsResult, RunState
 
 
-def select_dependency_components_for_stop(state: RunState, route: Route) -> dict[str, set[str]]:
+def select_dependency_components_for_stop(
+    state: RunState,
+    route: Route,
+    *,
+    requested_projects: Iterable[str] | None = None,
+) -> dict[str, set[str]]:
     if route.flags.get("runtime_scope") == "entire-system":
-        requested_projects = {str(project).strip().casefold() for project in route.projects if str(project).strip()}
+        explicit_project_scope = requested_projects is not None
+        normalized_projects = {
+            str(project).strip().casefold()
+            for project in (route.projects if requested_projects is None else requested_projects)
+            if str(project).strip()
+        }
         return {
             project_name: {
                 definition.id
@@ -19,7 +29,8 @@ def select_dependency_components_for_stop(state: RunState, route: Route) -> dict
                 if bool(requirements.component(definition.id).get("enabled", False))
             }
             for project_name, requirements in state.requirements.items()
-            if not requested_projects or str(project_name).strip().casefold() in requested_projects
+            if (not explicit_project_scope and not normalized_projects)
+            or str(requirements.project or project_name).strip().casefold() in normalized_projects
         }
     raw_components = route.flags.get("stop_dependency_components")
     if not isinstance(raw_components, list):
@@ -27,21 +38,26 @@ def select_dependency_components_for_stop(state: RunState, route: Route) -> dict
 
     known_definitions = {definition.id for definition in dependency_definitions()}
     selected: dict[str, set[str]] = {}
-    project_key_by_lower = {str(project).strip().casefold(): project for project in state.requirements}
+    project_keys_by_lower: dict[str, list[str]] = {}
+    for storage_key, requirements in state.requirements.items():
+        project = str(requirements.project or storage_key).strip().casefold()
+        if project:
+            project_keys_by_lower.setdefault(project, []).append(storage_key)
     for raw in raw_components:
         project_name, separator, dependency_id = str(raw).partition(":")
         if not separator:
             continue
-        project_key = project_key_by_lower.get(project_name.strip().casefold())
-        if project_key is None:
+        project_keys = project_keys_by_lower.get(project_name.strip().casefold(), [])
+        if not project_keys:
             continue
         normalized_dependency = dependency_id.strip().lower()
         if normalized_dependency not in known_definitions:
             continue
-        component = state.requirements[project_key].component(normalized_dependency)
-        if not bool(component.get("enabled", False)):
-            continue
-        selected.setdefault(project_key, set()).add(normalized_dependency)
+        for project_key in project_keys:
+            component = state.requirements[project_key].component(normalized_dependency)
+            if not bool(component.get("enabled", False)):
+                continue
+            selected.setdefault(project_key, set()).add(normalized_dependency)
     return selected
 
 

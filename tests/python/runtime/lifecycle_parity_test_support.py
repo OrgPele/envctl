@@ -103,12 +103,13 @@ class _OwnershipDenyRunner(_TrackingRunner):
 
 
 class _ResumeRestoreRunner:
-    def __init__(self) -> None:
+    def __init__(self, *, listeners_ready: bool = False) -> None:
         self.run_calls: list[tuple[str, ...]] = []
         self.start_calls: list[tuple[str, ...]] = []
         self.terminated: list[int] = []
         self._next_pid = 42000
         self._running: set[int] = set()
+        self.listeners_ready = listeners_ready
         self.fail_alembic = False
 
     def run(self, cmd, *, cwd=None, env=None, timeout=None):  # noqa: ANN001
@@ -167,7 +168,7 @@ class _ResumeRestoreRunner:
         debug_pid_wait_group: str = "",
     ) -> bool:
         _ = host, timeout, debug_pid_wait_group
-        return False
+        return self.listeners_ready and self.pid_owns_port(_pid, _port)
 
     def pid_owns_port(self, pid: int, _port: int) -> bool:
         return pid in self._running

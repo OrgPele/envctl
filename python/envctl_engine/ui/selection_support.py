@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from envctl_engine.runtime.command_router import Route
-from envctl_engine.shared.services import project_name_from_service_name
+from envctl_engine.shared.services import resolve_service_project_name
 from envctl_engine.state.models import RunState
 from envctl_engine.ui.dashboard.terminal_ui import RuntimeTerminalUI
 from envctl_engine.ui.selection_types import TargetSelection
@@ -36,8 +36,8 @@ def interactive_selection_allowed(
 def project_names_from_state(runtime: Any, state: RunState) -> list[object]:
     names: list[str] = []
     seen: set[str] = set()
-    for project in state.requirements:
-        project_name = str(project).strip()
+    for storage_name, requirements in state.requirements.items():
+        project_name = str(getattr(requirements, "project", "") or storage_name).strip()
         if not project_name:
             continue
         lowered = project_name.lower()
@@ -45,10 +45,12 @@ def project_names_from_state(runtime: Any, state: RunState) -> list[object]:
             continue
         seen.add(lowered)
         names.append(project_name)
-    for name in state.services:
-        project = runtime._project_name_from_service(name)  # type: ignore[attr-defined]
-        if not project:
-            project = project_name_from_service_name(str(name))
+    for name, service in state.services.items():
+        project = resolve_service_project_name(
+            name,
+            service,
+            project_name_from_service=runtime._project_name_from_service,  # type: ignore[attr-defined]
+        )
         if not project:
             continue
         lowered = project.lower()
@@ -77,10 +79,12 @@ def services_from_selection(runtime: Any, selection: TargetSelection, state: Run
         return {name for name in state.services if name in selection.service_names}
     if selection.project_names:
         selected: set[str] = set()
-        for name in state.services:
-            project = runtime._project_name_from_service(name)  # type: ignore[attr-defined]
-            if not project:
-                project = project_name_from_service_name(str(name))
+        for name, service in state.services.items():
+            project = resolve_service_project_name(
+                name,
+                service,
+                project_name_from_service=runtime._project_name_from_service,  # type: ignore[attr-defined]
+            )
             if not project:
                 continue
             for wanted in selection.project_names:

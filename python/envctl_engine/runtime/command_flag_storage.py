@@ -41,6 +41,7 @@ def boolean_flag_name(token: str) -> str:
         "--test-parallel": "test_parallel",
         "--service-parallel": "service_parallel",
         "--service-prep-parallel": "service_prep_parallel",
+        "--ignore-service-deps": "ignore_service_deps",
         "--refresh-cache": "refresh_cache",
         "--fast": "fast",
         "--fast-startup": "fast",

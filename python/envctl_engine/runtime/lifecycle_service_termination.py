@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import os
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,6 +14,38 @@ from envctl_engine.shared.process_termination import (
 )
 from envctl_engine.shared.services import service_project_name
 from envctl_engine.runtime.lifecycle_requirement_ports import release_port_reservation
+
+
+def unconfirmed_service_names(result: object, service_names: Collection[str]) -> set[str]:
+    """Normalize a termination adapter result without ever assuming success.
+
+    Only a collection containing known service identities is authoritative. An
+    absent/scalar result or any unknown identity fails closed for the complete
+    requested set so callers never discard state for a process whose exit was
+    not positively confirmed.
+    """
+
+    requested = {str(name).strip() for name in service_names if str(name).strip()}
+    if not isinstance(result, Collection) or isinstance(result, (str, bytes, Mapping)):
+        return requested
+    raw_reported = list(result)
+    if any(not str(name).strip() for name in raw_reported):
+        return requested
+    reported = {str(name).strip() for name in raw_reported}
+    return reported if reported.issubset(requested) else requested
+
+
+def failed_listener_pids(result: object) -> set[int] | None:
+    """Return failed listener PIDs, or ``None`` when cleanup was not confirmed."""
+
+    if not isinstance(result, Collection) or isinstance(result, (str, bytes, Mapping)):
+        return None
+    failed: set[int] = set()
+    for value in result:
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            return None
+        failed.add(value)
+    return failed
 
 
 def terminate_started_services(runtime: Any, services: dict[str, object]) -> set[str]:
@@ -127,9 +159,17 @@ def terminate_service_record(runtime: Any, service: object, *, aggressive: bool,
         container = str(
             getattr(service, "container_id", "") or getattr(service, "container_name", "") or ""
         ).strip()
+        launch_token = str(getattr(service, "container_launch_token", "") or "").strip()
+        pending_since = getattr(service, "container_cleanup_pending_since", None)
         stopped = DockerServiceRuntime(runtime, runtime.process_runner).stop(
             container,
             verify_ownership=verify_ownership,
+            **({"expected_launch_token": launch_token} if launch_token else {}),
+            **(
+                {"pending_cleanup_since": pending_since}
+                if isinstance(pending_since, (int, float))
+                else {}
+            ),
         )
         follower_stopped = True
         pid = getattr(service, "pid", None)

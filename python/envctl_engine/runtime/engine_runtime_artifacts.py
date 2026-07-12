@@ -6,7 +6,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from envctl_engine.runtime.runtime_context import optional_state_repository
 from envctl_engine.runtime.runtime_readiness import (
@@ -28,7 +28,14 @@ class _SummaryContext(Protocol):
     ports: Mapping[str, _FinalPort]
 
 
-def write_artifacts(runtime: Any, state: object, contexts: list[object], *, errors: list[str]) -> None:
+def write_artifacts(
+    runtime: Any,
+    state: object,
+    contexts: list[object],
+    *,
+    errors: list[str],
+    on_commit: Callable[[], None] | None = None,
+) -> None:
     started = time.monotonic()
     cached = _cached_runtime_readiness_payload(runtime)
     paths = runtime.state_repository.save_run(
@@ -43,6 +50,7 @@ def write_artifacts(runtime: Any, state: object, contexts: list[object], *, erro
             if cached is not None
             else (lambda run_dir: _write_pending_runtime_readiness_payload(runtime, run_dir=run_dir))
         ),
+        on_commit=on_commit,
     )
     runtime._emit(
         "artifacts.write",

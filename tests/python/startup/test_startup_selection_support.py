@@ -9,7 +9,10 @@ from envctl_engine.runtime.command_router import Route, parse_route
 from envctl_engine.startup.startup_selection_support import (
     _restart_service_types_for_project,
     restart_include_requirements,
+    restart_target_projects,
+    restart_target_projects_for_selected_services,
     select_start_tree_projects,
+    state_project_names,
     trees_start_selection_required,
 )
 from envctl_engine.state.models import RunState, ServiceRecord
@@ -88,6 +91,103 @@ class StartupSelectionSupportTests(unittest.TestCase):
                 runtime_mode="trees",
             )
         )
+
+    def test_state_project_discovery_prefers_explicit_multiword_service_metadata(self) -> None:
+        runtime = _RuntimeStub()
+        service_name = "My Project Optional Bad"
+        state = RunState(
+            run_id="run-1",
+            mode="main",
+            services={
+                service_name: ServiceRecord(
+                    name=service_name,
+                    type="optional-bad",
+                    cwd="/repo/optional-bad",
+                    project="My Project",
+                    service_slug="optional-bad",
+                )
+            },
+        )
+
+        self.assertEqual(state_project_names(runtime=runtime, state=state), {"My Project"})
+        self.assertEqual(
+            restart_target_projects(
+                state=state,
+                route=Route(command="restart", mode="main", flags={}),
+                runtime=runtime,
+            ),
+            {"My Project"},
+        )
+        self.assertEqual(
+            restart_target_projects_for_selected_services(
+                selected_services={service_name},
+                state=state,
+                runtime=runtime,
+            ),
+            {"My Project"},
+        )
+
+    def test_state_project_discovery_uses_requirement_project_not_collision_storage_key(self) -> None:
+        runtime = _RuntimeStub()
+        state = RunState(
+            run_id="run-1",
+            mode="trees",
+            requirements={
+                "Main Restart Collision": SimpleNamespace(project="Main")  # type: ignore[dict-item]
+            },
+        )
+
+        self.assertEqual(state_project_names(runtime=runtime, state=state), {"Main"})
+        self.assertEqual(
+            restart_target_projects(
+                state=state,
+                route=Route(command="restart", mode="trees", flags={"runtime_scope": "dependencies"}),
+                runtime=runtime,
+            ),
+            {"Main"},
+        )
+    def test_restart_target_projects_resolves_stopped_additional_service_metadata(self) -> None:
+        runtime = _RuntimeStub()
+        state = RunState(
+            run_id="run-1",
+            mode="trees",
+            services={
+                "Other Backend": ServiceRecord(
+                    name="Other Backend",
+                    type="backend",
+                    cwd="/repo/other/backend",
+                    project="Other",
+                )
+            },
+            metadata={
+                "dashboard_stopped_services": [
+                    {
+                        "name": "Customer Platform Voice Runtime",
+                        "project": "Customer Platform",
+                        "type": "voice-runtime",
+                    }
+                ]
+            },
+        )
+
+        for selector in (
+            "voice-runtime",
+            "Voice Runtime",
+            "Customer Platform Voice Runtime",
+            "service:voice-runtime",
+        ):
+            with self.subTest(selector=selector):
+                targets = restart_target_projects(
+                    state=state,
+                    route=Route(
+                        command="restart",
+                        mode="trees",
+                        flags={"services": [selector]},
+                    ),
+                    runtime=runtime,
+                )
+
+                self.assertEqual(targets, {"Customer Platform"})
 
     def test_select_start_tree_projects_preselects_from_previous_trees_state(self) -> None:
         runtime = _RuntimeStub(can_tty=True)

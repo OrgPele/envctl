@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.runtime.lifecycle_service_termination import failed_listener_pids, unconfirmed_service_names
 from envctl_engine.shared.services import service_project_name, service_slug_from_record
 from envctl_engine.startup.session import metadata_with_state_sources
 from envctl_engine.startup.startup_selection_support import _restart_service_types_for_project
@@ -75,6 +76,29 @@ class FreshStartServiceReplacer:
 
     def replace(self) -> None:
         route = self.session.effective_route
+        previous_preserve_flag = bool(getattr(self.session, "preserve_existing_state_on_failure", False))
+        source_services = {
+            **dict(self.candidate_state.services),
+            **dict(self.session.preserved_services),
+        }
+        source_requirements = {
+            **dict(self.candidate_state.requirements),
+            **dict(self.session.preserved_requirements),
+        }
+        source_metadata = metadata_with_state_sources(
+            {
+                **dict(self.candidate_state.metadata),
+                **dict(self.session.base_metadata),
+            },
+            self.candidate_state,
+        )
+        # Bind failure finalization to the existing run before resolving any
+        # legacy selector or emitting diagnostics. Those adapters are allowed
+        # to fail, but their failure must never supersede active authority.
+        self.session.preserved_services = source_services
+        self.session.preserved_requirements = source_requirements
+        self.session.base_metadata = source_metadata
+        self.session.preserve_existing_state_on_failure = True
         dependencies_only = route.flags.get("runtime_scope") == "dependencies"
         selected_services = (
             set()
@@ -112,58 +136,60 @@ class FreshStartServiceReplacer:
         else:
             preserved_requirements = dict(self.candidate_state.requirements)
             requirements_to_release = {}
-        if selected_services:
-            self.announce_session_identifiers(self.session)
-            progress_message = (
-                f"Auto-resume disabled; replacing {len(selected_services)} existing service(s)..."
-                if self.reason == "explicit_no_resume"
-                else f"Startup selection changed; replacing {len(selected_services)} existing service(s)..."
-            )
-            self.report_progress(route, progress_message)
-        self.runtime._emit(
-            "state.run_reuse.replace_existing_services",
-            run_id=self.candidate_state.run_id,
-            mode=self.session.runtime_mode,
-            reason=self.reason,
-            selected_services=sorted(selected_services),
-        )
-        if selected_services:
-            termination_result = self.runtime._terminate_services_from_state(
-                self.candidate_state,
-                selected_services=selected_services,
-                aggressive=False,
-                verify_ownership=True,
-            )
-            failed_services = _failed_service_names(termination_result)
-            if failed_services:
-                self.session.preserve_existing_state_on_failure = True
-                raise RuntimeError(
-                    "Fresh start aborted because existing services could not be stopped: "
-                    + ", ".join(sorted(failed_services))
+        try:
+            if selected_services:
+                self.announce_session_identifiers(self.session)
+                progress_message = (
+                    f"Auto-resume disabled; replacing {len(selected_services)} existing service(s)..."
+                    if self.reason == "explicit_no_resume"
+                    else f"Startup selection changed; replacing {len(selected_services)} existing service(s)..."
                 )
-            failed_orphan_pids = self.terminate_restart_orphan_listeners(
-                state=self.candidate_state,
-                selected_services=selected_services,
-                aggressive=True,
+                self.report_progress(route, progress_message)
+            self.runtime._emit(
+                "state.run_reuse.replace_existing_services",
+                run_id=self.candidate_state.run_id,
+                mode=self.session.runtime_mode,
+                reason=self.reason,
+                selected_services=sorted(selected_services),
             )
-            if failed_orphan_pids:
-                self.session.preserve_existing_state_on_failure = True
-                raise RuntimeError(
-                    "Fresh start aborted because orphan listeners could not be stopped: "
-                    + ", ".join(str(pid) for pid in sorted(failed_orphan_pids))
+            if selected_services:
+                termination_result = self.runtime._terminate_services_from_state(
+                    self.candidate_state,
+                    selected_services=selected_services,
+                    aggressive=False,
+                    verify_ownership=True,
                 )
-        for requirements in requirements_to_release.values():
-            self.runtime._release_requirement_ports(requirements)
+                failed_services = unconfirmed_service_names(termination_result, selected_services)
+                if failed_services:
+                    raise RuntimeError(
+                        "Fresh start aborted because existing services could not be stopped: "
+                        + ", ".join(sorted(failed_services))
+                    )
+                orphan_result = self.terminate_restart_orphan_listeners(
+                    state=self.candidate_state,
+                    selected_services=selected_services,
+                    aggressive=True,
+                )
+                failed_orphan_pids = failed_listener_pids(orphan_result)
+                if failed_orphan_pids is None:
+                    raise RuntimeError("Fresh start aborted because orphan listener cleanup was not confirmed")
+                if failed_orphan_pids:
+                    raise RuntimeError(
+                        "Fresh start aborted because orphan listeners could not be stopped: "
+                        + ", ".join(str(pid) for pid in sorted(failed_orphan_pids))
+                    )
+            for requirements in requirements_to_release.values():
+                self.runtime._release_requirement_ports(requirements)
+            self._rebind_replacement_ports(selected_services)
+        except Exception:
+            self.session.preserved_services = source_services
+            self.session.preserved_requirements = source_requirements
+            self.session.base_metadata = source_metadata
+            self.session.preserve_existing_state_on_failure = True
+            raise
         self.session.preserved_services = preserved_services
         self.session.preserved_requirements = preserved_requirements
-        self.session.base_metadata = metadata_with_state_sources(
-            {
-                **dict(self.candidate_state.metadata),
-                **dict(self.session.base_metadata),
-            },
-            self.candidate_state,
-        )
-        self._rebind_replacement_ports(selected_services)
+        self.session.preserve_existing_state_on_failure = previous_preserve_flag
 
     def _rebind_replacement_ports(self, selected_services: set[str]) -> None:
         port_planner = getattr(self.runtime, "port_planner", None)
@@ -256,12 +282,6 @@ def _split_requirements(
         destination = replaced if project in target_projects else preserved
         destination[name] = requirements
     return preserved, replaced
-
-
-def _failed_service_names(result: object) -> set[str]:
-    if not isinstance(result, (set, frozenset)):
-        return set()
-    return {str(name).strip() for name in result if str(name).strip()}
 
 
 def _route_has_app_service_scope(route: Route) -> bool:

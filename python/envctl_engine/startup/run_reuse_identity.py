@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from envctl_engine.requirements.core import dependency_ids
 from envctl_engine.requirements.external import dependency_external_mode
 from envctl_engine.runtime.command_router import Route
+from envctl_engine.shared.services import resolve_service_project_name
 from envctl_engine.state.models import RunState
 
 
@@ -101,13 +102,17 @@ def project_identities_from_state(runtime: Any, state: RunState) -> list[Project
         if not normalized_name:
             continue
         names[normalized_name] = normalize_project_root(root_value)
-    for project_name in state.requirements:
-        normalized_name = str(project_name).strip()
+    for storage_name, requirements in state.requirements.items():
+        normalized_name = str(getattr(requirements, "project", "") or storage_name).strip()
         if not normalized_name:
             continue
         names.setdefault(normalized_name, normalize_project_root(roots.get(normalized_name)))
-    for service_name in state.services:
-        project_name = runtime._project_name_from_service(service_name)
+    for service_name, service in state.services.items():
+        project_name = resolve_service_project_name(
+            service_name,
+            service,
+            project_name_from_service=runtime._project_name_from_service,
+        )
         normalized_name = str(project_name).strip()
         if not normalized_name:
             continue

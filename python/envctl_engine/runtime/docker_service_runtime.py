@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
+import tempfile
 import threading
+import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from envctl_engine.shared.parsing import parse_bool
 
@@ -40,6 +44,11 @@ _PUBLIC_ENV_KEYS = {
 }
 _DOCKER_INFO_LOCK = threading.Lock()
 _RUNTIME_SCOPE_LABEL = "io.envctl.runtime-scope"
+_LAUNCH_TOKEN_LABEL = "io.envctl.launch-token"
+_ENV_FILE_PID_PATTERN = re.compile(
+    r"^\.docker-env-[0-9a-f]{12}-p(?P<pid>[1-9][0-9]*)-[A-Za-z0-9_]+$"
+)
+_SECRET_SCRUB_FAILED = "secret scrub failed"
 
 
 def _docker_name(value: str, *, limit: int) -> str:
@@ -59,6 +68,16 @@ class DockerServiceLaunch:
     container_name: str
     image: str
     log_path: str
+    launch_token: str = ""
+    cleanup_pending_since: float | None = None
+
+
+class DockerServiceLaunchCleanupError(RuntimeError):
+    """A failed launch whose container cleanup could not be confirmed."""
+
+    def __init__(self, message: str, launch: DockerServiceLaunch) -> None:
+        super().__init__(message)
+        self.launch = launch
 
 
 def docker_service_mode_enabled(runtime: Any) -> bool:
@@ -137,6 +156,7 @@ class DockerServiceRuntime:
         container_port: int,
         listener_expected: bool,
         log_path: str,
+        on_confirmed: Callable[[DockerServiceLaunch], None] | None = None,
     ) -> DockerServiceLaunch:
         self._require_docker()
         image = self._resolve_image(
@@ -160,6 +180,10 @@ class DockerServiceRuntime:
             service_name=service_name,
             values=container_env,
         )
+        launch_token = uuid.uuid4().hex
+        result: object
+        run_error: BaseException | None = None
+        docker_run_invoked = False
         try:
             docker_command = [
                 "docker",
@@ -175,6 +199,8 @@ class DockerServiceRuntime:
                 f"io.envctl.service={service_name}",
                 "--label",
                 f"{_RUNTIME_SCOPE_LABEL}={self._runtime_scope_identity()}",
+                "--label",
+                f"{_LAUNCH_TOKEN_LABEL}={launch_token}",
                 "--add-host",
                 "host.docker.internal:host-gateway",
                 "--env-file",
@@ -196,35 +222,262 @@ class DockerServiceRuntime:
                     container_port=effective_container_port,
                 )
             )
+            docker_run_invoked = True
             result = self.process_runtime.run(
                 docker_command,
                 cwd=project_root,
                 env={**os.environ, "DOCKER_BUILDKIT": "1"},
                 timeout=self._timeout("ENVCTL_DOCKER_RUN_TIMEOUT_SECONDS", 120.0),
             )
+        except BaseException as exc:  # noqa: BLE001 - cancellation still requires token cleanup
+            run_error = exc
+            result = None
         finally:
-            env_file.unlink(missing_ok=True)
-        if result.returncode != 0:
-            detail = str(result.stderr or result.stdout or "docker run failed").strip()
-            raise RuntimeError(detail)
-        container_id = str(result.stdout or "").strip().splitlines()[-1]
-        if not container_id:
-            raise RuntimeError(f"docker run returned no container id for {project_name} {service_name}")
-        launch = DockerServiceLaunch(
-            container_id=container_id,
+            env_cleanup_error = self._scrub_env_file_safely(env_file)
+        if env_cleanup_error:
+            self._emit_best_effort(
+                "service.container.env_file_cleanup_warning",
+                project=project_name,
+                service=service_name,
+                detail=env_cleanup_error,
+            )
+        provisional_launch = DockerServiceLaunch(
+            container_id=container_name,
             container_name=container_name,
             image=image,
             log_path=log_path,
+            launch_token=launch_token,
+            cleanup_pending_since=time.time(),
         )
-        self.runtime._emit(
-            "service.container.start",
-            project=project_name,
-            service=service_name,
-            container_name=container_name,
-            image=image,
-            port=host_port if listener_expected else None,
+        if env_cleanup_error and _SECRET_SCRUB_FAILED in env_cleanup_error:
+            cleanup_detail = f"Docker env file cleanup failed: {env_cleanup_error}"
+            if not docker_run_invoked:
+                if run_error is not None:
+                    raise RuntimeError(f"{run_error}; {cleanup_detail}") from run_error
+                raise RuntimeError(cleanup_detail)
+            self._raise_launch_error_after_cleanup(
+                cleanup_detail,
+                provisional_launch,
+                absence_can_confirm=self._definite_docker_rejection(result),
+            )
+        if run_error is not None:
+            if not docker_run_invoked:
+                if isinstance(run_error, Exception):
+                    raise RuntimeError(str(run_error)) from run_error
+                raise run_error
+            run_error_detail = str(run_error).strip() or type(run_error).__name__
+            self._raise_launch_error_after_cleanup(
+                run_error_detail,
+                provisional_launch,
+                cause=run_error,
+            )
+        if result is None:
+            self._raise_launch_error_after_cleanup("docker run returned no result", provisional_launch)
+        returncode = getattr(result, "returncode", None)
+        if not isinstance(returncode, int):
+            self._raise_launch_error_after_cleanup("docker run returned an invalid result", provisional_launch)
+        if returncode != 0:
+            detail = str(
+                getattr(result, "stderr", "")
+                or getattr(result, "stdout", "")
+                or "docker run failed"
+            ).strip()
+            self._raise_launch_error_after_cleanup(
+                detail,
+                provisional_launch,
+                absence_can_confirm=self._definite_docker_rejection(result),
+            )
+        try:
+            output_lines = [
+                line.strip()
+                for line in str(getattr(result, "stdout", "") or "").splitlines()
+                if line.strip()
+            ]
+            output_identity = output_lines[-1] if output_lines else ""
+            identity_ref = (
+                output_identity
+                if re.fullmatch(r"[0-9a-fA-F]{64}", output_identity)
+                else container_name
+            )
+            ownership, container_id = self._container_label_identity(
+                identity_ref,
+                label=_LAUNCH_TOKEN_LABEL,
+                expected_value=launch_token,
+            )
+        except BaseException as exc:  # noqa: BLE001 - post-run authority is still transactional
+            self._raise_launch_error_after_cleanup(
+                str(exc).strip() or type(exc).__name__,
+                provisional_launch,
+                cause=exc,
+            )
+        if ownership != "owned" or container_id is None:
+            self._raise_launch_error_after_cleanup(
+                "docker run completed but the launched container identity could not be confirmed",
+                provisional_launch,
+            )
+        try:
+            launch = DockerServiceLaunch(
+                container_id=container_id,
+                container_name=container_name,
+                image=image,
+                log_path=log_path,
+                launch_token=launch_token,
+            )
+            if on_confirmed is not None:
+                on_confirmed(launch)
+            self._emit_best_effort(
+                "service.container.start",
+                project=project_name,
+                service=service_name,
+                container_name=container_name,
+                image=image,
+                port=host_port if listener_expected else None,
+            )
+            return launch
+        except BaseException as exc:  # noqa: BLE001 - confirmed identity was not handed off
+            self._raise_launch_error_after_cleanup(
+                str(exc).strip() or type(exc).__name__,
+                provisional_launch,
+                cause=exc,
+            )
+
+    def _raise_launch_error_after_cleanup(
+        self,
+        detail: str,
+        launch: DockerServiceLaunch,
+        *,
+        cause: BaseException | None = None,
+        absence_can_confirm: bool = False,
+    ) -> None:
+        cleanup_error: BaseException | None = None
+        try:
+            cleanup_confirmed = self._cleanup_failed_launch(
+                launch,
+                absence_can_confirm=absence_can_confirm,
+            )
+        except BaseException as exc:  # noqa: BLE001 - preserve authority across cleanup cancellation
+            cleanup_confirmed = False
+            cleanup_error = exc
+        if cleanup_confirmed:
+            if cause is not None:
+                if not isinstance(cause, Exception):
+                    raise cause
+                raise RuntimeError(detail) from cause
+            raise RuntimeError(detail)
+        error = DockerServiceLaunchCleanupError(
+            f"{detail}; Docker cleanup could not confirm removal of {launch.container_name}",
+            launch,
         )
-        return launch
+        chained_cause = cause if cause is not None else cleanup_error
+        if chained_cause is not None:
+            raise error from chained_cause
+        raise error
+
+    def _cleanup_failed_launch(
+        self,
+        launch: DockerServiceLaunch,
+        *,
+        absence_can_confirm: bool,
+        remove: bool = True,
+    ) -> bool:
+        deadline = time.monotonic() + self._timeout("ENVCTL_DOCKER_CLEANUP_DISCOVERY_SECONDS", 1.0)
+        while True:
+            try:
+                token_cleanup = self._cleanup_launch_token_matches(
+                    launch.launch_token,
+                    remove=remove,
+                )
+            except BaseException:  # noqa: BLE001 - cancellation cannot abandon authority
+                return False
+            if token_cleanup == "unknown":
+                return False
+            if token_cleanup == "removed":
+                return True
+
+            try:
+                ownership, container_id = self._container_label_identity(
+                    launch.container_name,
+                    label=_LAUNCH_TOKEN_LABEL,
+                    expected_value=launch.launch_token,
+                )
+            except BaseException:  # noqa: BLE001 - cancellation cannot abandon authority
+                return False
+            if ownership == "owned" and container_id is not None:
+                try:
+                    return self._remove_container_identity(container_id, remove=remove)
+                except BaseException:  # noqa: BLE001 - cancellation cannot abandon authority
+                    return False
+            if ownership == "unknown":
+                return False
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                # A token-filtered daemon query plus repeated name probes stayed
+                # absent for the whole discovery window. This covers definite
+                # Docker failures without losing a timeout-accepted container
+                # that becomes visible shortly after its client is terminated.
+                return absence_can_confirm
+            time.sleep(min(0.1, remaining))
+
+    @staticmethod
+    def _definite_docker_rejection(result: object | None) -> bool:
+        returncode = getattr(result, "returncode", None)
+        if not isinstance(returncode, int) or returncode in {0, 124}:
+            return False
+        detail = str(getattr(result, "stderr", "") or getattr(result, "stdout", "")).lower()
+        return "timed out" not in detail and "timeout" not in detail
+
+    def _cleanup_launch_token_matches(self, launch_token: str, *, remove: bool) -> str:
+        matching_ids = self._container_ids_for_launch_token(launch_token)
+        if matching_ids is None:
+            return "unknown"
+        if not matching_ids:
+            return "absent"
+        removal_results: list[bool] = []
+        for candidate_id in matching_ids:
+            ownership, confirmed_id = self._container_label_identity(
+                candidate_id,
+                label=_LAUNCH_TOKEN_LABEL,
+                expected_value=launch_token,
+            )
+            if ownership == "absent":
+                removal_results.append(True)
+            elif ownership == "owned" and confirmed_id == candidate_id:
+                removal_results.append(
+                    self._remove_container_identity(confirmed_id, remove=remove)
+                )
+            else:
+                removal_results.append(False)
+        return "removed" if all(removal_results) else "unknown"
+
+    def _container_ids_for_launch_token(self, launch_token: str) -> tuple[str, ...] | None:
+        if not launch_token:
+            return None
+        result = self.process_runtime.run(
+            [
+                "docker",
+                "container",
+                "ls",
+                "--all",
+                "--quiet",
+                "--no-trunc",
+                "--filter",
+                f"label={_LAUNCH_TOKEN_LABEL}={launch_token}",
+            ],
+            timeout=10.0,
+        )
+        if result.returncode != 0:
+            return None
+        identities = tuple(
+            dict.fromkeys(
+                line.strip()
+                for line in str(result.stdout or "").splitlines()
+                if line.strip()
+            )
+        )
+        if any(re.fullmatch(r"[0-9a-fA-F]{64}", identity) is None for identity in identities):
+            return None
+        return identities
 
     def wait_until_ready(self, launch: DockerServiceLaunch, *, port: int, listener_expected: bool) -> bool:
         if not self.container_running(launch.container_id):
@@ -280,30 +533,104 @@ class DockerServiceRuntime:
         *,
         remove: bool = True,
         verify_ownership: bool = False,
+        expected_launch_token: str | None = None,
+        pending_cleanup_since: float | None = None,
     ) -> bool:
         if not container:
             return True
-        if verify_ownership and not self._container_owned_by_runtime_scope(container):
-            return False
-        command = ["docker", "rm", "--force", container] if remove else ["docker", "stop", container]
+        target = container
+        if expected_launch_token:
+            ownership, container_id = self._container_label_identity(
+                container,
+                label=_LAUNCH_TOKEN_LABEL,
+                expected_value=expected_launch_token,
+            )
+            if ownership == "owned" and container_id is not None:
+                target = container_id
+            elif ownership == "unknown":
+                return False
+            else:
+                token_cleanup = self._cleanup_launch_token_matches(
+                    expected_launch_token,
+                    remove=remove,
+                )
+                if token_cleanup == "removed":
+                    return True
+                if token_cleanup == "unknown" or ownership == "foreign":
+                    return False
+                if pending_cleanup_since is None:
+                    return True
+                try:
+                    pending_timestamp = float(pending_cleanup_since)
+                except (TypeError, ValueError):
+                    return False
+                if not math.isfinite(pending_timestamp) or pending_timestamp <= 0:
+                    return False
+                grace = self._timeout("ENVCTL_DOCKER_PENDING_CLEANUP_GRACE_SECONDS", 30.0)
+                if time.time() - pending_timestamp < grace:
+                    return False
+                provisional = DockerServiceLaunch(
+                    container_id=container,
+                    container_name=container,
+                    image="",
+                    log_path="",
+                    launch_token=expected_launch_token,
+                    cleanup_pending_since=pending_timestamp,
+                )
+                return self._cleanup_failed_launch(
+                    provisional,
+                    absence_can_confirm=True,
+                    remove=remove,
+                )
+        elif verify_ownership:
+            ownership, container_id = self._container_label_identity(
+                container,
+                label=_RUNTIME_SCOPE_LABEL,
+                expected_value=self._runtime_scope_identity(),
+            )
+            if ownership == "absent":
+                return True
+            if ownership != "owned" or container_id is None:
+                return False
+            target = container_id
+        return self._remove_container_identity(target, remove=remove)
+
+    def _remove_container_identity(self, container_id: str, *, remove: bool) -> bool:
+        command = ["docker", "rm", "--force", container_id] if remove else ["docker", "stop", container_id]
         result = self.process_runtime.run(command, timeout=30.0)
         return result.returncode == 0 or "No such container" in str(result.stderr or "")
 
-    def _container_owned_by_runtime_scope(self, container: str) -> bool:
+    def _container_label_identity(
+        self,
+        container: str,
+        *,
+        label: str,
+        expected_value: str,
+    ) -> tuple[str, str | None]:
+        if not container or not expected_value:
+            return "unknown", None
         inspected = self.process_runtime.run(
             [
                 "docker",
                 "container",
                 "inspect",
                 "--format",
-                f"{{{{index .Config.Labels {json.dumps(_RUNTIME_SCOPE_LABEL)}}}}}",
+                f"{{{{.Id}}}}|{{{{index .Config.Labels {json.dumps(label)}}}}}",
                 container,
             ],
             timeout=10.0,
         )
         if inspected.returncode != 0:
-            return "No such" in str(inspected.stderr or "")
-        return str(inspected.stdout or "").strip() == self._runtime_scope_identity()
+            return ("absent", None) if "No such" in str(inspected.stderr or "") else ("unknown", None)
+        raw_id, separator, actual_value = str(inspected.stdout or "").strip().partition("|")
+        container_id = raw_id.strip()
+        if not separator or re.fullmatch(r"[0-9a-fA-F]{64}", container_id) is None:
+            return "unknown", None
+        return (
+            ("owned", container_id)
+            if actual_value.strip() == expected_value
+            else ("foreign", container_id)
+        )
 
     def container_running(self, container: str) -> bool:
         if not container:
@@ -411,7 +738,10 @@ class DockerServiceRuntime:
                 "container",
                 "inspect",
                 "--format",
-                f"{{{{.State.Running}}}}|{{{{index .Config.Labels {json.dumps(_RUNTIME_SCOPE_LABEL)}}}}}",
+                (
+                    f"{{{{.Id}}}}|{{{{.State.Running}}}}|"
+                    f"{{{{index .Config.Labels {json.dumps(_RUNTIME_SCOPE_LABEL)}}}}}"
+                ),
                 name,
             ],
             timeout=10.0,
@@ -420,19 +750,29 @@ class DockerServiceRuntime:
             if "No such" in str(inspect.stderr or "") or "not found" in str(inspect.stderr or "").lower():
                 return
             raise RuntimeError(str(inspect.stderr or inspect.stdout or f"failed to inspect {name}").strip())
-        running_text, _separator, owner = str(inspect.stdout or "").strip().partition("|")
+        container_id, separator, remainder = str(inspect.stdout or "").strip().partition("|")
+        running_text, owner_separator, owner = remainder.partition("|")
+        if (
+            not separator
+            or not owner_separator
+            or re.fullmatch(r"[0-9a-fA-F]{64}", container_id.strip()) is None
+        ):
+            raise RuntimeError(f"Docker returned an invalid identity while inspecting {name!r}")
         expected_owner = self._runtime_scope_identity()
-        if owner and owner != expected_owner:
+        if owner != expected_owner:
             raise RuntimeError(
                 f"Docker container {name!r} is managed by another envctl runtime scope; "
                 "stop it from that runtime before starting this one"
             )
-        if running_text.lower() == "true":
+        normalized_running = running_text.strip().lower()
+        if normalized_running not in {"true", "false"}:
+            raise RuntimeError(f"Docker returned an invalid running state while inspecting {name!r}")
+        if normalized_running == "true":
             raise RuntimeError(
                 f"Docker container {name!r} is already running but was not resumed from current state; "
                 "run envctl stop for this project before starting it again"
             )
-        self._remove_container(name)
+        self._remove_container(container_id.strip())
 
     def _remove_container(self, name: str) -> None:
         result = self.process_runtime.run(["docker", "rm", "--force", name], timeout=30.0)
@@ -584,12 +924,114 @@ class DockerServiceRuntime:
     def _write_env_file(self, *, project_name: str, service_name: str, values: Mapping[str, str]) -> Path:
         run_dir = Path(self.runtime._run_dir_path(getattr(self.runtime, "_active_run_id", None) or "docker"))
         run_dir.mkdir(parents=True, exist_ok=True)
+        stale_errors = self._scrub_stale_env_files(run_dir)
+        unsafe_errors = [detail for detail in stale_errors if _SECRET_SCRUB_FAILED in detail]
+        if unsafe_errors:
+            raise RuntimeError("Stale Docker env file cleanup failed: " + "; ".join(unsafe_errors))
+        for detail in stale_errors:
+            self._emit_best_effort("service.container.env_file_cleanup_warning", detail=detail, stale=True)
         digest = hashlib.sha256(f"{project_name}\0{service_name}".encode()).hexdigest()[:12]
-        path = run_dir / f".docker-env-{digest}"
-        lines = [f"{key}={str(value).replace(chr(10), '')}" for key, value in sorted(values.items())]
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        path.chmod(0o600)
-        return path
+        descriptor, raw_path = tempfile.mkstemp(
+            prefix=f".docker-env-{digest}-p{os.getpid()}-",
+            dir=run_dir,
+        )
+        path = Path(raw_path)
+        try:
+            lines = [
+                f"{key}={str(value).replace(chr(10), '')}"
+                for key, value in sorted(values.items())
+            ]
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                descriptor = -1
+                handle.write("\n".join(lines) + "\n")
+            return path
+        except BaseException as write_error:
+            if descriptor >= 0:
+                try:
+                    os.close(descriptor)
+                except BaseException:  # noqa: BLE001 - continue to pathname scrub
+                    pass
+            cleanup_error = self._scrub_env_file_safely(path)
+            if cleanup_error:
+                self._emit_best_effort(
+                    "service.container.env_file_cleanup_warning",
+                    project=project_name,
+                    service=service_name,
+                    detail=cleanup_error,
+                    write_failed=True,
+                )
+                raise RuntimeError(
+                    f"Docker env file write failed: {write_error}; cleanup failed: {cleanup_error}"
+                ) from write_error
+            raise
+
+    def _scrub_stale_env_files(self, run_dir: Path) -> list[str]:
+        errors: list[str] = []
+        legacy_grace = self._timeout("ENVCTL_DOCKER_ENV_STALE_SECONDS", 300.0)
+        now = time.time()
+        for path in tuple(run_dir.glob(".docker-env-*")):
+            match = _ENV_FILE_PID_PATTERN.fullmatch(path.name)
+            if match is not None:
+                pid = int(match.group("pid"))
+                if pid == os.getpid() or self._pid_is_running(pid):
+                    continue
+            else:
+                try:
+                    if now - path.lstat().st_mtime < legacy_grace:
+                        continue
+                except OSError as exc:
+                    errors.append(f"{path}: {_SECRET_SCRUB_FAILED}: {exc}")
+                    continue
+            detail = self._scrub_env_file_safely(path)
+            if detail:
+                errors.append(f"{path}: {detail}")
+        return errors
+
+    @staticmethod
+    def _pid_is_running(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except (PermissionError, OSError):
+            return True
+        return True
+
+    @staticmethod
+    def _scrub_env_file(path: Path) -> str | None:
+        try:
+            path.unlink(missing_ok=True)
+            return None
+        except OSError as unlink_error:
+            if not path.exists() and not path.is_symlink():
+                return None
+            try:
+                flags = os.O_WRONLY | os.O_TRUNC
+                if hasattr(os, "O_NOFOLLOW"):
+                    flags |= os.O_NOFOLLOW
+                descriptor = os.open(path, flags)
+                os.close(descriptor)
+            except OSError as scrub_error:
+                return f"{unlink_error}; secret scrub failed: {scrub_error}"
+            try:
+                path.unlink(missing_ok=True)
+                return None
+            except OSError as retry_error:
+                return f"{unlink_error}; file was scrubbed but unlink retry failed: {retry_error}"
+
+    @staticmethod
+    def _scrub_env_file_safely(path: Path) -> str | None:
+        try:
+            return DockerServiceRuntime._scrub_env_file(path)
+        except BaseException as exc:  # noqa: BLE001 - secret cleanup must never be masked
+            return f"{_SECRET_SCRUB_FAILED}: {exc}"
+
+    def _emit_best_effort(self, event: str, **payload: object) -> None:
+        try:
+            self.runtime._emit(event, **payload)
+        except BaseException:  # noqa: BLE001 - diagnostics cannot interrupt authority handoff
+            pass
 
     def _setting(self, service_name: str, suffix: str) -> str:
         env = getattr(self.runtime, "env", {})

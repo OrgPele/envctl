@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -658,6 +660,60 @@ class EngineRuntimeStartupSupportTests(unittest.TestCase):
         context = ProjectContext(name="Main", root=Path("/repo"), ports={"backend": port_plan})
         reserve_project_ports(runtime, context)
         self.assertEqual(events[-1][0], "port.reserved")
+
+    def test_reserving_selected_project_reclaims_only_its_candidate_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_dir = Path(tmpdir)
+            foreign_payload = json.dumps(
+                {
+                    "owner": "Other:backend",
+                    "session": "historical-other",
+                    "pid": 99999999,
+                    "created_at": 0,
+                },
+                sort_keys=True,
+            )
+            selected_payload = json.dumps(
+                {
+                    "owner": "Selected:backend",
+                    "session": "historical-selected",
+                    "pid": 99999998,
+                    "created_at": 0,
+                },
+                sort_keys=True,
+            )
+            (lock_dir / "18000.lock").write_text(foreign_payload, encoding="utf-8")
+            (lock_dir / "18001.lock").write_text(selected_payload, encoding="utf-8")
+            planner = PortPlanner(
+                lock_dir=lock_dir,
+                session_id="selected-start",
+                availability_checker=lambda _port: True,
+            )
+            runtime = SimpleNamespace(
+                port_planner=planner,
+                _emit=lambda *_args, **_kwargs: None,
+                _lock_inventory=lambda: [],
+            )
+            context = ProjectContext(
+                name="Selected",
+                root=Path("/repo/trees/selected"),
+                ports={
+                    "backend": PortPlan(
+                        project="Selected",
+                        requested=18001,
+                        assigned=18001,
+                        final=18001,
+                        source="fixed",
+                    )
+                },
+            )
+
+            reserve_project_ports(runtime, context)
+
+            self.assertEqual((lock_dir / "18000.lock").read_text(encoding="utf-8"), foreign_payload)
+            selected_lock = json.loads((lock_dir / "18001.lock").read_text(encoding="utf-8"))
+            self.assertEqual(selected_lock["owner"], "Selected:backend")
+            self.assertEqual(selected_lock["session"], "selected-start")
 
     def test_no_infra_reserves_no_application_or_dependency_ports(self) -> None:
         reserve_calls: list[tuple[int, str]] = []

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import UTC, datetime, timedelta
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -855,6 +856,91 @@ def stable_system_python_bin() -> str | None:
     if candidate.exists():
         return str(candidate)
     return shutil.which("python3")
+
+
+def prepare_python_command_shim(
+    env: dict[str, str],
+    *,
+    runtime_root: Path,
+) -> Path:
+    """Expose the selected Python 3 interpreter under the legacy ``python`` name.
+
+    Imported PR branches can contain launch scripts written before envctl
+    propagated ``PYTHON_BIN``. Self-hosted runners commonly provide only
+    ``python3``. A controller-owned, private PATH shim lets those scripts use
+    the selected interpreter without modifying the imported worktree.
+    """
+
+    configured = str(env.get("PYTHON_BIN") or stable_system_python_bin() or "").strip()
+    if not configured:
+        raise RuntimeError("No Python 3 interpreter is available for PR preview startup")
+    candidate = Path(configured).expanduser()
+    if not candidate.is_absolute():
+        resolved_command = shutil.which(configured, path=env.get("PATH"))
+        if not resolved_command:
+            raise RuntimeError(f"Configured preview Python interpreter is not executable: {configured}")
+        candidate = Path(resolved_command)
+    try:
+        python_bin = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError(f"Configured preview Python interpreter does not exist: {configured}") from exc
+    if not python_bin.is_file() or not os.access(python_bin, os.X_OK):
+        raise RuntimeError(f"Configured preview Python interpreter is not executable: {python_bin}")
+
+    try:
+        probe = subprocess.run(
+            [
+                str(python_bin),
+                "-c",
+                "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"Configured preview interpreter could not be validated: {python_bin}") from exc
+    reported_version = str(probe.stdout or "").strip()
+    if probe.returncode != 0 or re.fullmatch(r"3\.\d+", reported_version) is None:
+        raise RuntimeError(f"Configured preview interpreter is not Python 3: {python_bin}")
+
+    _ensure_real_directory(runtime_root)
+    shim_root = runtime_root / "python-command-shims"
+    _ensure_real_directory(shim_root, private=True)
+    interpreter_key = hashlib.sha256(str(python_bin).encode("utf-8")).hexdigest()[:20]
+    shim_dir = shim_root / interpreter_key
+    _ensure_real_directory(shim_dir, private=True)
+    shim_path = shim_dir / "python"
+    temporary = shim_dir / f".python-{os.getpid()}-{secrets.token_hex(8)}"
+    try:
+        temporary.symlink_to(python_bin)
+        os.replace(temporary, shim_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+    env["PYTHON_BIN"] = str(python_bin)
+    env["ENVCTL_PYTHON_EXECUTABLE"] = str(python_bin)
+    existing_path = str(env.get("PATH") or "")
+    legacy_shim_dir = runtime_root / "python-command-shim"
+    path_parts = [
+        part
+        for part in existing_path.split(os.pathsep)
+        if part and Path(part) != legacy_shim_dir and Path(part).parent != shim_root
+    ]
+    env["PATH"] = os.pathsep.join((str(shim_dir), *path_parts))
+    return shim_path
+
+
+def _ensure_real_directory(path: Path, *, private: bool = False) -> None:
+    try:
+        path.mkdir(parents=True, exist_ok=False, mode=0o700 if private else 0o755)
+    except FileExistsError:
+        pass
+    if path.is_symlink() or not path.is_dir():
+        raise RuntimeError(f"PR preview runtime path is not a real directory: {path}")
+    if private:
+        path.chmod(0o700)
 
 
 def normalize_envctl_config_value(raw: str) -> str:
@@ -1989,7 +2075,16 @@ class PreviewController:
         start_env = self.envctl_command_env()
         start_env.update(pr_preview_start_env_overrides())
         start_env.update(self.external_dependency_start_env(external_dependencies))
-        self.reset_incompatible_backend_venv(project, start_env)
+        python_setup_error = ""
+        try:
+            prepare_python_command_shim(
+                start_env,
+                runtime_root=self.config.preview_root / "runtime",
+            )
+        except (OSError, RuntimeError) as exc:
+            python_setup_error = str(exc)
+        if not python_setup_error:
+            self.reset_incompatible_backend_venv(project, start_env)
         public_urls = self.public_route_urls(pr.number)
         if public_urls.get("backend"):
             start_env["ENVCTL_BACKEND_ENV__FRONTEND_BASE_URL"] = public_urls["frontend"]
@@ -2005,21 +2100,31 @@ class PreviewController:
                 start_env["ENVCTL_FRONTEND_ENV__VITE_SUPABASE_URL"] = public_urls["supabase"]
         self.apply_repository_preview_env(start_env, pr_number=pr.number)
 
-        start_result = self.runner.run(
-            [
-                self.config.envctl_bin,
-                "start",
-                "--trees",
-                "--project",
-                str(project["name"]),
-                "--headless",
-                "--entire-system",
-                "--isolated-deps",
-                "--copy-db-storage",
-            ],
-            cwd=self.config.control_repo,
-            check=False,
-            env=start_env,
+        start_argv = [
+            self.config.envctl_bin,
+            "start",
+            "--trees",
+            "--project",
+            str(project["name"]),
+            "--headless",
+            "--entire-system",
+            "--isolated-deps",
+            "--copy-db-storage",
+        ]
+        start_result = (
+            CommandResult(
+                argv=start_argv,
+                returncode=1,
+                stdout="",
+                stderr=f"PR preview Python compatibility setup failed: {python_setup_error}",
+            )
+            if python_setup_error
+            else self.runner.run(
+                start_argv,
+                cwd=self.config.control_repo,
+                check=False,
+                env=start_env,
+            )
         )
         if start_result.returncode != 0:
             state = PreviewState(

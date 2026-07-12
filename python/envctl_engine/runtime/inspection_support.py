@@ -10,6 +10,7 @@ from envctl_engine.config import discover_local_config_state
 from envctl_engine.config.persistence import managed_values_from_local_state, managed_values_to_payload
 from envctl_engine.planning import PlanProjectPrediction
 from envctl_engine.runtime.command_router import Route, list_supported_commands
+from envctl_engine.shared.services import resolve_service_project_name
 from envctl_engine.runtime.state_inspection_support import (
     emit_cwd_runtime_mismatch_warnings as _emit_cwd_runtime_mismatch_warnings_impl,
     print_state as _print_state_impl,
@@ -154,7 +155,11 @@ def _running_tree_project_names(*, runtime: Any, state: RunState) -> set[str]:
     if not isinstance(services, dict):
         return running
     for service_name, record in services.items():
-        project_name = runtime._project_name_from_service(str(service_name))
+        project_name = resolve_service_project_name(
+            str(service_name),
+            record,
+            project_name_from_service=runtime._project_name_from_service,
+        )
         normalized = str(project_name).strip()
         if not normalized:
             continue
