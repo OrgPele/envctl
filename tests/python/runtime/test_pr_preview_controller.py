@@ -496,17 +496,19 @@ def test_overload_reasons_report_real_threshold_breaches(tmp_path):
         docker_error=None,
         top_processes=(),
     )
-    other = controller.PullRequestInfo(
-        number=123,
-        title="Other",
-        url="https://example.test/pr/123",
-        state="OPEN",
-        merged=False,
+    other = controller.PreviewState(
+        pr_number=123,
+        label="deploy-app",
+        project="feature/other",
+        root=str(tmp_path / "other"),
         head_ref="feature/other",
         head_sha="abc",
-        head_repo_name="pele-monorepo",
-        head_repo_owner="OrgPele",
-        labels=("deploy-app",),
+        status="running",
+        label_added_at="2026-07-15T17:00:00Z",
+        started_at="2026-07-15T17:00:00Z",
+        expires_at="2026-07-15T17:30:00Z",
+        updated_at="2026-07-15T17:00:00Z",
+        endpoints={},
     )
 
     reasons = controller.overload_reasons(stats, [other], 456, config)
@@ -517,7 +519,7 @@ def test_overload_reasons_report_real_threshold_breaches(tmp_path):
     assert any("other envctl previews" in reason for reason in reasons)
 
 
-def test_overloaded_start_comments_stats_lists_other_prs_and_removes_label(
+def test_overloaded_start_comments_stats_lists_other_previews_and_removes_label(
     tmp_path,
     monkeypatch,
 ):
@@ -532,6 +534,22 @@ def test_overloaded_start_comments_stats_lists_other_prs_and_removes_label(
         ],
     )
     instance = controller.PreviewController(config, runner)
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=123,
+            label="deploy-app",
+            project="feature/other",
+            root=str(tmp_path / "other"),
+            head_ref="feature/other",
+            head_sha="abc",
+            status="running",
+            label_added_at="2026-07-15T17:00:00Z",
+            started_at="2026-07-15T17:00:00Z",
+            expires_at="2026-07-15T17:30:00Z",
+            updated_at="2026-07-15T17:00:00Z",
+            endpoints={},
+        )
+    )
     stats = controller.MachineStats(
         load_1m=8.0,
         load_5m=5.0,
@@ -561,8 +579,62 @@ def test_overloaded_start_comments_stats_lists_other_prs_and_removes_label(
     comment = runner.comments[-1]
     assert "self-hosted machine is overloaded" in comment
     assert "Load average: 8.00, 5.00, 3.00" in comment
-    assert "#123: [Other preview]" in comment
+    assert "PR #123: `running` on `feature/other`" in comment
+    assert "Capacity-consuming envctl previews: 1" in comment
     assert "111 python 250.0 5.0" in comment
+
+
+def test_capacity_admission_ignores_other_labeled_prs_without_preview_state(
+    tmp_path,
+):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        active_prs=[
+            pr_list_payload(789, "Current", head_ref="feature/demo"),
+            pr_list_payload(123, "Requested one", head_ref="feature/one"),
+            pr_list_payload(124, "Requested two", head_ref="feature/two"),
+            pr_list_payload(125, "Requested three", head_ref="feature/three"),
+        ],
+        projects={
+            "projects": [
+                {
+                    "name": "feature/demo",
+                    "root": str(root),
+                    "running": True,
+                }
+            ]
+        },
+        endpoints={
+            "frontend": {"port": 9000},
+            "backend": {"port": 8000},
+        },
+        root_to_branch={str(root): "feature/demo"},
+    )
+    base_config = make_config(controller, tmp_path)
+    config = controller.ControllerConfig(
+        **{
+            **base_config.__dict__,
+            "max_other_active_previews": 1,
+        }
+    )
+    instance = controller.PreviewController(config, runner)
+
+    exit_code = instance.run_pull_request_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "import")
+    assert command_argvs(runner, "envctl", "start")
+    assert runner.removed_labels == []
+    assert instance.load_state(789).status == "running"
 
 
 def test_overloaded_start_stops_stale_tracked_preview_before_label_removal(

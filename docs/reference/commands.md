@@ -270,6 +270,8 @@ Behavior:
 - deletes imported worktrees when a PR closes or merges
 - comments with CPU, memory, disk, Docker, and process evidence when the runner
   is too loaded to deploy
+- counts only controller states that still consume runtime capacity; pending
+  labels by themselves do not count as active previews
 - runs storage-preserving `envctl blast-all` cleanup when active preview count
   reaches zero, passing keep-volume flags so leftover containers and processes
   are killed without deleting copied runtime storage
