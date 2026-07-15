@@ -275,6 +275,8 @@ Behavior:
   is too loaded to deploy
 - counts only controller states that still consume runtime capacity; pending
   labels by themselves do not count as active previews
+- admits up to five concurrent previews by default; set
+  `ENVCTL_PREVIEW_MAX_OTHER_ACTIVE` to override that capacity
 - expires overdue previews before evaluating a new start, so delayed GitHub
   schedules cannot leave stale runtimes occupying every admission slot
 - keeps failed stop/cleanup states and their dependency leases capacity-visible
