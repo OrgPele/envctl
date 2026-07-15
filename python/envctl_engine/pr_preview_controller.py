@@ -100,6 +100,7 @@ PR_PREVIEW_SERVICE_ENV_OVERLAY_PATTERN = re.compile(
     r"^ENVCTL_[A-Z][A-Z0-9_]*_ENV__[A-Z_][A-Z0-9_]*$"
 )
 FAILED_START_STATUSES = frozenset({"public_route_unhealthy", "start_failed"})
+CAPACITY_CONSUMING_PREVIEW_STATUSES = frozenset({"running", "starting", "qa_user_failed", "public_route_failed"})
 PUBLIC_ROUTE_HEALTH_DEADLINE_SECONDS = 30.0
 PUBLIC_ROUTE_HEALTH_INTERVAL_SECONDS = 2.0
 PUBLIC_ROUTE_REQUEST_TIMEOUT_SECONDS = 5.0
@@ -1213,7 +1214,7 @@ def run_capture(argv: list[str], *, timeout: float) -> subprocess.CompletedProce
 
 def overload_reasons(
     stats: MachineStats,
-    active_prs: list[PullRequestInfo],
+    active_previews: list[PreviewState],
     current_pr_number: int,
     config: ControllerConfig,
 ) -> list[str]:
@@ -1236,7 +1237,7 @@ def overload_reasons(
         reasons.append(
             f"free disk is {stats.disk_free_percent:.1f}%, below threshold {config.min_disk_free_percent:.1f}%"
         )
-    other_active = [pr for pr in active_prs if pr.number != current_pr_number]
+    other_active = [state for state in active_previews if state.pr_number != current_pr_number]
     if len(other_active) >= config.max_other_active_previews:
         reasons.append(
             f"{len(other_active)} other envctl previews are already active, "
@@ -1895,16 +1896,26 @@ class PreviewController:
             )
             return 0
 
-        active_prs = self.active_prs_with_label()
+        active_previews = self.capacity_consuming_preview_states()
         stats = collect_machine_stats(self.config.preview_root, self.runner)
-        reasons = overload_reasons(stats, active_prs, pr.number, self.config)
+        reasons = overload_reasons(
+            stats,
+            active_previews,
+            pr.number,
+            self.config,
+        )
         if reasons:
             state = self.load_state(pr.number)
             if state and state.project:
                 self.stop(pr, reason="self-hosted machine overloaded", comment=False)
             self.comment(
                 pr.number,
-                self.render_overload_comment(pr, stats, reasons, active_prs),
+                self.render_overload_comment(
+                    pr,
+                    stats,
+                    reasons,
+                    active_previews,
+                ),
             )
             self.remove_label(pr.number)
             return 0
@@ -3165,6 +3176,13 @@ class PreviewController:
                 continue
         return states
 
+    def capacity_consuming_preview_states(self) -> list[PreviewState]:
+        return [
+            state
+            for state in self.load_all_states()
+            if state.project and state.status in CAPACITY_CONSUMING_PREVIEW_STATUSES
+        ]
+
     def load_state(self, pr_number: int) -> PreviewState | None:
         path = self.state_path(pr_number)
         if not path.exists():
@@ -3440,11 +3458,11 @@ class PreviewController:
         pr: PullRequestInfo,
         stats: MachineStats,
         reasons: list[str],
-        active_prs: list[PullRequestInfo],
+        active_previews: list[PreviewState],
     ) -> str:
-        other_prs = [item for item in active_prs if item.number != pr.number]
+        other_previews = [state for state in active_previews if state.pr_number != pr.number]
         other_lines = (
-            "\n".join(f"- #{item.number}: [{item.title}]({item.url}) on `{item.head_ref}`" for item in other_prs)
+            "\n".join(f"- PR #{state.pr_number}: `{state.status}` on `{state.project}`" for state in other_previews)
             or "- None"
         )
         process_lines = "\n".join(f"  - `{line}`" for line in stats.top_processes) or "  - unavailable"
@@ -3475,8 +3493,9 @@ class PreviewController:
             f"({stats.disk_free_percent:.1f}%; "
             f"threshold {self.config.min_disk_free_percent:.1f}%)\n"
             f"- Docker containers: {docker_line}\n"
-            f"- Active PRs with `{self.config.label}`: {len(active_prs)}\n\n"
-            "Other active PRs with this label:\n"
+            "- Capacity-consuming envctl previews: "
+            f"{len(active_previews)}\n\n"
+            "Other capacity-consuming previews:\n"
             f"{other_lines}\n\n"
             "Top CPU processes:\n"
             f"{process_lines}"
