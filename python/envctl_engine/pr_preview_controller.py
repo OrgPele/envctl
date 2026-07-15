@@ -99,8 +99,25 @@ PR_PREVIEW_START_ENV_PREFIXES = (
 PR_PREVIEW_SERVICE_ENV_OVERLAY_PATTERN = re.compile(
     r"^ENVCTL_[A-Z][A-Z0-9_]*_ENV__[A-Z_][A-Z0-9_]*$"
 )
-FAILED_START_STATUSES = frozenset({"public_route_unhealthy", "start_failed"})
-CAPACITY_CONSUMING_PREVIEW_STATUSES = frozenset({"running", "starting", "qa_user_failed", "public_route_failed"})
+FAILED_START_STATUSES = frozenset(
+    {
+        "public_route_cleanup_failed",
+        "public_route_unhealthy",
+        "start_cleanup_failed",
+        "start_failed",
+    }
+)
+CAPACITY_CONSUMING_PREVIEW_STATUSES = frozenset(
+    {
+        "public_route_cleanup_failed",
+        "public_route_failed",
+        "qa_user_failed",
+        "running",
+        "start_cleanup_failed",
+        "starting",
+        "stop_failed",
+    }
+)
 PUBLIC_ROUTE_HEALTH_DEADLINE_SECONDS = 30.0
 PUBLIC_ROUTE_HEALTH_INTERVAL_SECONDS = 2.0
 PUBLIC_ROUTE_REQUEST_TIMEOUT_SECONDS = 5.0
@@ -1896,6 +1913,11 @@ class PreviewController:
             )
             return 0
 
+        self.expire_overdue_previews(
+            self.active_prs_with_label(),
+            now=utc_now(),
+            exclude_pr_numbers={pr.number},
+        )
         active_previews = self.capacity_consuming_preview_states()
         stats = collect_machine_stats(self.config.preview_root, self.runner)
         reasons = overload_reasons(
@@ -2165,13 +2187,11 @@ class PreviewController:
             )
             self.save_state(state)
             cleanup_code = self.cleanup_failed_start_preview(state)
-            self.release_external_dependency_leases(
-                pr.number,
-                external_dependencies,
+            self.record_failed_start_cleanup(
+                state,
+                cleanup_code=cleanup_code,
+                cleanup_failed_status="start_cleanup_failed",
             )
-            if external_dependencies:
-                state = PreviewState(**{**asdict(state), "external_dependencies": {}})
-                self.save_state(state)
             self.comment(
                 pr.number,
                 self.render_failure_comment(
@@ -2293,13 +2313,11 @@ class PreviewController:
             )
             self.save_state(state)
             cleanup_code = self.cleanup_failed_start_preview(state)
-            self.release_external_dependency_leases(
-                pr.number,
-                external_dependencies,
+            self.record_failed_start_cleanup(
+                state,
+                cleanup_code=cleanup_code,
+                cleanup_failed_status="public_route_cleanup_failed",
             )
-            if external_dependencies:
-                state = PreviewState(**{**asdict(state), "external_dependencies": {}})
-                self.save_state(state)
             self.comment(
                 pr.number,
                 self.render_failure_comment(
@@ -2453,6 +2471,34 @@ class PreviewController:
         ):
             self.remove_project_docker_artifacts(raw_name)
         return 0
+
+    def record_failed_start_cleanup(
+        self,
+        state: PreviewState,
+        *,
+        cleanup_code: int,
+        cleanup_failed_status: str,
+    ) -> PreviewState:
+        status = state.status
+        external_dependencies = state.external_dependencies
+        if cleanup_code == 0:
+            self.release_external_dependency_leases(
+                state.pr_number,
+                external_dependencies,
+            )
+            external_dependencies = {}
+        else:
+            status = cleanup_failed_status
+        updated = PreviewState(
+            **{
+                **asdict(state),
+                "status": status,
+                "updated_at": isoformat(utc_now()) or "",
+                "external_dependencies": external_dependencies,
+            }
+        )
+        self.save_state(updated)
+        return updated
 
     def publish_public_routes(
         self,
@@ -2672,27 +2718,14 @@ class PreviewController:
         if not active_prs:
             return self.blast_all_if_scaled_to_zero()
         now = utc_now()
-        exit_code = 0
+        expired_pr_numbers, exit_code = self.expire_overdue_previews(
+            active_prs,
+            now=now,
+        )
         for pr in active_prs:
-            state = self.load_state(pr.number)
-            active_since = self.label_active_since(pr.number)
-            saved_active_since = parse_github_datetime(state.label_added_at) if state and state.label_added_at else None
-            if active_since is None:
-                active_since = saved_active_since
-            elif saved_active_since is not None and saved_active_since > active_since:
-                active_since = saved_active_since
-            if active_since is None:
-                active_since = now
-            expires_at = active_since + timedelta(minutes=self.config.ttl_minutes)
-            if now >= expires_at:
-                self.comment(
-                    pr.number,
-                    self.render_ttl_comment(pr, active_since, expires_at),
-                )
-                stop_code = self.stop(pr, reason="preview TTL expired", comment=False)
-                self.remove_label(pr.number)
-                exit_code = exit_code or stop_code
+            if pr.number in expired_pr_numbers:
                 continue
+            state = self.load_state(pr.number)
             if state and state.status in {"running", "starting"}:
                 if state.head_sha and state.head_sha != pr.head_sha:
                     exit_code = exit_code or self.start(
@@ -2714,6 +2747,54 @@ class PreviewController:
             if state is None or state.status not in {"running", "starting"}:
                 exit_code = exit_code or self.start(pr, reason="scheduled reconciliation")
         return exit_code
+
+    def expire_overdue_previews(
+        self,
+        active_prs: list[PullRequestInfo],
+        *,
+        now: datetime,
+        exclude_pr_numbers: set[int] | None = None,
+    ) -> tuple[set[int], int]:
+        excluded = exclude_pr_numbers or set()
+        expired: set[int] = set()
+        exit_code = 0
+        for pr in active_prs:
+            if pr.number in excluded:
+                continue
+            state = self.load_state(pr.number)
+            active_since = self.label_active_since(pr.number)
+            saved_active_since = (
+                parse_github_datetime(state.label_added_at)
+                if state and state.label_added_at
+                else None
+            )
+            if active_since is None:
+                active_since = saved_active_since
+            elif (
+                saved_active_since is not None
+                and saved_active_since > active_since
+            ):
+                active_since = saved_active_since
+            if active_since is None:
+                active_since = now
+            expires_at = active_since + timedelta(
+                minutes=self.config.ttl_minutes
+            )
+            if now < expires_at:
+                continue
+            expired.add(pr.number)
+            self.comment(
+                pr.number,
+                self.render_ttl_comment(pr, active_since, expires_at),
+            )
+            stop_code = self.stop(
+                pr,
+                reason="preview TTL expired",
+                comment=False,
+            )
+            self.remove_label(pr.number)
+            exit_code = exit_code or stop_code
+        return expired, exit_code
 
     def blast_all_if_scaled_to_zero(
         self,

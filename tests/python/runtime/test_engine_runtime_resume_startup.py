@@ -339,6 +339,7 @@ class EngineRuntimeResumeStartupTests(_EngineRuntimeRealStartupTestCase):
             output = StringIO()
             with (
                 patch.object(engine, "_try_load_existing_state", return_value=state),
+                patch.object(engine, "_state_has_resumable_services", return_value=False),
                 patch.object(engine, "_run_interactive_dashboard_loop", return_value=0) as loop_mock,
                 patch(
                     "envctl_engine.startup.resume_orchestrator.release_lifecycle_operation"
