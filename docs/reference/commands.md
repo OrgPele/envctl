@@ -267,6 +267,9 @@ Behavior:
   so shared service credentials do not need to be stored in GitHub
 - also redeploys during scheduled reconciliation if the saved preview head is stale
 - stops previews when the label is removed
+- enumerates open PRs and validates their returned label payload locally instead
+  of trusting GitHub's eventually consistent label-search index; scheduled
+  reconciliation also stops any tracked runtime whose authoritative label is gone
 - deletes imported worktrees when a PR closes or merges
 - comments with CPU, memory, disk, Docker, and process evidence when the runner
   is too loaded to deploy

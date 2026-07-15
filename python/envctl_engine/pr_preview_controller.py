@@ -2714,14 +2714,20 @@ class PreviewController:
         )
 
     def sweep(self) -> int:
-        active_prs = self.active_prs_with_label()
+        open_prs = self.open_prs()
+        active_prs = [pr for pr in open_prs if pr.has_label(self.config.label)]
         if not active_prs:
             return self.blast_all_if_scaled_to_zero()
+        exit_code = self.stop_unlabeled_tracked_previews(
+            open_prs,
+            active_pr_numbers={pr.number for pr in active_prs},
+        )
         now = utc_now()
-        expired_pr_numbers, exit_code = self.expire_overdue_previews(
+        expired_pr_numbers, expiry_exit_code = self.expire_overdue_previews(
             active_prs,
             now=now,
         )
+        exit_code = exit_code or expiry_exit_code
         for pr in active_prs:
             if pr.number in expired_pr_numbers:
                 continue
@@ -2746,6 +2752,36 @@ class PreviewController:
                 continue
             if state is None or state.status not in {"running", "starting"}:
                 exit_code = exit_code or self.start(pr, reason="scheduled reconciliation")
+        return exit_code
+
+    def stop_unlabeled_tracked_previews(
+        self,
+        open_prs: list[PullRequestInfo],
+        *,
+        active_pr_numbers: set[int],
+    ) -> int:
+        open_prs_by_number = {pr.number: pr for pr in open_prs}
+        exit_code = 0
+        for state in self.load_all_states():
+            if (
+                state.status in {"stopped", "deleted"}
+                or state.pr_number in active_pr_numbers
+            ):
+                continue
+            pr = open_prs_by_number.get(state.pr_number)
+            if pr is None:
+                continue
+            print(
+                f"Stopping tracked preview PR #{pr.number}; "
+                f"authoritative PR labels no longer include `{self.config.label}`.",
+                flush=True,
+            )
+            stop_code = self.stop(
+                pr,
+                reason="scheduled reconciliation after label removal",
+                comment=True,
+            )
+            exit_code = exit_code or stop_code
         return exit_code
 
     def expire_overdue_previews(
@@ -2950,7 +2986,7 @@ class PreviewController:
         )
         return pr_from_gh_payload(payload)
 
-    def active_prs_with_label(self) -> list[PullRequestInfo]:
+    def open_prs(self) -> list[PullRequestInfo]:
         payload = self.runner.json(
             [
                 "gh",
@@ -2960,15 +2996,16 @@ class PreviewController:
                 self.config.repo_slug,
                 "--state",
                 "open",
-                "--label",
-                self.config.label,
                 "--json",
                 ("number,title,url,state,headRefName,headRefOid,headRepository,headRepositoryOwner,labels"),
                 "--limit",
-                "100",
+                "1000",
             ]
         )
         return [pr_from_list_payload(item) for item in payload]
+
+    def active_prs_with_label(self) -> list[PullRequestInfo]:
+        return [pr for pr in self.open_prs() if pr.has_label(self.config.label)]
 
     def label_active_since(self, pr_number: int) -> datetime | None:
         result = self.runner.run(

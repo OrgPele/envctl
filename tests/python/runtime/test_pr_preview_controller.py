@@ -369,6 +369,10 @@ def pr_list_payload(
     }
 
 
+def without_preview_label(payload):
+    return {**payload, "labels": []}
+
+
 def command_argvs(runner, *prefix):
     return [call["argv"] for call in runner.calls if call["argv"][: len(prefix)] == list(prefix)]
 
@@ -3077,6 +3081,86 @@ def test_sweep_redeploys_running_preview_when_public_route_unhealthy(
         ["envctl", "start"],
     ]
     assert "scheduled reconciliation for unhealthy public route" in runner.comments[-1]
+
+
+def test_active_prs_with_label_ignores_stale_github_label_search_matches(tmp_path):
+    controller = load_controller()
+    config = make_config(controller, tmp_path)
+    runner = FakeRunner(
+        controller,
+        active_prs=[
+            without_preview_label(pr_list_payload(789, "Stale search match")),
+            pr_list_payload(790, "Actually labeled"),
+        ],
+    )
+    instance = controller.PreviewController(config, runner)
+
+    active_prs = instance.active_prs_with_label()
+
+    assert [pr.number for pr in active_prs] == [790]
+    list_call = command_argvs(runner, "gh", "pr", "list")[-1]
+    assert "--label" not in list_call
+    assert list_call[list_call.index("--limit") + 1] == "1000"
+
+
+def test_sweep_stops_unlabeled_tracked_preview_while_another_is_active(tmp_path):
+    controller = load_controller()
+    stale_root = tmp_path / "control" / "trees" / "imported" / "feature-stale"
+    active_root = tmp_path / "control" / "trees" / "imported" / "feature-active"
+    stale_root.mkdir(parents=True)
+    active_root.mkdir(parents=True)
+    config = make_config(controller, tmp_path, ttl_minutes=45)
+    runner = FakeRunner(
+        controller,
+        active_prs=[
+            without_preview_label(
+                pr_list_payload(789, "Stale", head_ref="feature/stale")
+            ),
+            pr_list_payload(790, "Active", head_ref="feature/active"),
+        ],
+        timeline="labeled\t2999-01-01T00:00:00Z\tdeploy-app\n",
+        projects={
+            "projects": [
+                {"name": "feature/stale", "root": str(stale_root), "running": True},
+                {"name": "feature/active", "root": str(active_root), "running": True},
+            ]
+        },
+        root_to_branch={
+            str(stale_root): "feature/stale",
+            str(active_root): "feature/active",
+        },
+    )
+    instance = controller.PreviewController(config, runner)
+    for number, project, root in (
+        (789, "feature/stale", stale_root),
+        (790, "feature/active", active_root),
+    ):
+        instance.save_state(
+            controller.PreviewState(
+                pr_number=number,
+                label="deploy-app",
+                project=project,
+                root=str(root),
+                head_ref=project,
+                head_sha="abc123456789",
+                status="running",
+                label_added_at="2999-01-01T00:00:00Z",
+                started_at="2999-01-01T00:00:00Z",
+                expires_at="2999-01-01T00:45:00Z",
+                updated_at="2999-01-01T00:00:00Z",
+                endpoints={},
+            )
+        )
+
+    exit_code = instance.sweep()
+
+    assert exit_code == 0
+    assert command_argvs(runner, "envctl", "stop") == [
+        ["envctl", "stop", "--trees", "--project", "feature/stale", "--entire-system"]
+    ]
+    assert instance.load_state(789).status == "stopped"
+    assert instance.load_state(790).status == "running"
+    assert "scheduled reconciliation after label removal" in runner.comments[-1]
 
 
 def test_sweep_with_no_active_prs_blasts_processes_without_removing_storage(
