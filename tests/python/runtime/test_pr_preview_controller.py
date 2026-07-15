@@ -523,6 +523,75 @@ def test_overload_reasons_report_real_threshold_breaches(tmp_path):
     assert any("other envctl previews" in reason for reason in reasons)
 
 
+def test_controller_config_defaults_to_five_concurrent_previews(monkeypatch):
+    controller = load_controller()
+    monkeypatch.delenv("ENVCTL_PREVIEW_MAX_OTHER_ACTIVE", raising=False)
+    args = controller.build_parser().parse_args(
+        ["--repo", "OrgPele/pele-monorepo"]
+    )
+
+    config = controller.ControllerConfig.from_env(args)
+
+    assert config.max_other_active_previews == 5
+
+
+def test_capacity_five_admits_fifth_preview_and_rejects_sixth(tmp_path):
+    controller = load_controller()
+    base_config = make_config(controller, tmp_path)
+    config = controller.ControllerConfig(
+        **{**base_config.__dict__, "max_other_active_previews": 5}
+    )
+    stats = controller.MachineStats(
+        load_1m=0.0,
+        load_5m=0.0,
+        load_15m=0.0,
+        cpu_count=4,
+        memory_total_bytes=100,
+        memory_available_bytes=100,
+        disk_total_bytes=100,
+        disk_free_bytes=100,
+        docker_running_containers=0,
+        docker_error=None,
+        top_processes=(),
+    )
+    active_previews = [
+        controller.PreviewState(
+            pr_number=number,
+            label="deploy-app",
+            project=f"feature/{number}",
+            root=str(tmp_path / str(number)),
+            head_ref=f"feature/{number}",
+            head_sha=f"sha-{number}",
+            status="running",
+            label_added_at="2026-07-15T17:00:00Z",
+            started_at="2026-07-15T17:00:00Z",
+            expires_at="2026-07-15T17:30:00Z",
+            updated_at="2026-07-15T17:00:00Z",
+            endpoints={},
+        )
+        for number in range(1, 6)
+    ]
+
+    fifth_reasons = controller.overload_reasons(
+        stats,
+        active_previews[:4],
+        current_pr_number=99,
+        config=config,
+    )
+    sixth_reasons = controller.overload_reasons(
+        stats,
+        active_previews,
+        current_pr_number=99,
+        config=config,
+    )
+
+    assert not any("other envctl previews" in reason for reason in fifth_reasons)
+    assert any(
+        "5 other envctl previews are already active, meeting limit 5" in reason
+        for reason in sixth_reasons
+    )
+
+
 def test_overloaded_start_comments_stats_lists_other_previews_and_removes_label(
     tmp_path,
     monkeypatch,

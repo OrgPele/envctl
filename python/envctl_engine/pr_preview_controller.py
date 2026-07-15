@@ -435,7 +435,7 @@ class ControllerConfig:
             max_load_per_cpu=float(os.environ.get("ENVCTL_PREVIEW_MAX_LOAD_PER_CPU", "1.50")),
             min_memory_available_percent=float(os.environ.get("ENVCTL_PREVIEW_MIN_MEMORY_AVAILABLE_PERCENT", "10")),
             min_disk_free_percent=float(os.environ.get("ENVCTL_PREVIEW_MIN_DISK_FREE_PERCENT", "10")),
-            max_other_active_previews=int(os.environ.get("ENVCTL_PREVIEW_MAX_OTHER_ACTIVE", "2")),
+            max_other_active_previews=int(os.environ.get("ENVCTL_PREVIEW_MAX_OTHER_ACTIVE", "5")),
             dry_run=args.dry_run or parse_bool(os.environ.get("ENVCTL_PREVIEW_DRY_RUN", "false")),
             qa_user_enabled=parse_bool(os.environ.get("ENVCTL_PREVIEW_QA_USER_ENABLE", "true")),
             qa_user_email=env_value(
