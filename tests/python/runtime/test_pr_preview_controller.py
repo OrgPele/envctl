@@ -532,6 +532,7 @@ def test_overloaded_start_comments_stats_lists_other_previews_and_removes_label(
             pr_list_payload(789, "Current", head_ref="feature/demo"),
             pr_list_payload(123, "Other preview", head_ref="feature/other"),
         ],
+        timeline="labeled\t2026-07-15T22:00:00Z\tdeploy-app\n",
     )
     instance = controller.PreviewController(config, runner)
     instance.save_state(
@@ -543,10 +544,10 @@ def test_overloaded_start_comments_stats_lists_other_previews_and_removes_label(
             head_ref="feature/other",
             head_sha="abc",
             status="running",
-            label_added_at="2026-07-15T17:00:00Z",
-            started_at="2026-07-15T17:00:00Z",
-            expires_at="2026-07-15T17:30:00Z",
-            updated_at="2026-07-15T17:00:00Z",
+            label_added_at="2026-07-15T22:00:00Z",
+            started_at="2026-07-15T22:00:00Z",
+            expires_at="2026-07-15T22:30:00Z",
+            updated_at="2026-07-15T22:00:00Z",
             endpoints={},
         )
     )
@@ -562,6 +563,11 @@ def test_overloaded_start_comments_stats_lists_other_previews_and_removes_label(
         docker_running_containers=7,
         docker_error=None,
         top_processes=("111 python 250.0 5.0",),
+    )
+    monkeypatch.setattr(
+        controller,
+        "utc_now",
+        lambda: datetime(2026, 7, 15, 22, 1, tzinfo=UTC),
     )
     monkeypatch.setattr(controller, "collect_machine_stats", lambda *_: stats)
 
@@ -586,6 +592,7 @@ def test_overloaded_start_comments_stats_lists_other_previews_and_removes_label(
 
 def test_capacity_admission_ignores_other_labeled_prs_without_preview_state(
     tmp_path,
+    monkeypatch,
 ):
     controller = load_controller()
     root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
@@ -598,6 +605,7 @@ def test_capacity_admission_ignores_other_labeled_prs_without_preview_state(
             pr_list_payload(124, "Requested two", head_ref="feature/two"),
             pr_list_payload(125, "Requested three", head_ref="feature/three"),
         ],
+        timeline="labeled\t2026-07-15T22:00:00Z\tdeploy-app\n",
         projects={
             "projects": [
                 {
@@ -621,6 +629,11 @@ def test_capacity_admission_ignores_other_labeled_prs_without_preview_state(
         }
     )
     instance = controller.PreviewController(config, runner)
+    monkeypatch.setattr(
+        controller,
+        "utc_now",
+        lambda: datetime(2026, 7, 15, 22, 1, tzinfo=UTC),
+    )
 
     exit_code = instance.run_pull_request_event(
         pr_payload(
@@ -635,6 +648,103 @@ def test_capacity_admission_ignores_other_labeled_prs_without_preview_state(
     assert command_argvs(runner, "envctl", "start")
     assert runner.removed_labels == []
     assert instance.load_state(789).status == "running"
+
+
+def test_start_expires_overdue_preview_before_capacity_admission(
+    tmp_path,
+    monkeypatch,
+):
+    controller = load_controller()
+    current_root = (
+        tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    )
+    other_root = (
+        tmp_path / "control" / "trees" / "imported" / "feature-other"
+    )
+    current_root.mkdir(parents=True)
+    other_root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        active_prs=[
+            pr_list_payload(789, "Current", head_ref="feature/demo"),
+            pr_list_payload(123, "Expired", head_ref="feature/other"),
+        ],
+        timeline="labeled\t2026-07-15T16:00:00Z\tdeploy-app\n",
+        projects={
+            "projects": [
+                {
+                    "name": "feature/demo",
+                    "root": str(current_root),
+                    "running": False,
+                },
+                {
+                    "name": "feature/other",
+                    "root": str(other_root),
+                    "running": True,
+                },
+            ]
+        },
+        endpoints={
+            "frontend": {"port": 9000},
+            "backend": {"port": 8000},
+        },
+        root_to_branch={
+            str(current_root): "feature/demo",
+            str(other_root): "feature/other",
+        },
+    )
+    base_config = make_config(controller, tmp_path)
+    config = controller.ControllerConfig(
+        **{
+            **base_config.__dict__,
+            "max_other_active_previews": 1,
+        }
+    )
+    instance = controller.PreviewController(config, runner)
+    monkeypatch.setattr(
+        controller,
+        "utc_now",
+        lambda: datetime(2026, 7, 15, 17, 0, tzinfo=UTC),
+    )
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=123,
+            label="deploy-app",
+            project="feature/other",
+            root=str(other_root),
+            head_ref="feature/other",
+            head_sha="othersha",
+            status="running",
+            label_added_at="2026-07-15T16:00:00Z",
+            started_at="2026-07-15T16:00:00Z",
+            expires_at="2026-07-15T16:30:00Z",
+            updated_at="2026-07-15T16:00:00Z",
+            endpoints={},
+        )
+    )
+
+    exit_code = instance.run_pull_request_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+
+    assert exit_code == 0
+    command_sequence = [
+        call["argv"][:2]
+        for call in runner.calls
+        if call["argv"][:2]
+        in (["envctl", "stop"], ["envctl", "import"])
+    ]
+    assert command_sequence[:2] == [
+        ["envctl", "stop"],
+        ["envctl", "import"],
+    ]
+    assert instance.load_state(123).status == "stopped"
+    assert instance.load_state(789).status == "running"
+    assert command_argvs(runner, "gh", "issue")[0][3] == "123"
 
 
 def test_overloaded_start_stops_stale_tracked_preview_before_label_removal(
@@ -2145,6 +2255,45 @@ def test_labeled_event_records_start_failure_after_import(tmp_path):
     ] in command_argvs(runner, "docker", "network")
 
 
+def test_start_cleanup_failure_remains_capacity_consuming(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        projects={
+            "projects": [
+                {
+                    "name": "feature/demo",
+                    "root": str(root),
+                    "running": False,
+                }
+            ]
+        },
+        root_to_branch={str(root): "feature/demo"},
+        start_returncode=7,
+        blast_returncode=9,
+        blast_stderr="failed to remove runtime",
+    )
+    config = make_config(controller, tmp_path)
+    instance = controller.PreviewController(config, runner)
+
+    exit_code = instance.run_pull_request_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+
+    assert exit_code == 7
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.status == "start_cleanup_failed"
+    assert instance.capacity_consuming_preview_states() == [state]
+    assert "Failed-start cleanup exit code: `9`" in runner.comments[-1]
+
+
 def test_labeled_event_records_public_route_unhealthy_after_publish(
     tmp_path,
     monkeypatch,
@@ -2464,6 +2613,61 @@ def test_unlabeled_event_releases_external_dependency_lease(tmp_path):
     assert state is not None
     assert state.status == "stopped"
     assert state.external_dependencies == {}
+
+
+def test_stop_failure_remains_capacity_consuming_and_keeps_dependency_lease(
+    tmp_path,
+):
+    controller = load_controller()
+    base_config = make_config(controller, tmp_path)
+    config = controller.ControllerConfig(
+        **{
+            **base_config.__dict__,
+            "external_dependency_pools": supabase_external_pool(controller),
+        }
+    )
+    runner = FakeRunner(
+        controller,
+        stop_returncode=7,
+        stop_stderr="runtime refused to stop",
+    )
+    instance = controller.PreviewController(config, runner)
+    instance.save_external_dependency_leases({"supabase": {"supabase-a": 789}})
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=789,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(tmp_path / "feature-demo"),
+            head_ref="feature/demo",
+            head_sha="abc123456789",
+            status="running",
+            label_added_at="2026-07-15T17:00:00Z",
+            started_at="2026-07-15T17:00:00Z",
+            expires_at="2026-07-15T17:30:00Z",
+            updated_at="2026-07-15T17:00:00Z",
+            endpoints={},
+            external_dependencies={"supabase": "supabase-a"},
+        )
+    )
+
+    exit_code = instance.run_pull_request_event(
+        pr_payload(
+            action="unlabeled",
+            labels=[],
+            event_label="deploy-app",
+        )
+    )
+
+    assert exit_code == 7
+    state = instance.load_state(789)
+    assert state is not None
+    assert state.status == "stop_failed"
+    assert state.external_dependencies == {"supabase": "supabase-a"}
+    assert instance.load_external_dependency_leases() == {
+        "supabase": {"supabase-a": 789}
+    }
+    assert instance.capacity_consuming_preview_states() == [state]
 
 
 def test_stop_releases_existing_lease_even_when_pool_secret_was_removed(tmp_path):

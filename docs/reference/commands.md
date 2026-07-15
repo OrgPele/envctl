@@ -272,6 +272,10 @@ Behavior:
   is too loaded to deploy
 - counts only controller states that still consume runtime capacity; pending
   labels by themselves do not count as active previews
+- expires overdue previews before evaluating a new start, so delayed GitHub
+  schedules cannot leave stale runtimes occupying every admission slot
+- keeps failed stop/cleanup states and their dependency leases capacity-visible
+  until cleanup succeeds
 - runs storage-preserving `envctl blast-all` cleanup when active preview count
   reaches zero, passing keep-volume flags so leftover containers and processes
   are killed without deleting copied runtime storage
