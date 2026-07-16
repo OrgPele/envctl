@@ -1461,6 +1461,33 @@ def test_started_comment_omits_qa_credentials_when_qa_user_disabled(tmp_path):
     assert "Pele-QA-2026!" not in comment
 
 
+def test_labeled_event_comments_immediately_before_provisioning(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    runner = FakeRunner(
+        controller,
+        projects={"projects": [{"name": "feature/demo", "root": str(root), "running": True}]},
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+    )
+    instance = controller.PreviewController(make_config(controller, tmp_path), runner)
+
+    exit_code = instance.run_pull_request_event(
+        pr_payload(
+            action="labeled",
+            labels=["deploy-app"],
+            event_label="deploy-app",
+        )
+    )
+
+    assert exit_code == 0
+    assert "preview request received" in runner.comments[0]
+    assert "this can take several minutes" in runner.comments[0]
+    assert "- Reason: label added" in runner.comments[0]
+    assert "Envctl preview is running" in runner.comments[-1]
+
+
 def test_labeled_event_leases_external_supabase_without_storing_tokens(tmp_path):
     controller = load_controller()
     root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
@@ -3034,6 +3061,40 @@ def test_sweep_expires_label_stops_preview_and_removes_label(tmp_path):
     assert command_argvs(runner, "envctl", "delete-worktree") == []
     assert runner.removed_labels == ["deploy-app"]
     assert "TTL expired" in runner.comments[0]
+
+
+def test_sweep_does_not_repeat_ttl_comment_for_already_stopped_label_window(tmp_path):
+    controller = load_controller()
+    config = make_config(controller, tmp_path, ttl_minutes=45)
+    runner = FakeRunner(
+        controller,
+        active_prs=[pr_list_payload(789, "Preview me")],
+        timeline="labeled\t2000-01-01T00:00:00Z\tdeploy-app\n",
+    )
+    instance = controller.PreviewController(config, runner)
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=789,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(tmp_path / "control" / "trees" / "imported" / "feature-demo"),
+            head_ref="feature/demo",
+            head_sha="abc123456789",
+            status="stopped",
+            label_added_at="2000-01-01T00:00:00Z",
+            started_at="2000-01-01T00:00:00Z",
+            expires_at="2000-01-01T00:45:00Z",
+            updated_at="2000-01-01T00:45:00Z",
+            endpoints={},
+        )
+    )
+
+    exit_code = instance.sweep()
+
+    assert exit_code == 0
+    assert runner.comments == []
+    assert runner.removed_labels == ["deploy-app"]
+    assert command_argvs(runner, "envctl", "stop") == []
 
 
 def test_sweep_redeploys_running_preview_when_head_sha_changes(tmp_path):
