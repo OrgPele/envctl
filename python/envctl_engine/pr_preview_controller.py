@@ -96,9 +96,7 @@ PR_PREVIEW_START_ENV_PREFIXES = (
     "ENVCTL_BACKEND_ENV__",
     "ENVCTL_FRONTEND_ENV__",
 )
-PR_PREVIEW_SERVICE_ENV_OVERLAY_PATTERN = re.compile(
-    r"^ENVCTL_[A-Z][A-Z0-9_]*_ENV__[A-Z_][A-Z0-9_]*$"
-)
+PR_PREVIEW_SERVICE_ENV_OVERLAY_PATTERN = re.compile(r"^ENVCTL_[A-Z][A-Z0-9_]*_ENV__[A-Z_][A-Z0-9_]*$")
 FAILED_START_STATUSES = frozenset(
     {
         "public_route_cleanup_failed",
@@ -450,6 +448,10 @@ class ControllerConfig:
                 os.environ.get("ENVCTL_PREVIEW_EXTERNAL_DEPS_JSON", "")
             ),
         )
+
+
+class LabelTimelineUnavailable(RuntimeError):
+    """Raised when GitHub cannot provide authoritative label history."""
 
 
 def parse_bool(raw: str | None) -> bool:
@@ -868,10 +870,7 @@ def pr_preview_start_env_overrides() -> dict[str, str]:
     return {
         key: value
         for key, value in os.environ.items()
-        if (
-            key.startswith(PR_PREVIEW_START_ENV_PREFIXES)
-            or PR_PREVIEW_SERVICE_ENV_OVERLAY_PATTERN.fullmatch(key)
-        )
+        if (key.startswith(PR_PREVIEW_START_ENV_PREFIXES) or PR_PREVIEW_SERVICE_ENV_OVERLAY_PATTERN.fullmatch(key))
         and str(value).strip()
     }
 
@@ -1889,9 +1888,21 @@ class PreviewController:
         force_restart: bool = False,
     ) -> int:
         self.validate_same_repo(pr)
-        label_added_at = self.label_active_since(pr.number) or utc_now()
-        if refresh_ttl:
-            label_added_at = utc_now()
+        now = utc_now()
+        if reason == "label added" or refresh_ttl:
+            # The event itself is authoritative and newer than any saved state.
+            # Avoid letting a transient timeline API failure reuse an expired
+            # label window when a visitor has just requested a fresh preview.
+            label_added_at = now
+        else:
+            try:
+                label_added_at = self.label_active_since(pr.number) or now
+            except LabelTimelineUnavailable as exc:
+                print(
+                    f"Could not read label history for PR #{pr.number}; starting with a fresh TTL window. {exc}",
+                    flush=True,
+                )
+                label_added_at = now
         existing_state = self.load_state(pr.number)
         if not force_restart and self.current_head_preview_is_running(
             pr,
@@ -2768,10 +2779,7 @@ class PreviewController:
         open_prs_by_number = {pr.number: pr for pr in open_prs}
         exit_code = 0
         for state in self.load_all_states():
-            if (
-                state.status in {"stopped", "deleted"}
-                or state.pr_number in active_pr_numbers
-            ):
+            if state.status in {"stopped", "deleted"} or state.pr_number in active_pr_numbers:
                 continue
             pr = open_prs_by_number.get(state.pr_number)
             if pr is None:
@@ -2803,36 +2811,35 @@ class PreviewController:
             if pr.number in excluded:
                 continue
             state = self.load_state(pr.number)
-            active_since = self.label_active_since(pr.number)
-            saved_active_since = (
-                parse_github_datetime(state.label_added_at)
-                if state and state.label_added_at
-                else None
-            )
+            try:
+                active_since = self.label_active_since(pr.number)
+            except LabelTimelineUnavailable as exc:
+                print(
+                    f"Skipping TTL expiry for PR #{pr.number} because GitHub label history is unavailable. {exc}",
+                    flush=True,
+                )
+                continue
             if active_since is None:
+                print(
+                    f"Skipping TTL expiry for PR #{pr.number} because the PR listing and label timeline disagree.",
+                    flush=True,
+                )
+                continue
+            saved_active_since = parse_github_datetime(state.label_added_at) if state and state.label_added_at else None
+            if saved_active_since is not None and saved_active_since > active_since:
                 active_since = saved_active_since
-            elif (
-                saved_active_since is not None
-                and saved_active_since > active_since
-            ):
-                active_since = saved_active_since
-            if active_since is None:
-                active_since = now
-            expires_at = active_since + timedelta(
-                minutes=self.config.ttl_minutes
-            )
+            expires_at = active_since + timedelta(minutes=self.config.ttl_minutes)
             if now < expires_at:
                 continue
             expired.add(pr.number)
-            if (
-                state
-                and state.status == "stopped"
-                and state.label_added_at == isoformat(active_since)
-            ):
-                print(
-                    f"Preview PR #{pr.number} already stopped for this expired "
-                    "label window; removing the stale label without another comment.",
-                    flush=True,
+            if state and state.status == "stopped" and state.label_added_at == isoformat(active_since):
+                self.comment(
+                    pr.number,
+                    self.render_stale_label_comment(
+                        pr,
+                        active_since,
+                        expires_at,
+                    ),
                 )
                 self.remove_label(pr.number)
                 continue
@@ -3042,7 +3049,8 @@ class PreviewController:
             check=False,
         )
         if result.returncode != 0:
-            return None
+            details = truncate(result.stderr or result.stdout or "unknown GitHub API error")
+            raise LabelTimelineUnavailable(details)
         return timeline_label_active_since(result.stdout.splitlines(), self.config.label)
 
     def resolve_project(self, pr: PullRequestInfo) -> dict[str, Any] | None:
@@ -3491,11 +3499,7 @@ class PreviewController:
         server_url = os.environ.get("GITHUB_SERVER_URL", "").rstrip("/")
         repository = os.environ.get("GITHUB_REPOSITORY", "").strip("/")
         run_id = os.environ.get("GITHUB_RUN_ID", "").strip()
-        run_url = (
-            f"{server_url}/{repository}/actions/runs/{run_id}"
-            if server_url and repository and run_id
-            else ""
-        )
+        run_url = f"{server_url}/{repository}/actions/runs/{run_id}" if server_url and repository and run_id else ""
         run_line = f"\n- Workflow run: {run_url}" if run_url else ""
         return (
             f"{COMMENT_MARKER}\n"
@@ -3608,6 +3612,22 @@ class PreviewController:
             f"{COMMENT_MARKER}\n"
             f"Envctl preview TTL expired for PR #{pr.number}. I am stopping the environment "
             f"and removing the `{self.config.label}` label.\n\n"
+            f"- Label added: {isoformat(active_since)}\n"
+            f"- TTL: {self.config.ttl_minutes} minutes\n"
+            f"- Expired at: {isoformat(expires_at)}"
+        )
+
+    def render_stale_label_comment(
+        self,
+        pr: PullRequestInfo,
+        active_since: datetime,
+        expires_at: datetime,
+    ) -> str:
+        return (
+            f"{COMMENT_MARKER}\n"
+            f"Envctl preview TTL expired for PR #{pr.number}. The environment was "
+            f"already stopped for this label window, so I am removing the "
+            f"`{self.config.label}` label.\n\n"
             f"- Label added: {isoformat(active_since)}\n"
             f"- TTL: {self.config.ttl_minutes} minutes\n"
             f"- Expired at: {isoformat(expires_at)}"

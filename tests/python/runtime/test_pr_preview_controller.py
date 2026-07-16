@@ -35,6 +35,8 @@ class FakeRunner:
         *,
         active_prs=None,
         timeline: str = "labeled\t2000-01-01T00:00:00Z\tdeploy-app\n",
+        timeline_returncode: int = 0,
+        timeline_stderr: str = "",
         projects=None,
         endpoints=None,
         root_to_branch=None,
@@ -53,6 +55,8 @@ class FakeRunner:
         self.controller = controller
         self.active_prs = active_prs or []
         self.timeline = timeline
+        self.timeline_returncode = timeline_returncode
+        self.timeline_stderr = timeline_stderr
         self.projects = projects or {"projects": []}
         self.endpoints = endpoints or {}
         self.root_to_branch = root_to_branch or {}
@@ -111,7 +115,12 @@ class FakeRunner:
             self.deployment_statuses.append(json.loads(input_text or "{}"))
             return self.ok(argv, stdout="{}\n")
         if argv[:2] == ["gh", "api"]:
-            return self.ok(argv, stdout=self.timeline)
+            return self.controller.CommandResult(
+                argv=list(argv),
+                returncode=self.timeline_returncode,
+                stdout=self.timeline,
+                stderr=self.timeline_stderr,
+            )
         if argv[:3] == ["gh", "auth", "setup-git"]:
             return self.ok(argv)
         if argv[:3] == ["gh", "repo", "clone"]:
@@ -401,6 +410,23 @@ def test_timeline_label_active_since_returns_none_after_unlabel():
     assert controller.timeline_label_active_since(lines, "deploy-app") is None
 
 
+def test_label_active_since_surfaces_timeline_api_failure(tmp_path):
+    controller = load_controller()
+    runner = FakeRunner(
+        controller,
+        timeline="",
+        timeline_returncode=1,
+        timeline_stderr="invalid character '<' looking for beginning of value",
+    )
+    instance = controller.PreviewController(make_config(controller, tmp_path), runner)
+
+    with pytest.raises(
+        controller.LabelTimelineUnavailable,
+        match="invalid character",
+    ):
+        instance.label_active_since(789)
+
+
 def test_select_project_prefers_running_project_matching_branch_name():
     controller = load_controller()
     projects = [
@@ -526,9 +552,7 @@ def test_overload_reasons_report_real_threshold_breaches(tmp_path):
 def test_controller_config_defaults_to_five_concurrent_previews(monkeypatch):
     controller = load_controller()
     monkeypatch.delenv("ENVCTL_PREVIEW_MAX_OTHER_ACTIVE", raising=False)
-    args = controller.build_parser().parse_args(
-        ["--repo", "OrgPele/pele-monorepo"]
-    )
+    args = controller.build_parser().parse_args(["--repo", "OrgPele/pele-monorepo"])
 
     config = controller.ControllerConfig.from_env(args)
 
@@ -538,9 +562,7 @@ def test_controller_config_defaults_to_five_concurrent_previews(monkeypatch):
 def test_capacity_five_admits_fifth_preview_and_rejects_sixth(tmp_path):
     controller = load_controller()
     base_config = make_config(controller, tmp_path)
-    config = controller.ControllerConfig(
-        **{**base_config.__dict__, "max_other_active_previews": 5}
-    )
+    config = controller.ControllerConfig(**{**base_config.__dict__, "max_other_active_previews": 5})
     stats = controller.MachineStats(
         load_1m=0.0,
         load_5m=0.0,
@@ -586,10 +608,7 @@ def test_capacity_five_admits_fifth_preview_and_rejects_sixth(tmp_path):
     )
 
     assert not any("other envctl previews" in reason for reason in fifth_reasons)
-    assert any(
-        "5 other envctl previews are already active, meeting limit 5" in reason
-        for reason in sixth_reasons
-    )
+    assert any("5 other envctl previews are already active, meeting limit 5" in reason for reason in sixth_reasons)
 
 
 def test_overloaded_start_comments_stats_lists_other_previews_and_removes_label(
@@ -728,12 +747,8 @@ def test_start_expires_overdue_preview_before_capacity_admission(
     monkeypatch,
 ):
     controller = load_controller()
-    current_root = (
-        tmp_path / "control" / "trees" / "imported" / "feature-demo"
-    )
-    other_root = (
-        tmp_path / "control" / "trees" / "imported" / "feature-other"
-    )
+    current_root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    other_root = tmp_path / "control" / "trees" / "imported" / "feature-other"
     current_root.mkdir(parents=True)
     other_root.mkdir(parents=True)
     runner = FakeRunner(
@@ -806,10 +821,7 @@ def test_start_expires_overdue_preview_before_capacity_admission(
 
     assert exit_code == 0
     command_sequence = [
-        call["argv"][:2]
-        for call in runner.calls
-        if call["argv"][:2]
-        in (["envctl", "stop"], ["envctl", "import"])
+        call["argv"][:2] for call in runner.calls if call["argv"][:2] in (["envctl", "stop"], ["envctl", "import"])
     ]
     assert command_sequence[:2] == [
         ["envctl", "stop"],
@@ -1763,9 +1775,7 @@ def test_controller_run_dispatches_github_push_payload(tmp_path, monkeypatch):
         "run_push_event",
         lambda event: received.append(event) or 7,
     )
-    args = controller.build_parser().parse_args(
-        ["--event-name", "push", "--event-path", str(event_path)]
-    )
+    args = controller.build_parser().parse_args(["--event-name", "push", "--event-path", str(event_path)])
 
     assert instance.run(args) == 7
     assert received == [push_payload(after="newsha")]
@@ -2542,7 +2552,7 @@ def test_preview_python_command_shims_are_isolated_by_interpreter(tmp_path):
         executable = tmp_path / f"python-{index}"
         executable.write_text(
             "#!/bin/sh\n"
-            "case \"$2\" in\n"
+            'case "$2" in\n'
             "  *sys.version_info*) printf '3.13\\n' ;;\n"
             f"  *) printf 'interpreter-{index}\\n' ;;\n"
             "esac\n",
@@ -2573,9 +2583,7 @@ def test_preview_python_command_shims_are_isolated_by_interpreter(tmp_path):
         results = list(executor.map(prepare_and_run, interpreters))
 
     assert len({shim.parent for shim, _output in results}) == len(interpreters)
-    assert {output for _shim, output in results} == {
-        f"interpreter-{index}" for index in range(len(interpreters))
-    }
+    assert {output for _shim, output in results} == {f"interpreter-{index}" for index in range(len(interpreters))}
     assert list((tmp_path / "runtime").rglob(".python-*")) == []
 
     reused_env = {"PYTHON_BIN": str(interpreters[0]), "PATH": "/usr/bin:/bin"}
@@ -2764,9 +2772,7 @@ def test_stop_failure_remains_capacity_consuming_and_keeps_dependency_lease(
     assert state is not None
     assert state.status == "stop_failed"
     assert state.external_dependencies == {"supabase": "supabase-a"}
-    assert instance.load_external_dependency_leases() == {
-        "supabase": {"supabase-a": 789}
-    }
+    assert instance.load_external_dependency_leases() == {"supabase": {"supabase-a": 789}}
     assert instance.capacity_consuming_preview_states() == [state]
 
 
@@ -3092,9 +3098,104 @@ def test_sweep_does_not_repeat_ttl_comment_for_already_stopped_label_window(tmp_
     exit_code = instance.sweep()
 
     assert exit_code == 0
-    assert runner.comments == []
+    assert len(runner.comments) == 1
+    assert "TTL expired" in runner.comments[0]
+    assert "already stopped" in runner.comments[0]
     assert runner.removed_labels == ["deploy-app"]
     assert command_argvs(runner, "envctl", "stop") == []
+
+
+def test_sweep_never_removes_fresh_label_when_timeline_lookup_fails(tmp_path):
+    controller = load_controller()
+    root = tmp_path / "control" / "trees" / "imported" / "feature-demo"
+    root.mkdir(parents=True)
+    config = make_config(controller, tmp_path, ttl_minutes=45)
+    runner = FakeRunner(
+        controller,
+        active_prs=[pr_list_payload(789, "Preview me")],
+        timeline="",
+        timeline_returncode=1,
+        timeline_stderr="invalid character '<' looking for beginning of value",
+        projects={"projects": [{"name": "feature/demo", "root": str(root), "running": True}]},
+        endpoints={"frontend": {"port": 9000}, "backend": {"port": 8000}},
+        root_to_branch={str(root): "feature/demo"},
+    )
+    instance = controller.PreviewController(config, runner)
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=789,
+            label="deploy-app",
+            project="feature/demo",
+            root=str(root),
+            head_ref="feature/demo",
+            head_sha="abc123456789",
+            status="stopped",
+            label_added_at="2000-01-01T00:00:00Z",
+            started_at="2000-01-01T00:00:00Z",
+            expires_at="2000-01-01T00:45:00Z",
+            updated_at="2000-01-01T00:45:00Z",
+            endpoints={},
+        )
+    )
+
+    exit_code = instance.sweep()
+
+    assert exit_code == 0
+    assert runner.removed_labels == []
+    assert "preview request received" in runner.comments[0]
+    assert "Envctl preview is running" in runner.comments[-1]
+    assert instance.load_state(789).status == "running"
+
+
+def test_startup_reconciliation_keeps_other_labels_when_timeline_lookup_fails(
+    tmp_path,
+):
+    controller = load_controller()
+    runner = FakeRunner(
+        controller,
+        timeline="",
+        timeline_returncode=1,
+        timeline_stderr="invalid character '<' looking for beginning of value",
+    )
+    instance = controller.PreviewController(
+        make_config(controller, tmp_path, ttl_minutes=30),
+        runner,
+    )
+    instance.save_state(
+        controller.PreviewState(
+            pr_number=435,
+            label="deploy-app",
+            project="codex/agentic-voice-actions",
+            root=str(tmp_path / "old-preview"),
+            head_ref="codex/agentic-voice-actions",
+            head_sha="4231d8fad484",
+            status="stopped",
+            label_added_at="2000-01-01T00:00:00Z",
+            started_at="2000-01-01T00:00:00Z",
+            expires_at="2000-01-01T00:30:00Z",
+            updated_at="2000-01-01T00:30:00Z",
+            endpoints={},
+        )
+    )
+
+    expired, exit_code = instance.expire_overdue_previews(
+        [
+            controller.pr_from_list_payload(
+                pr_list_payload(
+                    435,
+                    "Personalize the public voice demo",
+                    head_ref="codex/agentic-voice-actions",
+                    head_sha="4231d8fad484",
+                )
+            )
+        ],
+        now=datetime(2026, 7, 17, tzinfo=UTC),
+    )
+
+    assert expired == set()
+    assert exit_code == 0
+    assert runner.removed_labels == []
+    assert runner.comments == []
 
 
 def test_sweep_redeploys_running_preview_when_head_sha_changes(tmp_path):
@@ -3243,9 +3344,7 @@ def test_sweep_stops_unlabeled_tracked_preview_while_another_is_active(tmp_path)
     runner = FakeRunner(
         controller,
         active_prs=[
-            without_preview_label(
-                pr_list_payload(789, "Stale", head_ref="feature/stale")
-            ),
+            without_preview_label(pr_list_payload(789, "Stale", head_ref="feature/stale")),
             pr_list_payload(790, "Active", head_ref="feature/active"),
         ],
         timeline="labeled\t2999-01-01T00:00:00Z\tdeploy-app\n",
@@ -3344,7 +3443,9 @@ def test_sweep_with_no_active_prs_blasts_processes_without_removing_storage(
     }
 
 
-def test_sweep_uses_saved_label_time_when_timeline_is_unavailable(tmp_path):
+def test_sweep_does_not_use_stale_saved_time_when_timeline_has_no_active_span(
+    tmp_path,
+):
     controller = load_controller()
     config = make_config(controller, tmp_path, ttl_minutes=45)
     runner = FakeRunner(
@@ -3373,11 +3474,9 @@ def test_sweep_uses_saved_label_time_when_timeline_is_unavailable(tmp_path):
     exit_code = instance.sweep()
 
     assert exit_code == 0
-    assert command_argvs(runner, "envctl", "stop") == [
-        ["envctl", "stop", "--trees", "--project", "feature/demo", "--entire-system"]
-    ]
-    assert runner.removed_labels == ["deploy-app"]
-    assert "Label added: 2000-01-01T00:00:00Z" in runner.comments[0]
+    assert command_argvs(runner, "envctl", "stop") == []
+    assert runner.removed_labels == []
+    assert runner.comments == []
 
 
 def test_sweep_prefers_newer_saved_manual_start_time(tmp_path):
