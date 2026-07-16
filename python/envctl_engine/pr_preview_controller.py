@@ -1942,6 +1942,11 @@ class PreviewController:
             self.remove_label(pr.number)
             return 0
 
+        self.comment(
+            pr.number,
+            self.render_starting_comment(pr, reason),
+        )
+
         external_dependencies = self.acquire_external_dependency_leases(
             pr,
             existing_state,
@@ -2819,6 +2824,18 @@ class PreviewController:
             if now < expires_at:
                 continue
             expired.add(pr.number)
+            if (
+                state
+                and state.status == "stopped"
+                and state.label_added_at == isoformat(active_since)
+            ):
+                print(
+                    f"Preview PR #{pr.number} already stopped for this expired "
+                    "label window; removing the stale label without another comment.",
+                    flush=True,
+                )
+                self.remove_label(pr.number)
+                continue
             self.comment(
                 pr.number,
                 self.render_ttl_comment(pr, active_since, expires_at),
@@ -3464,6 +3481,31 @@ class PreviewController:
             f"{public_link_lines}"
             f"{qa_user_lines}"
             f"{endpoint_lines}"
+        )
+
+    def render_starting_comment(
+        self,
+        pr: PullRequestInfo,
+        reason: str,
+    ) -> str:
+        server_url = os.environ.get("GITHUB_SERVER_URL", "").rstrip("/")
+        repository = os.environ.get("GITHUB_REPOSITORY", "").strip("/")
+        run_id = os.environ.get("GITHUB_RUN_ID", "").strip()
+        run_url = (
+            f"{server_url}/{repository}/actions/runs/{run_id}"
+            if server_url and repository and run_id
+            else ""
+        )
+        run_line = f"\n- Workflow run: {run_url}" if run_url else ""
+        return (
+            f"{COMMENT_MARKER}\n"
+            f"Envctl preview request received for PR #{pr.number}. Provisioning has started; "
+            "this can take several minutes. I will post the preview links or the exact failure "
+            "reason when it finishes.\n\n"
+            f"- Reason: {reason}\n"
+            f"- Branch: `{pr.head_ref}`\n"
+            f"- Head: `{pr.head_sha[:12]}`"
+            f"{run_line}"
         )
 
     def render_external_dependency_mode(self, state: PreviewState) -> str:
